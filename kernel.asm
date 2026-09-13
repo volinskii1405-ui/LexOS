@@ -11,6 +11,9 @@
 ;   src/filesystem.asm  - файловая система поверх ATA
 ;   src/programs.asm    - исполняемые файлы (run), hex-редактор, пример TEST.BIN
 ;   src/assembler.asm   - мини-ассемблер одной строки для hex-редактора
+;   src/rtc.asm         - часы/дата из CMOS RTC (команды date/time)
+;   src/speaker.asm     - PC-спикер (команда beep)
+;   src/serial.asm      - UART COM1 (команда serial, полезно для отладки)
 ;
 ; Работаем в плоской модели памяти (флэт): CS/DS/ES/FS/GS/SS все покрывают
 ; 0..4GB, поэтому в отличие от 16-битной реал-модной версии здесь НЕТ
@@ -62,6 +65,9 @@ main_loop:
 %include "src/filesystem.asm"
 %include "src/programs.asm"
 %include "src/assembler.asm"
+%include "src/rtc.asm"
+%include "src/speaker.asm"
+%include "src/serial.asm"
 
 ; Заполняем оставшееся место в пределах секторов, которые читает загрузчик,
 ; чтобы файл был кратен 512 байтам (см. KERNEL_SECTORS в boot.asm).

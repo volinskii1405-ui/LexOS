@@ -169,6 +169,36 @@ handle_command:
     cmp ax, 1
     je .do_tree
 
+    mov si, buffer
+    mov di, cmd_date
+    call strcmp_eq
+    cmp ax, 1
+    je .do_date
+
+    mov si, buffer
+    mov di, cmd_time
+    call strcmp_eq
+    cmp ax, 1
+    je .do_time
+
+    mov si, buffer
+    mov di, cmd_beep_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_beep
+
+    mov si, buffer
+    mov di, cmd_beep
+    call strcmp_eq
+    cmp ax, 1
+    je .do_beep_noarg
+
+    mov si, buffer
+    mov di, cmd_serial_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_serial
+
     ; Пустая строка (просто Enter) — ничего не делаем
     cmp byte [buffer], 0
     je .done
@@ -333,6 +363,31 @@ handle_command:
 
 .do_tree:
     call fs_tree
+    jmp .done
+
+.do_date:
+    call cmd_show_date
+    jmp .done
+
+.do_time:
+    call cmd_show_time
+    jmp .done
+
+.do_beep:
+    mov si, buffer
+    add si, 5                  ; пропускаем "beep "
+    call do_beep_cmd
+    jmp .done
+
+.do_beep_noarg:
+    mov si, empty_string
+    call do_beep_cmd
+    jmp .done
+
+.do_serial:
+    mov si, buffer
+    add si, 7                  ; пропускаем "serial "
+    call cmd_serial
 
 .done:
     popa

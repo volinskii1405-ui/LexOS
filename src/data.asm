@@ -117,6 +117,10 @@ help_l28 db "  shutdown      - power off the system", 13, 10, 0
 help_l29 db "  (Up/Down = command history)", 13, 10, 0
 help_l30 db "  Names: stored UPPERCASE, lookup is case-insensitive,", 13, 10, 0
 help_l31 db "         type the extension yourself (e.g. save notes.txt hi)", 13, 10, 0
+help_l32 db "  date          - show current date", 13, 10, 0
+help_l33 db "  time          - show current time", 13, 10, 0
+help_l34 db "  beep [hz]     - play a short tone (frequency in hex)", 13, 10, 0
+help_l35 db "  serial <text> - send text out over COM1", 13, 10, 0
 
 help_lines:
     dw help_l01, help_l02, help_l03, help_l04, help_l05
@@ -125,7 +129,7 @@ help_lines:
     dw help_l16, help_l17, help_l18, help_l19, help_l20
     dw help_l21, help_l22, help_l23, help_l24, help_l25
     dw help_l26, help_l27, help_l28, help_l29, help_l30
-    dw help_l31
+    dw help_l31, help_l32, help_l33, help_l34, help_l35
 help_lines_end:
 
 HELP_LINE_COUNT equ (help_lines_end - help_lines) / 2
@@ -205,12 +209,16 @@ msg_dev_type_output  db "output ", 0
 msg_dev_type_input   db "input  ", 0
 msg_dev_type_storage db "storage", 0
 msg_dev_type_timer   db "timer  ", 0
+msg_dev_type_misc    db "misc   ", 0
 msg_dev_status_ok    db " - OK", 13, 10, 0
 msg_dev_status_error db " - ERROR", 13, 10, 0
 
 msg_ata_lba_label  db "ATA LBA 0x", 0
 msg_ata_read_error db "ATA read error.", 13, 10, 0
 msg_ata_usage      db "Usage: ataread <lba (hex)>", 13, 10, 0
+
+msg_beep_usage     db "Usage: beep [freq_hz_in_hex]", 13, 10, 0
+msg_serial_sent    db "Sent over COM1.", 13, 10, 0
 
 dev_tmp_status db 0
 
@@ -242,6 +250,11 @@ cmd_edit_prefix  db "edit ", 0
 cmd_mkdir_prefix db "mkdir ", 0
 cmd_reboot       db "reboot", 0
 cmd_about        db "about", 0
+cmd_date         db "date", 0
+cmd_time         db "time", 0
+cmd_beep         db "beep", 0
+cmd_beep_prefix  db "beep ", 0
+cmd_serial_prefix db "serial ", 0
 cmd_cd           db "cd", 0
 cmd_cd_prefix    db "cd ", 0
 cmd_cp_prefix    db "cp ", 0
