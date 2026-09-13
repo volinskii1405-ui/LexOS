@@ -789,3 +789,83 @@ print_dec_word:
     mov cx, 1
     mov ax, dx
     ret
+
+; --- Создаёт при загрузке файл LICENSE с полным текстом лицензии проекта
+;     (если его ещё нет). Текст длиннее 127 инлайн-байт, поэтому вместо
+;     ручного заполнения инлайн-области (как fs_ensure_readme) создаём
+;     пустой файл-скелет, а сам текст дописываем через fs_append - она
+;     уже умеет и заполнить инлайн-часть, и продолжить в цепочку доп.
+;     секторов для остатка. См. license_append_line в src/data.asm. ---
+fs_ensure_license:
+    push ax
+    push bx
+    push dx
+    push si
+
+    mov si, license_name
+    call fs_find_by_name
+    cmp ax, -1
+    jne .end
+
+    call fs_find_free
+    cmp ax, -1
+    je .end
+
+    mov [fs_tmp_slot], ax
+
+    xor bx, bx
+.clear_loop:
+    cmp bx, FS_CONTENT_OFFSET + FS_CONTENT_LEN
+    jae .clear_done
+    push bx
+    mov ax, bx
+    xor dx, dx
+    call fs_scratch_write_byte
+    pop bx
+    inc bx
+    jmp .clear_loop
+.clear_done:
+
+    mov si, license_name
+    xor bx, bx
+.copy_name:
+    mov al, [si]
+    cmp al, 0
+    je .name_copied
+    call to_upper_al
+    mov dl, al
+    mov ax, bx
+    call fs_scratch_write_byte
+    inc si
+    inc bx
+    jmp .copy_name
+.name_copied:
+
+    mov ax, FS_TYPE_OFFSET
+    mov dl, FS_TYPE_FILE
+    call fs_scratch_write_byte
+
+    call fs_get_current_parent_byte
+    mov dl, al
+    mov ax, FS_PARENT_OFFSET
+    call fs_scratch_write_byte
+
+    mov ax, FS_TOTAL_LEN_OFFSET
+    xor dx, dx
+    call fs_scratch_write_word
+    mov ax, FS_CHAIN_OFFSET
+    mov dx, FS_NO_CHAIN
+    call fs_scratch_write_word
+
+    mov ax, [fs_tmp_slot]
+    call fs_write_slot
+
+    mov si, license_append_line
+    call fs_append
+
+.end:
+    pop si
+    pop dx
+    pop bx
+    pop ax
+    ret

@@ -262,6 +262,40 @@ readme_content db "LexOS - a tiny 32-bit protected-mode OS made with NASM.", 13,
                db "Type 'help' for commands. Names are stored", 13, 10
                db "UPPERCASE; type your own extension. Enjoy!", 0
 
+; --- LICENSE: полный текст лицензии проекта (MIT). Длиннее 127 байт,
+; поэтому создаётся не как README (один инлайн-кусок), а через
+; fs_ensure_license (src/fs_extra.asm), который дозаписывает остаток
+; через fs_append в цепочку доп. секторов - см. FS_CHAIN_OFFSET.
+; Строка ниже - готовый аргумент для fs_append: "LICENSE " + сам текст,
+; с настоящими переводами строк (13,10) внутри - fs_append копирует их
+; как обычные байты, не трогая (спецобработка "\n" нужна только когда
+; текст набирают на клавиатуре, где реального Enter внутри строки нет).
+license_name db "LICENSE", 0
+license_append_line:
+    db "LICENSE "
+    db "MIT License", 13, 10
+    db 13, 10
+    db "Copyright (c) 2026 volinskii1405-ui", 13, 10
+    db 13, 10
+    db "Permission is hereby granted, free of charge, to any person obtaining a copy", 13, 10
+    db 'of this software and associated documentation files (the "Software"), to deal', 13, 10
+    db "in the Software without restriction, including without limitation the rights", 13, 10
+    db "to use, copy, modify, merge, publish, distribute, sublicense, and/or sell", 13, 10
+    db "copies of the Software, and to permit persons to whom the Software is", 13, 10
+    db "furnished to do so, subject to the following conditions:", 13, 10
+    db 13, 10
+    db "The above copyright notice and this permission notice shall be included in all", 13, 10
+    db "copies or substantial portions of the Software.", 13, 10
+    db 13, 10
+    db 'THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR', 13, 10
+    db "IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,", 13, 10
+    db "FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE", 13, 10
+    db "AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER", 13, 10
+    db "LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,", 13, 10
+    db "OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE", 13, 10
+    db "SOFTWARE.", 13, 10
+    db 0
+
 ; ============================================================
 ; Имена команд (для сравнения)
 ; ============================================================
