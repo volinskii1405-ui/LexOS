@@ -92,6 +92,12 @@ handle_command:
     je .do_edit
 
     mov si, buffer
+    mov di, cmd_append_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_append
+
+    mov si, buffer
     mov di, cmd_mkdir_prefix
     call strcmp_prefix
     cmp ax, 1
@@ -291,6 +297,12 @@ handle_command:
     mov si, buffer
     add si, 5                  ; пропускаем "edit "
     call fs_edit
+    jmp .done
+
+.do_append:
+    mov si, buffer
+    add si, 7                  ; пропускаем "append "
+    call fs_append
     jmp .done
 
 .do_mkdir:

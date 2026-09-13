@@ -51,6 +51,27 @@ FS_TYPE_FILE equ 1
 FS_TYPE_DIR  equ 2
 FS_TYPE_PROGRAM equ 3
 
+; --- Цепочки дополнительных секторов (для файлов больше 127 байт,
+;     см. src/fs_extra.asm и команду append) ---
+; В каждом слоте директории (и в каждом дополнительном секторе) байты
+; 146-507 не используются вообще ни для чего (макс. инлайн-контент
+; кончается на 145) - там свободно место под 2 служебных 16-битных
+; поля в самом хвосте сектора, без сдвига существующей раскладки:
+FS_TOTAL_LEN_OFFSET equ 508    ; (только FS_TYPE_FILE) общая длина контента
+FS_CHAIN_OFFSET     equ 510    ; индекс первого доп. сектора, FS_NO_CHAIN=нет
+FS_NO_CHAIN         equ 0xFFFF
+
+; Раскладка доп. сектора (не имеет заголовка директории, целиком чужой
+; пул): байты 0-507 - содержимое, байты 508-509 - сколько из них занято,
+; байты 510-511 - индекс следующего доп. сектора (FS_NO_CHAIN = конец).
+FS_EXTRA_CONTENT_LEN equ 508
+FS_EXTRA_USED_OFFSET equ 508
+FS_EXTRA_NEXT_OFFSET equ 510
+
+FS_EXTRA_COUNT equ 64
+FS_BITMAP_SECTOR equ FS_START_SECTOR + FS_FILE_COUNT
+FS_EXTRA_START_SECTOR equ FS_BITMAP_SECTOR + 1
+
 ; --- Программы и hex-редактор ---
 ; content[0] у файлов типа PROGRAM хранит длину (0..127), content[1..] -
 ; сами байты машинного кода (в отличие от текстовых файлов, НЕ ноль-
@@ -121,6 +142,8 @@ help_l32 db "  date          - show current date", 13, 10, 0
 help_l33 db "  time          - show current time", 13, 10, 0
 help_l34 db "  beep [hz]     - play a short tone (frequency in hex)", 13, 10, 0
 help_l35 db "  serial <text> - send text out over COM1", 13, 10, 0
+help_l36 db "  append <n> <t> - add text to the end of file n (grows past 127", 13, 10, 0
+help_l37 db "                   bytes into extra disk sectors as needed)", 13, 10, 0
 
 help_lines:
     dw help_l01, help_l02, help_l03, help_l04, help_l05
@@ -130,6 +153,7 @@ help_lines:
     dw help_l21, help_l22, help_l23, help_l24, help_l25
     dw help_l26, help_l27, help_l28, help_l29, help_l30
     dw help_l31, help_l32, help_l33, help_l34, help_l35
+    dw help_l36, help_l37
 help_lines_end:
 
 HELP_LINE_COUNT equ (help_lines_end - help_lines) / 2
@@ -156,6 +180,9 @@ msg_fs_renamed     db "Renamed.", 13, 10, 0
 msg_fs_cleared     db "Cleared.", 13, 10, 0
 msg_fs_usage_edit  db "Usage: edit <n> <text>", 13, 10, 0
 msg_fs_edited      db "Edited.", 13, 10, 0
+msg_fs_usage_append db "Usage: append <n> <text>", 13, 10, 0
+msg_fs_appended     db "Appended.", 13, 10, 0
+msg_fs_disk_full    db "No free space for more content - saved what fit.", 13, 10, 0
 msg_bytes_suffix   db " bytes", 13, 10, 0
 fs_extension       db ".TXT", 0
 fs_dir_extension   db "  <DIR>", 0
@@ -247,6 +274,7 @@ cmd_ren_prefix   db "ren ", 0
 cmd_size_prefix  db "size ", 0
 cmd_clear_prefix db "clear ", 0
 cmd_edit_prefix  db "edit ", 0
+cmd_append_prefix db "append ", 0
 cmd_mkdir_prefix db "mkdir ", 0
 cmd_reboot       db "reboot", 0
 cmd_about        db "about", 0
