@@ -268,6 +268,7 @@ cmd_tree         db "tree", 0
 boot_drive_copy db 0
 
 buf_len dw 0
+buf_cursor dw 0
 buffer  times (BUFFER_MAX + 1) db 0
 
 empty_string db 0

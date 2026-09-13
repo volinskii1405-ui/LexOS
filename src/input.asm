@@ -8,11 +8,19 @@
 ; не сработает.
 
 ; ============================================================
-; Читает одну команду с клавиатуры в buffer (с учётом Backspace,
-; Enter, стрелок вверх/вниз для истории). Возвращает, когда
-; пользователь нажал Enter; buffer содержит ноль-терминированную строку.
+; Читает одну команду с клавиатуры в buffer (с учётом Backspace, Delete,
+; стрелок влево/вправо/Home/End для редактирования В СЕРЕДИНЕ строки,
+; стрелок вверх/вниз для истории). Возвращает, когда пользователь нажал
+; Enter; buffer содержит ноль-терминированную строку.
+;
+; buf_cursor - позиция курсора ВНУТРИ buffer (0..buf_len), отдельно от
+; buf_len (длины строки) - раньше их не различали, курсор всегда был
+; в конце. Экранный курсор (cursor_row/cursor_col) двигается отдельными
+; вызовами update_hw_cursor, а не через print_char, когда нужно просто
+; переместиться, не печатая и не стирая символы.
 ; ============================================================
 read_command_line:
+    mov word [buf_cursor], 0
 .loop:
     call read_key      ; al = ASCII-код (0 для спецклавиш), ah = scancode
 
@@ -23,6 +31,16 @@ read_command_line:
     je .history_up
     cmp ah, 0x50      ; стрелка вниз?
     je .history_down
+    cmp ah, 0x4B      ; стрелка влево?
+    je .cursor_left
+    cmp ah, 0x4D      ; стрелка вправо?
+    je .cursor_right
+    cmp ah, 0x47      ; Home?
+    je .cursor_home
+    cmp ah, 0x4F      ; End?
+    je .cursor_end
+    cmp ah, 0x53      ; Delete?
+    je .delete_fwd
     jmp .loop          ; прочие спецклавиши игнорируем
 
 .normal_key:
@@ -35,16 +53,10 @@ read_command_line:
     cmp al, 0x20        ; игнорируем прочие управляющие символы
     jb .loop
 
-    mov bx, [buf_len]
-    cmp bx, BUFFER_MAX
+    cmp word [buf_len], BUFFER_MAX
     jae .loop            ; буфер полон — игнорируем символ
 
-    mov di, buffer
-    add di, bx
-    mov [di], al
-    inc word [buf_len]
-
-    call print_char
+    call insert_char_at_cursor
     jmp .loop
 
 .history_up:
@@ -55,16 +67,66 @@ read_command_line:
     call history_show_next
     jmp .loop
 
+.cursor_left:
+    cmp word [buf_cursor], 0
+    je .loop
+    dec word [buf_cursor]
+    dec word [cursor_col]
+    call update_hw_cursor
+    jmp .loop
+
+.cursor_right:
+    mov ax, [buf_cursor]
+    cmp ax, [buf_len]
+    jae .loop
+    inc word [buf_cursor]
+    inc word [cursor_col]
+    call update_hw_cursor
+    jmp .loop
+
+.cursor_home:
+    mov ax, [cursor_col]
+    sub ax, [buf_cursor]
+    mov [cursor_col], ax
+    mov word [buf_cursor], 0
+    call update_hw_cursor
+    jmp .loop
+
+.cursor_end:
+    mov ax, [buf_len]
+    sub ax, [buf_cursor]           ; ax = сколько символов осталось справа
+    add [cursor_col], ax
+    mov ax, [buf_len]
+    mov [buf_cursor], ax
+    call update_hw_cursor
+    jmp .loop
+
+.delete_fwd:
+    mov ax, [buf_cursor]
+    cmp ax, [buf_len]
+    jae .loop                       ; курсор уже в конце - стирать нечего
+    call remove_char_at_cursor
+    jmp .loop
+
 .backspace:
-    cmp word [buf_len], 0
+    cmp word [buf_cursor], 0
     je .loop
 
-    dec word [buf_len]
-    mov al, 0x08
-    call print_char
+    dec word [buf_cursor]
+    dec word [cursor_col]
+    call update_hw_cursor
+    call remove_char_at_cursor
     jmp .loop
 
 .enter:
+    ; независимо от того, где был курсор редактирования, переводим
+    ; строку нужно печатать из конца текста - переставляем экранный
+    ; курсор туда же, куда указывает buf_len
+    mov ax, [buf_len]
+    sub ax, [buf_cursor]
+    add [cursor_col], ax
+    call update_hw_cursor
+
     mov al, 0x0D
     call print_char
     mov al, 0x0A
@@ -78,7 +140,141 @@ read_command_line:
     call history_save
 
     mov word [buf_len], 0
+    mov word [buf_cursor], 0
     mov word [history_cursor], -1
+    ret
+
+; ============================================================
+; Вставляет символ (al) в buffer по позиции buf_cursor, сдвигая хвост
+; строки вправо, перерисовывает хвост на экране и переставляет курсор
+; сразу после вставленного символа. Предполагает, что место в буфере
+; уже проверено вызывающим (buf_len < BUFFER_MAX).
+; ============================================================
+insert_char_at_cursor:
+    push ax
+    push bx
+    push cx
+    push si
+    push di
+
+    mov bl, al                    ; сохраняем символ - al ещё понадобится
+
+    ; --- сдвигаем buffer[cursor..len-1] на 1 вправо (с конца, чтобы не
+    ;     затереть непереписанные байты) ---
+    mov cx, [buf_len]
+    sub cx, [buf_cursor]           ; cx = сколько байт сдвигать
+    mov si, buffer
+    add si, [buf_len]                ; si -> позиция после последнего байта
+    mov di, si
+    inc di                             ; di -> на 1 правее
+.shift_loop:
+    cmp cx, 0
+    je .shift_done
+    dec si
+    dec di
+    mov al, [si]
+    mov [di], al
+    dec cx
+    jmp .shift_loop
+.shift_done:
+
+    mov si, buffer
+    add si, [buf_cursor]
+    mov [si], bl
+    inc word [buf_len]
+
+    ; --- печатаем хвост от курсора до нового конца строки ---
+    mov cx, [buf_len]
+    sub cx, [buf_cursor]              ; cx = сколько символов допечатать
+    mov si, buffer
+    add si, [buf_cursor]
+.print_loop:
+    cmp cx, 0
+    je .print_done
+    mov al, [si]
+    call print_char
+    inc si
+    dec cx
+    jmp .print_loop
+.print_done:
+
+    ; --- курсор сейчас в конце строки, возвращаем сразу за вставленный
+    ;     символ ---
+    mov ax, [buf_len]
+    sub ax, [buf_cursor]
+    dec ax                              ; -1 за только что вставленный символ
+    sub [cursor_col], ax
+    call update_hw_cursor
+    inc word [buf_cursor]
+
+    pop di
+    pop si
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+; ============================================================
+; Удаляет символ buffer[buf_cursor] (сдвигая хвост влево), перерисовывает
+; укоротившийся хвост + один пробел поверх старого последнего символа,
+; возвращает экранный курсор туда же, откуда вызвали (buf_cursor не
+; двигает - вызывающий сам решает, менять ли его до/после).
+; ============================================================
+remove_char_at_cursor:
+    push ax
+    push cx
+    push si
+    push di
+
+    mov si, buffer
+    add si, [buf_cursor]
+    mov di, si
+    inc si                            ; si -> следующий символ (источник)
+
+    mov cx, [buf_len]
+    sub cx, [buf_cursor]
+    dec cx                              ; сколько байт сдвигать влево
+.shift_loop:
+    cmp cx, 0
+    je .shift_done
+    mov al, [si]
+    mov [di], al
+    inc si
+    inc di
+    dec cx
+    jmp .shift_loop
+.shift_done:
+
+    dec word [buf_len]
+
+    ; --- перерисовываем хвост от курсора + один пробел поверх старого
+    ;     "хвоста хвоста", затем возвращаем курсор на место ---
+    mov cx, [buf_len]
+    sub cx, [buf_cursor]                ; cx = длина нового хвоста
+    mov si, buffer
+    add si, [buf_cursor]
+.print_loop:
+    cmp cx, 0
+    je .print_tail_done
+    mov al, [si]
+    call print_char
+    inc si
+    dec cx
+    jmp .print_loop
+.print_tail_done:
+    mov al, ' '
+    call print_char
+
+    mov ax, [buf_len]
+    sub ax, [buf_cursor]
+    inc ax                              ; +1 за только что стёртый пробел
+    sub [cursor_col], ax
+    call update_hw_cursor
+
+    pop di
+    pop si
+    pop cx
+    pop ax
     ret
 
 ; ============================================================
@@ -132,9 +328,17 @@ history_save:
     popa
     ret
 
-; --- Заменяет текущую строку ввода (экран + buffer) текстом из DS:SI ---
+; --- Заменяет текущую строку ввода (экран + buffer) текстом из DS:SI.
+;     Курсор редактирования (buf_cursor) может быть где угодно в
+;     текущей строке - сначала переставляем экранный курсор в конец,
+;     чтобы стереть строку было можно обычными backspace. ---
 replace_input_line_with:
     pusha
+
+    mov ax, [buf_len]
+    sub ax, [buf_cursor]
+    add [cursor_col], ax
+    call update_hw_cursor
 
 .erase_loop:
     cmp word [buf_len], 0
@@ -158,6 +362,7 @@ replace_input_line_with:
     jmp .len_loop
 .len_done:
     mov [buf_len], cx
+    mov [buf_cursor], cx
 
     mov si, buffer
     call print_string
