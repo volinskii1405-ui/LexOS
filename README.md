@@ -18,6 +18,7 @@ Type help for commands
 $ ls
 README
 TEST.BIN
+LICENSE
 $ run test.bin
 Hello from executable file!
 $
@@ -44,6 +45,13 @@ $
   on-disk bitmap. `cat`, `size`, `cp`, and `rm` all understand the chain.
 - `batch` runs every line of a text file as a shell command — combined with
   `append`'s `\n` escape, that's enough to write and run a tiny script.
+- `grep` searches a file's content for a piece of text and prints every
+  match as `Line <n>, Symbol <col> <line text>`, with the matched text
+  itself highlighted in bright red on screen.
+- On first boot the root folder is seeded with `README`, a demo `TEST.BIN`,
+  and a `LICENSE` file holding the project's own license text (long enough
+  to spill from the inline area into chained extra sectors, same as any
+  file grown with `append`).
 
 **Shell**
 - Real line editing: Left/Right/Home/End/Delete work anywhere in the line,
@@ -121,6 +129,7 @@ is case-insensitive; type the extension yourself (`save notes.txt hi`).
 | `cp <n> <new>` | copy a file (independent content, not aliased) |
 | `mv <n> <path>` | move a file into a folder at `path` |
 | `batch <n>` | run every line of file `n` as a shell command |
+| `grep <n> <text>` | search file `n` for `text`; prints `Line <n>, Symbol <col> <line>` for each match, with the match highlighted in red |
 | **Programs** | |
 | `run <n>` | execute a program file |
 | `hex <n>` | hex/assembly editor (auto-adds `.BIN` if the name has no dot) |
@@ -145,8 +154,9 @@ BIOS  →  boot.asm (16-bit real mode)
 ```
 
 Everything below `0x10000` is the kernel itself — code and all working
-data — which is small enough (kernel.bin is padded to 60 sectors, well
-under that) that internal pointers still fit in 16 bits and most of the
+data — which is small enough (kernel.bin is padded to 64 sectors, the most
+this loader can read in one BIOS call without crossing a 64 KB segment
+boundary) that internal pointers still fit in 16 bits and most of the
 code reads like a real-mode program. Only things that live outside the
 kernel image need a full 32-bit linear address:
 
@@ -154,10 +164,10 @@ kernel image need a full 32-bit linear address:
 |---|---|
 | Video memory (VGA text mode) | `0xB8000` |
 | ATA scratch buffer (one sector) | `0x91000` |
-| Kernel code/data | `0x8000` – (padded to 60 sectors) |
+| Kernel code/data | `0x8000` – (padded to 64 sectors) |
 | Boot sector | `0x7C00` |
 
-On disk, sectors are laid out as: boot sector, then the kernel (60
+On disk, sectors are laid out as: boot sector, then the kernel (64
 sectors), then 24 directory slots (one file/folder per 512-byte sector —
 name, type, parent pointer, up to 127 bytes of inline content), a 1-sector
 free-space bitmap for the extra-sector pool, then 64 extra 512-byte
@@ -185,6 +195,8 @@ src/
   rtc.asm              CMOS RTC driver (`date`, `time`).
   speaker.asm          PC speaker driver (`beep`).
   serial.asm           16550 UART driver for COM1 (`serial`).
+  grep.asm             text search within a file (`grep`), with on-screen
+                       highlighting of the matched text.
 ```
 
 ## Known limitations
@@ -195,6 +207,9 @@ src/
   before the extension.
 - The mini-assembler resolves labels in one pass, so jumps can only target
   a label that already appears earlier in the same program.
+- `grep` reads the whole file into a 4 KB buffer before searching, so only
+  the first 4 KB of a larger file is searched; matching is case-sensitive
+  and the search text is capped at 32 characters.
 - Everything runs in ring 0 — there's no user/kernel privilege separation
   or process isolation. `run` executes a file's bytes as one big function
   call into the same address space as the kernel.

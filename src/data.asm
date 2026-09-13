@@ -28,7 +28,7 @@ SECTOR_COUNT equ 8
 ;   байт 8       - тип (0=свободно, 1=файл, 2=папка)
 ;   байт 9       - родитель (индекс слота папки-родителя, 0xFF = корень)
 ;   байты 10..   - содержимое (ноль-терминированное, не используется для папок)
-FS_START_SECTOR   equ 62      ; сектор 1=загрузчик, 2..61=ядро (60 секторов)
+FS_START_SECTOR   equ 66      ; сектор 1=загрузчик, 2..65=ядро (64 сектора)
 FS_FILE_COUNT     equ 24
 FS_NAME_LEN       equ 16
 FS_CONTENT_LEN    equ 128
@@ -145,6 +145,7 @@ help_l35 db "  serial <text> - send text out over COM1", 13, 10, 0
 help_l36 db "  append <n> <t> - add text to the end of file n (grows past 127", 13, 10, 0
 help_l37 db "                   bytes into extra disk sectors as needed)", 13, 10, 0
 help_l38 db "  batch <n>     - run each line of file n as a command", 13, 10, 0
+help_l39 db "  grep <n> <t>  - search file n for text t, highlight matches", 13, 10, 0
 
 help_lines:
     dw help_l01, help_l02, help_l03, help_l04, help_l05
@@ -154,7 +155,7 @@ help_lines:
     dw help_l21, help_l22, help_l23, help_l24, help_l25
     dw help_l26, help_l27, help_l28, help_l29, help_l30
     dw help_l31, help_l32, help_l33, help_l34, help_l35
-    dw help_l36, help_l37, help_l38
+    dw help_l36, help_l37, help_l38, help_l39
 help_lines_end:
 
 HELP_LINE_COUNT equ (help_lines_end - help_lines) / 2
@@ -185,6 +186,12 @@ msg_fs_usage_append db "Usage: append <n> <text>", 13, 10, 0
 msg_fs_appended     db "Appended.", 13, 10, 0
 msg_fs_disk_full    db "No free space for more content - saved what fit.", 13, 10, 0
 msg_fs_usage_batch  db "Usage: batch <n>", 13, 10, 0
+msg_grep_usage       db "Usage: grep <n> <text>", 13, 10, 0
+msg_grep_header_mid  db " matches found with ", 34, 0
+msg_grep_quote_nl    db 34, 13, 10, 0
+msg_grep_line_label  db "Line ", 0
+msg_grep_symbol_label db ", Symbol ", 0
+msg_grep_space       db " ", 0
 msg_bytes_suffix   db " bytes", 13, 10, 0
 fs_extension       db ".TXT", 0
 fs_dir_extension   db "  <DIR>", 0
@@ -226,6 +233,16 @@ program_exec_buffer times PROGRAM_MAX_LEN db 0
 
 BATCH_BUF_LEN equ 511
 batch_content_buf times (BATCH_BUF_LEN + 1) db 0
+
+; --- grep: содержимое файла целиком читается в grep_buf перед поиском
+; (не потоково, как cat/batch), т.к. нужно и посчитать общее число
+; совпадений для заголовка, и потом второй раз пройтись для печати
+; строк - см. src/grep.asm. Если файл больше GREP_BUF_LEN, лишний
+; хвост просто не читается (см. "Known limitations" в README). ---
+GREP_BUF_LEN equ 4096
+GREP_NEEDLE_LEN equ 32
+grep_buf times GREP_BUF_LEN db 0
+grep_needle times (GREP_NEEDLE_LEN + 1) db 0
 
 hex_edit_buffer times PROGRAM_MAX_LEN db 0
 hex_edit_length db 0
@@ -329,6 +346,7 @@ cmd_cp_prefix    db "cp ", 0
 cmd_mv_prefix    db "mv ", 0
 cmd_pwd          db "pwd", 0
 cmd_tree         db "tree", 0
+cmd_grep_prefix  db "grep ", 0
 
 ; ============================================================
 ; Рабочие переменные
@@ -349,6 +367,7 @@ history_buf         times (HISTORY_SIZE * (BUFFER_MAX + 1)) db 0
 cursor_row dw 0
 cursor_col dw 0
 current_color db 0x07   ; светло-серый на чёрном - мягче для глаз, чем ярко-белый
+COLOR_RED equ 0x0C      ; ярко-красный на чёрном - подсветка найденного текста в grep
 
 fs_tmp_name times (FS_NAME_LEN + 1) db 0
 fs_tmp_name2 times (FS_NAME_LEN + 1) db 0
