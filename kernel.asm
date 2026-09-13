@@ -9,8 +9,12 @@
 ;   src/devices.asm     - менеджер устройств: таблица устройств + их init-функции
 ;   src/ata.asm         - ATA-драйвер (PIO), прямая работа с портами контроллера
 ;   src/filesystem.asm  - файловая система поверх ATA
+;   src/fs_extra.asm    - цепочки доп. секторов для файлов > 127 байт (append, batch)
 ;   src/programs.asm    - исполняемые файлы (run), hex-редактор, пример TEST.BIN
 ;   src/assembler.asm   - мини-ассемблер одной строки для hex-редактора
+;   src/rtc.asm         - часы/дата из CMOS RTC (команды date/time)
+;   src/speaker.asm     - PC-спикер (команда beep)
+;   src/serial.asm      - UART COM1 (команда serial, полезно для отладки)
 ;
 ; Работаем в плоской модели памяти (флэт): CS/DS/ES/FS/GS/SS все покрывают
 ; 0..4GB, поэтому в отличие от 16-битной реал-модной версии здесь НЕТ
@@ -60,8 +64,12 @@ main_loop:
 %include "src/devices.asm"
 %include "src/ata.asm"
 %include "src/filesystem.asm"
+%include "src/fs_extra.asm"
 %include "src/programs.asm"
 %include "src/assembler.asm"
+%include "src/rtc.asm"
+%include "src/speaker.asm"
+%include "src/serial.asm"
 
 ; Заполняем оставшееся место в пределах секторов, которые читает загрузчик,
 ; чтобы файл был кратен 512 байтам (см. KERNEL_SECTORS в boot.asm).

@@ -316,6 +316,8 @@ fs_save:
 
 .existing_is_file:
     mov ax, [fs_tmp_slot]
+    call fs_free_chain        ; перезаписываем файл - старая цепочка (если была) больше не нужна
+    mov ax, [fs_tmp_slot]
     jmp .have_slot
 
 .have_slot:
@@ -373,9 +375,22 @@ fs_save:
     dec cx
     jnz .copy_content
 .content_copied:
+    push bx
     mov ax, bx
     xor dx, dx
     call fs_scratch_write_byte
+    pop bx
+
+    ; --- длина/цепочка (см. src/fs_extra.asm): свежесохранённый файл
+    ; всегда укладывается в инлайн, доп. секторов ещё нет - их наживает
+    ; только команда append ---
+    mov ax, FS_TOTAL_LEN_OFFSET
+    mov dx, bx
+    sub dx, FS_CONTENT_OFFSET
+    call fs_scratch_write_word
+    mov ax, FS_CHAIN_OFFSET
+    mov dx, FS_NO_CHAIN
+    call fs_scratch_write_word
 
     mov ax, [fs_tmp_slot]
     call fs_write_slot
@@ -427,19 +442,78 @@ fs_cat:
     jmp .end
 
 .is_file:
+    mov ax, FS_TOTAL_LEN_OFFSET
+    call fs_scratch_read_word
+    mov [fs_cat_remaining], ax
+
+    mov ax, FS_CHAIN_OFFSET
+    call fs_scratch_read_word
+    mov [fs_cat_chain], ax
+
     mov bx, FS_CONTENT_OFFSET
-.print_loop:
+    mov cx, FS_CONTENT_LEN - 1        ; cx = min(127, remaining) - сколько
+    cmp cx, [fs_cat_remaining]          ; байт печатать из инлайна
+    jbe .inline_loop
+    mov cx, [fs_cat_remaining]
+
+.inline_loop:
+    cmp cx, 0
+    je .inline_done
+    push cx
     push bx
     mov ax, bx
     call fs_scratch_read_byte
     pop bx
-    cmp al, 0
-    je .print_done
+    pop cx
     call print_char
     inc bx
-    jmp .print_loop
-.print_done:
+    dec cx
+    dec word [fs_cat_remaining]
+    jmp .inline_loop
+.inline_done:
 
+    cmp word [fs_cat_remaining], 0
+    jle .print_done
+
+.chain_loop:
+    cmp word [fs_cat_remaining], 0
+    jle .print_done
+    cmp word [fs_cat_chain], FS_NO_CHAIN
+    je .print_done
+
+    mov ax, [fs_cat_chain]
+    call fs_extra_read
+
+    mov cx, FS_EXTRA_CONTENT_LEN
+    cmp cx, [fs_cat_remaining]
+    jbe .have_count
+    mov cx, [fs_cat_remaining]
+.have_count:
+    xor bx, bx
+.extra_print_loop:
+    cmp cx, 0
+    je .extra_print_done
+    push cx
+    push bx
+    mov ax, bx
+    call fs_scratch_read_byte
+    pop bx
+    pop cx
+    call print_char
+    inc bx
+    dec cx
+    dec word [fs_cat_remaining]
+    jmp .extra_print_loop
+.extra_print_done:
+    ; scratch всё ещё содержит этот же сектор (печать выше его не
+    ; трогала) - следующий указатель можно прочитать без повторного
+    ; чтения диска
+    mov ax, FS_EXTRA_NEXT_OFFSET
+    call fs_scratch_read_word
+    mov [fs_cat_chain], ax
+    jmp .chain_loop
+
+.print_done:
     mov si, msg_newline
     call print_string
 
@@ -448,6 +522,9 @@ fs_cat:
     pop bx
     pop ax
     ret
+
+fs_cat_remaining dw 0
+fs_cat_chain dw 0
 
 ; --- rm <имя> ---
 fs_rm:
@@ -467,6 +544,20 @@ fs_rm:
     push ax
     call fs_read_slot
     pop ax
+
+    push ax
+    mov ax, FS_TYPE_OFFSET
+    call fs_scratch_read_byte
+    pop ax
+    cmp al, FS_TYPE_FILE
+    jne .no_chain
+    push ax
+    call fs_free_chain          ; освобождаем доп. секторы (если были)
+    pop ax
+    call fs_read_slot            ; fs_free_chain оставил scratch на последнем
+                                   ; освобождённом доп. секторе, а не на
+                                   ; самом слоте - перечитываем слот заново
+.no_chain:
 
     push ax
     mov ax, FS_TYPE_OFFSET
@@ -600,23 +691,9 @@ fs_size:
     jmp .end
 
 .is_file:
-    mov bx, FS_CONTENT_OFFSET
-    xor cx, cx
-.count_loop:
-    push bx
-    push cx
-    mov ax, bx
-    call fs_scratch_read_byte
-    pop cx
-    pop bx
-    cmp al, 0
-    je .count_done
-    inc bx
-    inc cx
-    jmp .count_loop
-.count_done:
-    mov ax, cx
-    call print_dec_byte
+    mov ax, FS_TOTAL_LEN_OFFSET
+    call fs_scratch_read_word
+    call print_dec_word
     mov si, msg_bytes_suffix
     call print_string
 
@@ -659,9 +736,22 @@ fs_clear:
 
 .is_file:
     push ax
+    call fs_free_chain           ; освобождаем доп. секторы, если были
+    pop ax
+    call fs_read_slot              ; fs_free_chain мог оставить scratch на
+                                     ; чужом секторе - перечитываем свой слот
+
+    push ax
     mov ax, FS_CONTENT_OFFSET
     xor dx, dx
     call fs_scratch_write_byte
+
+    mov ax, FS_TOTAL_LEN_OFFSET
+    xor dx, dx
+    call fs_scratch_write_word
+    mov ax, FS_CHAIN_OFFSET
+    mov dx, FS_NO_CHAIN
+    call fs_scratch_write_word
     pop ax
 
     call fs_write_slot
@@ -885,6 +975,14 @@ fs_edit:
     jmp .end2
 
 .is_file:
+    cmp al, FS_TYPE_FILE
+    jne .skip_chain_free
+    mov ax, [fs_tmp_slot]
+    call fs_free_chain             ; перезаписываем контент - старая цепочка не нужна
+    mov ax, [fs_tmp_slot]
+    call fs_read_slot                ; fs_free_chain мог оставить scratch на чужом секторе
+.skip_chain_free:
+
     mov si, [fs_tmp_text_ptr]
     mov bx, FS_CONTENT_OFFSET
     mov cx, FS_CONTENT_LEN - 1
@@ -900,9 +998,19 @@ fs_edit:
     dec cx
     jnz .copy_content
 .content_copied:
+    push bx
     mov ax, bx
     xor dx, dx
     call fs_scratch_write_byte
+    pop bx
+
+    mov ax, FS_TOTAL_LEN_OFFSET
+    mov dx, bx
+    sub dx, FS_CONTENT_OFFSET
+    call fs_scratch_write_word
+    mov ax, FS_CHAIN_OFFSET
+    mov dx, FS_NO_CHAIN
+    call fs_scratch_write_word
 
     mov ax, [fs_tmp_slot]
     call fs_write_slot
@@ -1463,9 +1571,19 @@ fs_ensure_readme:
     dec cx
     jnz .copy_content
 .content_copied:
+    push bx
     mov ax, bx
     xor dx, dx
     call fs_scratch_write_byte
+    pop bx
+
+    mov ax, FS_TOTAL_LEN_OFFSET
+    mov dx, bx
+    sub dx, FS_CONTENT_OFFSET
+    call fs_scratch_write_word
+    mov ax, FS_CHAIN_OFFSET
+    mov dx, FS_NO_CHAIN
+    call fs_scratch_write_word
 
     mov ax, [fs_tmp_slot]
     call fs_write_slot
@@ -1654,6 +1772,31 @@ fs_cp:
     call fs_write_slot
     jc .write_failed
 
+    ; --- Если у оригинала была цепочка доп. секторов, копия сектора
+    ; выше скопировала и сам указатель на неё - т.е. оба файла сейчас
+    ; ДЕЛЯТ одни и те же доп. секторы. Делаем независимую копию цепочки
+    ; и переставляем указатель новой записи на неё. ---
+    mov ax, [fs_tmp_slot]
+    call fs_read_slot
+    mov ax, FS_TYPE_OFFSET
+    call fs_scratch_read_byte
+    cmp al, FS_TYPE_FILE
+    jne .no_chain_copy
+    mov ax, FS_CHAIN_OFFSET
+    call fs_scratch_read_word
+    cmp ax, FS_NO_CHAIN
+    je .no_chain_copy
+
+    call fs_duplicate_chain
+    mov dx, ax
+    mov ax, [fs_tmp_slot2]
+    call fs_read_slot
+    mov ax, FS_CHAIN_OFFSET
+    call fs_scratch_write_word
+    mov ax, [fs_tmp_slot2]
+    call fs_write_slot
+
+.no_chain_copy:
     mov si, msg_fs_copied
     call print_string
     jmp .end

@@ -21,6 +21,7 @@ DEV_TYPE_OUTPUT  equ 1
 DEV_TYPE_INPUT   equ 2
 DEV_TYPE_STORAGE equ 3
 DEV_TYPE_TIMER   equ 4
+DEV_TYPE_MISC    equ 5
 
 DEV_STATUS_ERROR equ 0
 DEV_STATUS_OK    equ 1
@@ -52,6 +53,16 @@ devices_table:
     db DEV_TYPE_TIMER
     db 0
     dw dev_init_timer
+
+    db "RTC     "
+    db DEV_TYPE_MISC
+    db 0
+    dw dev_init_rtc
+
+    db "SERIAL  "
+    db DEV_TYPE_MISC
+    db 0
+    dw serial_init
 devices_table_end:
 
 DEVICE_COUNT equ (devices_table_end - devices_table) / DEV_RECORD_SIZE
@@ -129,6 +140,24 @@ dev_init_timer:
     clc
     ret
 
+; --- RTC: читаем часы и проверяем, что значение похоже на настоящее
+;     время (0-23) - грубая, но достаточная проверка живого CMOS ---
+dev_init_rtc:
+    push bx
+    push cx
+    call rtc_read_time
+    cmp bh, 24
+    jae .fail
+    pop cx
+    pop bx
+    clc
+    ret
+.fail:
+    pop cx
+    pop bx
+    stc
+    ret
+
 ; ============================================================
 ; devices : выводит таблицу устройств (имя, тип, статус)
 ; ============================================================
@@ -189,7 +218,13 @@ show_devices:
     call print_string
     jmp .type_done
 .check_timer:
+    cmp al, DEV_TYPE_TIMER
+    jne .check_misc
     mov si, msg_dev_type_timer
+    call print_string
+    jmp .type_done
+.check_misc:
+    mov si, msg_dev_type_misc
     call print_string
 .type_done:
 

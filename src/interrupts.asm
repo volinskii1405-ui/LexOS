@@ -174,6 +174,16 @@ keyboard_isr:
     jmp .eoi
 .not_ext_prefix:
 
+    ; Захватываем "этот байт шёл сразу после 0xE0?" в bh и СРАЗУ сбрасываем
+    ; флаг - неважно, окажется байт нажатием, отпусканием или модификатором.
+    ; Раньше флаг сбрасывался только в ветке "расширенная клавиша нажата"
+    ; ниже, а .check_release для ОТПУСКАНИЯ выходил раньше, чем до неё
+    ; доходило - после каждой стрелки/Home/End/Delete флаг залипал в 1,
+    ; и следующая обычная клавиша (например, символ при вводе) ошибочно
+    ; считалась расширенной (al=0 вместо ASCII).
+    mov bh, [kbd_extended_flag]
+    mov byte [kbd_extended_flag], 0
+
     cmp al, 0x2A                 ; Left Shift (нажатие)
     je .shift_down
     cmp al, 0x36                 ; Right Shift (нажатие)
@@ -204,16 +214,16 @@ keyboard_isr:
 
 .check_release:
     test al, 0x80
-    jnz .eoi                      ; отпускание обычной клавиши - игнорируем
+    jnz .eoi                      ; отпускание клавиши (обычной или расширенной,
+                                   ; флаг extended уже сброшен выше) - игнорируем
 
     mov bl, al                     ; bl = scancode нажатой клавиши
 
-    cmp byte [kbd_extended_flag], 0
+    cmp bh, 0
     je .normal_key
 
     ; расширенная клавиша (стрелки и т.п.) - кладём (al=0, ah=scancode),
     ; тот же формат, что и у read_key для спецклавиш
-    mov byte [kbd_extended_flag], 0
     xor ax, ax
     mov ah, bl
     call push_key_to_buffer
