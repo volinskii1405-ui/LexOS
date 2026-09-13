@@ -144,6 +144,7 @@ help_l34 db "  beep [hz]     - play a short tone (frequency in hex)", 13, 10, 0
 help_l35 db "  serial <text> - send text out over COM1", 13, 10, 0
 help_l36 db "  append <n> <t> - add text to the end of file n (grows past 127", 13, 10, 0
 help_l37 db "                   bytes into extra disk sectors as needed)", 13, 10, 0
+help_l38 db "  batch <n>     - run each line of file n as a command", 13, 10, 0
 
 help_lines:
     dw help_l01, help_l02, help_l03, help_l04, help_l05
@@ -153,7 +154,7 @@ help_lines:
     dw help_l21, help_l22, help_l23, help_l24, help_l25
     dw help_l26, help_l27, help_l28, help_l29, help_l30
     dw help_l31, help_l32, help_l33, help_l34, help_l35
-    dw help_l36, help_l37
+    dw help_l36, help_l37, help_l38
 help_lines_end:
 
 HELP_LINE_COUNT equ (help_lines_end - help_lines) / 2
@@ -183,6 +184,7 @@ msg_fs_edited      db "Edited.", 13, 10, 0
 msg_fs_usage_append db "Usage: append <n> <text>", 13, 10, 0
 msg_fs_appended     db "Appended.", 13, 10, 0
 msg_fs_disk_full    db "No free space for more content - saved what fit.", 13, 10, 0
+msg_fs_usage_batch  db "Usage: batch <n>", 13, 10, 0
 msg_bytes_suffix   db " bytes", 13, 10, 0
 fs_extension       db ".TXT", 0
 fs_dir_extension   db "  <DIR>", 0
@@ -221,6 +223,9 @@ cmd_hex_prefix db "hex ", 0
 test_exe_name db "TEST.BIN", 0
 
 program_exec_buffer times PROGRAM_MAX_LEN db 0
+
+BATCH_BUF_LEN equ 511
+batch_content_buf times (BATCH_BUF_LEN + 1) db 0
 
 hex_edit_buffer times PROGRAM_MAX_LEN db 0
 hex_edit_length db 0
@@ -275,6 +280,7 @@ cmd_size_prefix  db "size ", 0
 cmd_clear_prefix db "clear ", 0
 cmd_edit_prefix  db "edit ", 0
 cmd_append_prefix db "append ", 0
+cmd_batch_prefix db "batch ", 0
 cmd_mkdir_prefix db "mkdir ", 0
 cmd_reboot       db "reboot", 0
 cmd_about        db "about", 0

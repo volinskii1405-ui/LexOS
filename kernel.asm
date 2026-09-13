@@ -9,7 +9,7 @@
 ;   src/devices.asm     - менеджер устройств: таблица устройств + их init-функции
 ;   src/ata.asm         - ATA-драйвер (PIO), прямая работа с портами контроллера
 ;   src/filesystem.asm  - файловая система поверх ATA
-;   src/fs_extra.asm    - цепочки доп. секторов для файлов > 127 байт (append)
+;   src/fs_extra.asm    - цепочки доп. секторов для файлов > 127 байт (append, batch)
 ;   src/programs.asm    - исполняемые файлы (run), hex-редактор, пример TEST.BIN
 ;   src/assembler.asm   - мини-ассемблер одной строки для hex-редактора
 ;   src/rtc.asm         - часы/дата из CMOS RTC (команды date/time)

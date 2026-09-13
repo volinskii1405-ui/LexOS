@@ -282,11 +282,27 @@ fs_append:
     cmp bx, 0
     je .phase_a_done
 
+    ; "\n" (два обычных символа - бэкслэш и n) в тексте append превращаем
+    ; в настоящий перевод строки (0x0A) - иначе многострочные файлы
+    ; (например, для команды batch) набрать было бы просто нечем: одна
+    ; команда с клавиатуры - всегда одна строка без реального Enter внутри
+    mov dx, 1                       ; сколько байт исходного текста съесть
+    cmp al, '\'
+    jne .a_have_char
+    mov ah, [si+1]
+    cmp ah, 'n'
+    jne .a_have_char
+    mov al, 10
+    mov dx, 2
+.a_have_char:
+
+    push dx
     mov dl, al
     mov ax, cx
     call fs_scratch_write_byte
+    pop dx
 
-    inc word [fs_tmp_text_ptr]
+    add word [fs_tmp_text_ptr], dx
     inc word [fs_append_total]
     inc cx
     dec bx
@@ -373,13 +389,24 @@ fs_append:
     cmp dx, 0
     je .sector_full
 
+    mov word [fs_append_consume], 1     ; см. комментарий про "\n" в фазе A
+    cmp al, '\'
+    jne .b_have_char
+    mov ah, [si+1]
+    cmp ah, 'n'
+    jne .b_have_char
+    mov al, 10
+    mov word [fs_append_consume], 2
+.b_have_char:
+
     push dx
     mov dl, al                  ; dl = символ для записи (пока не затёрли al)
     mov ax, cx                    ; ax = offset для fs_scratch_write_byte
     call fs_scratch_write_byte
     pop dx
 
-    inc word [fs_tmp_text_ptr]
+    mov ax, [fs_append_consume]
+    add [fs_tmp_text_ptr], ax
     inc word [fs_append_total]
     inc cx
     dec dx
@@ -448,6 +475,7 @@ fs_append:
 fs_append_total dw 0
 fs_append_chain dw 0
 fs_append_prev  dw 0
+fs_append_consume dw 0
 
 ; ============================================================
 ; Делает НЕЗАВИСИМУЮ копию цепочки доп. секторов (используется fs_cp -
@@ -524,6 +552,199 @@ fs_dup_prev_new dw 0
 fs_dup_head_new dw 0
 fs_dup_next_src dw 0
 fs_dup_new_idx  dw 0
+
+; ============================================================
+; batch <имя> : читает текстовый файл целиком (до BATCH_BUF_LEN байт,
+; через инлайн + цепочку доп. секторов) и построчно скармливает каждую
+; строку в handle_command - простой способ выполнить несколько команд
+; подряд из одного файла ("скрипт"). Пустые строки пропускаются.
+; ============================================================
+fs_batch:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+
+    mov di, fs_tmp_name
+    xor cx, cx
+.name_loop:
+    mov al, [si]
+    cmp al, 0
+    je .name_done
+    cmp al, ' '
+    je .name_done
+    cmp cx, FS_NAME_LEN
+    jae .skip_char
+    mov [di], al
+    inc di
+.skip_char:
+    inc si
+    inc cx
+    jmp .name_loop
+.name_done:
+    mov byte [di], 0
+
+    cmp byte [fs_tmp_name], 0
+    jne .have_name
+    mov si, msg_fs_usage_batch
+    call print_string
+    jmp .end
+
+.have_name:
+    mov si, fs_tmp_name
+    call fs_find_by_name
+    cmp ax, -1
+    jne .found
+    mov si, msg_fs_notfound
+    call print_string
+    jmp .end
+
+.found:
+    mov [fs_tmp_slot], ax
+    call fs_get_type
+    cmp ax, FS_TYPE_FILE
+    je .is_file
+    mov si, msg_fs_is_dir
+    call print_string
+    jmp .end
+
+.is_file:
+    mov ax, [fs_tmp_slot]
+    call fs_read_slot
+
+    mov ax, FS_TOTAL_LEN_OFFSET
+    call fs_scratch_read_word
+    cmp ax, BATCH_BUF_LEN
+    jbe .have_total
+    mov ax, BATCH_BUF_LEN
+.have_total:
+    mov [fs_batch_remaining], ax
+
+    mov ax, FS_CHAIN_OFFSET
+    call fs_scratch_read_word
+    mov [fs_batch_chain], ax
+
+    mov di, batch_content_buf
+    mov bx, FS_CONTENT_OFFSET
+    mov cx, FS_CONTENT_LEN - 1
+    cmp cx, [fs_batch_remaining]
+    jbe .inline_loop
+    mov cx, [fs_batch_remaining]
+
+.inline_loop:
+    cmp cx, 0
+    je .inline_done
+    push cx
+    push bx
+    push di
+    mov ax, bx
+    call fs_scratch_read_byte
+    pop di
+    pop bx
+    pop cx
+    mov [di], al
+    inc di
+    inc bx
+    dec cx
+    dec word [fs_batch_remaining]
+    jmp .inline_loop
+.inline_done:
+
+.chain_loop:
+    cmp word [fs_batch_remaining], 0
+    jle .content_done
+    cmp word [fs_batch_chain], FS_NO_CHAIN
+    je .content_done
+
+    mov ax, [fs_batch_chain]
+    call fs_extra_read
+
+    mov cx, FS_EXTRA_CONTENT_LEN
+    cmp cx, [fs_batch_remaining]
+    jbe .have_count
+    mov cx, [fs_batch_remaining]
+.have_count:
+    xor bx, bx
+.extra_loop:
+    cmp cx, 0
+    je .extra_done
+    push cx
+    push bx
+    push di
+    mov ax, bx
+    call fs_scratch_read_byte
+    pop di
+    pop bx
+    pop cx
+    mov [di], al
+    inc di
+    inc bx
+    dec cx
+    dec word [fs_batch_remaining]
+    jmp .extra_loop
+.extra_done:
+    ; scratch всё ещё содержит этот сектор - можно взять "next" без перечитывания
+    mov ax, FS_EXTRA_NEXT_OFFSET
+    call fs_scratch_read_word
+    mov [fs_batch_chain], ax
+    jmp .chain_loop
+
+.content_done:
+    mov byte [di], 0
+
+    ; --- построчно скармливаем содержимое в handle_command ---
+    mov si, batch_content_buf
+.line_loop:
+    cmp byte [si], 0
+    je .end                             ; дошли до конца содержимого
+
+    mov di, buffer
+    xor cx, cx
+.copy_line:
+    mov al, [si]
+    cmp al, 0
+    je .line_end_noadvance                ; конец содержимого посреди строки
+    cmp al, 13
+    je .hit_cr
+    cmp al, 10
+    je .hit_lf
+    cmp cx, BUFFER_MAX
+    jae .skip_line_char
+    mov [di], al
+    inc di
+.skip_line_char:
+    inc si
+    inc cx
+    jmp .copy_line
+
+.hit_cr:
+    inc si                             ; пропускаем CR
+    cmp byte [si], 10
+    jne .line_end_noadvance
+    inc si                               ; и LF сразу за ним (CRLF)
+    jmp .line_end_noadvance
+
+.hit_lf:
+    inc si                               ; пропускаем LF
+.line_end_noadvance:
+    mov byte [di], 0
+
+    call handle_command
+    jmp .line_loop
+
+.end:
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+fs_batch_remaining dw 0
+fs_batch_chain dw 0
 
 ; ============================================================
 ; Печатает ax как десятичное число (0-65535), без ведущих нулей.
