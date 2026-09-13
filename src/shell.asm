@@ -1,0 +1,529 @@
+; shell.asm — разбор и выполнение команд, введённых пользователем
+; Экспортирует: handle_command
+
+; ============================================================
+; Разбор и выполнение команды (DS:buffer, ноль-терминированная)
+; ============================================================
+handle_command:
+    pusha
+
+    mov si, buffer
+    mov di, cmd_shutdown
+    call strcmp_eq
+    cmp ax, 1
+    je .do_shutdown
+
+    mov si, buffer
+    mov di, cmd_cls
+    call strcmp_eq
+    cmp ax, 1
+    je .do_cls
+
+    mov si, buffer
+    mov di, cmd_help
+    call strcmp_eq
+    cmp ax, 1
+    je .do_help
+
+    mov si, buffer
+    mov di, cmd_echo_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_echo
+
+    mov si, buffer
+    mov di, cmd_color_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_color
+
+    mov si, buffer
+    mov di, cmd_sector
+    call strcmp_eq
+    cmp ax, 1
+    je .do_sector
+
+    mov si, buffer
+    mov di, cmd_ls
+    call strcmp_eq
+    cmp ax, 1
+    je .do_ls
+
+    mov si, buffer
+    mov di, cmd_save_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_save
+
+    mov si, buffer
+    mov di, cmd_cat_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_cat
+
+    mov si, buffer
+    mov di, cmd_rm_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_rm
+
+    mov si, buffer
+    mov di, cmd_ren_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_ren
+
+    mov si, buffer
+    mov di, cmd_size_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_size
+
+    mov si, buffer
+    mov di, cmd_clear_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_clear
+
+    mov si, buffer
+    mov di, cmd_edit_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_edit
+
+    mov si, buffer
+    mov di, cmd_mkdir_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_mkdir
+
+    mov si, buffer
+    mov di, cmd_reboot
+    call strcmp_eq
+    cmp ax, 1
+    je .do_reboot
+
+    mov si, buffer
+    mov di, cmd_about
+    call strcmp_eq
+    cmp ax, 1
+    je .do_about
+
+    mov si, buffer
+    mov di, cmd_devices
+    call strcmp_eq
+    cmp ax, 1
+    je .do_devices
+
+    mov si, buffer
+    mov di, cmd_ataread_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_ataread
+
+    mov si, buffer
+    mov di, cmd_run_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_run
+
+    mov si, buffer
+    mov di, cmd_hex_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_hex
+
+    mov si, buffer
+    mov di, cmd_cd_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_cd_arg
+
+    mov si, buffer
+    mov di, cmd_cd
+    call strcmp_eq
+    cmp ax, 1
+    je .do_cd_root
+
+    mov si, buffer
+    mov di, cmd_cp_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_cp
+
+    mov si, buffer
+    mov di, cmd_mv_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_mv
+
+    mov si, buffer
+    mov di, cmd_pwd
+    call strcmp_eq
+    cmp ax, 1
+    je .do_pwd
+
+    mov si, buffer
+    mov di, cmd_tree
+    call strcmp_eq
+    cmp ax, 1
+    je .do_tree
+
+    ; Пустая строка (просто Enter) — ничего не делаем
+    cmp byte [buffer], 0
+    je .done
+
+    ; Неизвестная команда
+    mov si, msg_unknown
+    call print_string
+    mov si, buffer
+    call print_string
+    mov si, msg_newline
+    call print_string
+    jmp .done
+
+.do_shutdown:
+    mov si, msg_shutdown
+    call print_string
+    call do_shutdown
+    jmp .done
+
+.do_cls:
+    call clear_screen
+    jmp .done
+
+.do_help:
+    call show_help
+    jmp .done
+
+.do_echo:
+    mov si, buffer
+    add si, 5                  ; пропускаем "echo "
+    call print_string
+    mov si, msg_newline
+    call print_string
+    jmp .done
+
+.do_color:
+    mov si, buffer
+    add si, 6                  ; пропускаем "color "
+    call parse_hex_byte
+    mov [current_color], al
+    mov si, msg_color_ok
+    call print_string
+    jmp .done
+
+.do_sector:
+    call show_sectors
+    jmp .done
+
+.do_ls:
+    call fs_list
+    jmp .done
+
+.do_save:
+    mov si, buffer
+    add si, 5                  ; пропускаем "save "
+    call fs_save
+    jmp .done
+
+.do_cat:
+    mov si, buffer
+    add si, 4                  ; пропускаем "cat "
+    call fs_cat
+    jmp .done
+
+.do_rm:
+    mov si, buffer
+    add si, 3                  ; пропускаем "rm "
+    call fs_rm
+    jmp .done
+
+.do_ren:
+    mov si, buffer
+    add si, 4                  ; пропускаем "ren "
+    call fs_ren
+    jmp .done
+
+.do_size:
+    mov si, buffer
+    add si, 5                  ; пропускаем "size "
+    call fs_size
+    jmp .done
+
+.do_clear:
+    mov si, buffer
+    add si, 6                  ; пропускаем "clear "
+    call fs_clear
+    jmp .done
+
+.do_edit:
+    mov si, buffer
+    add si, 5                  ; пропускаем "edit "
+    call fs_edit
+    jmp .done
+
+.do_mkdir:
+    mov si, buffer
+    add si, 6                  ; пропускаем "mkdir "
+    call fs_mkdir
+    jmp .done
+
+.do_reboot:
+    call do_reboot
+    jmp .done
+
+.do_about:
+    mov si, msg_about
+    call print_string
+    mov al, [boot_drive_copy]
+    call print_hex_byte
+    mov si, msg_newline
+    call print_string
+    jmp .done
+
+.do_devices:
+    call show_devices
+    jmp .done
+
+.do_ataread:
+    mov si, buffer
+    add si, 8                  ; пропускаем "ataread "
+    call show_ata_sector
+    jmp .done
+
+.do_run:
+    mov si, buffer
+    add si, 4                  ; пропускаем "run "
+    call fs_run
+    jmp .done
+
+.do_hex:
+    mov si, buffer
+    add si, 4                  ; пропускаем "hex "
+    call hex_editor
+    jmp .done
+
+.do_cd_arg:
+    mov si, buffer
+    add si, 3                  ; пропускаем "cd "
+    call fs_cd
+    jmp .done
+
+.do_cd_root:
+    mov si, empty_string
+    call fs_cd
+    jmp .done
+
+.do_cp:
+    mov si, buffer
+    add si, 3                  ; пропускаем "cp "
+    call fs_cp
+    jmp .done
+
+.do_mv:
+    mov si, buffer
+    add si, 3                  ; пропускаем "mv "
+    call fs_mv
+    jmp .done
+
+.do_pwd:
+    call fs_pwd
+    jmp .done
+
+.do_tree:
+    call fs_tree
+
+.done:
+    popa
+    ret
+
+; ============================================================
+; Постраничный просмотр справки: A/D — листать страницы, ESC — выход.
+; ============================================================
+show_help:
+    push ax
+    push bx
+    push cx
+    push si
+
+    mov byte [help_current_page], 0
+
+.redraw:
+    call clear_screen
+
+    mov si, msg_help_title
+    call print_string
+    mov al, [help_current_page]
+    inc al
+    call print_dec_byte
+    mov si, msg_help_slash
+    call print_string
+    mov al, HELP_TOTAL_PAGES
+    call print_dec_byte
+    mov si, msg_newline
+    call print_string
+    mov si, msg_newline
+    call print_string
+
+    mov al, [help_current_page]
+    mov cl, HELP_LINES_PER_PAGE
+    mul cl
+    mov [help_line_start], ax
+
+    xor bx, bx
+.print_loop:
+    mov ax, [help_line_start]
+    add ax, bx
+    cmp ax, HELP_LINE_COUNT
+    jae .print_done
+    cmp bx, HELP_LINES_PER_PAGE
+    jae .print_done
+
+    push bx
+    mov bx, ax
+    shl bx, 1
+    mov si, [help_lines + bx]
+    call print_string
+    pop bx
+
+    inc bx
+    jmp .print_loop
+.print_done:
+
+    mov si, msg_help_footer
+    call print_string
+
+.wait_key:
+    call read_key
+
+    cmp al, 0x1B
+    je .exit_help
+
+    cmp al, 'a'
+    je .prev_page
+    cmp al, 'A'
+    je .prev_page
+    cmp al, 'd'
+    je .next_page
+    cmp al, 'D'
+    je .next_page
+
+    jmp .wait_key
+
+.prev_page:
+    cmp byte [help_current_page], 0
+    je .redraw
+    dec byte [help_current_page]
+    jmp .redraw
+
+.next_page:
+    mov al, [help_current_page]
+    cmp al, HELP_TOTAL_PAGES - 1
+    jae .redraw
+    inc byte [help_current_page]
+    jmp .redraw
+
+.exit_help:
+    call clear_screen
+
+    pop si
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+; ============================================================
+; Выключение системы (ACPI shutdown через порт QEMU/Bochs 0x604)
+; ============================================================
+do_shutdown:
+    mov ax, 0x2000
+    mov dx, 0x604
+    out dx, ax
+.halt_loop:
+    hlt
+    jmp .halt_loop
+
+; ============================================================
+; Перезагрузка через контроллер клавиатуры (8042): импульс на
+; линии reset. Широко поддерживается, включая QEMU.
+; ============================================================
+do_reboot:
+    cli
+.wait_kbd:
+    in al, 0x64
+    test al, 2
+    jnz .wait_kbd
+    mov al, 0xFE
+    out 0x64, al
+.halt_loop:
+    hlt
+    jmp .halt_loop
+
+; ============================================================
+; Читает SECTOR_COUNT секторов диска (LBA 0..SECTOR_COUNT-1) через
+; ATA-драйвер и печатает первые 8 байт каждого сектора в hex.
+;
+; В отличие от реал-модной версии, которая читала все SECTOR_COUNT
+; секторов ОДНИМ вызовом BIOS int 13h в общий буфер, здесь BIOS
+; недоступен - ata_read_sector умеет только один сектор за раз, так
+; что читаем и сразу печатаем по одному сектору за итерацию, каждый
+; раз заново используя тот же scratch-буфер (SCRATCH_ADDR).
+; ============================================================
+show_sectors:
+    pusha
+
+    xor cx, cx
+
+.print_loop:
+    cmp cx, SECTOR_COUNT
+    jae .finish
+
+    push cx
+    mov ax, cx
+    call ata_read_sector
+    pop cx
+    jc .read_error
+
+    mov si, msg_sector_label
+    call print_string
+
+    mov ax, cx
+    call print_dec_byte
+
+    mov si, msg_colon_space
+    call print_string
+
+    xor bx, bx
+.byte_loop:
+    cmp bx, 8
+    jae .byte_loop_done
+
+    push bx
+    mov ax, bx
+    call fs_scratch_read_byte
+    pop bx
+
+    call print_hex_byte
+    mov al, ' '
+    call print_char
+
+    inc bx
+    jmp .byte_loop
+.byte_loop_done:
+
+    mov si, msg_newline
+    call print_string
+
+    inc cx
+    jmp .print_loop
+
+.read_error:
+    mov si, msg_sector_error
+    call print_string
+    jmp .end
+
+.finish:
+.end:
+    popa
+    ret
