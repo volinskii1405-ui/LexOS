@@ -19,7 +19,8 @@
 
 KERNEL_LOAD_SEG  equ 0x0000
 KERNEL_LOAD_OFF  equ 0x8000     ; должно совпадать с ORG в kernel.asm
-KERNEL_SECTORS   equ 60         ; сколько секторов ядра читать (см. Makefile/FS_START_SECTOR)
+KERNEL_SECTORS   equ 64         ; сколько секторов ядра читать (максимум для этого загрузчика -
+                                 ; 64*512=32 КБ ровно упирается в границу 0x10000, см. выше)
 
 start:
     cli
