@@ -48,6 +48,7 @@ kernel_start:
 
     call fs_ensure_readme    ; создаёт README.TXT в корне, если его ещё нет
     call fs_ensure_test_exe  ; создаёт TEST.BIN в корне, если его ещё нет
+    call fs_ensure_license   ; создаёт LICENSE в корне, если его ещё нет
 
     call fs_print_prompt
 
