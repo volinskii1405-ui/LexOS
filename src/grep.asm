@@ -1,8 +1,8 @@
 ; grep.asm — поиск текста внутри файла (команда "grep <имя> <текст>")
 ; Экспортирует: fs_grep
 ;
-; Читает содержимое файла целиком (инлайн + цепочка доп. секторов, как
-; fs_cat) в grep_buf, затем ищет в нём подстроку grep_needle. Печатает
+; Читает содержимое файла целиком через fs_load_content (src/fs_extra.asm)
+; в content_buf, затем ищет в нём подстроку grep_needle. Печатает
 ; заголовок с числом совпадений, а для каждого совпадения - строку вида
 ; "Line <n>, Symbol <col> <текст строки>" с найденным текстом, выделенным
 ; ярко-красным цветом (COLOR_RED).
@@ -95,91 +95,17 @@ fs_grep:
 
 .is_file:
     mov ax, [fs_tmp_slot]
-    call fs_read_slot
-
-    mov ax, FS_TOTAL_LEN_OFFSET
-    call fs_scratch_read_word
-    mov [grep_remaining], ax
-
-    mov ax, FS_CHAIN_OFFSET
-    call fs_scratch_read_word
-    mov [grep_chain], ax
-
-    ; --- Читаем содержимое (инлайн, потом цепочка) в grep_buf ---
-    xor di, di                              ; di = позиция записи в grep_buf
-
-    mov bx, FS_CONTENT_OFFSET
-    mov cx, FS_CONTENT_LEN - 1
-    cmp cx, [grep_remaining]
-    jbe .inline_loop
-    mov cx, [grep_remaining]
-
-.inline_loop:
-    cmp cx, 0
-    je .inline_done
-    cmp di, GREP_BUF_LEN
-    jae .load_done
-    mov ax, bx
-    call fs_scratch_read_byte
-    mov [grep_buf + di], al
-    inc bx
-    inc di
-    dec cx
-    dec word [grep_remaining]
-    jmp .inline_loop
-.inline_done:
-
-    cmp word [grep_remaining], 0
-    jle .load_done
-
-.chain_loop:
-    cmp word [grep_remaining], 0
-    jle .load_done
-    cmp word [grep_chain], FS_NO_CHAIN
-    je .load_done
-    cmp di, GREP_BUF_LEN
-    jae .load_done
-
-    mov ax, [grep_chain]
-    call fs_extra_read
-
-    mov cx, FS_EXTRA_CONTENT_LEN
-    cmp cx, [grep_remaining]
-    jbe .have_count
-    mov cx, [grep_remaining]
-.have_count:
-    xor bx, bx
-.extra_loop:
-    cmp cx, 0
-    je .extra_done
-    cmp di, GREP_BUF_LEN
-    jae .load_done
-    mov ax, bx
-    call fs_scratch_read_byte
-    mov [grep_buf + di], al
-    inc bx
-    inc di
-    dec cx
-    dec word [grep_remaining]
-    jmp .extra_loop
-.extra_done:
-    mov ax, FS_EXTRA_NEXT_OFFSET
-    call fs_scratch_read_word
-    mov [grep_chain], ax
-    jmp .chain_loop
-
-.load_done:
-    mov [grep_content_len], di
+    call fs_load_content
 
     ; --- Проход 1: считаем общее число совпадений (для заголовка) ---
     xor bx, bx
     xor cx, cx
 .count_loop:
-    cmp bx, [grep_content_len]
+    cmp bx, [content_buf_len]
     jae .count_done
     mov ax, bx
     add ax, [grep_needle_len]
-    cmp ax, [grep_content_len]
+    cmp ax, [content_buf_len]
     ja .count_advance1
     call grep_match_at
     cmp ax, 1
@@ -207,10 +133,10 @@ fs_grep:
     mov word [grep_line_num], 1
     mov word [grep_line_start], 0
 .scan_loop:
-    cmp bx, [grep_content_len]
+    cmp bx, [content_buf_len]
     jae .end
 
-    mov al, [grep_buf + bx]
+    mov al, [content_buf + bx]
     cmp al, 13
     je .is_cr
     cmp al, 10
@@ -218,7 +144,7 @@ fs_grep:
 
     mov ax, bx
     add ax, [grep_needle_len]
-    cmp ax, [grep_content_len]
+    cmp ax, [content_buf_len]
     ja .no_match_here
     call grep_match_at
     cmp ax, 1
@@ -236,9 +162,9 @@ fs_grep:
 .is_cr:
     mov si, bx
     inc si
-    cmp si, [grep_content_len]
+    cmp si, [content_buf_len]
     jae .cr_alone
-    cmp byte [grep_buf + si], 10
+    cmp byte [content_buf + si], 10
     jne .cr_alone
     add bx, 2
     jmp .new_line
@@ -261,10 +187,7 @@ fs_grep:
     pop ax
     ret
 
-grep_remaining   dw 0
-grep_chain       dw 0
 grep_needle_len  dw 0
-grep_content_len dw 0
 grep_match_count dw 0
 grep_line_num    dw 0
 grep_line_start  dw 0
@@ -273,8 +196,8 @@ grep_match_start dw 0
 grep_saved_color db 0
 
 ; ============================================================
-; grep_buf[bx .. bx+needle_len) == grep_needle ?  ax = 1/0.
-; Вызывающий отвечает за то, что bx+needle_len <= grep_content_len.
+; content_buf[bx .. bx+needle_len) == grep_needle ?  ax = 1/0.
+; Вызывающий отвечает за то, что bx+needle_len <= content_buf_len.
 ; ============================================================
 grep_match_at:
     push bx
@@ -284,7 +207,7 @@ grep_match_at:
 
     mov si, grep_needle
     mov di, bx
-    add di, grep_buf
+    add di, content_buf
     mov cx, [grep_needle_len]
 .cmp_loop:
     cmp cx, 0
@@ -311,7 +234,7 @@ grep_match_at:
 ; ============================================================
 ; Печатает одно совпадение: "Line <n>, Symbol <col> <строка>",
 ; подсвечивая сам найденный текст ярко-красным (COLOR_RED).
-; Вход: grep_match_start = индекс совпадения в grep_buf,
+; Вход: grep_match_start = индекс совпадения в content_buf,
 ;       grep_line_start/grep_line_num = текущая строка (не трогаются).
 ; ============================================================
 grep_report_match:
@@ -337,9 +260,9 @@ grep_report_match:
     ; --- находим конец строки (CR, LF или конец буфера) ---
     mov bx, [grep_line_start]
 .find_end_loop:
-    cmp bx, [grep_content_len]
+    cmp bx, [content_buf_len]
     jae .end_found
-    mov al, [grep_buf + bx]
+    mov al, [content_buf + bx]
     cmp al, 13
     je .end_found
     cmp al, 10
@@ -370,7 +293,7 @@ grep_report_match:
     mov al, [grep_saved_color]
     mov [current_color], al
 .do_print:
-    mov al, [grep_buf + bx]
+    mov al, [content_buf + bx]
     call print_char
     inc bx
     jmp .print_loop

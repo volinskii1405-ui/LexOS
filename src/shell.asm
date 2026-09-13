@@ -50,12 +50,6 @@ handle_command:
     je .do_ls
 
     mov si, buffer
-    mov di, cmd_save_prefix
-    call strcmp_prefix
-    cmp ax, 1
-    je .do_save
-
-    mov si, buffer
     mov di, cmd_cat_prefix
     call strcmp_prefix
     cmp ax, 1
@@ -78,24 +72,6 @@ handle_command:
     call strcmp_prefix
     cmp ax, 1
     je .do_size
-
-    mov si, buffer
-    mov di, cmd_clear_prefix
-    call strcmp_prefix
-    cmp ax, 1
-    je .do_clear
-
-    mov si, buffer
-    mov di, cmd_edit_prefix
-    call strcmp_prefix
-    cmp ax, 1
-    je .do_edit
-
-    mov si, buffer
-    mov di, cmd_append_prefix
-    call strcmp_prefix
-    cmp ax, 1
-    je .do_append
 
     mov si, buffer
     mov di, cmd_batch_prefix
@@ -217,6 +193,24 @@ handle_command:
     cmp ax, 1
     je .do_grep
 
+    mov si, buffer
+    mov di, cmd_head_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_head
+
+    mov si, buffer
+    mov di, cmd_tail_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_tail
+
+    mov si, buffer
+    mov di, cmd_uranium_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_uranium
+
     ; Пустая строка (просто Enter) — ничего не делаем
     cmp byte [buffer], 0
     je .done
@@ -269,12 +263,6 @@ handle_command:
     call fs_list
     jmp .done
 
-.do_save:
-    mov si, buffer
-    add si, 5                  ; пропускаем "save "
-    call fs_save
-    jmp .done
-
 .do_cat:
     mov si, buffer
     add si, 4                  ; пропускаем "cat "
@@ -297,24 +285,6 @@ handle_command:
     mov si, buffer
     add si, 5                  ; пропускаем "size "
     call fs_size
-    jmp .done
-
-.do_clear:
-    mov si, buffer
-    add si, 6                  ; пропускаем "clear "
-    call fs_clear
-    jmp .done
-
-.do_edit:
-    mov si, buffer
-    add si, 5                  ; пропускаем "edit "
-    call fs_edit
-    jmp .done
-
-.do_append:
-    mov si, buffer
-    add si, 7                  ; пропускаем "append "
-    call fs_append
     jmp .done
 
 .do_batch:
@@ -424,6 +394,24 @@ handle_command:
     mov si, buffer
     add si, 5                  ; пропускаем "grep "
     call fs_grep
+    jmp .done
+
+.do_head:
+    mov si, buffer
+    add si, 5                  ; пропускаем "head "
+    call fs_head
+    jmp .done
+
+.do_tail:
+    mov si, buffer
+    add si, 5                  ; пропускаем "tail "
+    call fs_tail
+    jmp .done
+
+.do_uranium:
+    mov si, buffer
+    add si, 8                  ; пропускаем "uranium "
+    call uranium_editor
 
 .done:
     popa

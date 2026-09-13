@@ -40,18 +40,19 @@ $
 - A simple folder-aware filesystem on top of the ATA driver — files and
   folders live in fixed-size sectors, with parent pointers for
   subdirectories (`mkdir`, `cd`, `pwd`, `tree`, `mv`, `cp`, `ren`).
-- Files aren't stuck at one sector: `append` grows a file past its initial
-  127 inline bytes into a chain of extra disk sectors, tracked by a small
-  on-disk bitmap. `cat`, `size`, `cp`, and `rm` all understand the chain.
-- `batch` runs every line of a text file as a shell command — combined with
-  `append`'s `\n` escape, that's enough to write and run a tiny script.
+- Files aren't stuck at one sector: content grows past its initial 127
+  inline bytes into a chain of extra disk sectors, tracked by a small
+  on-disk bitmap. `cat`, `size`, `head`, `tail`, `grep`, `cp`, and `rm` all
+  understand the chain.
+- `batch` runs every line of a text file as a shell command.
 - `grep` searches a file's content for a piece of text and prints every
   match as `Line <n>, Symbol <col> <line text>`, with the matched text
   itself highlighted in bright red on screen.
+- `head`/`tail` print the first/last lines of a file (10 by default, or a
+  given count).
 - On first boot the root folder is seeded with `README`, a demo `TEST.BIN`,
   and a `LICENSE` file holding the project's own license text (long enough
-  to spill from the inline area into chained extra sectors, same as any
-  file grown with `append`).
+  to spill from the inline area into chained extra sectors).
 
 **Shell**
 - Real line editing: Left/Right/Home/End/Delete work anywhere in the line,
@@ -68,11 +69,19 @@ $
   driver for COM1 (`serial`) — handy for debugging with
   `qemu ... -serial stdio`.
 
+**Editors**
+- `uranium` is a full-screen, nano-style text editor: arrow keys move the
+  cursor (with line wrapping and scrolling for content taller than the
+  screen), typing inserts, Backspace/Delete remove. `Ctrl+B` saves and
+  exits, `Ctrl+H` saves without exiting, and `Esc` asks for confirmation
+  (`Are you sure? Y/N`) before discarding unsaved changes.
+- `hex` is an interactive hex editor (arrow keys, nibble-at-a-time input)
+  for writing small machine-code programs byte by byte, plus a one-line
+  mini-assembler (press `S` inside the editor) so you don't have to
+  hand-encode opcodes.
+
 **Programs**
 - `run` loads a small file from disk and executes it as raw machine code.
-- `hex` is an interactive hex editor (arrow keys, nibble-at-a-time input)
-  for writing programs byte by byte, plus a one-line mini-assembler (press
-  `S` inside the editor) so you don't have to hand-encode opcodes.
 
 ## Quick start
 
@@ -94,7 +103,7 @@ been tested in QEMU.
 
 Run `help` inside LexOS at any time for the live, paginated list
 (`[A]`/`[D]` to flip pages). Names are stored UPPERCASE on disk but lookup
-is case-insensitive; type the extension yourself (`save notes.txt hi`).
+is case-insensitive; type the extension yourself (`uranium notes.txt`).
 
 | Command | Description |
 |---|---|
@@ -118,21 +127,27 @@ is case-insensitive; type the extension yourself (`save notes.txt hi`).
 | `cd ..` | go to the parent folder |
 | `cd /a/b` | enter a folder by path (`cd`, `cd /`, `cd //` all go to root) |
 | `mkdir <name>` | create a folder |
-| `save <n> <text>` | save text to file `n` (creates or overwrites) |
-| `append <n> <text>` | add text to the end of file `n`, growing onto extra sectors as needed; `\n` in the text becomes a real line break |
-| `edit <n> <text>` | replace the contents of an existing file |
 | `cat <n>` | print a file's contents |
+| `head <n> [k]` | print the first `k` lines of a file (default 10) |
+| `tail <n> [k]` | print the last `k` lines of a file (default 10) |
 | `size <n>` | show a file's content length |
-| `clear <n>` | empty a file's contents |
 | `rm <n>` | delete a file or folder |
 | `ren <n> <new>` | rename a file or folder |
 | `cp <n> <new>` | copy a file (independent content, not aliased) |
 | `mv <n> <path>` | move a file into a folder at `path` |
 | `batch <n>` | run every line of file `n` as a shell command |
 | `grep <n> <text>` | search file `n` for `text`; prints `Line <n>, Symbol <col> <line>` for each match, with the match highlighted in red |
+| **Editors** | |
+| `uranium <n>` | full-screen text editor (creates the file if it doesn't exist) |
+| `hex <n>` | hex/assembly editor (auto-adds `.BIN` if the name has no dot) |
 | **Programs** | |
 | `run <n>` | execute a program file |
-| `hex <n>` | hex/assembly editor (auto-adds `.BIN` if the name has no dot) |
+
+Inside the `uranium` text editor: arrow keys, Home/End and Delete move
+around and edit like any text editor, Enter inserts a real line break.
+`Ctrl+B` saves and exits, `Ctrl+H` saves without exiting (flashes
+`Saved.` in the status line), and `Esc` asks `Are you sure? Y/N` before
+discarding unsaved changes and returning to the shell.
 
 Inside the hex editor: arrow keys move the cursor, hex digits edit the
 byte under it a nibble at a time, `S` opens the one-line mini-assembler
@@ -144,7 +159,11 @@ byte under it a nibble at a time, `S` opens the one-line mini-assembler
 
 ```
 BIOS  →  boot.asm (16-bit real mode)
-            │  loads kernel.bin via one LBA read (int 13h/ah=42h)
+            │  loads kernel.bin via TWO LBA reads (int 13h/ah=42h) -
+            │  a real-mode segment:offset BIOS read can't cross a 64 KB
+            │  segment boundary, so the kernel is split at 0x10000:
+            │  64 sectors into 0x0000:0x8000, then the rest into
+            │  0x1000:0x0000 - physically contiguous either way
             │  enables A20, builds a flat GDT, sets CR0.PE
             ▼
          kernel.asm (32-bit protected mode, ORG 0x8000)
@@ -154,24 +173,24 @@ BIOS  →  boot.asm (16-bit real mode)
 ```
 
 Everything below `0x10000` is the kernel itself — code and all working
-data — which is small enough (kernel.bin is padded to 64 sectors, the most
-this loader can read in one BIOS call without crossing a 64 KB segment
-boundary) that internal pointers still fit in 16 bits and most of the
-code reads like a real-mode program. Only things that live outside the
-kernel image need a full 32-bit linear address:
+data — small enough that internal pointers still fit in 16 bits and most
+of the code reads like a real-mode program, even though the kernel image
+as a whole (padded to 96 sectors, split across the boot loader's two reads
+as described above) now extends past that boundary. Only things that live
+outside the kernel image need a full 32-bit linear address:
 
 | What | Address |
 |---|---|
 | Video memory (VGA text mode) | `0xB8000` |
 | ATA scratch buffer (one sector) | `0x91000` |
-| Kernel code/data | `0x8000` – (padded to 64 sectors) |
+| Kernel code/data | `0x8000` – (padded to 96 sectors) |
 | Boot sector | `0x7C00` |
 
-On disk, sectors are laid out as: boot sector, then the kernel (64
+On disk, sectors are laid out as: boot sector, then the kernel (96
 sectors), then 24 directory slots (one file/folder per 512-byte sector —
 name, type, parent pointer, up to 127 bytes of inline content), a 1-sector
 free-space bitmap for the extra-sector pool, then 64 extra 512-byte
-sectors that `append`-grown files chain into.
+sectors that files chain into once they outgrow the inline area.
 
 ## Project layout
 
@@ -188,8 +207,9 @@ src/
   devices.asm          device manager/table (the `devices` command).
   ata.asm              ATA PIO driver (the `ataread` command).
   filesystem.asm       folder-aware filesystem on top of the ATA driver.
-  fs_extra.asm         chained extra sectors for files > 127 bytes
-                       (`append`, `batch`).
+  fs_extra.asm         chained extra sectors for files > 127 bytes, and
+                       fs_load_content - the shared file-content reader
+                       used by grep/head/tail/uranium.
   programs.asm         `run`/`hex` commands, the TEST.BIN demo program.
   assembler.asm        one-line mini-assembler used by the hex editor.
   rtc.asm              CMOS RTC driver (`date`, `time`).
@@ -197,19 +217,24 @@ src/
   serial.asm           16550 UART driver for COM1 (`serial`).
   grep.asm             text search within a file (`grep`), with on-screen
                        highlighting of the matched text.
+  headtail.asm         `head`/`tail` commands.
+  uranium.asm          full-screen text editor (`uranium`) and its
+                       disk-writing counterpart to fs_load_content.
 ```
 
 ## Known limitations
 
 - One file's inline metadata + content lives in a single 512-byte sector;
-  `append` extends it through a chain of extra sectors, but the pool is
-  fixed at 64 sectors and file/folder names are capped at 8 characters
+  content past that grows through a chain of extra sectors, but the pool
+  is fixed at 64 sectors and file/folder names are capped at 8 characters
   before the extension.
+- `grep`, `head`, `tail`, and `uranium` all read a file through the same
+  4 KB `content_buf` (see `fs_load_content` in `src/fs_extra.asm`), so
+  only the first 4 KB of a larger file is visible to them - `uranium`
+  in particular can't open or grow a file past that size. `grep` is also
+  case-sensitive and its search text is capped at 32 characters.
 - The mini-assembler resolves labels in one pass, so jumps can only target
   a label that already appears earlier in the same program.
-- `grep` reads the whole file into a 4 KB buffer before searching, so only
-  the first 4 KB of a larger file is searched; matching is case-sensitive
-  and the search text is capped at 32 characters.
 - Everything runs in ring 0 — there's no user/kernel privilege separation
   or process isolation. `run` executes a file's bytes as one big function
   call into the same address space as the kernel.

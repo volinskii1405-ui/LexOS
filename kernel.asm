@@ -72,7 +72,9 @@ main_loop:
 %include "src/speaker.asm"
 %include "src/serial.asm"
 %include "src/grep.asm"
+%include "src/headtail.asm"
+%include "src/uranium.asm"
 
 ; Заполняем оставшееся место в пределах секторов, которые читает загрузчик,
-; чтобы файл был кратен 512 байтам (см. KERNEL_SECTORS в boot.asm).
-times (512*64)-($-$$) db 0
+; чтобы файл был кратен 512 байтам (см. KERNEL_SECTORS_1/2 в boot.asm).
+times (512*96)-($-$$) db 0

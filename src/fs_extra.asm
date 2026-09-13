@@ -11,7 +11,7 @@
 ; Экспортирует: fs_extra_alloc, fs_extra_free, fs_extra_read,
 ;               fs_extra_write, fs_scratch_read_word,
 ;               fs_scratch_write_word, fs_free_chain, fs_append,
-;               print_dec_word
+;               fs_load_content, print_dec_word
 
 ; ============================================================
 ; Читает 16-битное поле scratch[offset] (offset в ax) -> ax.
@@ -176,6 +176,104 @@ fs_free_chain:
     pop bx
     pop ax
     ret
+
+; ============================================================
+; Читает содержимое файла (слот в ax) целиком в content_buf (инлайн-
+; часть, потом цепочка доп. секторов - как fs_cat, но в память вместо
+; экрана). Устанавливает content_buf_len; если файл больше
+; CONTENT_BUF_LEN, лишний хвост просто не читается. Используется
+; grep/head/tail (только для чтения) и uranium (как рабочий буфер
+; редактора, который потом пишет обратно через fs_save_content).
+; ============================================================
+fs_load_content:
+    push ax
+    push bx
+    push cx
+    push di
+
+    call fs_read_slot
+
+    mov ax, FS_TOTAL_LEN_OFFSET
+    call fs_scratch_read_word
+    mov [fs_load_remaining], ax
+
+    mov ax, FS_CHAIN_OFFSET
+    call fs_scratch_read_word
+    mov [fs_load_chain], ax
+
+    xor di, di
+
+    mov bx, FS_CONTENT_OFFSET
+    mov cx, FS_CONTENT_LEN - 1
+    cmp cx, [fs_load_remaining]
+    jbe .inline_loop
+    mov cx, [fs_load_remaining]
+
+.inline_loop:
+    cmp cx, 0
+    je .inline_done
+    cmp di, CONTENT_BUF_LEN
+    jae .load_done
+    mov ax, bx
+    call fs_scratch_read_byte
+    mov [content_buf + di], al
+    inc bx
+    inc di
+    dec cx
+    dec word [fs_load_remaining]
+    jmp .inline_loop
+.inline_done:
+
+    cmp word [fs_load_remaining], 0
+    jle .load_done
+
+.chain_loop:
+    cmp word [fs_load_remaining], 0
+    jle .load_done
+    cmp word [fs_load_chain], FS_NO_CHAIN
+    je .load_done
+    cmp di, CONTENT_BUF_LEN
+    jae .load_done
+
+    mov ax, [fs_load_chain]
+    call fs_extra_read
+
+    mov cx, FS_EXTRA_CONTENT_LEN
+    cmp cx, [fs_load_remaining]
+    jbe .have_count
+    mov cx, [fs_load_remaining]
+.have_count:
+    xor bx, bx
+.extra_loop:
+    cmp cx, 0
+    je .extra_done
+    cmp di, CONTENT_BUF_LEN
+    jae .load_done
+    mov ax, bx
+    call fs_scratch_read_byte
+    mov [content_buf + di], al
+    inc bx
+    inc di
+    dec cx
+    dec word [fs_load_remaining]
+    jmp .extra_loop
+.extra_done:
+    mov ax, FS_EXTRA_NEXT_OFFSET
+    call fs_scratch_read_word
+    mov [fs_load_chain], ax
+    jmp .chain_loop
+
+.load_done:
+    mov [content_buf_len], di
+
+    pop di
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+fs_load_remaining dw 0
+fs_load_chain     dw 0
 
 ; ============================================================
 ; append <имя> <текст> : дописывает текст в конец содержимого файла,

@@ -28,7 +28,7 @@ SECTOR_COUNT equ 8
 ;   байт 8       - тип (0=свободно, 1=файл, 2=папка)
 ;   байт 9       - родитель (индекс слота папки-родителя, 0xFF = корень)
 ;   байты 10..   - содержимое (ноль-терминированное, не используется для папок)
-FS_START_SECTOR   equ 66      ; сектор 1=загрузчик, 2..65=ядро (64 сектора)
+FS_START_SECTOR   equ 98      ; сектор 1=загрузчик, 2..97=ядро (96 секторов)
 FS_FILE_COUNT     equ 24
 FS_NAME_LEN       equ 16
 FS_CONTENT_LEN    equ 128
@@ -113,13 +113,10 @@ help_l03 db "  echo <text>   - print text", 13, 10, 0
 help_l04 db "  color <hex>   - set text color (e.g. color 0f, color 09)", 13, 10, 0
 help_l05 db "  sector        - show first 8 bytes of first 8 disk sectors", 13, 10, 0
 help_l06 db "  ls            - list files and folders here", 13, 10, 0
-help_l07 db "  save <n> <t>  - save text t to file n", 13, 10, 0
 help_l08 db "  cat <n>       - print contents of file n", 13, 10, 0
-help_l09 db "  edit <n> <t>  - replace contents of existing file n with t", 13, 10, 0
 help_l10 db "  rm <n>        - delete file or folder n", 13, 10, 0
 help_l11 db "  ren <n> <new> - rename file or folder n to new", 13, 10, 0
 help_l12 db "  size <n>      - show content size of file n", 13, 10, 0
-help_l13 db "  clear <n>     - clear content of file n", 13, 10, 0
 help_l14 db "  mkdir <n>     - create a folder n", 13, 10, 0
 help_l15 db "  cd <n>        - enter folder n", 13, 10, 0
 help_l16 db "  cd ..         - go to parent folder", 13, 10, 0
@@ -137,25 +134,26 @@ help_l27 db "  ataread <lba> - read a disk sector via ATA driver (bypasses BIOS)
 help_l28 db "  shutdown      - power off the system", 13, 10, 0
 help_l29 db "  (Up/Down = command history)", 13, 10, 0
 help_l30 db "  Names: stored UPPERCASE, lookup is case-insensitive,", 13, 10, 0
-help_l31 db "         type the extension yourself (e.g. save notes.txt hi)", 13, 10, 0
+help_l31 db "         type the extension yourself (e.g. uranium notes.txt)", 13, 10, 0
 help_l32 db "  date          - show current date", 13, 10, 0
 help_l33 db "  time          - show current time", 13, 10, 0
 help_l34 db "  beep [hz]     - play a short tone (frequency in hex)", 13, 10, 0
 help_l35 db "  serial <text> - send text out over COM1", 13, 10, 0
-help_l36 db "  append <n> <t> - add text to the end of file n (grows past 127", 13, 10, 0
-help_l37 db "                   bytes into extra disk sectors as needed)", 13, 10, 0
 help_l38 db "  batch <n>     - run each line of file n as a command", 13, 10, 0
 help_l39 db "  grep <n> <t>  - search file n for text t, highlight matches", 13, 10, 0
+help_l40 db "  head <n> [k]  - print first k lines of file n (default 10)", 13, 10, 0
+help_l41 db "  tail <n> [k]  - print last k lines of file n (default 10)", 13, 10, 0
+help_l42 db "  uranium <n>   - open file n in the full-screen text editor", 13, 10, 0
 
 help_lines:
     dw help_l01, help_l02, help_l03, help_l04, help_l05
-    dw help_l06, help_l07, help_l08, help_l09, help_l10
-    dw help_l11, help_l12, help_l13, help_l14, help_l15
-    dw help_l16, help_l17, help_l18, help_l19, help_l20
-    dw help_l21, help_l22, help_l23, help_l24, help_l25
-    dw help_l26, help_l27, help_l28, help_l29, help_l30
-    dw help_l31, help_l32, help_l33, help_l34, help_l35
-    dw help_l36, help_l37, help_l38, help_l39
+    dw help_l06, help_l08, help_l10, help_l11, help_l12
+    dw help_l14, help_l15, help_l16, help_l17, help_l18
+    dw help_l19, help_l20, help_l21, help_l22, help_l23
+    dw help_l24, help_l25, help_l26, help_l27, help_l28
+    dw help_l29, help_l30, help_l31, help_l32, help_l33
+    dw help_l34, help_l35, help_l38, help_l39, help_l40
+    dw help_l41, help_l42
 help_lines_end:
 
 HELP_LINE_COUNT equ (help_lines_end - help_lines) / 2
@@ -169,9 +167,7 @@ msg_sector_label db "Sector ", 0
 msg_colon_space  db ": ", 0
 msg_sector_error db "Disk read error while reading sectors.", 13, 10, 0
 
-msg_fs_usage_save db "Usage: save <n> <text>", 13, 10, 0
 msg_fs_full       db "No free file slots.", 13, 10, 0
-msg_fs_saved      db "Saved.", 13, 10, 0
 msg_fs_notfound   db "Not found.", 13, 10, 0
 msg_fs_removed    db "Removed.", 13, 10, 0
 msg_fs_empty      db "Empty.", 13, 10, 0
@@ -179,9 +175,6 @@ msg_fs_write_error db "Disk write error.", 13, 10, 0
 msg_fs_usage_ren   db "Usage: ren <n> <new_name>", 13, 10, 0
 msg_fs_name_taken  db "Already exists here.", 13, 10, 0
 msg_fs_renamed     db "Renamed.", 13, 10, 0
-msg_fs_cleared     db "Cleared.", 13, 10, 0
-msg_fs_usage_edit  db "Usage: edit <n> <text>", 13, 10, 0
-msg_fs_edited      db "Edited.", 13, 10, 0
 msg_fs_usage_append db "Usage: append <n> <text>", 13, 10, 0
 msg_fs_appended     db "Appended.", 13, 10, 0
 msg_fs_disk_full    db "No free space for more content - saved what fit.", 13, 10, 0
@@ -192,8 +185,17 @@ msg_grep_quote_nl    db 34, 13, 10, 0
 msg_grep_line_label  db "Line ", 0
 msg_grep_symbol_label db ", Symbol ", 0
 msg_grep_space       db " ", 0
+msg_head_usage       db "Usage: head <n> [lines]", 13, 10, 0
+msg_tail_usage       db "Usage: tail <n> [lines]", 13, 10, 0
+msg_uranium_usage    db "Usage: uranium <n>", 13, 10, 0
+msg_uranium_not_text db "That is a program file. Use hex to edit it.", 13, 10, 0
+msg_uranium_header1  db "LexOS Editor - ", 0
+msg_uranium_header2  db "  (", 0
+msg_uranium_header3  db " bytes)", 13, 10, 13, 10, 0
+msg_uranium_footer   db "Ctrl+B=Save&Exit  Ctrl+H=Save  ESC=Exit", 0
+msg_uranium_saved_flash db "Saved.", 0
+msg_uranium_confirm  db "Are you sure?", 13, 10, 13, 10, "Y - YES.         N - NO.", 0
 msg_bytes_suffix   db " bytes", 13, 10, 0
-fs_extension       db ".TXT", 0
 fs_dir_extension   db "  <DIR>", 0
 
 msg_fs_usage_mkdir db "Usage: mkdir <n>", 13, 10, 0
@@ -234,14 +236,17 @@ program_exec_buffer times PROGRAM_MAX_LEN db 0
 BATCH_BUF_LEN equ 511
 batch_content_buf times (BATCH_BUF_LEN + 1) db 0
 
-; --- grep: содержимое файла целиком читается в grep_buf перед поиском
-; (не потоково, как cat/batch), т.к. нужно и посчитать общее число
-; совпадений для заголовка, и потом второй раз пройтись для печати
-; строк - см. src/grep.asm. Если файл больше GREP_BUF_LEN, лишний
-; хвост просто не читается (см. "Known limitations" в README). ---
-GREP_BUF_LEN equ 4096
+; --- content_buf: буфер, в который grep/head/tail/uranium целиком читают
+; содержимое файла (не потоково, как cat/batch) через fs_load_content
+; (src/fs_extra.asm) - grep считает совпадения в два прохода, head/tail
+; ищут границы строк, а uranium редактирует его напрямую как рабочий
+; буфер редактора. Если файл больше CONTENT_BUF_LEN, лишний хвост просто
+; не читается (см. "Known limitations" в README). ---
+CONTENT_BUF_LEN equ 4096
+content_buf times CONTENT_BUF_LEN db 0
+content_buf_len dw 0
+
 GREP_NEEDLE_LEN equ 32
-grep_buf times GREP_BUF_LEN db 0
 grep_needle times (GREP_NEEDLE_LEN + 1) db 0
 
 hex_edit_buffer times PROGRAM_MAX_LEN db 0
@@ -323,14 +328,10 @@ cmd_echo_prefix  db "echo ", 0
 cmd_color_prefix db "color ", 0
 cmd_sector       db "sector", 0
 cmd_ls           db "ls", 0
-cmd_save_prefix  db "save ", 0
 cmd_cat_prefix   db "cat ", 0
 cmd_rm_prefix    db "rm ", 0
 cmd_ren_prefix   db "ren ", 0
 cmd_size_prefix  db "size ", 0
-cmd_clear_prefix db "clear ", 0
-cmd_edit_prefix  db "edit ", 0
-cmd_append_prefix db "append ", 0
 cmd_batch_prefix db "batch ", 0
 cmd_mkdir_prefix db "mkdir ", 0
 cmd_reboot       db "reboot", 0
@@ -347,6 +348,9 @@ cmd_mv_prefix    db "mv ", 0
 cmd_pwd          db "pwd", 0
 cmd_tree         db "tree", 0
 cmd_grep_prefix  db "grep ", 0
+cmd_head_prefix  db "head ", 0
+cmd_tail_prefix  db "tail ", 0
+cmd_uranium_prefix db "uranium ", 0
 
 ; ============================================================
 ; Рабочие переменные
