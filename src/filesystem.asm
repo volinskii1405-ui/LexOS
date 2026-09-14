@@ -564,6 +564,9 @@ fs_list:
     push bx
     push dx
 
+    mov al, [current_color]
+    mov [fs_list_saved_color], al
+
     call fs_get_current_parent_byte
     mov dl, al
 
@@ -596,6 +599,13 @@ fs_list:
 
     inc word [fs_list_found]
 
+    ; folders print in a highlight color; files keep whatever color the
+    ; user already has set (see ATTR_LS_DIR in src/data.asm)
+    cmp byte [fs_list_type], FS_TYPE_DIR
+    jne .not_dir_color
+    mov byte [current_color], ATTR_LS_DIR
+.not_dir_color:
+
     push bx
     xor bx, bx
 .print_name:
@@ -623,6 +633,9 @@ fs_list:
 .print_ext:
     call print_string
     pop si
+
+    mov al, [fs_list_saved_color]
+    mov [current_color], al
 
     mov si, msg_newline
     call print_string

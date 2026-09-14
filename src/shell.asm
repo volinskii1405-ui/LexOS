@@ -211,6 +211,12 @@ handle_command:
     cmp ax, 1
     je .do_uranium
 
+    mov si, buffer
+    mov di, cmd_history
+    call strcmp_eq
+    cmp ax, 1
+    je .do_history
+
     ; Empty line (just Enter) - do nothing
     cmp byte [buffer], 0
     je .done
@@ -412,6 +418,10 @@ handle_command:
     mov si, buffer
     add si, 8                  ; skip "uranium "
     call uranium_editor
+    jmp .done
+
+.do_history:
+    call cmd_show_history
 
 .done:
     popa

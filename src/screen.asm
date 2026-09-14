@@ -192,6 +192,7 @@ scroll_screen:
 update_hw_cursor:
     push eax
     push ebx
+    push ecx
     push edx
 
     mov ax, [cursor_row]
@@ -215,6 +216,7 @@ update_hw_cursor:
     out dx, al
 
     pop edx
+    pop ecx
     pop ebx
     pop eax
     ret

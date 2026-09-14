@@ -1,6 +1,6 @@
 ; input.asm - keyboard reading, input buffer, command history
 ; Exports: read_command_line (the main loop for reading one line of input),
-; strcpy, strcmp_eq, strcmp_prefix, parse_hex_byte
+; strcpy, strcmp_eq, strcmp_prefix, parse_hex_byte, cmd_show_history
 ;
 ; IMPORTANT: the keyboard is read via read_key (src/interrupts.asm), not
 ; via BIOS int 16h. As soon as our IRQ1 handler is installed, the BIOS
@@ -332,6 +332,70 @@ strcpy:
 .done:
     pop di
     pop si
+    ret
+
+; --- history : lists every saved entry, oldest first, numbered ---
+cmd_show_history:
+    push ax
+    push bx
+    push cx
+    push si
+
+    cmp word [history_count], 0
+    jne .has_entries
+    mov si, msg_history_empty
+    call print_string
+    jmp .end
+
+.has_entries:
+    ; oldest entry's ring index = (history_next_slot - history_count) mod HISTORY_SIZE
+    mov ax, [history_next_slot]
+    sub ax, [history_count]
+    jns .oldest_ok
+    add ax, HISTORY_SIZE
+.oldest_ok:
+    mov bx, ax                    ; bx = ring index of the entry to print
+    mov cx, [history_count]       ; cx = how many entries are left to print
+.print_loop:
+    cmp cx, 0
+    je .end
+
+    push bx
+    push cx
+
+    mov ax, [history_count]        ; display number = history_count - cx + 1
+    sub ax, cx
+    inc ax
+    call print_dec_word
+    mov si, msg_colon_space
+    call print_string
+
+    mov ax, bx
+    mov cx, BUFFER_MAX + 1
+    mul cx
+    mov si, history_buf
+    add si, ax
+    call print_string
+
+    mov si, msg_newline
+    call print_string
+
+    pop cx
+    pop bx
+
+    inc bx
+    cmp bx, HISTORY_SIZE
+    jb .no_ring_wrap
+    xor bx, bx
+.no_ring_wrap:
+    dec cx
+    jmp .print_loop
+
+.end:
+    pop si
+    pop cx
+    pop bx
+    pop ax
     ret
 
 ; --- Saves buffer as a new history entry (empty ones are not saved) ---
