@@ -15,13 +15,21 @@ through hardware ports that this project drives itself.
 
 Type help for commands
 
-$ ls
+First boot - let's set a few things up.
+
+Choose a nickname: alex
+UTC timezone offset (e.g. +3, -5, 0): +3
+
+Welcome, alex! (see USER.CFG)
+
+alex@/$ ls
 README
 TEST.BIN
 LICENSE
-$ run test.bin
+USER.CFG
+alex@/$ run test.bin
 Hello from executable file!
-$
+alex@/$
 ```
 
 ## Features
@@ -59,6 +67,10 @@ $
   not just Backspace at the end.
 - Command history (Up/Down), case-insensitive filename lookup, and a
   30+ command set (`help` lists them all, paginated).
+- The very first boot asks for a nickname and a UTC timezone offset, saved
+  to `USER.CFG` (a plain two-line text file — editable later with `uranium`
+  or `cat`). The nickname shows up in every prompt as `nickname@/path$ `,
+  and the offset shifts what `time` displays.
 
 **Drivers**
 - Keyboard and PIT timer via IRQ1/IRQ0, not `int 0x16`/BIOS polling.
@@ -262,6 +274,8 @@ src/
   headtail.asm         `head`/`tail` commands.
   uranium.asm          full-screen text editor (`uranium`) and its
                        disk-writing counterpart to fs_load_content.
+  user.asm             first-boot nickname/timezone setup wizard, USER.CFG
+                       load/save, and the shell prompt's `nickname@/path$ `.
 ```
 
 ## Known limitations
@@ -281,6 +295,10 @@ src/
   or process isolation. `run` executes a file's bytes as one big function
   call into the same address space as the kernel.
 - Single-tasking: one command runs to completion before the next is read.
+- The UTC timezone offset chosen during first boot only shifts what `time`
+  displays; `date` always shows the RTC's own (unshifted) date. The offset
+  itself isn't validated or clamped — an out-of-range value just wraps
+  through the 0-23 hour normalization in `cmd_show_time`.
 
 ## License
 

@@ -73,13 +73,31 @@ rtc_read_date:
     mov cl, al                 ; year (0-99)
     ret
 
-; --- time : prints HH:MM:SS ---
+; --- time : prints HH:MM:SS, shifted by user_tz_offset (see src/user.asm) ---
 cmd_show_time:
     push ax
     push bx
     push cx
+    push dx
 
-    call rtc_read_time
+    call rtc_read_time      ; bh=hours, bl=minutes, cl=seconds
+
+    xor ah, ah
+    mov al, bh
+    mov dx, [user_tz_offset]
+    add ax, dx
+.norm_low:
+    cmp ax, 0
+    jge .norm_high
+    add ax, 24
+    jmp .norm_low
+.norm_high:
+    cmp ax, 24
+    jl .norm_done
+    sub ax, 24
+    jmp .norm_high
+.norm_done:
+    mov bh, al
 
     mov al, bh
     call print_dec2
@@ -95,6 +113,7 @@ cmd_show_time:
     mov si, msg_newline
     call print_string
 
+    pop dx
     pop cx
     pop bx
     pop ax

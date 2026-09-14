@@ -1,6 +1,6 @@
 ASM = nasm
 BUILD_DIR = build
-SRC_FILES = kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/assembler.asm src/rtc.asm src/speaker.asm src/serial.asm src/grep.asm src/headtail.asm src/uranium.asm
+SRC_FILES = kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/assembler.asm src/rtc.asm src/speaker.asm src/serial.asm src/grep.asm src/headtail.asm src/uranium.asm src/user.asm
 
 .PHONY: all run clean
 
