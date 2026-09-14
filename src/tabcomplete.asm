@@ -27,6 +27,12 @@ tab_update_suggestion:
 
     call tab_clear_suggestion
 
+    ; disabled entirely while the first-boot wizard is reading a nickname
+    ; or timezone (see tab_complete_enabled in src/data.asm) - the clear
+    ; above still runs, so a suggestion never gets stranded on screen
+    cmp byte [tab_complete_enabled], 0
+    je .done
+
     ; ghost text only makes sense while typing at the end of the line -
     ; insert_char_at_cursor/remove_char_at_cursor don't shift text drawn
     ; past buf_len, so anywhere else it would just get left behind

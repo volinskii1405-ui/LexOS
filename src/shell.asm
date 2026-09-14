@@ -217,6 +217,18 @@ handle_command:
     cmp ax, 1
     je .do_history
 
+    mov si, buffer
+    mov di, cmd_df
+    call strcmp_eq
+    cmp ax, 1
+    je .do_df
+
+    mov si, buffer
+    mov di, cmd_free
+    call strcmp_eq
+    cmp ax, 1
+    je .do_df
+
     ; Empty line (just Enter) - do nothing
     cmp byte [buffer], 0
     je .done
@@ -422,6 +434,10 @@ handle_command:
 
 .do_history:
     call cmd_show_history
+    jmp .done
+
+.do_df:
+    call fs_df
 
 .done:
     popa

@@ -77,6 +77,8 @@ alex@/$
   to spill from the inline area into chained extra sectors).
 - `ls` prints folders in bright yellow so they stand out from regular
   files, which stay whatever color you've set with `color`.
+- `df` (or `free`) shows how many of the 24 directory slots and 64 extra
+  disk sectors are in use.
 
 **Shell**
 - Real line editing: Left/Right/Home/End/Delete work anywhere in the line,
@@ -91,7 +93,8 @@ alex@/$
   names are always stored UPPERCASE on disk ("re" + Tab finishes as
   "README", not "reADME"). Matches the current directory's files only,
   not command names, and picks the first match on disk rather than an
-  alphabetical one.
+  alphabetical one. Turned off during the first-boot nickname/timezone
+  prompts below, where completing against filenames wouldn't make sense.
 - The very first boot shows a centered setup window (on a green backdrop)
   asking for a nickname and a UTC timezone offset, then drops you into the
   console. Both are saved to `USER.CFG` (a plain two-line text file). The
@@ -203,6 +206,7 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `serial <text>` | send text out over the COM1 UART |
 | `reboot` / `shutdown` | restart / power off |
 | `history` | list previously run commands, numbered oldest first |
+| `df` / `free` | show directory slot / extra sector usage |
 | **Filesystem** | |
 | `ls` | list files and folders in the current directory (folders in yellow) |
 | `pwd` | show the current folder path |
