@@ -1,39 +1,39 @@
-; input.asm — чтение клавиатуры, буфер ввода, история команд
-; Экспортирует: read_command_line (главный цикл ввода одной строки),
+; input.asm — keyboard reading, input buffer, command history
+; Exports: read_command_line (the main loop for reading one line of input),
 ; strcpy, strcmp_eq, strcmp_prefix, parse_hex_byte
 ;
-; ВАЖНО: клавиатура читается через read_key (src/interrupts.asm), а не
-; через BIOS int 16h. Как только наш обработчик IRQ1 установлен, BIOS
-; перестаёт получать данные клавиатуры, поэтому int 16h тут больше
-; не сработает.
+; IMPORTANT: the keyboard is read via read_key (src/interrupts.asm), not
+; via BIOS int 16h. As soon as our IRQ1 handler is installed, the BIOS
+; stops receiving keyboard data, so int 16h no longer works here.
 
 ; ============================================================
-; Читает одну команду с клавиатуры в buffer (с учётом Backspace, Delete,
-; стрелок влево/вправо/Home/End для редактирования В СЕРЕДИНЕ строки,
-; стрелок вверх/вниз для истории). Возвращает, когда пользователь нажал
-; Enter; buffer содержит ноль-терминированную строку.
+; Reads one command from the keyboard into buffer (handling Backspace,
+; Delete, left/right arrows/Home/End for editing IN THE MIDDLE of the
+; line, up/down arrows for history). Returns when the user presses
+; Enter; buffer holds a zero-terminated string.
 ;
-; buf_cursor - позиция курсора ВНУТРИ buffer (0..buf_len), отдельно от
-; buf_len (длины строки) - раньше их не различали, курсор всегда был
-; в конце. Экранный курсор (cursor_row/cursor_col) двигается отдельными
-; вызовами update_hw_cursor, а не через print_char, когда нужно просто
-; переместиться, не печатая и не стирая символы.
+; buf_cursor is the cursor position INSIDE buffer (0..buf_len), kept
+; separate from buf_len (the string length) - previously they weren't
+; distinguished, and the cursor was always at the end. The screen cursor
+; (cursor_row/cursor_col) is moved with separate calls to update_hw_cursor
+; rather than through print_char, whenever we just need to move without
+; printing or erasing characters.
 ; ============================================================
 read_command_line:
     mov word [buf_cursor], 0
 .loop:
-    call read_key      ; al = ASCII-код (0 для спецклавиш), ah = scancode
+    call read_key      ; al = ASCII code (0 for special keys), ah = scancode
 
-    cmp al, 0         ; al=0 значит спецклавиша (стрелки и т.п.)
+    cmp al, 0         ; al=0 means a special key (arrows, etc)
     jne .normal_key
 
-    cmp ah, 0x48      ; стрелка вверх?
+    cmp ah, 0x48      ; up arrow?
     je .history_up
-    cmp ah, 0x50      ; стрелка вниз?
+    cmp ah, 0x50      ; down arrow?
     je .history_down
-    cmp ah, 0x4B      ; стрелка влево?
+    cmp ah, 0x4B      ; left arrow?
     je .cursor_left
-    cmp ah, 0x4D      ; стрелка вправо?
+    cmp ah, 0x4D      ; right arrow?
     je .cursor_right
     cmp ah, 0x47      ; Home?
     je .cursor_home
@@ -41,7 +41,7 @@ read_command_line:
     je .cursor_end
     cmp ah, 0x53      ; Delete?
     je .delete_fwd
-    jmp .loop          ; прочие спецклавиши игнорируем
+    jmp .loop          ; ignore other special keys
 
 .normal_key:
     cmp al, 0x08       ; Backspace?
@@ -50,11 +50,11 @@ read_command_line:
     cmp al, 0x0D       ; Enter?
     je .enter
 
-    cmp al, 0x20        ; игнорируем прочие управляющие символы
+    cmp al, 0x20        ; ignore other control characters
     jb .loop
 
     cmp word [buf_len], BUFFER_MAX
-    jae .loop            ; буфер полон — игнорируем символ
+    jae .loop            ; buffer full — ignore the character
 
     call insert_char_at_cursor
     jmp .loop
@@ -94,7 +94,7 @@ read_command_line:
 
 .cursor_end:
     mov ax, [buf_len]
-    sub ax, [buf_cursor]           ; ax = сколько символов осталось справа
+    sub ax, [buf_cursor]           ; ax = how many characters remain to the right
     add [cursor_col], ax
     mov ax, [buf_len]
     mov [buf_cursor], ax
@@ -104,7 +104,7 @@ read_command_line:
 .delete_fwd:
     mov ax, [buf_cursor]
     cmp ax, [buf_len]
-    jae .loop                       ; курсор уже в конце - стирать нечего
+    jae .loop                       ; cursor is already at the end - nothing to erase
     call remove_char_at_cursor
     jmp .loop
 
@@ -119,9 +119,9 @@ read_command_line:
     jmp .loop
 
 .enter:
-    ; независимо от того, где был курсор редактирования, переводим
-    ; строку нужно печатать из конца текста - переставляем экранный
-    ; курсор туда же, куда указывает buf_len
+    ; regardless of where the editing cursor was, the newline needs to
+    ; be printed from the end of the text - move the screen cursor to
+    ; wherever buf_len points
     mov ax, [buf_len]
     sub ax, [buf_cursor]
     add [cursor_col], ax
@@ -145,10 +145,10 @@ read_command_line:
     ret
 
 ; ============================================================
-; Вставляет символ (al) в buffer по позиции buf_cursor, сдвигая хвост
-; строки вправо, перерисовывает хвост на экране и переставляет курсор
-; сразу после вставленного символа. Предполагает, что место в буфере
-; уже проверено вызывающим (buf_len < BUFFER_MAX).
+; Inserts a character (al) into buffer at position buf_cursor, shifting
+; the tail of the string to the right, redraws the tail on screen, and
+; moves the cursor right after the inserted character. Assumes the caller
+; has already checked there's room in the buffer (buf_len < BUFFER_MAX).
 ; ============================================================
 insert_char_at_cursor:
     push ax
@@ -157,16 +157,16 @@ insert_char_at_cursor:
     push si
     push di
 
-    mov bl, al                    ; сохраняем символ - al ещё понадобится
+    mov bl, al                    ; save the character - al will be needed again
 
-    ; --- сдвигаем buffer[cursor..len-1] на 1 вправо (с конца, чтобы не
-    ;     затереть непереписанные байты) ---
+    ; --- shift buffer[cursor..len-1] one position right (from the end, so
+    ;     we don't overwrite bytes before they're copied) ---
     mov cx, [buf_len]
-    sub cx, [buf_cursor]           ; cx = сколько байт сдвигать
+    sub cx, [buf_cursor]           ; cx = how many bytes to shift
     mov si, buffer
-    add si, [buf_len]                ; si -> позиция после последнего байта
+    add si, [buf_len]                ; si -> position right after the last byte
     mov di, si
-    inc di                             ; di -> на 1 правее
+    inc di                             ; di -> one position further right
 .shift_loop:
     cmp cx, 0
     je .shift_done
@@ -183,9 +183,9 @@ insert_char_at_cursor:
     mov [si], bl
     inc word [buf_len]
 
-    ; --- печатаем хвост от курсора до нового конца строки ---
+    ; --- print the tail from the cursor to the new end of the string ---
     mov cx, [buf_len]
-    sub cx, [buf_cursor]              ; cx = сколько символов допечатать
+    sub cx, [buf_cursor]              ; cx = how many characters to print
     mov si, buffer
     add si, [buf_cursor]
 .print_loop:
@@ -198,11 +198,11 @@ insert_char_at_cursor:
     jmp .print_loop
 .print_done:
 
-    ; --- курсор сейчас в конце строки, возвращаем сразу за вставленный
-    ;     символ ---
+    ; --- the cursor is now at the end of the string, move it back to
+    ;     right after the inserted character ---
     mov ax, [buf_len]
     sub ax, [buf_cursor]
-    dec ax                              ; -1 за только что вставленный символ
+    dec ax                              ; -1 for the character just inserted
     sub [cursor_col], ax
     call update_hw_cursor
     inc word [buf_cursor]
@@ -215,10 +215,11 @@ insert_char_at_cursor:
     ret
 
 ; ============================================================
-; Удаляет символ buffer[buf_cursor] (сдвигая хвост влево), перерисовывает
-; укоротившийся хвост + один пробел поверх старого последнего символа,
-; возвращает экранный курсор туда же, откуда вызвали (buf_cursor не
-; двигает - вызывающий сам решает, менять ли его до/после).
+; Removes the character buffer[buf_cursor] (shifting the tail left),
+; redraws the shortened tail + one space over the old last character,
+; and returns the screen cursor to where it was called from (does not
+; move buf_cursor itself - the caller decides whether to change it
+; before/after).
 ; ============================================================
 remove_char_at_cursor:
     push ax
@@ -229,11 +230,11 @@ remove_char_at_cursor:
     mov si, buffer
     add si, [buf_cursor]
     mov di, si
-    inc si                            ; si -> следующий символ (источник)
+    inc si                            ; si -> next character (source)
 
     mov cx, [buf_len]
     sub cx, [buf_cursor]
-    dec cx                              ; сколько байт сдвигать влево
+    dec cx                              ; how many bytes to shift left
 .shift_loop:
     cmp cx, 0
     je .shift_done
@@ -247,10 +248,10 @@ remove_char_at_cursor:
 
     dec word [buf_len]
 
-    ; --- перерисовываем хвост от курсора + один пробел поверх старого
-    ;     "хвоста хвоста", затем возвращаем курсор на место ---
+    ; --- redraw the tail from the cursor + one space over the old
+    ;     "tail of the tail", then move the cursor back into place ---
     mov cx, [buf_len]
-    sub cx, [buf_cursor]                ; cx = длина нового хвоста
+    sub cx, [buf_cursor]                ; cx = length of the new tail
     mov si, buffer
     add si, [buf_cursor]
 .print_loop:
@@ -267,7 +268,7 @@ remove_char_at_cursor:
 
     mov ax, [buf_len]
     sub ax, [buf_cursor]
-    inc ax                              ; +1 за только что стёртый пробел
+    inc ax                              ; +1 for the space just erased
     sub [cursor_col], ax
     call update_hw_cursor
 
@@ -278,12 +279,12 @@ remove_char_at_cursor:
     ret
 
 ; ============================================================
-; История команд: кольцевой буфер на HISTORY_SIZE записей по
-; (BUFFER_MAX+1) байт. history_cursor = -1 значит "не смотрим
-; историю, вводим новую команду".
+; Command history: a ring buffer of HISTORY_SIZE entries of
+; (BUFFER_MAX+1) bytes each. history_cursor = -1 means "not browsing
+; history, entering a new command".
 ; ============================================================
 
-; --- Копирует ноль-терминированную строку DS:SI -> DS:DI ---
+; --- Copies a zero-terminated string DS:SI -> DS:DI ---
 strcpy:
     push si
     push di
@@ -300,7 +301,7 @@ strcpy:
     pop si
     ret
 
-; --- Сохраняет buffer как новую запись истории (пустые не сохраняем) ---
+; --- Saves buffer as a new history entry (empty ones are not saved) ---
 history_save:
     pusha
 
@@ -328,10 +329,10 @@ history_save:
     popa
     ret
 
-; --- Заменяет текущую строку ввода (экран + buffer) текстом из DS:SI.
-;     Курсор редактирования (buf_cursor) может быть где угодно в
-;     текущей строке - сначала переставляем экранный курсор в конец,
-;     чтобы стереть строку было можно обычными backspace. ---
+; --- Replaces the current input line (screen + buffer) with text from
+;     DS:SI. The editing cursor (buf_cursor) may be anywhere in the
+;     current line - first move the screen cursor to the end, so the
+;     line can be erased with ordinary backspaces. ---
 replace_input_line_with:
     pusha
 
@@ -370,7 +371,7 @@ replace_input_line_with:
     popa
     ret
 
-; --- Загружает запись history_buf[index] (index в ax) в строку ввода ---
+; --- Loads the entry history_buf[index] (index in ax) into the input line ---
 history_load_index:
     push ax
     push bx
@@ -387,7 +388,7 @@ history_load_index:
     pop ax
     ret
 
-; --- Стрелка вверх: показать более старую команду ---
+; --- Up arrow: show an older command ---
 history_show_prev:
     pusha
 
@@ -428,7 +429,7 @@ history_show_prev:
     popa
     ret
 
-; --- Стрелка вниз: показать более новую команду (или очистить строку) ---
+; --- Down arrow: show a newer command (or clear the line) ---
 history_show_next:
     pusha
 
@@ -463,8 +464,8 @@ history_show_next:
     ret
 
 ; ============================================================
-; Сравнение двух ноль-терминированных строк (DS:SI и DS:DI)
-; Результат: ax = 1, если равны, иначе ax = 0
+; Compares two zero-terminated strings (DS:SI and DS:DI)
+; Result: ax = 1 if equal, otherwise ax = 0
 ; ============================================================
 strcmp_eq:
     push si
@@ -490,8 +491,8 @@ strcmp_eq:
     ret
 
 ; ============================================================
-; Проверка префикса: строка DS:SI начинается со строки DS:DI?
-; Результат: ax = 1, если да, иначе ax = 0
+; Prefix check: does the string DS:SI start with the string DS:DI?
+; Result: ax = 1 if yes, otherwise ax = 0
 ; ============================================================
 strcmp_prefix:
     push si
@@ -517,7 +518,7 @@ strcmp_prefix:
     ret
 
 ; ============================================================
-; Парсинг одного hex-байта (2 символа, DS:SI) -> al
+; Parses one hex byte (2 characters, DS:SI) -> al
 ; ============================================================
 parse_hex_byte:
     push si
