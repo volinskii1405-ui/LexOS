@@ -75,17 +75,23 @@ alex@/$
 - On first boot the root folder is seeded with `README`, a demo `TEST.BIN`,
   and a `LICENSE` file holding the project's own license text (long enough
   to spill from the inline area into chained extra sectors).
+- `ls` prints folders in bright yellow so they stand out from regular
+  files, which stay whatever color you've set with `color`.
 
 **Shell**
 - Real line editing: Left/Right/Home/End/Delete work anywhere in the line,
   not just Backspace at the end.
 - Command history (Up/Down), case-insensitive filename lookup, and a
-  30+ command set (`help` lists them all, paginated).
+  30+ command set (`help` lists them all, paginated). `history` lists
+  every saved entry, numbered.
 - Tab completion: as you type the last word of the line, if it matches a
   file in the current directory, the rest of that name shows up in blue
   right after the cursor - press Tab to accept it, or keep typing to
-  ignore it. Matches the current directory's files only, not command
-  names, and picks the first match on disk rather than an alphabetical one.
+  ignore it. Accepting also uppercases what you'd already typed, since
+  names are always stored UPPERCASE on disk ("re" + Tab finishes as
+  "README", not "reADME"). Matches the current directory's files only,
+  not command names, and picks the first match on disk rather than an
+  alphabetical one.
 - The very first boot shows a centered setup window (on a green backdrop)
   asking for a nickname and a UTC timezone offset, then drops you into the
   console. Both are saved to `USER.CFG` (a plain two-line text file). The
@@ -196,8 +202,9 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `beep [hz]` | play a short tone (frequency in hex, default 880 Hz) |
 | `serial <text>` | send text out over the COM1 UART |
 | `reboot` / `shutdown` | restart / power off |
+| `history` | list previously run commands, numbered oldest first |
 | **Filesystem** | |
-| `ls` | list files and folders in the current directory |
+| `ls` | list files and folders in the current directory (folders in yellow) |
 | `pwd` | show the current folder path |
 | `tree` | show every file and folder as a tree |
 | `cd <name>` | enter a folder |
@@ -330,6 +337,8 @@ src/
   only offers the first on-disk match for the typed prefix (not the
   alphabetically-first one, and no cycling through other matches), and
   only completes against filenames — never command names.
+- `history` only remembers the last `HISTORY_SIZE` (8) commands — older
+  ones roll off the ring buffer the same way Up/Down browsing already did.
 
 ## License
 

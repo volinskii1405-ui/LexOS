@@ -45,6 +45,8 @@ tab_update_suggestion:
     dec bx
     jmp .find_start
 .have_start:
+    mov [tab_word_start], bx     ; remembered for tab_try_complete, to
+                                  ; uppercase the already-typed part too
     mov cx, [buf_len]
     sub cx, bx                  ; cx = length of the word being typed
     cmp cx, 0
@@ -193,22 +195,55 @@ tab_clear_suggestion:
 ; insert_char_at_cursor the keyboard loop itself uses) and recomputes the
 ; suggestion afterward (normally there won't be one - the word now matches
 ; the file name exactly). Does nothing if no suggestion is active.
+;
+; Also uppercases whatever of the word was already typed: names are
+; always stored UPPERCASE on disk (see fs_ren/user.asm), so accepting a
+; suggestion should finish the whole word in that case - "re" + Tab
+; becomes "README", not "reADME".
 ; ============================================================
 tab_try_complete:
     push ax
+    push bx
     push cx
+    push di
     push si
 
     cmp byte [tab_sugg_active], 0
     je .done
 
-    mov cx, [tab_sugg_len]
-    mov si, tab_sugg_text
-
     ; erase the ghost text before typing over it for real - otherwise
     ; tab_update_suggestion's own clear (below) would run AFTER the cursor
     ; has already moved past the inserted text and erase the wrong cells
     call tab_clear_suggestion
+
+    ; --- uppercase the already-typed part of the word in place ---
+    mov bx, [tab_word_start]
+    mov cx, [buf_cursor]
+    sub cx, bx                    ; cx = length of what's already typed
+    cmp cx, 0
+    je .prefix_done
+
+    mov ax, [cursor_col]
+    sub ax, cx
+    mov [cursor_col], ax
+    call update_hw_cursor          ; back up to where the word started on screen
+
+    mov di, buffer
+    add di, bx
+.upper_loop:
+    cmp cx, 0
+    je .prefix_done
+    mov al, [di]
+    call to_upper_al
+    mov [di], al
+    call print_char                ; reprints in place and re-advances the cursor
+    inc di
+    dec cx
+    jmp .upper_loop
+.prefix_done:
+
+    mov cx, [tab_sugg_len]
+    mov si, tab_sugg_text
 .insert_loop:
     cmp cx, 0
     je .insert_done
@@ -224,6 +259,8 @@ tab_try_complete:
 
 .done:
     pop si
+    pop di
     pop cx
+    pop bx
     pop ax
     ret
