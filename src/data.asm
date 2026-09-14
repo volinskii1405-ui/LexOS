@@ -175,6 +175,7 @@ help_l40 db "  head <n> [k]  - print first k lines of file n (default 10)", 13, 
 help_l41 db "  tail <n> [k]  - print last k lines of file n (default 10)", 13, 10, 0
 help_l42 db "  uranium <n>   - open file n in the full-screen text editor", 13, 10, 0
 help_l43 db "  history       - list previously run commands", 13, 10, 0
+help_l44 db "  df / free     - show directory slot / extra sector usage", 13, 10, 0
 
 help_lines:
     dw help_l01, help_l02, help_l03, help_l04, help_l05
@@ -184,7 +185,7 @@ help_lines:
     dw help_l24, help_l25, help_l26, help_l27, help_l28
     dw help_l29, help_l30, help_l31, help_l32, help_l33
     dw help_l34, help_l35, help_l38, help_l39, help_l40
-    dw help_l41, help_l42, help_l43
+    dw help_l41, help_l42, help_l43, help_l44
 help_lines_end:
 
 HELP_LINE_COUNT equ (help_lines_end - help_lines) / 2
@@ -199,6 +200,12 @@ msg_colon_space  db ": ", 0
 msg_sector_error db "Disk read error while reading sectors.", 13, 10, 0
 
 msg_history_empty db "No command history yet.", 13, 10, 0
+
+msg_df_slots_label db "Directory slots: ", 0
+msg_df_extra_label db "Extra sectors:   ", 0
+msg_df_slash       db "/", 0
+msg_df_used        db " used, ", 0
+msg_df_free        db " free", 13, 10, 0
 
 msg_fs_full       db "No free file slots.", 13, 10, 0
 msg_fs_notfound   db "Not found.", 13, 10, 0
@@ -395,6 +402,8 @@ cmd_head_prefix  db "head ", 0
 cmd_tail_prefix  db "tail ", 0
 cmd_uranium_prefix db "uranium ", 0
 cmd_history      db "history", 0
+cmd_df           db "df", 0
+cmd_free         db "free", 0
 
 ; ============================================================
 ; Working variables
@@ -434,6 +443,11 @@ tab_word_start  dw 0     ; buffer index where the word being completed
 ATTR_TAB_SUGGESTION_FG equ 0x09   ; bright blue - OR'd onto the current
                                   ; background so it stays readable under
                                   ; any `color` the user has set
+tab_complete_enabled db 1        ; the first-boot wizard (src/user.asm)
+                                  ; turns this off around its nickname/
+                                  ; timezone prompts - completing against
+                                  ; filenames makes no sense while typing
+                                  ; those, and turns it back on afterward
 
 history_count      dw 0
 history_next_slot  dw 0

@@ -11,7 +11,7 @@
 ; is no longer here - but the rest of the filesystem still works only
 ; through fs_read_slot/fs_write_slot, nothing else changed.
 ;
-; Exports: fs_cat, fs_rm, fs_list, fs_ren, fs_size,
+; Exports: fs_cat, fs_rm, fs_list, fs_ren, fs_size, fs_df,
 ;          fs_mkdir, fs_cd, fs_ensure_readme, fs_print_prompt,
 ;          fs_find_prefix_match, fs_name_has_prefix, fs_read_slot_name
 
@@ -652,6 +652,97 @@ fs_list:
 
 .end:
     pop dx
+    pop bx
+    pop ax
+    ret
+
+; --- df / free : shows how full the directory-slot table and the
+;     extra-sector pool are (see FS_FILE_COUNT/FS_EXTRA_COUNT in
+;     src/data.asm) ---
+fs_df:
+    push ax
+    push bx
+    push cx
+
+    mov si, msg_df_slots_label
+    call print_string
+
+    xor bx, bx
+    xor cx, cx                    ; cx = number of used slots
+.scan_slots:
+    cmp bx, FS_FILE_COUNT
+    jae .slots_done
+    push bx
+    mov ax, bx
+    call fs_read_slot
+    pop bx
+    mov ax, FS_TYPE_OFFSET
+    call fs_scratch_read_byte
+    cmp al, FS_TYPE_FREE
+    je .slot_free
+    inc cx
+.slot_free:
+    inc bx
+    jmp .scan_slots
+.slots_done:
+    mov ax, cx
+    call print_dec_word
+    mov si, msg_df_slash
+    call print_string
+    mov ax, FS_FILE_COUNT
+    call print_dec_word
+    mov si, msg_df_used
+    call print_string
+    mov ax, FS_FILE_COUNT
+    sub ax, cx
+    call print_dec_word
+    mov si, msg_df_free
+    call print_string
+
+    mov si, msg_df_extra_label
+    call print_string
+
+    mov ax, FS_BITMAP_SECTOR
+    call ata_read_sector
+    jc .extra_error
+
+    xor bx, bx
+    xor cx, cx                    ; cx = number of used extra sectors
+.scan_extra:
+    cmp bx, FS_EXTRA_COUNT
+    jae .extra_done
+    push bx
+    mov ax, bx
+    call fs_scratch_read_byte
+    pop bx
+    cmp al, 0
+    je .extra_free
+    inc cx
+.extra_free:
+    inc bx
+    jmp .scan_extra
+.extra_done:
+    mov ax, cx
+    call print_dec_word
+    mov si, msg_df_slash
+    call print_string
+    mov ax, FS_EXTRA_COUNT
+    call print_dec_word
+    mov si, msg_df_used
+    call print_string
+    mov ax, FS_EXTRA_COUNT
+    sub ax, cx
+    call print_dec_word
+    mov si, msg_df_free
+    call print_string
+    jmp .end
+
+.extra_error:
+    mov si, msg_sector_error
+    call print_string
+
+.end:
+    pop cx
     pop bx
     pop ax
     ret

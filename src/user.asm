@@ -268,6 +268,11 @@ user_run_setup_wizard:
     mov al, [current_color]
     mov [user_wiz_saved_color], al
 
+    ; filename completion makes no sense while typing a nickname or a
+    ; timezone offset - see src/tabcomplete.asm - turned back on in
+    ; .reset_history below, once both prompts are done either way
+    mov byte [tab_complete_enabled], 0
+
     mov byte [current_color], ATTR_WIZ_BG
     call clear_screen
     call user_draw_setup_window
@@ -452,6 +457,8 @@ user_run_setup_wizard:
     call print_string
 
 .reset_history:
+    mov byte [tab_complete_enabled], 1
+
     ; setup answers shouldn't linger in the shell's Up/Down history
     mov word [history_count], 0
     mov word [history_next_slot], 0
