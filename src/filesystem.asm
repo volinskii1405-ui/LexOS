@@ -1237,37 +1237,31 @@ fs_ensure_readme:
     pop ax
     ret
 
-; --- Prints the prompt with the current directory's name (if not root),
-;     followed by the usual "$ " from print_prompt. ---
+; --- Prints "nickname@/path/to/here$ " - the nickname (see src/user.asm),
+;     the full path from the root (via fs_print_path, same as pwd), and
+;     the usual "$ " from print_prompt. ---
 fs_print_prompt:
     push ax
-    push bx
+    push si
+
+    mov si, user_nickname
+    call print_string
+    mov al, '@'
+    call print_char
 
     mov ax, [fs_current_dir]
     cmp ax, FS_ROOT
-    je .just_prompt
+    jne .not_root
+    mov si, slash_string
+    call print_string
+    jmp .after_path
+.not_root:
+    call fs_print_path
+.after_path:
 
-    call fs_read_slot
-
-    xor bx, bx
-.print_name:
-    cmp bx, FS_NAME_LEN
-    jae .name_done
-    push bx
-    mov ax, bx
-    call fs_scratch_read_byte
-    pop bx
-    cmp al, 0
-    je .name_done
-    call print_char
-    inc bx
-    jmp .print_name
-.name_done:
-
-.just_prompt:
     call print_prompt
 
-    pop bx
+    pop si
     pop ax
     ret
 

@@ -49,6 +49,7 @@ kernel_start:
     call fs_ensure_readme    ; creates README.TXT in the root if it doesn't exist yet
     call fs_ensure_test_exe  ; creates TEST.BIN in the root if it doesn't exist yet
     call fs_ensure_license   ; creates LICENSE in the root if it doesn't exist yet
+    call fs_ensure_user_cfg  ; loads USER.CFG, or runs first-boot setup to create it
 
     call fs_print_prompt
 
@@ -74,6 +75,7 @@ main_loop:
 %include "src/grep.asm"
 %include "src/headtail.asm"
 %include "src/uranium.asm"
+%include "src/user.asm"
 
 ; Pad the remaining space within the sectors the bootloader reads,
 ; so the file size is a multiple of 512 bytes (see KERNEL_SECTORS_1/2 in boot.asm).

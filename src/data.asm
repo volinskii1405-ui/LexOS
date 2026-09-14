@@ -86,6 +86,13 @@ FS_ROOT_BYTE equ 0xFF       ; value of the parent byte for records at the root
 ; --- Command history ---
 HISTORY_SIZE equ 8
 
+; --- Per-user profile (nickname + UTC timezone offset), stored in
+;     USER.CFG and set up interactively on first boot - see src/user.asm ---
+USER_NICKNAME_LEN equ 12
+user_cfg_name    db "USER.CFG", 0
+user_nickname    times (USER_NICKNAME_LEN + 1) db 0
+user_tz_offset   dw 0
+
 ; ============================================================
 ; Messages
 ; ============================================================
@@ -195,6 +202,13 @@ msg_uranium_header3  db " bytes)", 13, 10, 13, 10, 0
 msg_uranium_footer   db "Ctrl+B=Save&Exit  Ctrl+H=Save  ESC=Exit", 0
 msg_uranium_saved_flash db "Saved.", 0
 msg_uranium_confirm  db "Are you sure?", 13, 10, 13, 10, "Y - YES.         N - NO.", 0
+
+msg_user_setup_banner db 13, 10, "First boot - let's set a few things up.", 13, 10, 13, 10, 0
+msg_user_ask_nickname db "Choose a nickname: ", 0
+msg_user_ask_timezone db "UTC timezone offset (e.g. +3, -5, 0): ", 0
+msg_user_setup_done1  db 13, 10, "Welcome, ", 0
+msg_user_setup_done2  db "! (see USER.CFG)", 13, 10, 13, 10, 0
+
 msg_bytes_suffix   db " bytes", 13, 10, 0
 fs_dir_extension   db "  <DIR>", 0
 
