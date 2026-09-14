@@ -1,45 +1,45 @@
-; data.asm — константы, сообщения и рабочие переменные ядра LexOS
+; data.asm — constants, messages, and working variables of the LexOS kernel
 ;
-; ПРИМЕЧАНИЕ О ПЛОСКОЙ МОДЕЛИ ПАМЯТИ: ядро целиком (код + все переменные
-; ниже) загружено по адресу ORG 0x8000 и умещается в несколько десятков
-; килобайт, поэтому адрес ЛЮБОЙ метки в этом файле гарантированно меньше
-; 0x10000 и спокойно помещается в 16-битный регистр/непосредственное
-; значение - весь код, работающий с этими переменными через
-; si/di/bx/ax (как в реал-моде), продолжает работать без изменений.
-; Единственные адреса, которым НЕ хватает 16 бит - это настоящее
-; железо вне образа ядра (видеопамять, ATA scratch-буфер), поэтому
-; для них ниже отдельные плоские (линейные) константы VIDEO_MEM и
-; SCRATCH_ADDR - там, где к ним обращаются (screen.asm, ata.asm,
-; filesystem.asm), используются 32-битные регистры.
+; NOTE ON THE FLAT MEMORY MODEL: the whole kernel (code + all the variables
+; below) is loaded at address ORG 0x8000 and fits in a few dozen
+; kilobytes, so the address of ANY label in this file is guaranteed to be
+; below 0x10000 and fits comfortably in a 16-bit register/immediate
+; value - all the code that works with these variables via
+; si/di/bx/ax (as in real mode) keeps working unchanged.
+; The only addresses that DON'T fit in 16 bits are real hardware outside
+; the kernel image (video memory, the ATA scratch buffer), so for those
+; there are separate flat (linear) constants below, VIDEO_MEM and
+; SCRATCH_ADDR - wherever they're accessed (screen.asm, ata.asm,
+; filesystem.asm), 32-bit registers are used.
 
 BUFFER_MAX equ 63
 SCREEN_COLS equ 80
 SCREEN_ROWS equ 25
 
-; --- Плоские (линейные) адреса вместо сегментных трюков реал-мода ---
-VIDEO_MEM    equ 0xB8000     ; видеопамять VGA text mode, линейный адрес
-SCRATCH_ADDR equ 0x91000     ; scratch-буфер для чтения/записи одного сектора
+; --- Flat (linear) addresses instead of real-mode segment tricks ---
+VIDEO_MEM    equ 0xB8000     ; VGA text mode video memory, linear address
+SCRATCH_ADDR equ 0x91000     ; scratch buffer for reading/writing one sector
 
 SECTOR_COUNT equ 8
 
-; --- Файловая система ---
-; Раскладка одной записи (1 запись = 1 сектор на диске):
-;   байты 0..7   - имя (ASCII, дополнено нулями)
-;   байт 8       - тип (0=свободно, 1=файл, 2=папка)
-;   байт 9       - родитель (индекс слота папки-родителя, 0xFF = корень)
-;   байты 10..   - содержимое (ноль-терминированное, не используется для папок)
-FS_START_SECTOR   equ 98      ; сектор 1=загрузчик, 2..97=ядро (96 секторов)
+; --- Filesystem ---
+; Layout of one record (1 record = 1 disk sector):
+;   bytes 0..7   - name (ASCII, zero-padded)
+;   byte 8       - type (0=free, 1=file, 2=folder)
+;   byte 9       - parent (slot index of the parent folder, 0xFF = root)
+;   bytes 10..   - content (zero-terminated, unused for folders)
+FS_START_SECTOR   equ 98      ; sector 1=bootloader, 2..97=kernel (96 sectors)
 FS_FILE_COUNT     equ 24
 FS_NAME_LEN       equ 16
 FS_CONTENT_LEN    equ 128
 FS_SCRATCH_ADDR   equ SCRATCH_ADDR
 
-; Чтение/запись секторов - всегда через свой ATA-драйвер (прямая работа
-; с портами, в обход BIOS). В protected mode у нас вообще нет доступа
-; к BIOS (нет v86-режима/thunk'а на реальный режим), так что это не
-; настраиваемая опция, как было в реал-модной версии, а единственный
-; путь - но остальной код по-прежнему работает только через
-; fs_read_slot/fs_write_slot, ничего другого не меняя.
+; Sector read/write - always through our own ATA driver (direct port
+; access, bypassing the BIOS). In protected mode we have no access to
+; the BIOS at all (no v86 mode/thunk into real mode), so this isn't a
+; configurable option like it was in the real-mode version, but the
+; only path there is - though the rest of the code still only goes
+; through fs_read_slot/fs_write_slot, nothing else changes.
 FS_USE_ATA equ 1
 
 FS_TYPE_OFFSET    equ FS_NAME_LEN
@@ -51,19 +51,19 @@ FS_TYPE_FILE equ 1
 FS_TYPE_DIR  equ 2
 FS_TYPE_PROGRAM equ 3
 
-; --- Цепочки дополнительных секторов (для файлов больше 127 байт,
-;     см. src/fs_extra.asm и команду append) ---
-; В каждом слоте директории (и в каждом дополнительном секторе) байты
-; 146-507 не используются вообще ни для чего (макс. инлайн-контент
-; кончается на 145) - там свободно место под 2 служебных 16-битных
-; поля в самом хвосте сектора, без сдвига существующей раскладки:
-FS_TOTAL_LEN_OFFSET equ 508    ; (только FS_TYPE_FILE) общая длина контента
-FS_CHAIN_OFFSET     equ 510    ; индекс первого доп. сектора, FS_NO_CHAIN=нет
+; --- Chains of extra sectors (for files larger than 127 bytes,
+;     see src/fs_extra.asm and the append command) ---
+; In every directory slot (and in every extra sector) bytes
+; 146-507 aren't used for anything at all (max inline content
+; ends at 145) - that leaves room for 2 auxiliary 16-bit
+; fields right at the tail of the sector, without shifting the existing layout:
+FS_TOTAL_LEN_OFFSET equ 508    ; (FS_TYPE_FILE only) total content length
+FS_CHAIN_OFFSET     equ 510    ; index of the first extra sector, FS_NO_CHAIN=none
 FS_NO_CHAIN         equ 0xFFFF
 
-; Раскладка доп. сектора (не имеет заголовка директории, целиком чужой
-; пул): байты 0-507 - содержимое, байты 508-509 - сколько из них занято,
-; байты 510-511 - индекс следующего доп. сектора (FS_NO_CHAIN = конец).
+; Layout of an extra sector (has no directory header, entirely its own
+; pool): bytes 0-507 - content, bytes 508-509 - how many of them are used,
+; bytes 510-511 - index of the next extra sector (FS_NO_CHAIN = end).
 FS_EXTRA_CONTENT_LEN equ 508
 FS_EXTRA_USED_OFFSET equ 508
 FS_EXTRA_NEXT_OFFSET equ 510
@@ -72,22 +72,22 @@ FS_EXTRA_COUNT equ 64
 FS_BITMAP_SECTOR equ FS_START_SECTOR + FS_FILE_COUNT
 FS_EXTRA_START_SECTOR equ FS_BITMAP_SECTOR + 1
 
-; --- Программы и hex-редактор ---
-; content[0] у файлов типа PROGRAM хранит длину (0..127), content[1..] -
-; сами байты машинного кода (в отличие от текстовых файлов, НЕ ноль-
-; терминированные, т.к. 0x00 может быть частью реального кода).
-PROGRAM_MAX_LEN equ FS_CONTENT_LEN - 1   ; 127 байт максимум на программу
+; --- Programs and the hex editor ---
+; content[0] of PROGRAM-type files stores the length (0..127), content[1..] -
+; the actual machine code bytes (unlike text files, NOT zero-
+; terminated, since 0x00 may be part of the real code).
+PROGRAM_MAX_LEN equ FS_CONTENT_LEN - 1   ; 127 bytes max per program
 HEX_GRID_COLS equ 8
 HEX_GRID_ROWS equ 16
 
-FS_ROOT equ 0xFFFF          ; значение fs_current_dir, когда мы в корне
-FS_ROOT_BYTE equ 0xFF       ; значение байта parent для записей в корне
+FS_ROOT equ 0xFFFF          ; value of fs_current_dir when we're at the root
+FS_ROOT_BYTE equ 0xFF       ; value of the parent byte for records at the root
 
-; --- История команд ---
+; --- Command history ---
 HISTORY_SIZE equ 8
 
 ; ============================================================
-; Сообщения
+; Messages
 ; ============================================================
 welcome_msg db "Type help for commands", 13, 10, 13, 10, 0
 
@@ -236,12 +236,12 @@ program_exec_buffer times PROGRAM_MAX_LEN db 0
 BATCH_BUF_LEN equ 511
 batch_content_buf times (BATCH_BUF_LEN + 1) db 0
 
-; --- content_buf: буфер, в который grep/head/tail/uranium целиком читают
-; содержимое файла (не потоково, как cat/batch) через fs_load_content
-; (src/fs_extra.asm) - grep считает совпадения в два прохода, head/tail
-; ищут границы строк, а uranium редактирует его напрямую как рабочий
-; буфер редактора. Если файл больше CONTENT_BUF_LEN, лишний хвост просто
-; не читается (см. "Known limitations" в README). ---
+; --- content_buf: the buffer that grep/head/tail/uranium read the whole
+; file content into (not streamed, like cat/batch) via fs_load_content
+; (src/fs_extra.asm) - grep counts matches in two passes, head/tail
+; look for line boundaries, and uranium edits it directly as its
+; working editor buffer. If the file is larger than CONTENT_BUF_LEN,
+; the extra tail is simply not read (see "Known limitations" in the README). ---
 CONTENT_BUF_LEN equ 4096
 content_buf times CONTENT_BUF_LEN db 0
 content_buf_len dw 0
@@ -284,14 +284,14 @@ readme_content db "LexOS - a tiny 32-bit protected-mode OS made with NASM.", 13,
                db "Type 'help' for commands. Names are stored", 13, 10
                db "UPPERCASE; type your own extension. Enjoy!", 0
 
-; --- LICENSE: полный текст лицензии проекта (MIT). Длиннее 127 байт,
-; поэтому создаётся не как README (один инлайн-кусок), а через
-; fs_ensure_license (src/fs_extra.asm), который дозаписывает остаток
-; через fs_append в цепочку доп. секторов - см. FS_CHAIN_OFFSET.
-; Строка ниже - готовый аргумент для fs_append: "LICENSE " + сам текст,
-; с настоящими переводами строк (13,10) внутри - fs_append копирует их
-; как обычные байты, не трогая (спецобработка "\n" нужна только когда
-; текст набирают на клавиатуре, где реального Enter внутри строки нет).
+; --- LICENSE: the full text of the project's license (MIT). Longer than
+; 127 bytes, so it's created not like README (a single inline chunk) but
+; via fs_ensure_license (src/fs_extra.asm), which appends the remainder
+; through fs_append into a chain of extra sectors - see FS_CHAIN_OFFSET.
+; The line below is a ready-made argument for fs_append: "LICENSE " + the
+; text itself, with actual newlines (13,10) inside - fs_append copies them
+; as plain bytes without touching them (special-casing "\n" is only needed
+; when text is typed on the keyboard, where there's no real Enter inside a line).
 license_name db "LICENSE", 0
 license_append_line:
     db "LICENSE "
@@ -319,7 +319,7 @@ license_append_line:
     db 0
 
 ; ============================================================
-; Имена команд (для сравнения)
+; Command names (for comparison)
 ; ============================================================
 cmd_shutdown     db "shutdown", 0
 cmd_cls          db "cls", 0
@@ -353,7 +353,7 @@ cmd_tail_prefix  db "tail ", 0
 cmd_uranium_prefix db "uranium ", 0
 
 ; ============================================================
-; Рабочие переменные
+; Working variables
 ; ============================================================
 boot_drive_copy db 0
 
@@ -370,8 +370,8 @@ history_buf         times (HISTORY_SIZE * (BUFFER_MAX + 1)) db 0
 
 cursor_row dw 0
 cursor_col dw 0
-current_color db 0x07   ; светло-серый на чёрном - мягче для глаз, чем ярко-белый
-COLOR_RED equ 0x0C      ; ярко-красный на чёрном - подсветка найденного текста в grep
+current_color db 0x07   ; light gray on black - easier on the eyes than bright white
+COLOR_RED equ 0x0C      ; bright red on black - highlighting for matched text in grep
 
 fs_tmp_name times (FS_NAME_LEN + 1) db 0
 fs_tmp_name2 times (FS_NAME_LEN + 1) db 0

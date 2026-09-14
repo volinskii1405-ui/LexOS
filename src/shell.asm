@@ -1,8 +1,8 @@
-; shell.asm — разбор и выполнение команд, введённых пользователем
-; Экспортирует: handle_command
+; shell.asm — parses and executes commands entered by the user
+; Exports: handle_command
 
 ; ============================================================
-; Разбор и выполнение команды (DS:buffer, ноль-терминированная)
+; Parses and executes a command (DS:buffer, zero-terminated)
 ; ============================================================
 handle_command:
     pusha
@@ -211,11 +211,11 @@ handle_command:
     cmp ax, 1
     je .do_uranium
 
-    ; Пустая строка (просто Enter) — ничего не делаем
+    ; Empty line (just Enter) — do nothing
     cmp byte [buffer], 0
     je .done
 
-    ; Неизвестная команда
+    ; Unknown command
     mov si, msg_unknown
     call print_string
     mov si, buffer
@@ -240,7 +240,7 @@ handle_command:
 
 .do_echo:
     mov si, buffer
-    add si, 5                  ; пропускаем "echo "
+    add si, 5                  ; skip "echo "
     call print_string
     mov si, msg_newline
     call print_string
@@ -248,7 +248,7 @@ handle_command:
 
 .do_color:
     mov si, buffer
-    add si, 6                  ; пропускаем "color "
+    add si, 6                  ; skip "color "
     call parse_hex_byte
     mov [current_color], al
     mov si, msg_color_ok
@@ -265,37 +265,37 @@ handle_command:
 
 .do_cat:
     mov si, buffer
-    add si, 4                  ; пропускаем "cat "
+    add si, 4                  ; skip "cat "
     call fs_cat
     jmp .done
 
 .do_rm:
     mov si, buffer
-    add si, 3                  ; пропускаем "rm "
+    add si, 3                  ; skip "rm "
     call fs_rm
     jmp .done
 
 .do_ren:
     mov si, buffer
-    add si, 4                  ; пропускаем "ren "
+    add si, 4                  ; skip "ren "
     call fs_ren
     jmp .done
 
 .do_size:
     mov si, buffer
-    add si, 5                  ; пропускаем "size "
+    add si, 5                  ; skip "size "
     call fs_size
     jmp .done
 
 .do_batch:
     mov si, buffer
-    add si, 6                  ; пропускаем "batch "
+    add si, 6                  ; skip "batch "
     call fs_batch
     jmp .done
 
 .do_mkdir:
     mov si, buffer
-    add si, 6                  ; пропускаем "mkdir "
+    add si, 6                  ; skip "mkdir "
     call fs_mkdir
     jmp .done
 
@@ -318,25 +318,25 @@ handle_command:
 
 .do_ataread:
     mov si, buffer
-    add si, 8                  ; пропускаем "ataread "
+    add si, 8                  ; skip "ataread "
     call show_ata_sector
     jmp .done
 
 .do_run:
     mov si, buffer
-    add si, 4                  ; пропускаем "run "
+    add si, 4                  ; skip "run "
     call fs_run
     jmp .done
 
 .do_hex:
     mov si, buffer
-    add si, 4                  ; пропускаем "hex "
+    add si, 4                  ; skip "hex "
     call hex_editor
     jmp .done
 
 .do_cd_arg:
     mov si, buffer
-    add si, 3                  ; пропускаем "cd "
+    add si, 3                  ; skip "cd "
     call fs_cd
     jmp .done
 
@@ -347,13 +347,13 @@ handle_command:
 
 .do_cp:
     mov si, buffer
-    add si, 3                  ; пропускаем "cp "
+    add si, 3                  ; skip "cp "
     call fs_cp
     jmp .done
 
 .do_mv:
     mov si, buffer
-    add si, 3                  ; пропускаем "mv "
+    add si, 3                  ; skip "mv "
     call fs_mv
     jmp .done
 
@@ -375,7 +375,7 @@ handle_command:
 
 .do_beep:
     mov si, buffer
-    add si, 5                  ; пропускаем "beep "
+    add si, 5                  ; skip "beep "
     call do_beep_cmd
     jmp .done
 
@@ -386,31 +386,31 @@ handle_command:
 
 .do_serial:
     mov si, buffer
-    add si, 7                  ; пропускаем "serial "
+    add si, 7                  ; skip "serial "
     call cmd_serial
     jmp .done
 
 .do_grep:
     mov si, buffer
-    add si, 5                  ; пропускаем "grep "
+    add si, 5                  ; skip "grep "
     call fs_grep
     jmp .done
 
 .do_head:
     mov si, buffer
-    add si, 5                  ; пропускаем "head "
+    add si, 5                  ; skip "head "
     call fs_head
     jmp .done
 
 .do_tail:
     mov si, buffer
-    add si, 5                  ; пропускаем "tail "
+    add si, 5                  ; skip "tail "
     call fs_tail
     jmp .done
 
 .do_uranium:
     mov si, buffer
-    add si, 8                  ; пропускаем "uranium "
+    add si, 8                  ; skip "uranium "
     call uranium_editor
 
 .done:
@@ -418,7 +418,7 @@ handle_command:
     ret
 
 ; ============================================================
-; Постраничный просмотр справки: A/D — листать страницы, ESC — выход.
+; Paginated help viewer: A/D — flip pages, ESC — exit.
 ; ============================================================
 show_help:
     push ax
@@ -513,7 +513,7 @@ show_help:
     ret
 
 ; ============================================================
-; Выключение системы (ACPI shutdown через порт QEMU/Bochs 0x604)
+; System shutdown (ACPI shutdown via the QEMU/Bochs port 0x604)
 ; ============================================================
 do_shutdown:
     mov ax, 0x2000
@@ -524,8 +524,8 @@ do_shutdown:
     jmp .halt_loop
 
 ; ============================================================
-; Перезагрузка через контроллер клавиатуры (8042): импульс на
-; линии reset. Широко поддерживается, включая QEMU.
+; Reboot via the keyboard controller (8042): a pulse on the
+; reset line. Widely supported, including by QEMU.
 ; ============================================================
 do_reboot:
     cli
@@ -540,14 +540,14 @@ do_reboot:
     jmp .halt_loop
 
 ; ============================================================
-; Читает SECTOR_COUNT секторов диска (LBA 0..SECTOR_COUNT-1) через
-; ATA-драйвер и печатает первые 8 байт каждого сектора в hex.
+; Reads SECTOR_COUNT disk sectors (LBA 0..SECTOR_COUNT-1) via the
+; ATA driver and prints the first 8 bytes of each sector in hex.
 ;
-; В отличие от реал-модной версии, которая читала все SECTOR_COUNT
-; секторов ОДНИМ вызовом BIOS int 13h в общий буфер, здесь BIOS
-; недоступен - ata_read_sector умеет только один сектор за раз, так
-; что читаем и сразу печатаем по одному сектору за итерацию, каждый
-; раз заново используя тот же scratch-буфер (SCRATCH_ADDR).
+; Unlike the real-mode version, which read all SECTOR_COUNT
+; sectors with ONE BIOS int 13h call into a shared buffer, here the
+; BIOS is unavailable - ata_read_sector can only handle one sector at
+; a time, so we read and immediately print one sector per iteration,
+; reusing the same scratch buffer (SCRATCH_ADDR) each time.
 ; ============================================================
 show_sectors:
     pusha

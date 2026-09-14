@@ -551,7 +551,7 @@ uranium_delete_at_cursor:
     ret
 
 ; ============================================================
-; Backspace: удаляет байт ПЕРЕД курсором, сдвигая курсор назад.
+; Backspace: deletes the byte BEFORE the cursor, moving the cursor back.
 ; ============================================================
 uranium_backspace:
     cmp word [uranium_cursor_pos], 0
@@ -562,10 +562,10 @@ uranium_backspace:
     ret
 
 ; ============================================================
-; Записывает content_buf[0..content_buf_len) на диск в слот (индекс
-; в ax): сначала освобождает старую цепочку доп. секторов, пишет
-; инлайн-часть (до 127 байт), а остаток - в новую цепочку доп.
-; секторов (по протоколу fs_append: used/next поля, см. src/fs_extra.asm).
+; Writes content_buf[0..content_buf_len) to disk into the slot (index
+; in ax): first frees the old chain of extra sectors, writes the
+; inline part (up to 127 bytes), and the remainder - into a new chain
+; of extra sectors (per the fs_append protocol: used/next fields, see src/fs_extra.asm).
 ; ============================================================
 fs_save_content:
     push ax

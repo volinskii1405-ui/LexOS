@@ -217,23 +217,23 @@ keyboard_isr:
 
 .check_release:
     test al, 0x80
-    jnz .eoi                      ; отпускание клавиши (обычной или расширенной,
-                                   ; флаг extended уже сброшен выше) - игнорируем
+    jnz .eoi                      ; key release (normal or extended, the
+                                   ; extended flag was already cleared above) - ignore
 
-    mov bl, al                     ; bl = scancode нажатой клавиши
+    mov bl, al                     ; bl = scancode of the pressed key
 
     cmp bh, 0
     je .normal_key
 
-    ; расширенная клавиша (стрелки и т.п.) - кладём (al=0, ah=scancode),
-    ; тот же формат, что и у read_key для спецклавиш
+    ; extended key (arrows, etc) - push (al=0, ah=scancode),
+    ; the same format read_key uses for special keys
     xor ax, ax
     mov ah, bl
     call push_key_to_buffer
     jmp .eoi
 
 .normal_key:
-    xor bh, bh                     ; bx = scancode, индекс в таблице
+    xor bh, bh                     ; bx = scancode, index into the table
     cmp byte [kbd_shift_held], 0
     je .use_lower
     mov al, [scancode_upper + bx]
@@ -242,19 +242,19 @@ keyboard_isr:
     mov al, [scancode_lower + bx]
 .have_ascii:
     cmp al, 0
-    je .eoi                         ; нет ASCII для этой клавиши (Ctrl/Alt/CapsLock) - игнорируем
+    je .eoi                         ; no ASCII value for this key (Ctrl/Alt/CapsLock) - ignore
     mov ah, bl
     call push_key_to_buffer
 
 .eoi:
     mov al, 0x20
-    out PIC1_CMD, al                 ; EOI контроллеру прерываний (PIC)
+    out PIC1_CMD, al                 ; EOI to the interrupt controller (PIC)
 
     pop ebx
     pop eax
     iret
 
-; --- Кладёт пару (al=ascii, ah=scancode) в кольцевой буфер ---
+; --- Pushes a pair (al=ascii, ah=scancode) into the ring buffer ---
 push_key_to_buffer:
     push ebx
     mov bl, [kbd_buf_head]
@@ -264,17 +264,17 @@ push_key_to_buffer:
 
     inc byte [kbd_buf_head]
     and byte [kbd_buf_head], KBD_BUF_SIZE - 1
-    ; примечание: при переполнении буфера новые нажатия начнут затирать
-    ; непрочитанные старые - приемлемо для простого шелла с одной строкой ввода
+    ; note: on buffer overflow, new keypresses will start overwriting
+    ; unread old ones - acceptable for a simple single-line-input shell
 
     pop ebx
     ret
 
 ; ============================================================
-; Обработчик таймера (IRQ0 -> вектор 32). Просто считает тики и шлёт
-; EOI - в отличие от реал-модной версии, chaining на BIOS невозможен
-; (BIOS-обработчика в protected mode не существует), да и счётчик
-; тиков нигде в системе не используется, кроме самого себя.
+; Timer handler (IRQ0 -> vector 32). Just counts ticks and sends
+; EOI - unlike the real-mode version, chaining to the BIOS is impossible
+; (there's no BIOS handler in protected mode), and besides, the tick
+; counter isn't used anywhere in the system other than by itself.
 ; ============================================================
 timer_isr:
     push eax
@@ -288,11 +288,12 @@ timer_isr:
     iret
 
 ; ============================================================
-; Заглушки: любое прерывание/исключение, для которого нет своего
-; обработчика. Шлём EOI обоим контроллерам и выходим, чтобы система
-; не падала на неожиданном IRQ. Два варианта, т.к. у части исключений
-; CPU кладёт в стек ещё и код ошибки (см. idt_setup) - его нужно снять
-; со стека ПЕРЕД iret, иначе iret прочитает EIP/CS/EFLAGS не оттуда.
+; Stubs: any interrupt/exception that has no handler of its own.
+; We send EOI to both controllers and return, so the system doesn't
+; crash on an unexpected IRQ. Two variants, because some exceptions
+; have the CPU also push an error code onto the stack (see idt_setup) -
+; it must be removed from the stack BEFORE iret, otherwise iret will
+; read EIP/CS/EFLAGS from the wrong place.
 ; ============================================================
 default_isr_noerr:
     push eax
@@ -308,13 +309,13 @@ default_isr_err:
     out PIC1_CMD, al
     out PIC2_CMD, al
     pop eax
-    add esp, 4      ; снимаем код ошибки, который iret не понимает
+    add esp, 4      ; remove the error code, which iret doesn't understand
     iret
 
 ; ============================================================
-; Блокирующее чтение клавиши из НАШЕГО буфера. Ждёт через hlt (не
-; жжёт процессор), пока обработчик прерывания не положит что-то в
-; буфер. Возвращает: al=ASCII (0 для спецклавиш), ah=scancode.
+; Blocking read of a key from OUR buffer. Waits via hlt (doesn't
+; burn the CPU) until the interrupt handler puts something into the
+; buffer. Returns: al=ASCII (0 for special keys), ah=scancode.
 ; ============================================================
 read_key:
     push ebx
@@ -338,8 +339,8 @@ read_key:
     ret
 
 ; ============================================================
-; Таблицы scancode -> ASCII (Set 1, US QWERTY). Индекс = scancode.
-; 0 = нет ASCII-значения (Ctrl/Alt/CapsLock/Shift и т.п.).
+; scancode -> ASCII tables (Set 1, US QWERTY). Index = scancode.
+; 0 = no ASCII value (Ctrl/Alt/CapsLock/Shift, etc).
 ; ============================================================
 scancode_lower:
     db 0,    0x1B, '1', '2', '3', '4', '5', '6', '7', '8'   ; 0x00-0x09
@@ -358,7 +359,7 @@ scancode_upper:
     db 'M',  '<',  '>', '?', 0,   '*', 0,   ' ', 0          ; 0x32-0x3A
 
 ; ============================================================
-; Данные
+; Data
 ; ============================================================
 kbd_buf_ascii    times KBD_BUF_SIZE db 0
 kbd_buf_scancode times KBD_BUF_SIZE db 0

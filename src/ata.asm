@@ -1,11 +1,11 @@
-; ata.asm — настоящий драйвer ATA (PIO mode), работает напрямую с портами
-; контроллера, в обход BIOS (в protected mode BIOS недоступен вовсе).
-; Primary bus, master drive. Все операции идут через один и тот же
-; scratch-буфер SCRATCH_ADDR (плоский линейный адрес, см. data.asm) -
-; ровно как в реал-модной версии все вызовы шли через один и тот же
-; сегмент SCRATCH_SEG:0000.
-; Экспортирует: ata_identify (для менеджера устройств), ata_read_sector,
-;               ata_write_sector, show_ata_sector (команда ataread)
+; ata.asm — a genuine ATA driver (PIO mode), works directly with the
+; controller's ports, bypassing BIOS entirely (BIOS is unavailable at all
+; in protected mode). Primary bus, master drive. All operations go through
+; the same scratch buffer SCRATCH_ADDR (a flat linear address, see data.asm) -
+; exactly as in the real-mode version all calls went through the same
+; segment SCRATCH_SEG:0000.
+; Exports: ata_identify (for the device manager), ata_read_sector,
+;          ata_write_sector, show_ata_sector (the ataread command)
 
 ATA_DATA        equ 0x1F0
 ATA_ERROR       equ 0x1F1
@@ -22,7 +22,7 @@ ATA_STATUS_DRQ equ 0x08
 ATA_STATUS_ERR equ 0x01
 
 ; ============================================================
-; Ждёт, пока контроллер снимет флаг BSY (занят).
+; Waits until the controller clears the BSY (busy) flag.
 ; ============================================================
 ata_wait_bsy_clear:
     push ax
@@ -37,7 +37,7 @@ ata_wait_bsy_clear:
     ret
 
 ; ============================================================
-; Ждёт, пока контроллер выставит флаг DRQ (данные готовы).
+; Waits until the controller sets the DRQ (data ready) flag.
 ; ============================================================
 ata_wait_drq:
     push ax
@@ -52,9 +52,9 @@ ata_wait_drq:
     ret
 
 ; ============================================================
-; IDENTIFY DEVICE: проверяет, что диск реально отвечает на прямые
-; команды контроллера (в обход BIOS). Используется как init-функция
-; устройства ATA в менеджере устройств. carry=0 успех, carry=1 ошибка.
+; IDENTIFY DEVICE: checks that the drive actually responds to direct
+; controller commands (bypassing BIOS). Used as the init function of
+; the ATA device in the device manager. carry=0 success, carry=1 error.
 ; ============================================================
 ata_identify:
     push ax
@@ -94,9 +94,9 @@ ata_identify:
 
     call ata_wait_drq
 
-    ; вычитываем 256 слов IDENTIFY-данных, чтобы освободить буфер
-    ; контроллера (сами данные нам сейчас не нужны)
-    mov ecx, 256                 ; "loop" по умолчанию считает по ECX в 32-битном сегменте
+    ; read out 256 words of IDENTIFY data to free up the controller's
+    ; buffer (we don't need the data itself right now)
+    mov ecx, 256                 ; "loop" defaults to counting via ECX in a 32-bit segment
     mov dx, ATA_DATA
 .drain_loop:
     in ax, dx
@@ -116,9 +116,9 @@ ata_identify:
     ret
 
 ; ============================================================
-; Читает ОДИН сектор (512 байт) через прямой PIO, в обход BIOS,
-; в scratch-буфер SCRATCH_ADDR. Вход: ax = LBA (0-65535).
-; Выход: carry=1 при ошибке.
+; Reads ONE sector (512 bytes) via direct PIO, bypassing BIOS,
+; into the scratch buffer SCRATCH_ADDR. Input: ax = LBA (0-65535).
+; Output: carry=1 on error.
 ; ============================================================
 ata_read_sector:
     push ax
@@ -132,7 +132,7 @@ ata_read_sector:
     call ata_wait_bsy_clear
 
     mov dx, ATA_DRIVE_HEAD
-    mov al, 0xE0                    ; master, LBA mode, старшие биты LBA(24-27)=0
+    mov al, 0xE0                    ; master, LBA mode, high LBA bits(24-27)=0
     out dx, al
 
     mov dx, ATA_SECCOUNT
@@ -165,13 +165,13 @@ ata_read_sector:
     call ata_wait_drq
 
     mov dx, ATA_DATA
-    mov edi, SCRATCH_ADDR             ; буфер - плоский линейный адрес, не влезает
-    mov cx, 256                        ; в 16 бит, поэтому индекс здесь 32-битный
+    mov edi, SCRATCH_ADDR             ; buffer - a flat linear address, doesn't fit
+    mov cx, 256                        ; in 16 bits, so the index here is 32-bit
 .read_loop:
     in ax, dx
     mov [edi], ax
     add edi, 2
-    a16 loop .read_loop                ; счётчик (cx) остаётся 16-битным
+    a16 loop .read_loop                ; the counter (cx) stays 16-bit
 
     pop edi
     pop dx
@@ -191,8 +191,8 @@ ata_read_sector:
     ret
 
 ; ============================================================
-; Пишет ОДИН сектор (512 байт) из scratch-буфера SCRATCH_ADDR через
-; прямой PIO, в обход BIOS. Вход: ax = LBA. Выход: carry=1 при ошибке.
+; Writes ONE sector (512 bytes) from the scratch buffer SCRATCH_ADDR via
+; direct PIO, bypassing BIOS. Input: ax = LBA. Output: carry=1 on error.
 ; ============================================================
 ata_write_sector:
     push ax
@@ -249,7 +249,7 @@ ata_write_sector:
 
     call ata_wait_bsy_clear
 
-    ; FLUSH CACHE - хорошая практика после записи
+    ; FLUSH CACHE - good practice after a write
     mov dx, ATA_COMMAND
     mov al, 0xE7
     out dx, al
@@ -273,10 +273,10 @@ ata_write_sector:
     ret
 
 ; ============================================================
-; ataread <lba> : читает сектор напрямую через ATA-драйвер (не BIOS!)
-; и печатает первые 16 байт в hex - демонстрация, что драйвер реально
-; работает независимо от BIOS, которым в реал-моде пользовалась
-; файловая система.
+; ataread <lba> : reads a sector directly via the ATA driver (not BIOS!)
+; and prints the first 16 bytes in hex - a demonstration that the driver
+; really works independently of BIOS, which the file system used to
+; rely on in real mode.
 ; ============================================================
 show_ata_sector:
     push ax
@@ -287,12 +287,12 @@ show_ata_sector:
     call parse_immediate_value
     jc .bad_arg
 
-    push ax                        ; сохраняем LBA
-    call ata_read_sector            ; ax=LBA, буфер = SCRATCH_ADDR
+    push ax                        ; save the LBA
+    call ata_read_sector            ; ax=LBA, buffer = SCRATCH_ADDR
 
     jc .read_failed
 
-    pop ax                            ; ax = LBA обратно
+    pop ax                            ; ax = LBA back
     mov si, msg_ata_lba_label
     call print_string
     mov bx, ax
@@ -322,7 +322,7 @@ show_ata_sector:
     jmp .end
 
 .read_failed:
-    pop ax                              ; отбрасываем сохранённый LBA
+    pop ax                              ; discard the saved LBA
     mov si, msg_ata_read_error
     call print_string
     jmp .end

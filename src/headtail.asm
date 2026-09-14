@@ -1,15 +1,15 @@
-; headtail.asm — "head <имя> [k]" и "tail <имя> [k]": печатают первые/
-; последние k строк файла (по умолчанию HEADTAIL_DEFAULT_LINES).
-; Экспортирует: fs_head, fs_tail, parse_dec_word
+; headtail.asm — "head <name> [k]" and "tail <name> [k]": print the first/
+; last k lines of a file (HEADTAIL_DEFAULT_LINES by default).
+; Exports: fs_head, fs_tail, parse_dec_word
 ;
-; Оба читают содержимое файла целиком через fs_load_content в content_buf
-; (см. src/fs_extra.asm) - тот же общий буфер, что использует grep.
+; Both read the entire file content via fs_load_content into content_buf
+; (see src/fs_extra.asm) - the same shared buffer that grep uses.
 
 HEADTAIL_DEFAULT_LINES equ 10
 
 ; ============================================================
-; ax = число из ASCII-десятичных цифр по SI (0, если цифр нет).
-; Продвигает SI за прочитанные цифры.
+; ax = number from the ASCII decimal digits at SI (0 if there are no digits).
+; Advances SI past the digits read.
 ; ============================================================
 parse_dec_word:
     push bx
@@ -37,7 +37,7 @@ parse_dec_word:
     ret
 
 ; ============================================================
-; head <имя> [k] : DS:SI указывает на "<имя> [k]"
+; head <name> [k] : DS:SI points to "<name> [k]"
 ; ============================================================
 fs_head:
     push ax
@@ -109,7 +109,7 @@ fs_head:
     call fs_load_content
 
     xor bx, bx
-    xor cx, cx                     ; cx = сколько полных строк уже напечатано
+    xor cx, cx                     ; cx = how many complete lines have been printed so far
 .print_loop:
     cmp cx, [headtail_n]
     jae .end
@@ -154,9 +154,9 @@ fs_head:
 headtail_n dw 0
 
 ; ============================================================
-; Продвигает bx за один разделитель строки (CR, LF или CRLF),
-; начинающийся ровно в bx. Вызывающий проверяет, что там
-; действительно CR или LF, прежде чем звать это.
+; Advances bx past one line separator (CR, LF, or CRLF)
+; starting exactly at bx. The caller checks that there really
+; is a CR or LF there before calling this.
 ; ============================================================
 headtail_skip_separator:
     push ax
@@ -178,7 +178,7 @@ headtail_skip_separator:
     ret
 
 ; ============================================================
-; tail <имя> [k] : DS:SI указывает на "<имя> [k]"
+; tail <name> [k] : DS:SI points to "<name> [k]"
 ; ============================================================
 fs_tail:
     push ax
@@ -249,7 +249,7 @@ fs_tail:
     mov ax, [fs_tmp_slot]
     call fs_load_content
 
-    ; --- считаем общее число строк в файле ---
+    ; --- count the total number of lines in the file ---
     xor bx, bx
     xor cx, cx
     cmp word [content_buf_len], 0
@@ -274,7 +274,7 @@ fs_tail:
 .count_done:
     mov [headtail_total], cx
 
-    ; --- находим начало (total - n)-й строки (0-индекс), либо 0 ---
+    ; --- find the start of the (total - n)-th line (0-indexed), or 0 ---
     mov ax, [headtail_total]
     sub ax, [headtail_n]
     jns .target_ok

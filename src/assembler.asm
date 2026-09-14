@@ -1,27 +1,27 @@
-; assembler.asm — мини-ассемблер одной строки (для hex-редактора)
-; Поддерживаемые инструкции (регистры lowercase, числа - hex без префикса,
-; символьные литералы 'X'):
+; assembler.asm — a tiny single-line assembler (for the hex editor)
+; Supported instructions (registers lowercase, numbers - hex without a prefix,
+; character literals 'X'):
 ;   mov reg8,imm8   mov reg16,imm16   int imm8   ret   nop   hlt   cli   sti
 ;   push reg16   pop reg16   inc reg16   dec reg16
 ;   add al,imm8   sub al,imm8   cmp al,imm8
-;   name:  (определение метки)
+;   name:  (label definition)
 ;   jmp name   je name   jne name   jz name   jnz name   loop name
-; ВАЖНО: метки работают только "назад" - метка должна быть УЖЕ определена
-; (т.е. физически расположена раньше в буфере) к моменту, когда её
-; использует jmp/je/jne/loop. Переходов "вперёд" нет (это требовало бы
-; двухпроходного ассемблера с отложенным разрешением адресов).
-; Экспортирует: fs_assemble_line, read_asm_line
+; IMPORTANT: labels only work "backward" - a label must already be defined
+; (i.e. physically located earlier in the buffer) by the time it's
+; used by jmp/je/jne/loop. There are no "forward" jumps (that would require
+; a two-pass assembler with deferred address resolution).
+; Exports: fs_assemble_line, read_asm_line
 
 ASM_INPUT_MAX equ 20
 ASM_OUTPUT_MAX equ 3
 
 LABEL_NAME_LEN equ 8
 LABEL_MAX_COUNT equ 8
-LABEL_RECORD_SIZE equ LABEL_NAME_LEN + 1 + 1   ; имя(8)+null(1)+offset(1)
+LABEL_RECORD_SIZE equ LABEL_NAME_LEN + 1 + 1   ; name(8)+null(1)+offset(1)
 
 ; ============================================================
-; Считывает одну строку с клавиатуры в asm_input_buffer.
-; Enter завершает, Backspace стирает, ESC отменяет (carry=1).
+; Reads one line from the keyboard into asm_input_buffer.
+; Enter finishes, Backspace erases, ESC cancels (carry=1).
 ; ============================================================
 read_asm_line:
     push ax
@@ -80,7 +80,7 @@ read_asm_line:
     ret
 
 ; ============================================================
-; Пропускает пробелы, на которые указывает si.
+; Skips spaces pointed to by si.
 ; ============================================================
 skip_spaces_local:
 .loop:
@@ -91,7 +91,7 @@ skip_spaces_local:
 .done:
     ret
 
-; --- Пропускает запятую (если есть) и последующие пробелы ---
+; --- Skips a comma (if present) and the spaces that follow it ---
 skip_comma_and_spaces:
     cmp byte [si], ','
     jne .maybe_space
@@ -101,9 +101,9 @@ skip_comma_and_spaces:
     ret
 
 ; ============================================================
-; Проверяет ТОЧНОЕ совпадение мнемоники без операндов: si должен
-; совпадать с di (ноль-терминированная строка), и сразу после -
-; конец строки или пробел. carry=1 если не совпало.
+; Checks an EXACT match of a mnemonic with no operands: si must
+; match di (a null-terminated string), and right after it must be
+; either the end of the line or a space. carry=1 if it doesn't match.
 ; ============================================================
 match_mnemonic_exact:
     push si
@@ -137,9 +137,9 @@ match_mnemonic_exact:
     ret
 
 ; ============================================================
-; Ищет 2-буквенное имя 8-битного регистра (al,cl,dl,bl,ah,ch,dh,bh)
-; в si. Успех: ax=код регистра (0-7), si продвинут на 2 символа,
-; carry=0. Неудача: carry=1, si не меняется.
+; Looks for a 2-letter 8-bit register name (al,cl,dl,bl,ah,ch,dh,bh)
+; at si. Success: ax=register code (0-7), si advanced by 2 characters,
+; carry=0. Failure: carry=1, si unchanged.
 ; ============================================================
 reg8_names:
     db 'a','l', 0
@@ -200,7 +200,7 @@ parse_reg8_name:
     ret
 
 ; ============================================================
-; То же самое, но для 16-битных регистров (ax,cx,dx,bx,sp,bp,si,di).
+; Same as above, but for 16-bit registers (ax,cx,dx,bx,sp,bp,si,di).
 ; ============================================================
 reg16_names:
     db 'a','x', 0
@@ -261,15 +261,15 @@ parse_reg16_name:
     ret
 
 ; ============================================================
-; Разбирает числовое значение: символьный литерал 'X' (ASCII код
-; в ax) или hex-число (1-4 цифры, без префикса). Продвигает si.
-; Успех: ax=значение, carry=0. Неудача: carry=1.
+; Parses a numeric value: a character literal 'X' (ASCII code
+; in ax) or a hex number (1-4 digits, no prefix). Advances si.
+; Success: ax=value, carry=0. Failure: carry=1.
 ; ============================================================
 parse_immediate_value:
     push bx
     push cx
 
-    cmp byte [si], 39            ; апостроф '
+    cmp byte [si], 39            ; apostrophe '
     jne .not_char_literal
 
     mov al, [si+1]
@@ -331,9 +331,9 @@ parse_immediate_value:
     ret
 
 ; ============================================================
-; Ищет метку по имени (si). Успех: ax = offset (0-126).
-; Неудача: ax = -1 (метка не найдена - либо опечатка, либо это
-; "прыжок вперёд", который мы не поддерживаем).
+; Looks up a label by name (si). Success: ax = offset (0-126).
+; Failure: ax = -1 (label not found - either a typo, or this
+; is a "forward jump", which we don't support).
 ; ============================================================
 find_label:
     push bx
@@ -395,8 +395,8 @@ find_label:
     ret
 
 ; ============================================================
-; Добавляет новую метку: si=имя (ноль-терминировано, до 8 символов),
-; al=offset (0-126). carry=1, если таблица меток заполнена.
+; Adds a new label: si=name (null-terminated, up to 8 characters),
+; al=offset (0-126). carry=1, if the label table is full.
 ; ============================================================
 add_label:
     push ax
@@ -454,9 +454,9 @@ add_label:
     ret
 
 ; ============================================================
-; Ассемблирует одну строку инструкции (si) в asm_output_buffer.
-; Успех: asm_output_length = число байт, carry=0.
-; Неудача (неизвестная мнемоника/операнды): carry=1.
+; Assembles a single instruction line (si) into asm_output_buffer.
+; Success: asm_output_length = number of bytes, carry=0.
+; Failure (unknown mnemonic/operands): carry=1.
 ; ============================================================
 fs_assemble_line:
     push bx
@@ -467,7 +467,7 @@ fs_assemble_line:
     mov byte [asm_output_length], 0
     call skip_spaces_local
 
-    ; --- проверяем, не определение ли это метки "name:" ---
+    ; --- check whether this is a label definition "name:" ---
     mov [asm_saved_si], si
     mov di, asm_label_name_buf
     xor cx, cx
@@ -513,7 +513,7 @@ fs_assemble_line:
 .not_a_label:
     mov si, [asm_saved_si]
 
-    ; --- инструкции без операндов ---
+    ; --- instructions with no operands ---
     push si
     mov di, mnem_ret
     call match_mnemonic_exact
@@ -600,7 +600,7 @@ fs_assemble_line:
     jmp .mov_reg16_ok
 
 .mov_reg8_ok:
-    add sp, 2                       ; отбрасываем сохранённый si (не понадобился)
+    add sp, 2                       ; discard the saved si (wasn't needed)
     mov bx, ax
     call skip_comma_and_spaces
     call parse_immediate_value
@@ -751,7 +751,7 @@ fs_assemble_line:
     jmp .success
 .not_cmp:
 
-    ; --- jmp/je/jne/jz/jnz/loop name (переход НАЗАД, к уже определённой метке) ---
+    ; --- jmp/je/jne/jz/jnz/loop name (a BACKWARD jump, to an already defined label) ---
     push si
     mov di, mnem_jmp_prefix
     call strcmp_prefix
@@ -826,12 +826,12 @@ fs_assemble_line:
 
     call find_label
     cmp ax, -1
-    je .error                       ; метка не найдена (опечатка или переход "вперёд" - не поддерживается)
+    je .error                       ; label not found (a typo, or a "forward" jump - not supported)
 
-    mov bx, ax                       ; bx = offset метки
+    mov bx, ax                       ; bx = label offset
     mov ax, [hex_cursor_offset]
-    add ax, 2                          ; rel8 отсчитывается от адреса СЛЕДУЮЩЕЙ инструкции
-    sub bx, ax                          ; bx = target - (текущий+2), знаковое смещение
+    add ax, 2                          ; rel8 is measured from the address of the NEXT instruction
+    sub bx, ax                          ; bx = target - (current+2), signed offset
 
     mov al, [asm_jump_opcode]
     mov [asm_output_buffer], al
@@ -857,7 +857,7 @@ fs_assemble_line:
     ret
 
 ; ============================================================
-; Мнемоники
+; Mnemonics
 ; ============================================================
 mnem_ret db "ret", 0
 mnem_nop db "nop", 0
