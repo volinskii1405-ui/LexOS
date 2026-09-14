@@ -150,18 +150,18 @@ uranium_editor:
     cmp byte [kbd_ctrl_held], 0
     je .not_ctrl
     cmp al, 'b'
-    je .save_and_exit
+    je .confirm_save_and_exit
     cmp al, 'B'
-    je .save_and_exit
+    je .confirm_save_and_exit
     cmp al, 'h'
-    je .save_only
+    je .confirm_save_only
     cmp al, 'H'
-    je .save_only
+    je .confirm_save_only
     jmp .editor_loop
 .not_ctrl:
 
     cmp al, 0x1B
-    je .confirm_exit
+    je .confirm_discard_exit
 
     cmp al, 0
     jne .not_extended
@@ -269,38 +269,30 @@ uranium_editor:
     call uranium_backspace
     jmp .editor_loop
 
-.save_and_exit:
+.confirm_save_and_exit:
+    call uranium_confirm_prompt
+    cmp ax, 1
+    jne .editor_loop
     mov ax, [fs_tmp_slot]
     call fs_save_content
     call clear_screen
     jmp .end
 
-.save_only:
+.confirm_save_only:
+    call uranium_confirm_prompt
+    cmp ax, 1
+    jne .editor_loop
     mov ax, [fs_tmp_slot]
     call fs_save_content
     mov byte [uranium_flash_saved], 1
     jmp .editor_loop
 
-.confirm_exit:
-    call clear_screen
-    mov si, msg_uranium_confirm
-    call print_string
-.confirm_wait:
-    call read_key
-    cmp al, 'y'
-    je .confirm_yes
-    cmp al, 'Y'
-    je .confirm_yes
-    cmp al, 'n'
-    je .confirm_no
-    cmp al, 'N'
-    je .confirm_no
-    jmp .confirm_wait
-.confirm_yes:
+.confirm_discard_exit:
+    call uranium_confirm_prompt
+    cmp ax, 1
+    jne .editor_loop
     call clear_screen
     jmp .end
-.confirm_no:
-    jmp .editor_loop
 
 .end:
     pop di
@@ -319,6 +311,32 @@ uranium_target_row   dw 0
 uranium_target_col   dw 0
 uranium_have_target  dw 0
 uranium_flash_saved  db 0
+
+; ============================================================
+; Shows the "Are you sure?" prompt full-screen and waits for Y/N.
+; Output: ax = 1 if confirmed (Y), 0 if cancelled (N).
+; ============================================================
+uranium_confirm_prompt:
+    call clear_screen
+    mov si, msg_uranium_confirm
+    call print_string
+.wait:
+    call read_key
+    cmp al, 'y'
+    je .yes
+    cmp al, 'Y'
+    je .yes
+    cmp al, 'n'
+    je .no
+    cmp al, 'N'
+    je .no
+    jmp .wait
+.yes:
+    mov ax, 1
+    ret
+.no:
+    xor ax, ax
+    ret
 
 ; ============================================================
 ; Redraws the entire editor screen: header, content window
