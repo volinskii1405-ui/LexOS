@@ -8,17 +8,31 @@ libc, no bootloader framework, no BIOS calls once the kernel starts — every
 byte that touches the screen, keyboard, disk, clock, or speaker goes
 through hardware ports that this project drives itself.
 
+On first boot, a green backdrop and a centered window ask for a nickname
+and a UTC offset:
+
+```
+            ┌──────────────────────────────────────────────────────┐
+            │               LexOS - First Boot Setup                │
+            │                                                        │
+            │  Nickname:                                             │
+            │  > alex                                                │
+            │                                                        │
+            │  UTC timezone offset (e.g. +3, -5, 0):                 │
+            │  > +3                                                  │
+            │                                                        │
+            │       Saved to USER.CFG - shown in your prompt.        │
+            └──────────────────────────────────────────────────────┘
+```
+
+Then it drops you straight into the console:
+
 ```
 ======================================
          LexOS (32-bit, PM)
 ======================================
 
 Type help for commands
-
-First boot - let's set a few things up.
-
-Choose a nickname: alex
-UTC timezone offset (e.g. +3, -5, 0): +3
 
 Welcome, alex! (see USER.CFG)
 
@@ -67,10 +81,14 @@ alex@/$
   not just Backspace at the end.
 - Command history (Up/Down), case-insensitive filename lookup, and a
   30+ command set (`help` lists them all, paginated).
-- The very first boot asks for a nickname and a UTC timezone offset, saved
-  to `USER.CFG` (a plain two-line text file — editable later with `uranium`
-  or `cat`). The nickname shows up in every prompt as `nickname@/path$ `,
-  and the offset shifts what `time` displays.
+- The very first boot shows a centered setup window (on a green backdrop)
+  asking for a nickname and a UTC timezone offset, then drops you into the
+  console. Both are saved to `USER.CFG` (a plain two-line text file). The
+  nickname shows up in every prompt as `nickname@/path$ `, and the offset
+  shifts what `time` displays.
+- `USER.CFG` itself is protected: `rm`, `ren`, `mv`, and `uranium` all
+  refuse to touch it (with an explanatory message), though `cat`/`grep`/
+  `head`/`tail` can still read it like any other file.
 
 **Drivers**
 - Keyboard and PIT timer via IRQ1/IRQ0, not `int 0x16`/BIOS polling.
@@ -274,8 +292,9 @@ src/
   headtail.asm         `head`/`tail` commands.
   uranium.asm          full-screen text editor (`uranium`) and its
                        disk-writing counterpart to fs_load_content.
-  user.asm             first-boot nickname/timezone setup wizard, USER.CFG
-                       load/save, and the shell prompt's `nickname@/path$ `.
+  user.asm             first-boot nickname/timezone setup window, USER.CFG
+                       load/save/delete-protection, and the shell prompt's
+                       `nickname@/path$ `.
 ```
 
 ## Known limitations

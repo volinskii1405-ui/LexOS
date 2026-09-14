@@ -61,6 +61,12 @@ uranium_editor:
     cmp ax, -1
     je .fresh_file
 
+    push ax
+    call fs_reject_if_user_cfg
+    cmp ax, 1
+    pop ax
+    je .end                 ; protected - the message is already printed
+
     mov [fs_tmp_slot], ax
     call fs_get_type
     cmp ax, FS_TYPE_DIR

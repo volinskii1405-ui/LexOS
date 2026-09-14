@@ -92,6 +92,29 @@ USER_NICKNAME_LEN equ 12
 user_cfg_name    db "USER.CFG", 0
 user_nickname    times (USER_NICKNAME_LEN + 1) db 0
 user_tz_offset   dw 0
+user_cfg_slot    dw -1     ; the directory slot holding USER.CFG, so rm/ren/mv/
+                           ; uranium can refuse to touch it - see src/user.asm
+
+; --- First-boot setup wizard screen (see user_run_setup_wizard in
+;     src/user.asm): a bordered window centered on a solid-color backdrop. ---
+USER_BOX_WIDTH  equ 56
+USER_BOX_HEIGHT equ 11
+USER_BOX_ROW    equ (SCREEN_ROWS - USER_BOX_HEIGHT) / 2
+USER_BOX_COL    equ (SCREEN_COLS - USER_BOX_WIDTH) / 2
+USER_BOX_PAD    equ 3      ; left padding for labels/input inside the window
+
+ATTR_WIZ_BG    equ 0x20    ; black on green - the full-screen backdrop
+ATTR_WIZ_BOX   equ 0x70    ; black on light gray - the window itself
+ATTR_WIZ_TITLE equ 0x79    ; bright blue on light gray - the window's title
+
+BOX_CHAR_TL equ 0xDA       ; single-line box-drawing characters (CP437)
+BOX_CHAR_TR equ 0xBF
+BOX_CHAR_BL equ 0xC0
+BOX_CHAR_BR equ 0xD9
+BOX_CHAR_H  equ 0xC4
+BOX_CHAR_V  equ 0xB3
+
+user_wiz_saved_color db 0
 
 ; ============================================================
 ; Messages
@@ -203,11 +226,14 @@ msg_uranium_footer   db "Ctrl+B=Save&Exit  Ctrl+H=Save  ESC=Exit", 0
 msg_uranium_saved_flash db "Saved.", 0
 msg_uranium_confirm  db "Are you sure?", 13, 10, 13, 10, "Y - YES.         N - NO.", 0
 
-msg_user_setup_banner db 13, 10, "First boot - let's set a few things up.", 13, 10, 13, 10, 0
-msg_user_ask_nickname db "Choose a nickname: ", 0
-msg_user_ask_timezone db "UTC timezone offset (e.g. +3, -5, 0): ", 0
+msg_user_setup_title  db "LexOS - First Boot Setup", 0
+msg_user_nick_label   db "Nickname:", 0
+msg_user_tz_label     db "UTC timezone offset (e.g. +3, -5, 0):", 0
+msg_user_input_arrow  db "> ", 0
+msg_user_setup_hint   db "Saved to USER.CFG - shown in your prompt.", 0
 msg_user_setup_done1  db 13, 10, "Welcome, ", 0
 msg_user_setup_done2  db "! (see USER.CFG)", 13, 10, 13, 10, 0
+msg_user_cfg_protected db "USER.CFG is protected - it can't be deleted, renamed, moved, or edited.", 13, 10, 0
 
 msg_bytes_suffix   db " bytes", 13, 10, 0
 fs_dir_extension   db "  <DIR>", 0
