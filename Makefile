@@ -1,6 +1,6 @@
 ASM = nasm
 BUILD_DIR = build
-SRC_FILES = kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/assembler.asm src/rtc.asm src/speaker.asm src/serial.asm src/grep.asm
+SRC_FILES = kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/assembler.asm src/rtc.asm src/speaker.asm src/serial.asm src/grep.asm src/headtail.asm src/uranium.asm
 
 .PHONY: all run clean
 
@@ -18,9 +18,9 @@ $(BUILD_DIR)/kernel.bin: $(SRC_FILES) | $(BUILD_DIR)
 $(BUILD_DIR)/os-image.bin: $(BUILD_DIR)/boot.bin $(BUILD_DIR)/kernel.bin
 	cat $(BUILD_DIR)/boot.bin $(BUILD_DIR)/kernel.bin > $@
 	@actual=$$(stat -c%s $@); \
-	if [ $$actual -gt 33280 ]; then \
-		echo "ERROR: boot+kernel already larger than the filesystem area start (33280 bytes = 66 sectors)."; \
-		echo "Increase KERNEL_SECTORS in boot.asm and FS_START_SECTOR in src/data.asm if needed."; \
+	if [ $$actual -gt 50176 ]; then \
+		echo "ERROR: boot+kernel already larger than the filesystem area start (50176 bytes = 98 sectors)."; \
+		echo "Increase KERNEL_SECTORS_1/2 in boot.asm and FS_START_SECTOR in src/data.asm if needed."; \
 		rm -f $@; \
 		exit 1; \
 	fi

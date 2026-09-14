@@ -1,0 +1,714 @@
+; uranium.asm — полноэкранный текстовый редактор в стиле nano
+; ("uranium <имя>": создаёт файл, если его ещё нет, и открывает
+; редактор). Экспортирует: uranium_editor
+;
+; Работает напрямую с content_buf/content_buf_len (см. src/data.asm,
+; src/fs_extra.asm) как со своим рабочим буфером - загружает в него
+; существующее содержимое через fs_load_content, редактирует на месте
+; (вставка/удаление сдвигают байты в content_buf), а по Ctrl+B/Ctrl+H
+; пишет обратно на диск через fs_save_content ниже.
+;
+; Раскладка экрана: строка 0-1 - заголовок (имя файла, размер), строки
+; 2..23 - окно с содержимым (URANIUM_VISIBLE_ROWS строк), строка 24 -
+; подсказка/статус. Курсор хранится как индекс байта в content_buf
+; (uranium_cursor_pos); экранная строка/колонка вычисляются заново при
+; каждой перерисовке (uranium_redraw), включая прокрутку (uranium_view_line
+; - номер логической строки текста наверху окна), чтобы курсор всегда
+; оставался виден.
+
+URANIUM_VISIBLE_ROWS equ 22      ; строки экрана 2..23
+URANIUM_FOOTER_ROW   equ 24
+
+; ============================================================
+; uranium <имя> : DS:SI указывает на "<имя>"
+; ============================================================
+uranium_editor:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+
+    mov di, fs_tmp_name
+    xor cx, cx
+.name_loop:
+    mov al, [si]
+    cmp al, 0
+    je .name_done
+    cmp al, ' '
+    je .name_done
+    cmp cx, FS_NAME_LEN
+    jae .name_skip
+    mov [di], al
+    inc di
+.name_skip:
+    inc si
+    inc cx
+    jmp .name_loop
+.name_done:
+    mov byte [di], 0
+
+    cmp byte [fs_tmp_name], 0
+    jne .have_name
+    mov si, msg_uranium_usage
+    call print_string
+    jmp .end
+
+.have_name:
+    mov si, fs_tmp_name
+    call fs_find_by_name
+    cmp ax, -1
+    je .fresh_file
+
+    mov [fs_tmp_slot], ax
+    call fs_get_type
+    cmp ax, FS_TYPE_DIR
+    jne .check_program
+    mov si, msg_fs_is_dir
+    call print_string
+    jmp .end
+.check_program:
+    cmp ax, FS_TYPE_FILE
+    je .load_it
+    mov si, msg_uranium_not_text
+    call print_string
+    jmp .end
+.load_it:
+    mov ax, [fs_tmp_slot]
+    call fs_load_content
+    jmp .start_editing
+
+.fresh_file:
+    call fs_find_free
+    cmp ax, -1
+    jne .have_slot
+    mov si, msg_fs_full
+    call print_string
+    jmp .end
+.have_slot:
+    mov [fs_tmp_slot], ax
+
+    xor bx, bx
+.clear_loop:
+    cmp bx, FS_CONTENT_OFFSET + FS_CONTENT_LEN
+    jae .clear_done
+    push bx
+    mov ax, bx
+    xor dx, dx
+    call fs_scratch_write_byte
+    pop bx
+    inc bx
+    jmp .clear_loop
+.clear_done:
+
+    mov si, fs_tmp_name
+    xor bx, bx
+.copy_name:
+    mov al, [si]
+    cmp al, 0
+    je .name_copied
+    call to_upper_al
+    mov dl, al
+    mov ax, bx
+    call fs_scratch_write_byte
+    inc si
+    inc bx
+    jmp .copy_name
+.name_copied:
+
+    mov ax, FS_TYPE_OFFSET
+    mov dl, FS_TYPE_FILE
+    call fs_scratch_write_byte
+
+    call fs_get_current_parent_byte
+    mov dl, al
+    mov ax, FS_PARENT_OFFSET
+    call fs_scratch_write_byte
+
+    mov ax, FS_TOTAL_LEN_OFFSET
+    xor dx, dx
+    call fs_scratch_write_word
+    mov ax, FS_CHAIN_OFFSET
+    mov dx, FS_NO_CHAIN
+    call fs_scratch_write_word
+
+    mov ax, [fs_tmp_slot]
+    call fs_write_slot
+
+    mov word [content_buf_len], 0
+
+.start_editing:
+    mov word [uranium_cursor_pos], 0
+    mov word [uranium_view_line], 0
+    mov byte [uranium_flash_saved], 0
+
+.editor_loop:
+    call uranium_redraw
+    call read_key
+
+    cmp byte [kbd_ctrl_held], 0
+    je .not_ctrl
+    cmp al, 'b'
+    je .save_and_exit
+    cmp al, 'B'
+    je .save_and_exit
+    cmp al, 'h'
+    je .save_only
+    cmp al, 'H'
+    je .save_only
+    jmp .editor_loop
+.not_ctrl:
+
+    cmp al, 0x1B
+    je .confirm_exit
+
+    cmp al, 0
+    jne .not_extended
+    cmp ah, 0x48
+    je .move_up
+    cmp ah, 0x50
+    je .move_down
+    cmp ah, 0x4B
+    je .move_left
+    cmp ah, 0x4D
+    je .move_right
+    cmp ah, 0x47
+    je .move_home
+    cmp ah, 0x4F
+    je .move_end
+    cmp ah, 0x53
+    je .move_delete
+    jmp .editor_loop
+.not_extended:
+
+    cmp al, 0x0D
+    je .do_enter
+    cmp al, 0x08
+    je .do_backspace
+
+    cmp al, 32
+    jb .editor_loop
+    mov dl, al
+    call uranium_insert_char
+    jmp .editor_loop
+
+.move_left:
+    cmp word [uranium_cursor_pos], 0
+    je .editor_loop
+    dec word [uranium_cursor_pos]
+    jmp .editor_loop
+
+.move_right:
+    mov ax, [uranium_cursor_pos]
+    cmp ax, [content_buf_len]
+    jae .editor_loop
+    inc word [uranium_cursor_pos]
+    jmp .editor_loop
+
+.move_home:
+    call uranium_cursor_line_col       ; cx = начало текущей строки
+    mov [uranium_cursor_pos], cx
+    jmp .editor_loop
+
+.move_end:
+    call uranium_cursor_line_col        ; cx = начало текущей строки
+    mov bx, cx
+    call uranium_find_line_end            ; bx = конец текущей строки
+    mov [uranium_cursor_pos], bx
+    jmp .editor_loop
+
+.move_up:
+    call uranium_cursor_line_col        ; ax=строка, bx=колонка, cx=начало строки
+    cmp ax, 0
+    je .editor_loop
+    mov [uranium_want_col], bx
+    dec ax
+    mov cx, ax
+    call uranium_line_start_of            ; bx = начало предыдущей строки
+    mov [uranium_tmp_line_start], bx
+    call uranium_find_line_end             ; bx = конец предыдущей строки
+    mov ax, [uranium_tmp_line_start]
+    add ax, [uranium_want_col]
+    cmp ax, bx
+    jbe .up_use_ax
+    mov ax, bx
+.up_use_ax:
+    mov [uranium_cursor_pos], ax
+    jmp .editor_loop
+
+.move_down:
+    call uranium_cursor_line_col         ; bx=колонка, cx=начало текущей строки
+    mov [uranium_want_col], bx
+    mov bx, cx
+    call uranium_find_line_end             ; bx = конец текущей строки
+    cmp bx, [content_buf_len]
+    jae .editor_loop                          ; текущая строка последняя - вниз некуда
+    call headtail_skip_separator             ; bx = начало следующей строки
+    mov [uranium_tmp_line_start], bx
+    call uranium_find_line_end                ; bx = конец следующей строки
+    mov ax, [uranium_tmp_line_start]
+    add ax, [uranium_want_col]
+    cmp ax, bx
+    jbe .down_use_ax
+    mov ax, bx
+.down_use_ax:
+    mov [uranium_cursor_pos], ax
+    jmp .editor_loop
+
+.move_delete:
+    call uranium_delete_at_cursor
+    jmp .editor_loop
+
+.do_enter:
+    mov dl, 10
+    call uranium_insert_char
+    jmp .editor_loop
+
+.do_backspace:
+    call uranium_backspace
+    jmp .editor_loop
+
+.save_and_exit:
+    mov ax, [fs_tmp_slot]
+    call fs_save_content
+    call clear_screen
+    jmp .end
+
+.save_only:
+    mov ax, [fs_tmp_slot]
+    call fs_save_content
+    mov byte [uranium_flash_saved], 1
+    jmp .editor_loop
+
+.confirm_exit:
+    call clear_screen
+    mov si, msg_uranium_confirm
+    call print_string
+.confirm_wait:
+    call read_key
+    cmp al, 'y'
+    je .confirm_yes
+    cmp al, 'Y'
+    je .confirm_yes
+    cmp al, 'n'
+    je .confirm_no
+    cmp al, 'N'
+    je .confirm_no
+    jmp .confirm_wait
+.confirm_yes:
+    call clear_screen
+    jmp .end
+.confirm_no:
+    jmp .editor_loop
+
+.end:
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+uranium_cursor_pos   dw 0
+uranium_view_line    dw 0
+uranium_want_col     dw 0
+uranium_tmp_line_start dw 0
+uranium_target_row   dw 0
+uranium_target_col   dw 0
+uranium_have_target  dw 0
+uranium_flash_saved  db 0
+
+; ============================================================
+; Перерисовывает весь экран редактора: заголовок, окно содержимого
+; (с прокруткой, чтобы курсор был виден) и футер. Позиционирует
+; аппаратный курсор на реальное место курсора в тексте.
+; ============================================================
+uranium_redraw:
+    pusha
+    call clear_screen
+
+    mov si, msg_uranium_header1
+    call print_string
+    mov si, fs_tmp_name
+    call print_string
+    mov si, msg_uranium_header2
+    call print_string
+    mov ax, [content_buf_len]
+    call print_dec_word
+    mov si, msg_uranium_header3
+    call print_string
+
+    ; --- прокрутка: держим строку курсора в пределах видимого окна ---
+    call uranium_cursor_line_col          ; ax = номер строки курсора
+    cmp ax, [uranium_view_line]
+    jae .check_bottom
+    mov [uranium_view_line], ax
+    jmp .view_ok
+.check_bottom:
+    mov bx, [uranium_view_line]
+    add bx, URANIUM_VISIBLE_ROWS - 1
+    cmp ax, bx
+    jbe .view_ok
+    mov bx, ax
+    sub bx, URANIUM_VISIBLE_ROWS - 1
+    mov [uranium_view_line], bx
+.view_ok:
+
+    mov cx, [uranium_view_line]
+    call uranium_line_start_of              ; bx = индекс начала верхней видимой строки
+
+    mov word [uranium_have_target], 0
+.print_loop:
+    cmp word [cursor_row], URANIUM_FOOTER_ROW
+    jae .print_done
+    cmp bx, [content_buf_len]
+    jae .print_done
+
+    cmp bx, [uranium_cursor_pos]
+    jne .not_cursor_here
+    mov ax, [cursor_row]
+    mov [uranium_target_row], ax
+    mov ax, [cursor_col]
+    mov [uranium_target_col], ax
+    mov word [uranium_have_target], 1
+.not_cursor_here:
+
+    mov al, [content_buf + bx]
+    call print_char
+    inc bx
+    jmp .print_loop
+.print_done:
+
+    cmp word [uranium_have_target], 0
+    jne .have_target
+    mov ax, [cursor_row]
+    mov [uranium_target_row], ax
+    mov ax, [cursor_col]
+    mov [uranium_target_col], ax
+.have_target:
+
+    mov word [cursor_row], URANIUM_FOOTER_ROW
+    mov word [cursor_col], 0
+    call update_hw_cursor
+
+    cmp byte [uranium_flash_saved], 0
+    je .normal_footer
+    mov byte [uranium_flash_saved], 0
+    mov si, msg_uranium_saved_flash
+    call print_string
+    jmp .footer_done
+.normal_footer:
+    mov si, msg_uranium_footer
+    call print_string
+.footer_done:
+
+    mov ax, [uranium_target_row]
+    mov [cursor_row], ax
+    mov ax, [uranium_target_col]
+    mov [cursor_col], ax
+    call update_hw_cursor
+
+    popa
+    ret
+
+; ============================================================
+; Вычисляет для курсора (uranium_cursor_pos) его позицию в тексте:
+; ax = номер логической строки (0-индекс), bx = колонка в строке
+; (0-индекс), cx = индекс начала этой строки в content_buf.
+; ============================================================
+uranium_cursor_line_col:
+    xor bx, bx
+    xor ax, ax
+    xor cx, cx
+.scan:
+    cmp bx, [uranium_cursor_pos]
+    jae .done
+    push ax
+    mov al, [content_buf + bx]
+    cmp al, 13
+    je .sep
+    cmp al, 10
+    je .sep
+    pop ax
+    inc bx
+    jmp .scan
+.sep:
+    pop ax
+    call headtail_skip_separator
+    inc ax
+    mov cx, bx
+    jmp .scan
+.done:
+    mov bx, [uranium_cursor_pos]
+    sub bx, cx
+    ret
+
+; ============================================================
+; Вход: cx = номер логической строки (0-индекс). Выход: bx = индекс
+; её начала в content_buf (content_buf_len, если такой строки нет).
+; ============================================================
+uranium_line_start_of:
+    xor bx, bx
+    cmp cx, 0
+    je .done
+    xor dx, dx
+.scan:
+    cmp dx, cx
+    jae .done
+    cmp bx, [content_buf_len]
+    jae .done
+    mov al, [content_buf + bx]
+    cmp al, 13
+    je .sep
+    cmp al, 10
+    je .sep
+    inc bx
+    jmp .scan
+.sep:
+    call headtail_skip_separator
+    inc dx
+    jmp .scan
+.done:
+    ret
+
+; ============================================================
+; Вход: bx = индекс начала строки. Выход: bx = индекс её конца
+; (граница CR/LF или конец буфера).
+; ============================================================
+uranium_find_line_end:
+    push ax
+.loop:
+    cmp bx, [content_buf_len]
+    jae .done
+    mov al, [content_buf + bx]
+    cmp al, 13
+    je .done
+    cmp al, 10
+    je .done
+    inc bx
+    jmp .loop
+.done:
+    pop ax
+    ret
+
+; ============================================================
+; Вставляет байт dl в content_buf по позиции uranium_cursor_pos,
+; сдвигая последующие байты вправо. Не делает ничего, если буфер
+; уже заполнен до CONTENT_BUF_LEN.
+; ============================================================
+uranium_insert_char:
+    push ax
+    push bx
+
+    cmp word [content_buf_len], CONTENT_BUF_LEN - 1
+    jae .full
+
+    mov bx, [content_buf_len]
+.shift_loop:
+    cmp bx, [uranium_cursor_pos]
+    je .shift_done
+    dec bx
+    mov al, [content_buf + bx]
+    mov [content_buf + bx + 1], al
+    jmp .shift_loop
+.shift_done:
+    mov bx, [uranium_cursor_pos]
+    mov [content_buf + bx], dl
+    inc word [content_buf_len]
+    inc word [uranium_cursor_pos]
+.full:
+    pop bx
+    pop ax
+    ret
+
+; ============================================================
+; Удаляет байт по текущей позиции курсора (курсор не двигается).
+; ============================================================
+uranium_delete_at_cursor:
+    push ax
+    push bx
+
+    mov bx, [uranium_cursor_pos]
+    cmp bx, [content_buf_len]
+    jae .done
+
+.shift_loop:
+    mov ax, bx
+    inc ax
+    cmp ax, [content_buf_len]
+    jae .last_copied
+    mov al, [content_buf + bx + 1]
+    mov [content_buf + bx], al
+    inc bx
+    jmp .shift_loop
+.last_copied:
+    dec word [content_buf_len]
+.done:
+    pop bx
+    pop ax
+    ret
+
+; ============================================================
+; Backspace: удаляет байт ПЕРЕД курсором, сдвигая курсор назад.
+; ============================================================
+uranium_backspace:
+    cmp word [uranium_cursor_pos], 0
+    je .done
+    dec word [uranium_cursor_pos]
+    call uranium_delete_at_cursor
+.done:
+    ret
+
+; ============================================================
+; Записывает content_buf[0..content_buf_len) на диск в слот (индекс
+; в ax): сначала освобождает старую цепочку доп. секторов, пишет
+; инлайн-часть (до 127 байт), а остаток - в новую цепочку доп.
+; секторов (по протоколу fs_append: used/next поля, см. src/fs_extra.asm).
+; ============================================================
+fs_save_content:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+
+    mov [fs_tmp_slot], ax
+    call fs_free_chain
+    mov ax, [fs_tmp_slot]
+    call fs_read_slot
+
+    mov cx, [content_buf_len]
+    cmp cx, FS_CONTENT_LEN - 1
+    jbe .inline_fits
+    mov cx, FS_CONTENT_LEN - 1
+.inline_fits:
+    mov [fs_save_inline_count], cx
+
+    xor bx, bx
+.inline_loop:
+    cmp bx, cx
+    jae .inline_done
+    mov al, [content_buf + bx]
+    mov dl, al
+    mov ax, bx
+    add ax, FS_CONTENT_OFFSET
+    call fs_scratch_write_byte
+    inc bx
+    jmp .inline_loop
+.inline_done:
+
+    mov ax, FS_TOTAL_LEN_OFFSET
+    mov dx, [content_buf_len]
+    call fs_scratch_write_word
+
+    mov cx, [content_buf_len]
+    cmp cx, [fs_save_inline_count]
+    ja .need_chain
+
+    mov ax, FS_CHAIN_OFFSET
+    mov dx, FS_NO_CHAIN
+    call fs_scratch_write_word
+    mov ax, [fs_tmp_slot]
+    call fs_write_slot
+    jmp .end
+
+.need_chain:
+    mov ax, [fs_tmp_slot]
+    call fs_write_slot
+
+    mov si, [fs_save_inline_count]
+    mov word [fs_save_prev], FS_NO_CHAIN
+
+.chain_loop:
+    cmp si, [content_buf_len]
+    jae .end
+
+    call fs_extra_alloc
+    jc .full
+
+    mov bx, ax
+
+    mov ax, FS_EXTRA_USED_OFFSET
+    xor dx, dx
+    call fs_scratch_write_word
+    mov ax, FS_EXTRA_NEXT_OFFSET
+    mov dx, FS_NO_CHAIN
+    call fs_scratch_write_word
+    mov ax, bx
+    call fs_extra_write
+
+    cmp word [fs_save_prev], FS_NO_CHAIN
+    jne .link_prev
+
+    mov ax, [fs_tmp_slot]
+    call fs_read_slot
+    mov ax, FS_CHAIN_OFFSET
+    mov dx, bx
+    call fs_scratch_write_word
+    mov ax, [fs_tmp_slot]
+    call fs_write_slot
+    jmp .have_sector
+
+.link_prev:
+    mov ax, [fs_save_prev]
+    call fs_extra_read
+    mov ax, FS_EXTRA_NEXT_OFFSET
+    mov dx, bx
+    call fs_scratch_write_word
+    mov ax, [fs_save_prev]
+    call fs_extra_write
+
+.have_sector:
+    mov ax, bx
+    call fs_extra_read
+
+    xor cx, cx
+.fill_loop:
+    cmp cx, FS_EXTRA_CONTENT_LEN
+    jae .sector_done
+    cmp si, [content_buf_len]
+    jae .sector_done
+
+    mov al, [content_buf + si]
+    mov dl, al
+    mov ax, cx
+    call fs_scratch_write_byte
+
+    inc si
+    inc cx
+    jmp .fill_loop
+
+.sector_done:
+    push cx
+    mov ax, FS_EXTRA_USED_OFFSET
+    mov dx, cx
+    call fs_scratch_write_word
+    pop cx
+
+    mov ax, bx
+    call fs_extra_write
+
+    mov [fs_save_prev], bx
+    jmp .chain_loop
+
+.full:
+    mov ax, [fs_tmp_slot]
+    call fs_read_slot
+    mov ax, FS_TOTAL_LEN_OFFSET
+    mov dx, si
+    call fs_scratch_write_word
+    mov ax, [fs_tmp_slot]
+    call fs_write_slot
+
+.end:
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+fs_save_inline_count dw 0
+fs_save_prev          dw 0

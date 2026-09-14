@@ -1,26 +1,34 @@
 ; boot.asm — загрузчик LexOS (16-bit real mode -> 32-bit protected mode)
 ;
 ; BIOS грузит нас в 0x7C00. Здесь мы, пока BIOS ещё доступен:
-;   1. читаем 32-битное ядро с диска (LBA extended read) в память по
-;      физическому адресу KERNEL_LOAD_ADDR
+;   1. читаем 32-битное ядро с диска (LBA extended read, ДВУМЯ вызовами -
+;      см. ниже) в память по физическому адресу KERNEL_LOAD_ADDR
 ;   2. включаем линию A20 (иначе адреса выше 1 МБ не работают)
 ;   3. ставим GDT (плоская модель, код и данные на все 4 ГБ)
 ;   4. взводим бит PE в CR0 и прыжком far JMP переключаемся в protected mode
 ;   5. в 32-битной части передаём управление ядру
 ;
-; ВАЖНО: ядро должно уместиться в KERNEL_SECTORS секторов и физически
-; не пересекать границу 64 КБ сегмента (0x10000), т.к. читаем его ОДНИМ
-; вызовом int 13h/ah=42h, а BIOS в реальном режиме работает через
-; 16-битный segment:offset — при KERNEL_LOAD_ADDR=0x8000 это ограничивает
-; ядро 64 секторами (32 КБ), что более чем достаточно.
+; ВАЖНО: int 13h/ah=42h (extended read) адресует память через 16-битный
+; segment:offset, а НЕ линейный 32-битный адрес - один вызов не может
+; прочитать данные, пересекающие границу 64 КБ сегмента (0x10000). При
+; KERNEL_LOAD_OFF=0x8000 это ограничивает ОДИН вызов 64 секторами (32 КБ,
+; ровно до 0x10000). Ядру этого мало, поэтому грузим его ДВУМЯ вызовами
+; подряд: первый - как раньше, 64 сектора в 0x0000:0x8000 (физически
+; 0x8000..0xFFFF); второй - оставшиеся сектора в 0x1000:0x0000 (физически
+; 0x10000..). Физические адреса непрерывны (0x8000+64*512 = 0x10000 ровно),
+; так что для самого ядра (собранного как один плоский бинарник с
+; ORG 0x8000) эта граница просто не существует - он ничего не знает
+; про то, что был загружен двумя отдельными BIOS-вызовами.
 
 [BITS 16]
 [ORG 0x7C00]
 
 KERNEL_LOAD_SEG  equ 0x0000
 KERNEL_LOAD_OFF  equ 0x8000     ; должно совпадать с ORG в kernel.asm
-KERNEL_SECTORS   equ 64         ; сколько секторов ядра читать (максимум для этого загрузчика -
-                                 ; 64*512=32 КБ ровно упирается в границу 0x10000, см. выше)
+KERNEL_SECTORS_1 equ 64         ; часть 1: до границы 0x10000 (см. выше)
+KERNEL_SECTORS_2 equ 32         ; часть 2: сразу после границы
+KERNEL_LOAD_SEG2 equ 0x1000     ; = физический 0x10000, продолжение части 1
+KERNEL_LOAD_OFF2 equ 0x0000
 
 start:
     cli
@@ -36,9 +44,15 @@ start:
     mov si, msg_booting
     call print_string_16
 
-    ; --- читаем ядро одним вызовом (LBA extended read) ---
+    ; --- читаем ядро двумя вызовами (LBA extended read, см. коммент выше) ---
     mov dl, [boot_drive]
     mov si, dap
+    mov ah, 0x42
+    int 0x13
+    jc disk_error
+
+    mov dl, [boot_drive]
+    mov si, dap2
     mov ah, 0x42
     int 0x13
     jc disk_error
@@ -88,14 +102,23 @@ print_string_16:
     popa
     ret
 
-; Disk Address Packet для int 13h/ah=42h (extended read)
+; Disk Address Packet для int 13h/ah=42h (extended read) - часть 1
 dap:
     db 0x10
     db 0
-    dw KERNEL_SECTORS
+    dw KERNEL_SECTORS_1
     dw KERNEL_LOAD_OFF
     dw KERNEL_LOAD_SEG
     dq 1                          ; LBA 1 = сразу после загрузчика (LBA 0)
+
+; --- часть 2, сразу вслед за первой (LBA и физический адрес непрерывны) ---
+dap2:
+    db 0x10
+    db 0
+    dw KERNEL_SECTORS_2
+    dw KERNEL_LOAD_OFF2
+    dw KERNEL_LOAD_SEG2
+    dq 1 + KERNEL_SECTORS_1
 
 boot_drive     db 0
 msg_booting    db "Booting LexOS (32-bit)...", 13, 10, 0
