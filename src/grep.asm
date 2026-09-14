@@ -1,4 +1,4 @@
-; grep.asm — search for text inside a file (the "grep <name> <text>" command)
+; grep.asm - search for text inside a file (the "grep <name> <text>" command)
 ; Exports: fs_grep
 ;
 ; Reads the whole file content via fs_load_content (src/fs_extra.asm)

@@ -1,7 +1,7 @@
-; devices.asm — device manager
+; devices.asm - device manager
 ; A single device table (name, type, status, pointer to init function).
 ; devmgr_init walks the table and calls each device's init function,
-; writing the result (OK/ERROR) back into the table itself — instead of
+; writing the result (OK/ERROR) back into the table itself - instead of
 ; having code scattered all over the place call drivers directly.
 ; Exports: devmgr_init, show_devices
 ;

@@ -1,4 +1,4 @@
-; shell.asm — parses and executes commands entered by the user
+; shell.asm - parses and executes commands entered by the user
 ; Exports: handle_command
 
 ; ============================================================
@@ -211,7 +211,7 @@ handle_command:
     cmp ax, 1
     je .do_uranium
 
-    ; Empty line (just Enter) — do nothing
+    ; Empty line (just Enter) - do nothing
     cmp byte [buffer], 0
     je .done
 
@@ -418,7 +418,7 @@ handle_command:
     ret
 
 ; ============================================================
-; Paginated help viewer: A/D — flip pages, ESC — exit.
+; Paginated help viewer: A/D - flip pages, ESC - exit.
 ; ============================================================
 show_help:
     push ax

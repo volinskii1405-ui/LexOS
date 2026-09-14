@@ -1,4 +1,4 @@
-; data.asm — constants, messages, and working variables of the LexOS kernel
+; data.asm - constants, messages, and working variables of the LexOS kernel
 ;
 ; NOTE ON THE FLAT MEMORY MODEL: the whole kernel (code + all the variables
 ; below) is loaded at address ORG 0x8000 and fits in a few dozen

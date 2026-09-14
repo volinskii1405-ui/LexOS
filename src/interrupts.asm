@@ -1,4 +1,4 @@
-; interrupts.asm — real hardware interrupts (IDT, protected mode)
+; interrupts.asm - real hardware interrupts (IDT, protected mode)
 ;
 ; In real mode, interrupt handlers were placed directly in the IVT (the
 ; vector table at physical address 0x0000:0x0000, 4 bytes per vector). In

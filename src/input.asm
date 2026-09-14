@@ -1,4 +1,4 @@
-; input.asm — keyboard reading, input buffer, command history
+; input.asm - keyboard reading, input buffer, command history
 ; Exports: read_command_line (the main loop for reading one line of input),
 ; strcpy, strcmp_eq, strcmp_prefix, parse_hex_byte
 ;
@@ -54,7 +54,7 @@ read_command_line:
     jb .loop
 
     cmp word [buf_len], BUFFER_MAX
-    jae .loop            ; buffer full — ignore the character
+    jae .loop            ; buffer full - ignore the character
 
     call insert_char_at_cursor
     jmp .loop
