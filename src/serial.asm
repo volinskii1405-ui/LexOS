@@ -1,56 +1,56 @@
-; serial.asm — минимальный драйвер COM1 (UART 16550), порты 0x3F8-0x3FF
-; Полезно для отладки: `qemu ... -serial stdio` покажет вывод на хосте.
-; Экспортирует: serial_init (для менеджера устройств), serial_write_char,
-;               cmd_serial (команда serial - вывод текста на COM1)
+; serial.asm — minimal COM1 driver (UART 16550), ports 0x3F8-0x3FF
+; Useful for debugging: `qemu ... -serial stdio` shows the output on the host.
+; Exports: serial_init (for the device manager), serial_write_char,
+;          cmd_serial (serial command - sends text to COM1)
 
 COM1_BASE equ 0x3F8
 
-; --- Инициализация: 38400 бод, 8N1, разрешить FIFO ---
+; --- Initialization: 38400 baud, 8N1, enable FIFO ---
 serial_init:
     push ax
     push dx
 
     mov dx, COM1_BASE + 1
     xor al, al
-    out dx, al                    ; выключаем прерывания UART
+    out dx, al                    ; disable UART interrupts
 
     mov dx, COM1_BASE + 3
     mov al, 0x80
-    out dx, al                     ; DLAB=1 - следующие 2 порта задают делитель
+    out dx, al                     ; DLAB=1 - the next 2 ports set the baud rate divisor
 
     mov dx, COM1_BASE + 0
-    mov al, 3                       ; делитель=3 -> 38400 бод (при базе 115200)
+    mov al, 3                       ; divisor=3 -> 38400 baud (with a 115200 base)
     out dx, al
     mov dx, COM1_BASE + 1
     xor al, al
     out dx, al
 
     mov dx, COM1_BASE + 3
-    mov al, 00000011b                 ; DLAB=0, 8 бит, без чётности, 1 стоп-бит
+    mov al, 00000011b                 ; DLAB=0, 8 bits, no parity, 1 stop bit
     out dx, al
 
     mov dx, COM1_BASE + 2
-    mov al, 0xC7                       ; включить FIFO, очистить, порог 14 байт
+    mov al, 0xC7                       ; enable FIFO, clear it, 14-byte threshold
     out dx, al
 
     mov dx, COM1_BASE + 4
-    mov al, 0x0B                        ; RTS/DSR, разрешить работу
+    mov al, 0x0B                        ; RTS/DSR, mark the port ready
     out dx, al
 
-    ; Проверяем, что порт реально отвечает (loopback-тест)
+    ; Verify the port actually responds (loopback test)
     mov dx, COM1_BASE + 4
-    mov al, 0x1E                          ; включить loopback-режим
+    mov al, 0x1E                          ; enable loopback mode
     out dx, al
 
     mov dx, COM1_BASE + 0
     mov al, 0xAE
-    out dx, al                              ; тестовый байт
+    out dx, al                              ; test byte
     in al, dx
     cmp al, 0xAE
     jne .fail
 
     mov dx, COM1_BASE + 4
-    mov al, 0x0F                              ; выключаем loopback, обычный режим
+    mov al, 0x0F                              ; disable loopback, normal mode
     out dx, al
 
     pop dx
@@ -64,7 +64,7 @@ serial_init:
     stc
     ret
 
-; --- Ждёт, пока передатчик освободится ---
+; --- Waits until the transmitter is free ---
 serial_wait_tx:
     push ax
     push dx
@@ -77,7 +77,7 @@ serial_wait_tx:
     pop ax
     ret
 
-; --- Пишет один символ (al) на COM1 ---
+; --- Writes a single character (al) to COM1 ---
 serial_write_char:
     push ax
     push dx
@@ -88,7 +88,7 @@ serial_write_char:
     pop ax
     ret
 
-; --- Пишет ноль-терминированную строку DS:SI на COM1 ---
+; --- Writes a null-terminated string DS:SI to COM1 ---
 serial_write_string:
     push ax
     push si
@@ -104,7 +104,7 @@ serial_write_string:
     pop ax
     ret
 
-; --- serial <текст> : отправляет текст (+ CRLF) на COM1 ---
+; --- serial <text> : sends the text (+ CRLF) to COM1 ---
 cmd_serial:
     push si
     call serial_write_string

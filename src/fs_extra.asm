@@ -1,20 +1,20 @@
-; fs_extra.asm — цепочки дополнительных секторов для файлов больше 127
-; байт (сколько влезает в один слот директории). Каждый файл по-прежнему
-; хранит первые 127 байт прямо в своём слоте (см. FS_CONTENT_OFFSET) -
-; это НЕ меняется и старые файлы/операции продолжают работать как есть.
-; Когда контента больше - к слоту цепляются секторы из отдельного пула
-; (FS_EXTRA_START_SECTOR..+FS_EXTRA_COUNT-1), каждый по 508 байт
-; содержимого + служебные поля (см. константы в data.asm). Занятость
-; пула отслеживает отдельный сектор-"карта" (1 байт на сектор пула -
-; проще настоящего битмапа, места хватает с большим запасом).
+; fs_extra.asm — chains of extra sectors for files larger than 127
+; bytes (what fits in a single directory slot). Each file still
+; stores the first 127 bytes directly in its slot (see FS_CONTENT_OFFSET) -
+; this does NOT change and old files/operations keep working as-is.
+; When there's more content - sectors from a separate pool get chained
+; to the slot (FS_EXTRA_START_SECTOR..+FS_EXTRA_COUNT-1), each with 508 bytes
+; of content + service fields (see constants in data.asm). Pool
+; occupancy is tracked by a separate "map" sector (1 byte per pool sector -
+; simpler than a real bitmap, there's plenty of room to spare).
 ;
-; Экспортирует: fs_extra_alloc, fs_extra_free, fs_extra_read,
+; Exports: fs_extra_alloc, fs_extra_free, fs_extra_read,
 ;               fs_extra_write, fs_scratch_read_word,
 ;               fs_scratch_write_word, fs_free_chain, fs_append,
 ;               fs_load_content, print_dec_word
 
 ; ============================================================
-; Читает 16-битное поле scratch[offset] (offset в ax) -> ax.
+; Reads a 16-bit field scratch[offset] (offset in ax) -> ax.
 ; ============================================================
 fs_scratch_read_word:
     push bx
@@ -22,12 +22,12 @@ fs_scratch_read_word:
 
     mov bx, ax
     call fs_scratch_read_byte
-    mov dl, al                 ; dl = младший байт
+    mov dl, al                 ; dl = low byte
 
     mov ax, bx
     inc ax
     call fs_scratch_read_byte
-    mov dh, al                  ; dh = старший байт
+    mov dh, al                  ; dh = high byte
 
     mov ax, dx
 
@@ -36,7 +36,7 @@ fs_scratch_read_word:
     ret
 
 ; ============================================================
-; Пишет 16-битное поле scratch[offset]=dx (offset в ax).
+; Writes a 16-bit field scratch[offset]=dx (offset in ax).
 ; ============================================================
 fs_scratch_write_word:
     push ax
@@ -45,12 +45,12 @@ fs_scratch_write_word:
 
     mov bx, ax                   ; bx = offset
     push dx
-    call fs_scratch_write_byte     ; dl (младший байт значения) -> scratch[offset]
+    call fs_scratch_write_byte     ; dl (low byte of value) -> scratch[offset]
     pop dx
 
     mov ax, bx
     inc ax
-    mov dl, dh                     ; dl = старший байт значения
+    mov dl, dh                     ; dl = high byte of value
     call fs_scratch_write_byte      ; -> scratch[offset+1]
 
     pop dx
@@ -59,9 +59,9 @@ fs_scratch_write_word:
     ret
 
 ; ============================================================
-; Ищет свободный сектор в пуле, помечает занятым.
-; Выход: ax = индекс (0..FS_EXTRA_COUNT-1), carry=0.
-;        carry=1, если свободных нет.
+; Looks for a free sector in the pool, marks it as used.
+; Output: ax = index (0..FS_EXTRA_COUNT-1), carry=0.
+;        carry=1, if none are free.
 ; ============================================================
 fs_extra_alloc:
     push bx
@@ -104,7 +104,7 @@ fs_extra_alloc:
     ret
 
 ; ============================================================
-; Освобождает сектор пула (индекс в ax).
+; Frees a pool sector (index in ax).
 ; ============================================================
 fs_extra_free:
     push ax
@@ -127,23 +127,23 @@ fs_extra_free:
     pop ax
     ret
 
-; --- Читает сектор пула (индекс в ax) в scratch-буфер ---
+; --- Reads a pool sector (index in ax) into the scratch buffer ---
 fs_extra_read:
     add ax, FS_EXTRA_START_SECTOR
     call ata_read_sector
     ret
 
-; --- Пишет scratch-буфер в сектор пула (индекс в ax) ---
+; --- Writes the scratch buffer to a pool sector (index in ax) ---
 fs_extra_write:
     add ax, FS_EXTRA_START_SECTOR
     call ata_write_sector
     ret
 
 ; ============================================================
-; Освобождает всю цепочку доп. секторов слота (индекс слота в ax).
-; Вызывать перед удалением/перезаписью/очисткой файла - иначе доп.
-; секторы этого файла останутся вечно "занятыми" в карте, хотя на
-; них уже никто не ссылается.
+; Frees the whole extra-sector chain of a slot (slot index in ax).
+; Call before deleting/overwriting/clearing a file - otherwise the
+; extra sectors of that file would stay "used" in the map forever,
+; even though nothing references them anymore.
 ; ============================================================
 fs_free_chain:
     push ax
@@ -153,7 +153,7 @@ fs_free_chain:
 
     mov ax, FS_CHAIN_OFFSET
     call fs_scratch_read_word
-    mov bx, ax                     ; bx = текущий сектор цепочки
+    mov bx, ax                     ; bx = current chain sector
 
 .loop:
     cmp bx, FS_NO_CHAIN
@@ -162,7 +162,7 @@ fs_free_chain:
     mov ax, bx
     call fs_extra_read
     mov ax, FS_EXTRA_NEXT_OFFSET
-    call fs_scratch_read_word       ; ax = следующий в цепочке
+    call fs_scratch_read_word       ; ax = next in chain
 
     push ax
     mov ax, bx
@@ -178,12 +178,12 @@ fs_free_chain:
     ret
 
 ; ============================================================
-; Читает содержимое файла (слот в ax) целиком в content_buf (инлайн-
-; часть, потом цепочка доп. секторов - как fs_cat, но в память вместо
-; экрана). Устанавливает content_buf_len; если файл больше
-; CONTENT_BUF_LEN, лишний хвост просто не читается. Используется
-; grep/head/tail (только для чтения) и uranium (как рабочий буфер
-; редактора, который потом пишет обратно через fs_save_content).
+; Reads a file's whole content (slot in ax) into content_buf (inline
+; part, then the extra-sector chain - like fs_cat, but into memory
+; instead of the screen). Sets content_buf_len; if the file is larger
+; than CONTENT_BUF_LEN, the excess tail is simply not read. Used by
+; grep/head/tail (read-only) and uranium (as the editor's working
+; buffer, which is later written back via fs_save_content).
 ; ============================================================
 fs_load_content:
     push ax
@@ -276,10 +276,10 @@ fs_load_remaining dw 0
 fs_load_chain     dw 0
 
 ; ============================================================
-; append <имя> <текст> : дописывает текст в конец содержимого файла,
-; выделяя доп. секторы по мере необходимости. Работает и для файлов,
-; у которых ещё нет цепочки (текст просто дописывается в оставшееся
-; место инлайн-буфера).
+; append <name> <text> : appends text to the end of a file's content,
+; allocating extra sectors as needed. Also works for files that
+; don't have a chain yet (the text is simply appended into the
+; remaining room of the inline buffer).
 ; ============================================================
 fs_append:
     push ax
@@ -362,14 +362,14 @@ fs_append:
     call fs_scratch_read_word
     mov [fs_append_chain], ax
 
-    ; --- Фаза A: дозаполняем инлайн-буфер слота, если в нём есть место ---
+    ; --- Phase A: top off the slot's inline buffer, if there's room in it ---
     mov ax, [fs_append_total]
     cmp ax, FS_CONTENT_LEN - 1
-    jae .phase_b                   ; инлайн уже полон (или больше)
+    jae .phase_b                   ; inline is already full (or more)
 
     mov bx, FS_CONTENT_LEN - 1
-    sub bx, ax                       ; bx = свободно в инлайне
-    mov cx, ax                        ; cx = текущий инлайн-офсет для записи
+    sub bx, ax                       ; bx = free space in the inline buffer
+    mov cx, ax                        ; cx = current inline write offset
     add cx, FS_CONTENT_OFFSET
 
 .phase_a_loop:
@@ -380,11 +380,12 @@ fs_append:
     cmp bx, 0
     je .phase_a_done
 
-    ; "\n" (два обычных символа - бэкслэш и n) в тексте append превращаем
-    ; в настоящий перевод строки (0x0A) - иначе многострочные файлы
-    ; (например, для команды batch) набрать было бы просто нечем: одна
-    ; команда с клавиатуры - всегда одна строка без реального Enter внутри
-    mov dx, 1                       ; сколько байт исходного текста съесть
+    ; We turn "\n" (two ordinary characters - backslash and n) in the
+    ; append text into a real newline (0x0A) - otherwise there would be no
+    ; way to type multi-line files (e.g. for the batch command): a
+    ; command from the keyboard is always a single line with no real
+    ; Enter inside it
+    mov dx, 1                       ; how many bytes of source text to consume
     cmp al, '\'
     jne .a_have_char
     mov ah, [si+1]
@@ -418,25 +419,25 @@ fs_append:
 .phase_b:
     mov si, [fs_tmp_text_ptr]
     cmp byte [si], 0
-    je .save_total                  ; всё уместилось в инлайн - готово
+    je .save_total                  ; everything fit into the inline part - done
 
-    ; --- Фаза B: дописываем остаток текста в цепочку доп. секторов ---
-    mov bx, [fs_append_chain]         ; bx = текущий сектор цепочки (или FS_NO_CHAIN)
+    ; --- Phase B: append the rest of the text into the extra-sector chain ---
+    mov bx, [fs_append_chain]         ; bx = current chain sector (or FS_NO_CHAIN)
     mov word [fs_append_prev], FS_NO_CHAIN
 
 .chain_loop:
     cmp bx, FS_NO_CHAIN
     jne .have_sector
 
-    ; нужен новый сектор цепочки
+    ; need a new chain sector
     call fs_extra_alloc
     jc .full
     mov bx, ax
 
-    ; Инициализируем новый сектор (used=0, next=FS_NO_CHAIN) И СРАЗУ
-    ; пишем на диск - scratch дальше понадобится для заголовка слота
-    ; или предыдущего сектора цепочки, а без записи сюда эта
-    ; инициализация потерялась бы, как только scratch перезапишут.
+    ; Initialize the new sector (used=0, next=FS_NO_CHAIN) and write it
+    ; to disk RIGHT AWAY - scratch will next be needed for the slot header
+    ; or the previous chain sector, and without writing here this
+    ; initialization would be lost as soon as scratch gets overwritten.
     mov ax, FS_EXTRA_USED_OFFSET
     xor dx, dx
     call fs_scratch_write_word
@@ -449,7 +450,7 @@ fs_append:
     cmp word [fs_append_prev], FS_NO_CHAIN
     jne .link_prev
 
-    ; это первый доп. сектор файла - прописываем в заголовок слота
+    ; this is the file's first extra sector - record it in the slot header
     mov ax, [fs_tmp_slot]
     call fs_read_slot
     mov ax, FS_CHAIN_OFFSET
@@ -474,10 +475,10 @@ fs_append:
 
     mov ax, FS_EXTRA_USED_OFFSET
     call fs_scratch_read_word
-    mov cx, ax                        ; cx = сколько уже занято в этом секторе
+    mov cx, ax                        ; cx = how much is already used in this sector
 
     mov dx, FS_EXTRA_CONTENT_LEN
-    sub dx, cx                          ; dx = свободно в этом секторе
+    sub dx, cx                          ; dx = free space in this sector
 
 .fill_loop:
     mov si, [fs_tmp_text_ptr]
@@ -487,7 +488,7 @@ fs_append:
     cmp dx, 0
     je .sector_full
 
-    mov word [fs_append_consume], 1     ; см. комментарий про "\n" в фазе A
+    mov word [fs_append_consume], 1     ; see the comment about "\n" in phase A
     cmp al, '\'
     jne .b_have_char
     mov ah, [si+1]
@@ -498,8 +499,8 @@ fs_append:
 .b_have_char:
 
     push dx
-    mov dl, al                  ; dl = символ для записи (пока не затёрли al)
-    mov ax, cx                    ; ax = offset для fs_scratch_write_byte
+    mov dl, al                  ; dl = character to write (before al gets clobbered)
+    mov ax, cx                    ; ax = offset for fs_scratch_write_byte
     call fs_scratch_write_byte
     pop dx
 
@@ -576,19 +577,19 @@ fs_append_prev  dw 0
 fs_append_consume dw 0
 
 ; ============================================================
-; Делает НЕЗАВИСИМУЮ копию цепочки доп. секторов (используется fs_cp -
-; иначе оригинал и копия делили бы одни и те же доп. секторы, и
-; удаление/перезапись одного файла портила бы другой).
-; Вход: ax = индекс первого сектора исходной цепочки.
-; Выход: ax = индекс первого сектора НОВОЙ цепочки (FS_NO_CHAIN, если
-;        место кончилось до того, как скопирован хоть один сектор, или
-;        исходная цепочка была пуста).
+; Makes an INDEPENDENT copy of an extra-sector chain (used by fs_cp -
+; otherwise the original and the copy would share the same extra
+; sectors, and deleting/overwriting one file would corrupt the other).
+; Input: ax = index of the source chain's first sector.
+; Output: ax = index of the NEW chain's first sector (FS_NO_CHAIN, if
+;        space ran out before a single sector was copied, or
+;        the source chain was empty).
 ; ============================================================
 fs_duplicate_chain:
     push bx
     push dx
 
-    mov bx, ax                          ; bx = текущий ИСХОДНЫЙ сектор
+    mov bx, ax                          ; bx = current SOURCE sector
     mov word [fs_dup_prev_new], FS_NO_CHAIN
     mov word [fs_dup_head_new], FS_NO_CHAIN
 
@@ -597,21 +598,21 @@ fs_duplicate_chain:
     je .done
 
     mov ax, bx
-    call fs_extra_read                   ; scratch = копия исходного сектора
+    call fs_extra_read                   ; scratch = copy of the source sector
     mov ax, FS_EXTRA_NEXT_OFFSET
     call fs_scratch_read_word
-    mov [fs_dup_next_src], ax              ; следующий ИСХОДНЫЙ - до перезаписи
+    mov [fs_dup_next_src], ax              ; next SOURCE sector - before it's overwritten
 
     call fs_extra_alloc
-    jc .done                                ; место кончилось - обрубаем копию тут
+    jc .done                                ; out of space - cut the copy short here
 
     mov [fs_dup_new_idx], ax
 
-    ; scratch всё ещё = точная копия исходного сектора (содержимое и
-    ; used - как у оригинала) - поправляем только "next": пока не знаем
-    ; следующий НОВЫЙ индекс, ставим "конец цепочки", подправим при
-    ; связывании со следующим (или оставляем как есть, если это
-    ; последний сектор)
+    ; scratch is still an exact copy of the source sector (content and
+    ; used, same as the original) - we only fix up "next": since we don't
+    ; yet know the next NEW index, we set "end of chain" for now, and fix
+    ; it up when linking to the next one (or leave it as is, if this
+    ; is the last sector)
     mov ax, FS_EXTRA_NEXT_OFFSET
     mov dx, FS_NO_CHAIN
     call fs_scratch_write_word
@@ -652,10 +653,10 @@ fs_dup_next_src dw 0
 fs_dup_new_idx  dw 0
 
 ; ============================================================
-; batch <имя> : читает текстовый файл целиком (до BATCH_BUF_LEN байт,
-; через инлайн + цепочку доп. секторов) и построчно скармливает каждую
-; строку в handle_command - простой способ выполнить несколько команд
-; подряд из одного файла ("скрипт"). Пустые строки пропускаются.
+; batch <name> : reads a whole text file (up to BATCH_BUF_LEN bytes,
+; through the inline part plus the extra-sector chain) and feeds each
+; line into handle_command line by line - a simple way to run several
+; commands in a row from one file (a "script"). Blank lines are skipped.
 ; ============================================================
 fs_batch:
     push ax
@@ -783,7 +784,7 @@ fs_batch:
     dec word [fs_batch_remaining]
     jmp .extra_loop
 .extra_done:
-    ; scratch всё ещё содержит этот сектор - можно взять "next" без перечитывания
+    ; scratch still holds this sector - we can grab "next" without re-reading
     mov ax, FS_EXTRA_NEXT_OFFSET
     call fs_scratch_read_word
     mov [fs_batch_chain], ax
@@ -792,18 +793,18 @@ fs_batch:
 .content_done:
     mov byte [di], 0
 
-    ; --- построчно скармливаем содержимое в handle_command ---
+    ; --- feed the content into handle_command line by line ---
     mov si, batch_content_buf
 .line_loop:
     cmp byte [si], 0
-    je .end                             ; дошли до конца содержимого
+    je .end                             ; reached the end of the content
 
     mov di, buffer
     xor cx, cx
 .copy_line:
     mov al, [si]
     cmp al, 0
-    je .line_end_noadvance                ; конец содержимого посреди строки
+    je .line_end_noadvance                ; end of content in the middle of a line
     cmp al, 13
     je .hit_cr
     cmp al, 10
@@ -818,14 +819,14 @@ fs_batch:
     jmp .copy_line
 
 .hit_cr:
-    inc si                             ; пропускаем CR
+    inc si                             ; skip CR
     cmp byte [si], 10
     jne .line_end_noadvance
-    inc si                               ; и LF сразу за ним (CRLF)
+    inc si                               ; and the LF right after it (CRLF)
     jmp .line_end_noadvance
 
 .hit_lf:
-    inc si                               ; пропускаем LF
+    inc si                               ; skip LF
 .line_end_noadvance:
     mov byte [di], 0
 
@@ -845,7 +846,7 @@ fs_batch_remaining dw 0
 fs_batch_chain dw 0
 
 ; ============================================================
-; Печатает ax как десятичное число (0-65535), без ведущих нулей.
+; Prints ax as a decimal number (0-65535), with no leading zeros.
 ; ============================================================
 print_dec_word:
     push ax
@@ -853,7 +854,7 @@ print_dec_word:
     push cx
     push dx
 
-    xor cx, cx                    ; cx = флаг "уже печатали цифру"
+    xor cx, cx                    ; cx = "already printed a digit" flag
     mov bx, 10000
     call .digit
     mov bx, 1000
@@ -863,7 +864,7 @@ print_dec_word:
     mov bx, 10
     call .digit
 
-    add al, '0'                    ; последняя цифра печатается всегда
+    add al, '0'                    ; the last digit is always printed
     call print_char
 
     pop dx
@@ -874,26 +875,27 @@ print_dec_word:
 
 .digit:
     xor dx, dx
-    div bx                   ; ax = частное, dx = остаток
+    div bx                   ; ax = quotient, dx = remainder
     cmp al, 0
     jne .print_it
     cmp cx, 0
     jne .print_it
-    mov ax, dx                ; частное 0 и печатать ещё нечего - просто остаток дальше
+    mov ax, dx                ; quotient is 0 and there's nothing to print yet - just carry the remainder on
     ret
 .print_it:
     add al, '0'
-    call print_char             ; print_char сохраняет все регистры (pusha/popa)
+    call print_char             ; print_char preserves all registers (pusha/popa)
     mov cx, 1
     mov ax, dx
     ret
 
-; --- Создаёт при загрузке файл LICENSE с полным текстом лицензии проекта
-;     (если его ещё нет). Текст длиннее 127 инлайн-байт, поэтому вместо
-;     ручного заполнения инлайн-области (как fs_ensure_readme) создаём
-;     пустой файл-скелет, а сам текст дописываем через fs_append - она
-;     уже умеет и заполнить инлайн-часть, и продолжить в цепочку доп.
-;     секторов для остатка. См. license_append_line в src/data.asm. ---
+; --- Creates a LICENSE file with the project's full license text at boot
+;     (if it doesn't already exist). The text is longer than 127 inline
+;     bytes, so instead of manually filling the inline area (like
+;     fs_ensure_readme) we create an empty skeleton file and append the
+;     text itself via fs_append - it already knows how to both fill the
+;     inline part and continue into the extra-sector chain for the
+;     remainder. See license_append_line in src/data.asm. ---
 fs_ensure_license:
     push ax
     push bx

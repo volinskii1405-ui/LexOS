@@ -1,33 +1,33 @@
-; boot.asm — загрузчик LexOS (16-bit real mode -> 32-bit protected mode)
+; boot.asm — LexOS bootloader (16-bit real mode -> 32-bit protected mode)
 ;
-; BIOS грузит нас в 0x7C00. Здесь мы, пока BIOS ещё доступен:
-;   1. читаем 32-битное ядро с диска (LBA extended read, ДВУМЯ вызовами -
-;      см. ниже) в память по физическому адресу KERNEL_LOAD_ADDR
-;   2. включаем линию A20 (иначе адреса выше 1 МБ не работают)
-;   3. ставим GDT (плоская модель, код и данные на все 4 ГБ)
-;   4. взводим бит PE в CR0 и прыжком far JMP переключаемся в protected mode
-;   5. в 32-битной части передаём управление ядру
+; BIOS loads us at 0x7C00. Here, while BIOS is still available, we:
+;   1. read the 32-bit kernel from disk (LBA extended read, in TWO calls -
+;      see below) into memory at physical address KERNEL_LOAD_ADDR
+;   2. enable the A20 line (otherwise addresses above 1 MB don't work)
+;   3. set up the GDT (flat model, code and data spanning all 4 GB)
+;   4. set the PE bit in CR0 and switch to protected mode with a far JMP
+;   5. in the 32-bit part, transfer control to the kernel
 ;
-; ВАЖНО: int 13h/ah=42h (extended read) адресует память через 16-битный
-; segment:offset, а НЕ линейный 32-битный адрес - один вызов не может
-; прочитать данные, пересекающие границу 64 КБ сегмента (0x10000). При
-; KERNEL_LOAD_OFF=0x8000 это ограничивает ОДИН вызов 64 секторами (32 КБ,
-; ровно до 0x10000). Ядру этого мало, поэтому грузим его ДВУМЯ вызовами
-; подряд: первый - как раньше, 64 сектора в 0x0000:0x8000 (физически
-; 0x8000..0xFFFF); второй - оставшиеся сектора в 0x1000:0x0000 (физически
-; 0x10000..). Физические адреса непрерывны (0x8000+64*512 = 0x10000 ровно),
-; так что для самого ядра (собранного как один плоский бинарник с
-; ORG 0x8000) эта граница просто не существует - он ничего не знает
-; про то, что был загружен двумя отдельными BIOS-вызовами.
+; IMPORTANT: int 13h/ah=42h (extended read) addresses memory via a 16-bit
+; segment:offset, NOT a linear 32-bit address - a single call cannot
+; read data that crosses the 64 KB segment boundary (0x10000). With
+; KERNEL_LOAD_OFF=0x8000 this limits a SINGLE call to 64 sectors (32 KB,
+; exactly up to 0x10000). That's not enough for the kernel, so we load it in TWO calls
+; back to back: the first, as before, 64 sectors into 0x0000:0x8000 (physically
+; 0x8000..0xFFFF); the second, the remaining sectors into 0x1000:0x0000 (physically
+; 0x10000..). The physical addresses are contiguous (0x8000+64*512 = exactly 0x10000),
+; so for the kernel itself (assembled as a single flat binary with
+; ORG 0x8000) this boundary simply doesn't exist - it has no idea
+; that it was loaded by two separate BIOS calls.
 
 [BITS 16]
 [ORG 0x7C00]
 
 KERNEL_LOAD_SEG  equ 0x0000
-KERNEL_LOAD_OFF  equ 0x8000     ; должно совпадать с ORG в kernel.asm
-KERNEL_SECTORS_1 equ 64         ; часть 1: до границы 0x10000 (см. выше)
-KERNEL_SECTORS_2 equ 32         ; часть 2: сразу после границы
-KERNEL_LOAD_SEG2 equ 0x1000     ; = физический 0x10000, продолжение части 1
+KERNEL_LOAD_OFF  equ 0x8000     ; must match ORG in kernel.asm
+KERNEL_SECTORS_1 equ 64         ; part 1: up to the 0x10000 boundary (see above)
+KERNEL_SECTORS_2 equ 32         ; part 2: right after the boundary
+KERNEL_LOAD_SEG2 equ 0x1000     ; = physical 0x10000, continuation of part 1
 KERNEL_LOAD_OFF2 equ 0x0000
 
 start:
@@ -39,12 +39,12 @@ start:
     mov sp, 0x7C00
     sti
 
-    mov [boot_drive], dl        ; BIOS передаёт номер загрузочного диска в dl
+    mov [boot_drive], dl        ; BIOS passes the boot drive number in dl
 
     mov si, msg_booting
     call print_string_16
 
-    ; --- читаем ядро двумя вызовами (LBA extended read, см. коммент выше) ---
+    ; --- read the kernel with two calls (LBA extended read, see comment above) ---
     mov dl, [boot_drive]
     mov si, dap
     mov ah, 0x42
@@ -69,7 +69,7 @@ start:
     or eax, 1
     mov cr0, eax
 
-    jmp CODE_SEG:init_pm        ; далёкий прыжок сбрасывает конвейер и грузит 32-битный CS
+    jmp CODE_SEG:init_pm        ; a far jump flushes the pipeline and loads the 32-bit CS
 
 disk_error:
     mov si, msg_disk_error
@@ -77,8 +77,8 @@ disk_error:
     jmp $
 
 ; ============================================================
-; Включает линию A20 через порт 0x92 (быстрый метод, работает на
-; подавляющем большинстве реального железа и во всех эмуляторах).
+; Enables the A20 line via port 0x92 (the fast method, works on
+; the vast majority of real hardware and in all emulators).
 ; ============================================================
 enable_a20:
     in al, 0x92
@@ -86,9 +86,9 @@ enable_a20:
     out 0x92, al
     ret
 
-; --- Печать строки через BIOS teletype (int 10h, ah=0Eh) ---
-; DS:SI указывает на строку с завершающим нулём. Годится только
-; здесь, в 16-битной части — после переключения в PM BIOS недоступен.
+; --- Print a string via BIOS teletype (int 10h, ah=0Eh) ---
+; DS:SI points to a null-terminated string. Only usable
+; here, in the 16-bit part — after switching to PM, BIOS is unavailable.
 print_string_16:
     pusha
     mov ah, 0x0E
@@ -102,16 +102,16 @@ print_string_16:
     popa
     ret
 
-; Disk Address Packet для int 13h/ah=42h (extended read) - часть 1
+; Disk Address Packet for int 13h/ah=42h (extended read) - part 1
 dap:
     db 0x10
     db 0
     dw KERNEL_SECTORS_1
     dw KERNEL_LOAD_OFF
     dw KERNEL_LOAD_SEG
-    dq 1                          ; LBA 1 = сразу после загрузчика (LBA 0)
+    dq 1                          ; LBA 1 = right after the bootloader (LBA 0)
 
-; --- часть 2, сразу вслед за первой (LBA и физический адрес непрерывны) ---
+; --- part 2, right after the first (LBA and physical address are contiguous) ---
 dap2:
     db 0x10
     db 0
@@ -126,8 +126,8 @@ msg_loaded     db "Kernel loaded, entering protected mode...", 13, 10, 0
 msg_disk_error db "Disk read error!", 13, 10, 0
 
 ; ============================================================
-; 32-битная часть загрузчика: настраивает сегменты плоской модели
-; и передаёт управление ядру.
+; 32-bit part of the bootloader: sets up flat-model segments
+; and transfers control to the kernel.
 ; ============================================================
 [BITS 32]
 init_pm:
@@ -139,19 +139,19 @@ init_pm:
     mov ss, ax
     mov esp, STACK_TOP
 
-    jmp KERNEL_LOAD_OFF           ; передаём управление 32-битному ядру
+    jmp KERNEL_LOAD_OFF           ; transfer control to the 32-bit kernel
 
 STACK_TOP equ 0x90000
 
 ; ============================================================
-; GDT: плоская модель, код и данные покрывают все 4 ГБ от адреса 0.
+; GDT: flat model, code and data cover the entire 4 GB from address 0.
 ; ============================================================
 gdt_start:
 gdt_null:
     dd 0x0
     dd 0x0
 
-gdt_code:                         ; селектор 0x08
+gdt_code:                         ; selector 0x08
     dw 0xFFFF
     dw 0x0
     db 0x0
@@ -159,7 +159,7 @@ gdt_code:                         ; селектор 0x08
     db 11001111b
     db 0x0
 
-gdt_data:                         ; селектор 0x10
+gdt_data:                         ; selector 0x10
     dw 0xFFFF
     dw 0x0
     db 0x0

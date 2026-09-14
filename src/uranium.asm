@@ -1,26 +1,26 @@
-; uranium.asm — полноэкранный текстовый редактор в стиле nano
-; ("uranium <имя>": создаёт файл, если его ещё нет, и открывает
-; редактор). Экспортирует: uranium_editor
+; uranium.asm — full-screen text editor in nano's style
+; ("uranium <name>": creates the file if it doesn't exist yet, and opens
+; the editor). Exports: uranium_editor
 ;
-; Работает напрямую с content_buf/content_buf_len (см. src/data.asm,
-; src/fs_extra.asm) как со своим рабочим буфером - загружает в него
-; существующее содержимое через fs_load_content, редактирует на месте
-; (вставка/удаление сдвигают байты в content_buf), а по Ctrl+B/Ctrl+H
-; пишет обратно на диск через fs_save_content ниже.
+; Works directly with content_buf/content_buf_len (see src/data.asm,
+; src/fs_extra.asm) as its own working buffer - loads the existing
+; content into it via fs_load_content, edits in place
+; (insertion/deletion shift bytes within content_buf), and on Ctrl+B/Ctrl+H
+; writes it back to disk via fs_save_content below.
 ;
-; Раскладка экрана: строка 0-1 - заголовок (имя файла, размер), строки
-; 2..23 - окно с содержимым (URANIUM_VISIBLE_ROWS строк), строка 24 -
-; подсказка/статус. Курсор хранится как индекс байта в content_buf
-; (uranium_cursor_pos); экранная строка/колонка вычисляются заново при
-; каждой перерисовке (uranium_redraw), включая прокрутку (uranium_view_line
-; - номер логической строки текста наверху окна), чтобы курсор всегда
-; оставался виден.
+; Screen layout: row 0-1 - header (file name, size), rows
+; 2..23 - content window (URANIUM_VISIBLE_ROWS rows), row 24 -
+; hint/status. The cursor is stored as a byte index into content_buf
+; (uranium_cursor_pos); the screen row/column are recomputed on
+; every redraw (uranium_redraw), including scrolling (uranium_view_line
+; - the logical line number of the text at the top of the window), so the
+; cursor always stays visible.
 
-URANIUM_VISIBLE_ROWS equ 22      ; строки экрана 2..23
+URANIUM_VISIBLE_ROWS equ 22      ; screen rows 2..23
 URANIUM_FOOTER_ROW   equ 24
 
 ; ============================================================
-; uranium <имя> : DS:SI указывает на "<имя>"
+; uranium <name> : DS:SI points to "<name>"
 ; ============================================================
 uranium_editor:
     push ax
@@ -207,27 +207,27 @@ uranium_editor:
     jmp .editor_loop
 
 .move_home:
-    call uranium_cursor_line_col       ; cx = начало текущей строки
+    call uranium_cursor_line_col       ; cx = start of the current line
     mov [uranium_cursor_pos], cx
     jmp .editor_loop
 
 .move_end:
-    call uranium_cursor_line_col        ; cx = начало текущей строки
+    call uranium_cursor_line_col        ; cx = start of the current line
     mov bx, cx
-    call uranium_find_line_end            ; bx = конец текущей строки
+    call uranium_find_line_end            ; bx = end of the current line
     mov [uranium_cursor_pos], bx
     jmp .editor_loop
 
 .move_up:
-    call uranium_cursor_line_col        ; ax=строка, bx=колонка, cx=начало строки
+    call uranium_cursor_line_col        ; ax=line, bx=column, cx=line start
     cmp ax, 0
     je .editor_loop
     mov [uranium_want_col], bx
     dec ax
     mov cx, ax
-    call uranium_line_start_of            ; bx = начало предыдущей строки
+    call uranium_line_start_of            ; bx = start of the previous line
     mov [uranium_tmp_line_start], bx
-    call uranium_find_line_end             ; bx = конец предыдущей строки
+    call uranium_find_line_end             ; bx = end of the previous line
     mov ax, [uranium_tmp_line_start]
     add ax, [uranium_want_col]
     cmp ax, bx
@@ -238,15 +238,15 @@ uranium_editor:
     jmp .editor_loop
 
 .move_down:
-    call uranium_cursor_line_col         ; bx=колонка, cx=начало текущей строки
+    call uranium_cursor_line_col         ; bx=column, cx=start of the current line
     mov [uranium_want_col], bx
     mov bx, cx
-    call uranium_find_line_end             ; bx = конец текущей строки
+    call uranium_find_line_end             ; bx = end of the current line
     cmp bx, [content_buf_len]
-    jae .editor_loop                          ; текущая строка последняя - вниз некуда
-    call headtail_skip_separator             ; bx = начало следующей строки
+    jae .editor_loop                          ; current line is the last one - nowhere to go down
+    call headtail_skip_separator             ; bx = start of the next line
     mov [uranium_tmp_line_start], bx
-    call uranium_find_line_end                ; bx = конец следующей строки
+    call uranium_find_line_end                ; bx = end of the next line
     mov ax, [uranium_tmp_line_start]
     add ax, [uranium_want_col]
     cmp ax, bx
@@ -321,9 +321,9 @@ uranium_have_target  dw 0
 uranium_flash_saved  db 0
 
 ; ============================================================
-; Перерисовывает весь экран редактора: заголовок, окно содержимого
-; (с прокруткой, чтобы курсор был виден) и футер. Позиционирует
-; аппаратный курсор на реальное место курсора в тексте.
+; Redraws the entire editor screen: header, content window
+; (with scrolling, so the cursor is visible) and footer. Positions the
+; hardware cursor at the cursor's actual place in the text.
 ; ============================================================
 uranium_redraw:
     pusha
@@ -340,8 +340,8 @@ uranium_redraw:
     mov si, msg_uranium_header3
     call print_string
 
-    ; --- прокрутка: держим строку курсора в пределах видимого окна ---
-    call uranium_cursor_line_col          ; ax = номер строки курсора
+    ; --- scrolling: keep the cursor's line within the visible window ---
+    call uranium_cursor_line_col          ; ax = cursor line number
     cmp ax, [uranium_view_line]
     jae .check_bottom
     mov [uranium_view_line], ax
@@ -357,7 +357,7 @@ uranium_redraw:
 .view_ok:
 
     mov cx, [uranium_view_line]
-    call uranium_line_start_of              ; bx = индекс начала верхней видимой строки
+    call uranium_line_start_of              ; bx = index of the start of the top visible line
 
     mov word [uranium_have_target], 0
 .print_loop:
@@ -414,9 +414,9 @@ uranium_redraw:
     ret
 
 ; ============================================================
-; Вычисляет для курсора (uranium_cursor_pos) его позицию в тексте:
-; ax = номер логической строки (0-индекс), bx = колонка в строке
-; (0-индекс), cx = индекс начала этой строки в content_buf.
+; Computes the cursor's (uranium_cursor_pos) position in the text:
+; ax = logical line number (0-indexed), bx = column within the line
+; (0-indexed), cx = index of that line's start in content_buf.
 ; ============================================================
 uranium_cursor_line_col:
     xor bx, bx
@@ -446,8 +446,8 @@ uranium_cursor_line_col:
     ret
 
 ; ============================================================
-; Вход: cx = номер логической строки (0-индекс). Выход: bx = индекс
-; её начала в content_buf (content_buf_len, если такой строки нет).
+; Input: cx = logical line number (0-indexed). Output: bx = index
+; of its start in content_buf (content_buf_len if there's no such line).
 ; ============================================================
 uranium_line_start_of:
     xor bx, bx
@@ -474,8 +474,8 @@ uranium_line_start_of:
     ret
 
 ; ============================================================
-; Вход: bx = индекс начала строки. Выход: bx = индекс её конца
-; (граница CR/LF или конец буфера).
+; Input: bx = index of the line's start. Output: bx = index of its end
+; (a CR/LF boundary or the end of the buffer).
 ; ============================================================
 uranium_find_line_end:
     push ax
@@ -494,9 +494,9 @@ uranium_find_line_end:
     ret
 
 ; ============================================================
-; Вставляет байт dl в content_buf по позиции uranium_cursor_pos,
-; сдвигая последующие байты вправо. Не делает ничего, если буфер
-; уже заполнен до CONTENT_BUF_LEN.
+; Inserts byte dl into content_buf at position uranium_cursor_pos,
+; shifting subsequent bytes to the right. Does nothing if the buffer
+; is already filled up to CONTENT_BUF_LEN.
 ; ============================================================
 uranium_insert_char:
     push ax
@@ -524,7 +524,7 @@ uranium_insert_char:
     ret
 
 ; ============================================================
-; Удаляет байт по текущей позиции курсора (курсор не двигается).
+; Deletes the byte at the current cursor position (the cursor doesn't move).
 ; ============================================================
 uranium_delete_at_cursor:
     push ax
@@ -551,7 +551,7 @@ uranium_delete_at_cursor:
     ret
 
 ; ============================================================
-; Backspace: удаляет байт ПЕРЕД курсором, сдвигая курсор назад.
+; Backspace: deletes the byte BEFORE the cursor, moving the cursor back.
 ; ============================================================
 uranium_backspace:
     cmp word [uranium_cursor_pos], 0
@@ -562,10 +562,10 @@ uranium_backspace:
     ret
 
 ; ============================================================
-; Записывает content_buf[0..content_buf_len) на диск в слот (индекс
-; в ax): сначала освобождает старую цепочку доп. секторов, пишет
-; инлайн-часть (до 127 байт), а остаток - в новую цепочку доп.
-; секторов (по протоколу fs_append: used/next поля, см. src/fs_extra.asm).
+; Writes content_buf[0..content_buf_len) to disk into the slot (index
+; in ax): first frees the old chain of extra sectors, writes the
+; inline part (up to 127 bytes), and the remainder - into a new chain
+; of extra sectors (per the fs_append protocol: used/next fields, see src/fs_extra.asm).
 ; ============================================================
 fs_save_content:
     push ax

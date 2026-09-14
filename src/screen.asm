@@ -1,22 +1,22 @@
-; screen.asm — вывод на экран (VGA text mode, прямая запись в видеопамять)
-; Экспортирует: clear_screen, print_char, print_string, print_prompt,
+; screen.asm — screen output (VGA text mode, direct writes to video memory)
+; Exports: clear_screen, print_char, print_string, print_prompt,
 ; print_banner, print_hex_byte, print_dec_byte, update_hw_cursor, scroll_screen
 ;
-; В отличие от реал-модной версии видеопамять (VIDEO_MEM = 0xB8000) здесь
-; НЕ сегмент, а обычный линейный адрес - ES/DS и так покрывают все 4 ГБ,
-; поэтому вместо "mov ax, VIDEO_SEG / mov es, ax" + "[es:di]" используется
-; "[VIDEO_MEM + edi]" напрямую. Т.к. 0xB8000 не влезает в 16-битное
-; смещение, индексный регистр здесь 32-битный (edi), в отличие от
-; остального кода ядра, который спокойно продолжает работать с di/si
-; (все внутренние адреса ядра меньше 0x10000).
+; Unlike the real-mode version, here video memory (VIDEO_MEM = 0xB8000) is
+; NOT a segment but an ordinary linear address - ES/DS already cover the
+; whole 4 GB, so instead of "mov ax, VIDEO_SEG / mov es, ax" + "[es:di]" we
+; use "[VIDEO_MEM + edi]" directly. Since 0xB8000 doesn't fit in a 16-bit
+; offset, the index register here is 32-bit (edi), unlike the rest of
+; the kernel code, which happily keeps working with di/si
+; (all internal kernel addresses are below 0x10000).
 ;
-; Курсор больше не синхронизируется через BIOS int 10h (в protected mode
-; BIOS недоступен) - вместо этого пишем прямо в регистры контроллера
-; VGA (порты 0x3D4/0x3D5), как это делает любая настоящая ОС.
+; The cursor is no longer synced via BIOS int 10h (BIOS is unavailable in
+; protected mode) - instead we write directly to the VGA controller
+; registers (ports 0x3D4/0x3D5), the way any real OS does.
 
 ; ============================================================
-; Очистка экрана: перезаписывает всю видеопамять пробелами
-; текущим цветом и сбрасывает курсор в (0,0).
+; Clears the screen: overwrites all video memory with spaces of the
+; current color and resets the cursor to (0,0).
 ; ============================================================
 clear_screen:
     pusha
@@ -36,8 +36,8 @@ clear_screen:
     ret
 
 ; ============================================================
-; Печатает цветной баннер "LexOS" при загрузке.
-; Временно меняет current_color на яркий, затем возвращает исходный.
+; Prints the colored "LexOS" boot banner.
+; Temporarily changes current_color to a bright shade, then restores it.
 ; ============================================================
 print_banner:
     pusha
@@ -45,7 +45,7 @@ print_banner:
     mov al, [current_color]
     mov [banner_saved_color], al
 
-    mov byte [current_color], 0x0B    ; ярко-голубой на чёрном
+    mov byte [current_color], 0x0B    ; bright cyan on black
 
     mov si, banner_text
     call print_string
@@ -57,7 +57,7 @@ print_banner:
     ret
 
 ; ============================================================
-; Печать приглашения командной строки
+; Prints the command-line prompt
 ; ============================================================
 print_prompt:
     mov si, msg_prompt
@@ -65,9 +65,9 @@ print_prompt:
     ret
 
 ; ============================================================
-; Печать одного символа прямой записью в видеопамять (линейный
-; адрес VIDEO_MEM). Вход: al = символ. Обрабатывает CR (0x0D),
-; LF (0x0A), Backspace (0x08). Использует цвет из current_color.
+; Prints a single character by writing directly to video memory
+; (linear address VIDEO_MEM). Input: al = character. Handles CR (0x0D),
+; LF (0x0A), Backspace (0x08). Uses the color from current_color.
 ; ============================================================
 print_char:
     pusha
@@ -79,20 +79,20 @@ print_char:
     cmp al, 0x08
     je .backspace
 
-    ; --- обычный символ: пишем в видеопамять по текущей позиции курсора ---
-    mov bl, al               ; сохраняем символ
-    mov bh, [current_color]  ; bh = атрибут (для записи как старший байт слова)
+    ; --- ordinary character: write to video memory at the current cursor position ---
+    mov bl, al               ; save the character
+    mov bh, [current_color]  ; bh = attribute (to write as the high byte of the word)
 
     push ax
     mov ax, [cursor_row]
     mov cx, SCREEN_COLS
     mul cx                   ; ax = row * 80
     add ax, [cursor_col]
-    shl ax, 1                ; ax = смещение в байтах
+    shl ax, 1                ; ax = offset in bytes
     movzx edi, ax
     pop ax
 
-    mov [VIDEO_MEM + edi], bx  ; bl=символ (младший байт), bh=атрибут (старший байт)
+    mov [VIDEO_MEM + edi], bx  ; bl=character (low byte), bh=attribute (high byte)
 
     inc word [cursor_col]
     cmp word [cursor_col], SCREEN_COLS
@@ -106,13 +106,13 @@ print_char:
     jmp .sync
 
 .lf:
-    ; Настоящий телетайп различает LF (следующая строка, ТА ЖЕ колонка)
-    ; и CR (та же строка, колонка 0) - но каждое сообщение в этой ОС уже
-    ; печатает их только парой "13, 10", так что второй сброс колонки
-    ; тут не более чем избыточен. А одиночный "\n" (без CR) появляется
-    ; только там, где текст явно набирал пользователь (см. src/fs_extra.asm,
-    ; экранирование "\n" в append) - там наоборот ожидают обычный перевод
-    ; строки с началом каждой следующей строки с колонки 0.
+    ; A real teletype distinguishes LF (next line, SAME column)
+    ; from CR (same line, column 0) - but every message in this OS already
+    ; prints them only as the pair "13, 10", so the extra column reset
+    ; here is at most redundant. A lone "\n" (without CR) only ever
+    ; appears where the user typed the text themselves (see src/fs_extra.asm,
+    ; the "\n" escaping in append) - there, on the contrary, an ordinary
+    ; newline is expected, with each following line starting at column 0.
     mov word [cursor_col], 0
     inc word [cursor_row]
     jmp .maybe_scroll
@@ -159,7 +159,7 @@ print_char:
     ret
 
 ; ============================================================
-; Прокрутка экрана на одну строку вверх (при переполнении)
+; Scrolls the screen up by one line (on overflow)
 ; ============================================================
 scroll_screen:
     pusha
@@ -183,10 +183,10 @@ scroll_screen:
     ret
 
 ; ============================================================
-; Обновляет АППАРАТНЫЙ курсор VGA через регистры контроллера
-; (индекс/данные, порты 0x3D4/0x3D5), чтобы мигающий прямоугольник
-; стоял там же, где мы печатаем. Позиция задаётся в "ячейках"
-; (row*80+col), не в байтах.
+; Updates the HARDWARE VGA cursor via the controller registers
+; (index/data, ports 0x3D4/0x3D5), so the blinking block stays
+; wherever we're printing. The position is given in "cells"
+; (row*80+col), not bytes.
 ; ============================================================
 update_hw_cursor:
     push eax
@@ -200,14 +200,14 @@ update_hw_cursor:
     mov ebx, eax
 
     mov dx, 0x3D4
-    mov al, 14                  ; регистр "старший байт позиции курсора"
+    mov al, 14                  ; register "cursor position high byte"
     out dx, al
     mov dx, 0x3D5
     mov al, bh
     out dx, al
 
     mov dx, 0x3D4
-    mov al, 15                  ; регистр "младший байт позиции курсора"
+    mov al, 15                  ; register "cursor position low byte"
     out dx, al
     mov dx, 0x3D5
     mov al, bl
@@ -218,12 +218,12 @@ update_hw_cursor:
     pop eax
     ret
 
-; --- Печать строки с завершающим нулём (DS:SI) ---
-; Все вызывающие продолжают грузить адрес строки как "mov si, label"
-; (16 бит - все строки ядра лежат ниже 0x10000), поэтому здесь нужен
-; принудительно 16-битный размер адреса ("a16"): без него "lodsb" в
-; 32-битном сегменте кода по умолчанию читал бы полный 32-битный ESI,
-; чей старший битный полуслов si никто не обнулял.
+; --- Prints a null-terminated string (DS:SI) ---
+; All callers keep loading the string address as "mov si, label"
+; (16 bits - all kernel strings live below 0x10000), so here we need
+; a forced 16-bit address size ("a16"): without it "lodsb" in a
+; 32-bit code segment would by default read the full 32-bit ESI,
+; whose upper half nobody has zeroed.
 print_string:
     pusha
 .loop:
@@ -237,7 +237,7 @@ print_string:
     ret
 
 ; ============================================================
-; Печать байта в hex (2 символа), вход: al = байт
+; Prints a byte in hex (2 characters), input: al = byte
 ; ============================================================
 print_hex_byte:
     pusha
@@ -261,7 +261,7 @@ print_hex_byte:
     ret
 
 ; ============================================================
-; Печать однобайтового числа как десятичное (0-255), вход: al
+; Prints a one-byte number as decimal (0-255), input: al
 ; ============================================================
 print_dec_byte:
     pusha

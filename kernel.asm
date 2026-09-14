@@ -1,59 +1,59 @@
-; kernel.asm — ядро LexOS (32-bit protected mode)
-; Точка входа: настройка IDT/PIC/курсора, баннер, затем цикл
-; "прочитать команду -> выполнить". Реализация разбита на модули в src/:
-;   src/data.asm        - константы, сообщения, переменные
-;   src/screen.asm      - вывод на экран (прямая запись в видеопамять 0xB8000)
-;   src/input.asm       - чтение клавиатуры, буфер ввода, история команд
-;   src/shell.asm       - разбор и выполнение команд
-;   src/interrupts.asm  - IDT, перенастройка PIC, обработчики IRQ0/IRQ1
-;   src/devices.asm     - менеджер устройств: таблица устройств + их init-функции
-;   src/ata.asm         - ATA-драйвер (PIO), прямая работа с портами контроллера
-;   src/filesystem.asm  - файловая система поверх ATA
-;   src/fs_extra.asm    - цепочки доп. секторов для файлов > 127 байт (append, batch)
-;   src/programs.asm    - исполняемые файлы (run), hex-редактор, пример TEST.BIN
-;   src/assembler.asm   - мини-ассемблер одной строки для hex-редактора
-;   src/rtc.asm         - часы/дата из CMOS RTC (команды date/time)
-;   src/speaker.asm     - PC-спикер (команда beep)
-;   src/serial.asm      - UART COM1 (команда serial, полезно для отладки)
+; kernel.asm — LexOS kernel (32-bit protected mode)
+; Entry point: sets up IDT/PIC/cursor, prints the banner, then loops
+; "read command -> execute". The implementation is split into modules under src/:
+;   src/data.asm        - constants, messages, variables
+;   src/screen.asm      - screen output (direct writes to video memory 0xB8000)
+;   src/input.asm       - keyboard reading, input buffer, command history
+;   src/shell.asm       - command parsing and execution
+;   src/interrupts.asm  - IDT, PIC remapping, IRQ0/IRQ1 handlers
+;   src/devices.asm     - device manager: device table + their init functions
+;   src/ata.asm         - ATA driver (PIO), direct controller port access
+;   src/filesystem.asm  - filesystem layered on top of ATA
+;   src/fs_extra.asm    - extra sector chains for files > 127 bytes (append, batch)
+;   src/programs.asm    - executable files (run), hex editor, TEST.BIN example
+;   src/assembler.asm   - single-line mini-assembler for the hex editor
+;   src/rtc.asm         - clock/date from CMOS RTC (date/time commands)
+;   src/speaker.asm     - PC speaker (beep command)
+;   src/serial.asm      - COM1 UART (serial command, useful for debugging)
 ;
-; Работаем в плоской модели памяти (флэт): CS/DS/ES/FS/GS/SS все покрывают
-; 0..4GB, поэтому в отличие от 16-битной реал-модной версии здесь НЕТ
-; сегментных трюков (mov ax, XXX_SEG / mov es, ax) — вместо этого адреса
-; вроде видеопамяти или scratch-буфера диска это обычные плоские константы
-; (см. VIDEO_MEM, SCRATCH_ADDR в data.asm), к которым обращаются напрямую.
+; We run in a flat memory model: CS/DS/ES/FS/GS/SS all cover
+; 0..4GB, so unlike the 16-bit real-mode version there are NO
+; segment tricks here (mov ax, XXX_SEG / mov es, ax) — instead addresses
+; like video memory or the disk scratch buffer are plain flat constants
+; (see VIDEO_MEM, SCRATCH_ADDR in data.asm) accessed directly.
 
 [BITS 32]
-[ORG 0x8000]        ; должен совпадать с KERNEL_LOAD_OFF в boot.asm
+[ORG 0x8000]        ; must match KERNEL_LOAD_OFF in boot.asm
 
-; ВАЖНО: data.asm генерирует реальные байты (сообщения, буферы), поэтому
-; его нельзя просто include'ить перед кодом - иначе CPU попытается
-; исполнить эти данные как инструкции. Явно прыгаем через них.
+; IMPORTANT: data.asm generates real bytes (messages, buffers), so
+; it can't simply be include'd before the code - otherwise the CPU would try
+; to execute that data as instructions. We explicitly jump over it.
 jmp kernel_start
 
 %include "src/data.asm"
 
 kernel_start:
-    mov [boot_drive_copy], dl   ; сохраняем номер диска, переданный загрузчиком в dl
+    mov [boot_drive_copy], dl   ; save the drive number the bootloader passed in dl
 
-    ; ES/DS/FS/GS/SS уже настроены загрузчиком на плоский селектор данных
-    ; (0x10) и остаются такими всё время работы ядра - отдельная настройка
-    ; ES под видеопамять (как в реал-моде) больше не нужна.
+    ; ES/DS/FS/GS/SS were already set up by the bootloader to the flat data
+    ; selector (0x10) and stay that way for the entire life of the kernel - a separate
+    ; setup of ES for video memory (as in real mode) is no longer needed.
 
-    call devmgr_init         ; инициализирует все устройства (экран/клавиатура/диск/таймер)
+    call devmgr_init         ; initializes all devices (screen/keyboard/disk/timer)
 
     call clear_screen
     call print_banner
     mov si, welcome_msg
     call print_string
 
-    call fs_ensure_readme    ; создаёт README.TXT в корне, если его ещё нет
-    call fs_ensure_test_exe  ; создаёт TEST.BIN в корне, если его ещё нет
-    call fs_ensure_license   ; создаёт LICENSE в корне, если его ещё нет
+    call fs_ensure_readme    ; creates README.TXT in the root if it doesn't exist yet
+    call fs_ensure_test_exe  ; creates TEST.BIN in the root if it doesn't exist yet
+    call fs_ensure_license   ; creates LICENSE in the root if it doesn't exist yet
 
     call fs_print_prompt
 
 main_loop:
-    call read_command_line   ; блокируется, пока пользователь не нажмёт Enter
+    call read_command_line   ; blocks until the user presses Enter
     call handle_command
     call fs_print_prompt
     jmp main_loop
@@ -75,6 +75,6 @@ main_loop:
 %include "src/headtail.asm"
 %include "src/uranium.asm"
 
-; Заполняем оставшееся место в пределах секторов, которые читает загрузчик,
-; чтобы файл был кратен 512 байтам (см. KERNEL_SECTORS_1/2 в boot.asm).
+; Pad the remaining space within the sectors the bootloader reads,
+; so the file size is a multiple of 512 bytes (see KERNEL_SECTORS_1/2 in boot.asm).
 times (512*96)-($-$$) db 0

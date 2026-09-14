@@ -99,6 +99,32 @@ BIOS-based emulator (QEMU, Bochs, VirtualBox in legacy-BIOS mode, ...) at
 it directly. It boots on real hardware in principle, though it's only ever
 been tested in QEMU.
 
+## Running the pre-built image
+
+Don't want to build it yourself? Grab `LexOS.img` from the project's
+releases/assets and boot it directly — no `nasm`, no toolchain, nothing to
+compile.
+
+**QEMU** (quickest way to try it):
+
+```sh
+qemu-system-i386 -drive format=raw,file=LexOS.img
+```
+
+**VirtualBox**: create a new VM (Type: Other, Version: Other/Unknown,
+no EFI), attach `LexOS.img` as an IDE hard disk (not as an optical
+drive), and boot it.
+
+**A real USB stick** (⚠️ this overwrites everything on the target device
+— double-check `/dev/sdX` before running this):
+
+```sh
+sudo dd if=LexOS.img of=/dev/sdX bs=4M status=progress && sync
+```
+
+Either way you land straight at the `$` prompt described above — type
+`help` to see what LexOS can do.
+
 ## Command reference
 
 Run `help` inside LexOS at any time for the live, paginated list

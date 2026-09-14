@@ -1,32 +1,31 @@
-; filesystem.asm — простая файловая система на диске с поддержкой папок
-; Один файл/папка = один сектор. Формат сектора (см. константы FS_* в data.asm):
-;   байты 0..7  - имя (ASCII, дополнено нулями)
-;   байт 8      - тип (0=свободно, 1=файл, 2=папка)
-;   байт 9      - индекс слота папки-родителя (0xFF = корень)
-;   байты 10..  - содержимое (ноль-терминированное, только для файлов)
+; filesystem.asm — a simple disk filesystem with folder support
+; One file/folder = one sector. Sector layout (see the FS_* constants in data.asm):
+;   bytes 0..7  - name (ASCII, zero-padded)
+;   byte 8      - type (0=free, 1=file, 2=folder)
+;   byte 9      - parent folder's slot index (0xFF = root)
+;   bytes 10..  - content (null-terminated, files only)
 ;
-; ДОСТУП К ДИСКУ: только через свой ATA-драйвер (прямая работа с портами
-; контроллера). В protected mode BIOS недоступен вовсе (нет v86-режима/
-; thunk'а на реальный режим), поэтому запасного пути через int 13h, как
-; в реал-модной версии, здесь больше нет - но остальная файловая система
-; по-прежнему работает только через fs_read_slot/fs_write_slot, ничего
-; другого не меняя.
+; DISK ACCESS: only through our own ATA driver (direct controller port access).
+; In protected mode BIOS is not available at all (no v86 mode/real-mode
+; thunk), so the int 13h fallback that existed in the real-mode version
+; is no longer here - but the rest of the filesystem still works only
+; through fs_read_slot/fs_write_slot, nothing else changed.
 ;
-; Экспортирует: fs_cat, fs_rm, fs_list, fs_ren, fs_size,
-;               fs_mkdir, fs_cd, fs_ensure_readme, fs_print_prompt
+; Exports: fs_cat, fs_rm, fs_list, fs_ren, fs_size,
+;          fs_mkdir, fs_cd, fs_ensure_readme, fs_print_prompt
 
-; --- Читает слот (индекс в ax) с диска в SCRATCH_ADDR ---
+; --- Reads a slot (index in ax) from disk into SCRATCH_ADDR ---
 fs_read_slot:
     push ax
 
-    add ax, FS_START_SECTOR       ; ax = абсолютный LBA сектор
+    add ax, FS_START_SECTOR       ; ax = absolute LBA sector
     call ata_read_sector
 
     pop ax
     ret
 
-; --- Пишет SCRATCH_ADDR на диск в слот (индекс в ax).
-;     Возвращает: carry=0 при успехе, carry=1 при ошибке. ---
+; --- Writes SCRATCH_ADDR to disk into a slot (index in ax).
+;     Returns: carry=0 on success, carry=1 on error. ---
 fs_write_slot:
     push ax
 
@@ -46,7 +45,7 @@ fs_write_slot:
 
 fs_last_carry  db 0
 
-; --- Читает байт из scratch-буфера по offset (в ax) -> al ---
+; --- Reads a byte from the scratch buffer at offset (in ax) -> al ---
 fs_scratch_read_byte:
     push esi
 
@@ -56,7 +55,7 @@ fs_scratch_read_byte:
     pop esi
     ret
 
-; --- Пишет байт (в dl) в scratch-буфер по offset (в ax) ---
+; --- Writes a byte (in dl) into the scratch buffer at offset (in ax) ---
 fs_scratch_write_byte:
     push esi
 
@@ -66,8 +65,8 @@ fs_scratch_write_byte:
     pop esi
     ret
 
-; --- Возвращает al = байт "parent", соответствующий текущей директории
-;     (0xFF, если мы в корне, иначе младший байт fs_current_dir). ---
+; --- Returns al = the "parent" byte corresponding to the current directory
+;     (0xFF if we're in the root, otherwise the low byte of fs_current_dir). ---
 fs_get_current_parent_byte:
     mov ax, [fs_current_dir]
     cmp ax, FS_ROOT
@@ -76,7 +75,7 @@ fs_get_current_parent_byte:
 .done:
     ret
 
-; --- Приводит символ в al к верхнему регистру (a-z -> A-Z), иначе не трогает ---
+; --- Converts the character in al to uppercase (a-z -> A-Z), otherwise leaves it alone ---
 to_upper_al:
     cmp al, 'a'
     jb .done
@@ -86,8 +85,8 @@ to_upper_al:
 .done:
     ret
 
-; --- Сравнивает имя файла в scratch-буфере с DS:SI (макс FS_NAME_LEN байт).
-;     Регистронезависимо. Результат: ax = 1 если совпадает, иначе 0. ---
+; --- Compares the file name in the scratch buffer with DS:SI (max FS_NAME_LEN bytes).
+;     Case-insensitive. Result: ax = 1 if it matches, otherwise 0. ---
 fs_name_matches:
     push si
     push cx
@@ -144,8 +143,8 @@ fs_name_matches:
     xor ax, ax
     ret
 
-; --- Ищет файл/папку по имени DS:SI В ТЕКУЩЕЙ ДИРЕКТОРИИ.
-;     Возвращает: ax = индекс слота, или -1 если не найден. ---
+; --- Looks up a file/folder by name DS:SI IN THE CURRENT DIRECTORY.
+;     Returns: ax = slot index, or -1 if not found. ---
 fs_find_by_name:
     push bx
     push si
@@ -203,7 +202,7 @@ fs_find_by_name:
     pop bx
     ret
 
-; --- Ищет первый свободный слот (в любой директории). ax=индекс или -1. ---
+; --- Finds the first free slot (in any directory). ax=index or -1. ---
 fs_find_free:
     push bx
 
@@ -238,7 +237,7 @@ fs_find_free:
     pop bx
     ret
 
-; --- Возвращает тип слота (индекс в ax): FS_TYPE_FREE/FILE/DIR ---
+; --- Returns the type of a slot (index in ax): FS_TYPE_FREE/FILE/DIR ---
 fs_get_type:
     call fs_read_slot
     mov ax, FS_TYPE_OFFSET
@@ -246,7 +245,7 @@ fs_get_type:
     xor ah, ah
     ret
 
-; --- cat <имя> ---
+; --- cat <name> ---
 fs_cat:
     push ax
     push bx
@@ -284,8 +283,8 @@ fs_cat:
     mov [fs_cat_chain], ax
 
     mov bx, FS_CONTENT_OFFSET
-    mov cx, FS_CONTENT_LEN - 1        ; cx = min(127, remaining) - сколько
-    cmp cx, [fs_cat_remaining]          ; байт печатать из инлайна
+    mov cx, FS_CONTENT_LEN - 1        ; cx = min(127, remaining) - how many
+    cmp cx, [fs_cat_remaining]          ; bytes to print from the inline part
     jbe .inline_loop
     mov cx, [fs_cat_remaining]
 
@@ -338,9 +337,9 @@ fs_cat:
     dec word [fs_cat_remaining]
     jmp .extra_print_loop
 .extra_print_done:
-    ; scratch всё ещё содержит этот же сектор (печать выше его не
-    ; трогала) - следующий указатель можно прочитать без повторного
-    ; чтения диска
+    ; scratch still holds this same sector (the printing above didn't
+    ; touch it) - the next pointer can be read without re-reading
+    ; the disk
     mov ax, FS_EXTRA_NEXT_OFFSET
     call fs_scratch_read_word
     mov [fs_cat_chain], ax
@@ -359,7 +358,7 @@ fs_cat:
 fs_cat_remaining dw 0
 fs_cat_chain dw 0
 
-; --- rm <имя> ---
+; --- rm <name> ---
 fs_rm:
     push ax
     push dx
@@ -385,11 +384,11 @@ fs_rm:
     cmp al, FS_TYPE_FILE
     jne .no_chain
     push ax
-    call fs_free_chain          ; освобождаем доп. секторы (если были)
+    call fs_free_chain          ; free the extra sectors (if any)
     pop ax
-    call fs_read_slot            ; fs_free_chain оставил scratch на последнем
-                                   ; освобождённом доп. секторе, а не на
-                                   ; самом слоте - перечитываем слот заново
+    call fs_read_slot            ; fs_free_chain left scratch pointing at the last
+                                   ; freed extra sector, not at the slot
+                                   ; itself - re-read the slot
 .no_chain:
 
     push ax
@@ -409,7 +408,7 @@ fs_rm:
     pop ax
     ret
 
-; --- ls : выводит список файлов/папок В ТЕКУЩЕЙ ДИРЕКТОРИИ ---
+; --- ls : lists the files/folders IN THE CURRENT DIRECTORY ---
 fs_list:
     push ax
     push bx
@@ -494,7 +493,7 @@ fs_list:
     pop ax
     ret
 
-; --- size <имя> ---
+; --- size <name> ---
 fs_size:
     push ax
     push bx
@@ -537,7 +536,7 @@ fs_size:
     pop ax
     ret
 
-; --- ren <старое> <новое> ---
+; --- ren <old> <new> ---
 fs_ren:
     push ax
     push bx
@@ -675,7 +674,7 @@ fs_ren:
     pop ax
     ret
 
-; --- mkdir <имя> ---
+; --- mkdir <name> ---
 fs_mkdir:
     push ax
     push bx
@@ -789,15 +788,15 @@ fs_mkdir:
     pop ax
     ret
 
-; --- cd <имя> / cd .. / cd (пусто -> корень) : DS:SI указывает на аргумент ---
+; --- cd <name> / cd .. / cd (empty -> root) : DS:SI points to the argument ---
 ; ============================================================
-; Разбирает путь (DS:SI, может быть абсолютным "/a/b" или
-; относительным "a/b"), проходя по нему через директории.
-; Пустые сегменты (подряд идущие "/") пропускаются, поэтому
-; "//" или "/" резолвятся в корень.
-; Возвращает: ax = "байтовое" представление финальной директории
-; (0xFF = корень, иначе индекс слота 0..254), либо ax = -1 при
-; ошибке (сообщение уже напечатано внутри).
+; Parses a path (DS:SI, which can be absolute "/a/b" or
+; relative "a/b"), walking through it directory by directory.
+; Empty segments (consecutive "/") are skipped, so
+; "//" or "/" resolve to the root.
+; Returns: ax = the "byte" representation of the final directory
+; (0xFF = root, otherwise slot index 0..254), or ax = -1 on
+; error (the message has already been printed inside).
 ; ============================================================
 fs_resolve_path:
     push bx
@@ -843,8 +842,8 @@ fs_resolve_path:
     jmp .seg_loop
 .seg_done:
     mov byte [di], 0
-    mov [fs_resolve_saved_si], si   ; сохраняем позицию В ИСХОДНОМ ПУТИ, т.к. si
-                                     ; сейчас будет переиспользован для поиска
+    mov [fs_resolve_saved_si], si   ; save the position IN THE ORIGINAL PATH, since si
+                                     ; is about to be reused for the lookup
 
     cmp byte [fs_tmp_name2], 0
     jne .not_empty_segment
@@ -852,7 +851,7 @@ fs_resolve_path:
     jmp .next_segment
 .not_empty_segment:
 
-    ; ищем сегмент среди детей узла bl: временно подменяем fs_current_dir
+    ; look up the segment among the children of node bl: temporarily swap fs_current_dir
     push word [fs_current_dir]
 
     mov al, bl
@@ -894,7 +893,7 @@ fs_resolve_path:
 .is_dir:
     mov ax, [fs_tmp_slot2]
     mov bl, al
-    mov si, [fs_resolve_saved_si]   ; восстанавливаем позицию в пути перед продолжением
+    mov si, [fs_resolve_saved_si]   ; restore the position in the path before continuing
     jmp .next_segment
 
 .success:
@@ -903,7 +902,7 @@ fs_resolve_path:
     jmp .end
 
 .error_exit:
-    ; ax уже = -1
+    ; ax is already = -1
 
 .end:
     pop di
@@ -912,8 +911,8 @@ fs_resolve_path:
     pop bx
     ret
 
-; --- mv <имя> <путь> : перемещает файл (только файл, не папку) из
-;     ТЕКУЩЕЙ директории в директорию, заданную путём. ---
+; --- mv <name> <path> : moves a file (files only, not folders) from
+;     the CURRENT directory into the directory given by the path. ---
 fs_mv:
     push ax
     push bx
@@ -953,8 +952,8 @@ fs_mv:
     cmp byte [si], 0
     je .usage_error
 
-    ; копируем путь в отдельный буфер (аргумент si указывает внутрь
-    ; общего buffer, который могут менять последующие вызовы)
+    ; copy the path into a separate buffer (the si argument points inside
+    ; the shared buffer, which later calls may modify)
     push si
     mov di, fs_tmp_path
     xor cx, cx
@@ -1006,7 +1005,7 @@ fs_mv:
 
     mov [fs_tmp_dest_byte], al
 
-    ; проверяем, нет ли уже файла с таким именем в целевой директории
+    ; check whether a file with that name already exists in the target directory
     push word [fs_current_dir]
 
     mov al, [fs_tmp_dest_byte]
@@ -1102,9 +1101,9 @@ fs_cd:
 
 .use_resolver:
     mov si, fs_tmp_path
-    call fs_resolve_path      ; ax = байт целевой директории (0..254 или 0xFF), либо -1 при ошибке
+    call fs_resolve_path      ; ax = target directory byte (0..254 or 0xFF), or -1 on error
     cmp ax, -1
-    je .end                    ; ошибка уже напечатана внутри резолвера
+    je .end                    ; error already printed inside the resolver
 
     cmp al, FS_ROOT_BYTE
     jne .set_normal
@@ -1142,7 +1141,7 @@ fs_cd:
     pop ax
     ret
 
-; --- Создаёт README (только в корне), если его ещё нет. Вызывается при старте. ---
+; --- Creates README (root only) if it doesn't exist yet. Called at startup. ---
 fs_ensure_readme:
     push ax
     push bx
@@ -1238,8 +1237,8 @@ fs_ensure_readme:
     pop ax
     ret
 
-; --- Печатает приглашение с именем текущей директории (если не корень),
-;     затем обычный "$ " из print_prompt. ---
+; --- Prints the prompt with the current directory's name (if not root),
+;     followed by the usual "$ " from print_prompt. ---
 fs_print_prompt:
     push ax
     push bx
@@ -1272,7 +1271,7 @@ fs_print_prompt:
     pop ax
     ret
 
-; --- cp <старое> <новое> : копирует файл в ТЕКУЩЕЙ директории (только файлы) ---
+; --- cp <old> <new> : copies a file within the CURRENT directory (files only) ---
 fs_cp:
     push ax
     push bx
@@ -1377,11 +1376,11 @@ fs_cp:
 .have_new_slot:
     mov [fs_tmp_slot2], ax
 
-    ; загружаем полную запись старого файла (имя+тип+parent+содержимое)
+    ; load the full record of the old file (name+type+parent+content)
     mov ax, [fs_tmp_slot]
     call fs_read_slot
 
-    ; затираем поле имени и записываем новое (тип/parent/содержимое остаются как у оригинала)
+    ; wipe the name field and write the new one (type/parent/content stay as in the original)
     xor bx, bx
 .clear_name_loop:
     cmp bx, FS_NAME_LEN
@@ -1414,10 +1413,10 @@ fs_cp:
     call fs_write_slot
     jc .write_failed
 
-    ; --- Если у оригинала была цепочка доп. секторов, копия сектора
-    ; выше скопировала и сам указатель на неё - т.е. оба файла сейчас
-    ; ДЕЛЯТ одни и те же доп. секторы. Делаем независимую копию цепочки
-    ; и переставляем указатель новой записи на неё. ---
+    ; --- If the original had a chain of extra sectors, the sector copy
+    ; above also copied the pointer to it - i.e. both files now
+    ; SHARE the same extra sectors. Make an independent copy of the chain
+    ; and repoint the new record's pointer at it. ---
     mov ax, [fs_tmp_slot]
     call fs_read_slot
     mov ax, FS_TYPE_OFFSET
@@ -1456,21 +1455,21 @@ fs_cp:
     pop ax
     ret
 
-; --- Рекурсивно печатает "/имя/имя/..." для цепочки родителей заданного слота.
-;     Вход: ax = слот в "байтовом" виде (0..254, либо 0xFF = корень, ничего не печатает). ---
+; --- Recursively prints "/name/name/..." for the chain of parents of a given slot.
+;     Input: ax = the slot in "byte" form (0..254, or 0xFF = root, prints nothing). ---
 fs_print_path:
     cmp ax, 0xFF
     je .done
 
-    push ax                    ; сохраняем свой слот на время рекурсии
+    push ax                    ; save our own slot for the duration of the recursion
 
-    call fs_read_slot            ; читаем свою запись, чтобы узнать родителя
+    call fs_read_slot            ; read our own record to find out the parent
     mov ax, FS_PARENT_OFFSET
-    call fs_scratch_read_byte    ; ax = байт родителя (0..254 или 0xFF)
-    call fs_print_path            ; сначала печатаем путь родителя (рекурсия)
+    call fs_scratch_read_byte    ; ax = parent byte (0..254 or 0xFF)
+    call fs_print_path            ; first print the parent's path (recursion)
 
-    pop ax                        ; восстанавливаем свой слот
-    call fs_read_slot              ; перечитываем СВОЮ запись (рекурсия затёрла scratch)
+    pop ax                        ; restore our own slot
+    call fs_read_slot              ; re-read OUR OWN record (the recursion clobbered scratch)
 
     push si
     mov si, slash_string
@@ -1495,7 +1494,7 @@ fs_print_path:
 .done:
     ret
 
-; --- pwd : печатает полный путь от корня до текущей директории ---
+; --- pwd : prints the full path from the root to the current directory ---
 fs_pwd:
     push ax
     push si
@@ -1519,7 +1518,7 @@ fs_pwd:
     pop ax
     ret
 
-; --- Печатает отступ (2 пробела на уровень вложенности fs_tree_depth) ---
+; --- Prints indentation (2 spaces per nesting level of fs_tree_depth) ---
 print_indent:
     push ax
     push cx
@@ -1539,7 +1538,7 @@ print_indent:
     pop ax
     ret
 
-; --- Рекурсивно печатает детей заданной директории (parent-байт в bl) ---
+; --- Recursively prints the children of a given directory (parent byte in bl) ---
 fs_tree_print_children:
     push ax
     push bx
@@ -1607,13 +1606,13 @@ fs_tree_print_children:
     cmp byte [fs_list_type], FS_TYPE_DIR
     jne .next
 
-    push bx                     ; сохраняем счётчик сканирования этого уровня
-    ; bl уже = индекс найденной папки (< FS_FILE_COUNT, влезает в байт) - именно
-    ; это значение и нужно передать как parent-фильтр для рекурсивного вызова
+    push bx                     ; save this level's scan counter
+    ; bl is already = the found folder's index (< FS_FILE_COUNT, fits in a byte) - this
+    ; is exactly the value to pass as the parent filter for the recursive call
     inc byte [fs_tree_depth]
-    call fs_tree_print_children  ; рекурсивно печатаем детей этой папки
+    call fs_tree_print_children  ; recursively print this folder's children
     dec byte [fs_tree_depth]
-    pop bx                       ; восстанавливаем счётчик, продолжаем сканирование
+    pop bx                       ; restore the counter, continue scanning
 
 .next:
     inc bx
@@ -1627,7 +1626,7 @@ fs_tree_print_children:
     pop ax
     ret
 
-; --- tree : печатает дерево всех файлов и папок начиная с корня ---
+; --- tree : prints a tree of all files and folders starting from the root ---
 fs_tree:
     push si
 
