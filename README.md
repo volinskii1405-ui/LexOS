@@ -123,6 +123,12 @@ alex@/$
   for writing small machine-code programs byte by byte, plus a one-line
   mini-assembler (press `S` inside the editor) so you don't have to
   hand-encode opcodes.
+- Both editors frame their header and footer in a solid green bar (white
+  text on green), the same treatment as the first-boot setup window.
+- The mini-assembler now handles `mov`/`add`/`sub`/`cmp`/`and`/`or`/`xor`
+  between any two registers of the same width (`xor ax,ax`, `mov bl,dl`,
+  `cmp ax,bx`, ...), plus `add`/`sub`/`cmp`/`and`/`or`/`xor` with an
+  immediate on any of the 8 8-bit registers, not just `al`.
 
 **Programs**
 - `run` loads a small file from disk and executes it as raw machine code.
@@ -239,9 +245,11 @@ first ask `Are you sure? Y/N` — `N` cancels back into the editor.
 
 Inside the hex editor: arrow keys move the cursor, hex digits edit the
 byte under it a nibble at a time, `S` opens the one-line mini-assembler
-(`mov`, `push`/`pop`, `inc`/`dec`, `add`/`sub`/`cmp al,imm8`, `int`, `jmp`/
-`je`/`jne`/`jz`/`jnz`/`loop` to an already-defined label, `ret`, `nop`,
-`hlt`, `cli`, `sti`), `Ctrl+B` saves and exits, `Esc` cancels.
+(`mov`/`add`/`sub`/`cmp`/`and`/`or`/`xor` between two registers of the
+same width, or with an immediate on an 8-bit register; `push`/`pop`,
+`inc`/`dec`; `int`; `jmp`/`je`/`jne`/`jz`/`jnz`/`loop` to an
+already-defined label; `ret`, `nop`, `hlt`, `cli`, `sti`), `Ctrl+B` saves
+and exits, `Esc` cancels.
 
 ## How it works
 
@@ -328,7 +336,10 @@ src/
   in particular can't open or grow a file past that size. `grep` is also
   case-sensitive and its search text is capped at 32 characters.
 - The mini-assembler resolves labels in one pass, so jumps can only target
-  a label that already appears earlier in the same program.
+  a label that already appears earlier in the same program. It also has
+  no memory operands (no `[bx]`, no `[label]`) and no 16-bit-register
+  immediates (`add cx,5` doesn't work - only 8-bit registers take an
+  immediate; `add cx,dx` works fine, since that's register-to-register).
 - Everything runs in ring 0 — there's no user/kernel privilege separation
   or process isolation. `run` executes a file's bytes as one big function
   call into the same address space as the kernel.

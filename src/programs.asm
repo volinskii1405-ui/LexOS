@@ -153,6 +153,12 @@ hex_editor_redraw:
 
     call clear_screen
 
+    mov al, 0
+    call screen_fill_bar_row
+    mov al, [current_color]
+    mov [screen_bar_saved_color], al
+    mov byte [current_color], EDITOR_BAR_TEXT
+
     mov si, msg_hex_header1
     call print_string
     mov si, fs_tmp_name
@@ -163,6 +169,9 @@ hex_editor_redraw:
     call print_dec_byte
     mov si, msg_hex_header3
     call print_string
+
+    mov al, [screen_bar_saved_color]
+    mov [current_color], al
 
     xor dx, dx                     ; dx = row number (0..15)
 .row_loop:
@@ -230,8 +239,17 @@ hex_editor_redraw:
     jmp .row_loop
 
 .rows_done:
+    mov al, HEX_FOOTER_ROW
+    call screen_fill_bar_row
+    mov al, [current_color]
+    mov [screen_bar_saved_color], al
+    mov byte [current_color], EDITOR_BAR_TEXT
+
     mov si, msg_hex_footer
     call print_string
+
+    mov al, [screen_bar_saved_color]
+    mov [current_color], al
 
     pop si
     pop di
@@ -485,6 +503,9 @@ hex_editor:
 
 .enter_asm_mode:
     call hex_editor_redraw
+    mov word [cursor_row], HEX_FOOTER_ROW + 1
+    mov word [cursor_col], 0
+    call update_hw_cursor
     mov si, msg_asm_prompt
     call print_string
 
