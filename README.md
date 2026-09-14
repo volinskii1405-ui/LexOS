@@ -73,8 +73,8 @@ $
 - `uranium` is a full-screen, nano-style text editor: arrow keys move the
   cursor (with line wrapping and scrolling for content taller than the
   screen), typing inserts, Backspace/Delete remove. `Ctrl+B` saves and
-  exits, `Ctrl+H` saves without exiting, and `Esc` asks for confirmation
-  (`Are you sure? Y/N`) before discarding unsaved changes.
+  exits, `Ctrl+H` saves without exiting, and `Esc` exits without saving —
+  all three ask `Are you sure? Y/N` first.
 - `hex` is an interactive hex editor (arrow keys, nibble-at-a-time input)
   for writing small machine-code programs byte by byte, plus a one-line
   mini-assembler (press `S` inside the editor) so you don't have to
@@ -111,9 +111,25 @@ compile.
 qemu-system-i386 -drive format=raw,file=LexOS.img
 ```
 
+That's enough to try everything except `beep` — QEMU's default audio
+driver is `none`, so the PC speaker gets toggled correctly but nothing
+plays. To actually hear it, attach a real audio backend and route the PC
+speaker to it:
+
+```sh
+qemu-system-i386 -drive format=raw,file=LexOS.img \
+    -audiodev pa,id=snd0 -machine pcspk-audiodev=snd0
+```
+
+(swap `pa` for `alsa`/`coreaudio`/`dsound` depending on your host; run
+`qemu-system-i386 -audiodev help` to see which backends your build
+supports.)
+
 **VirtualBox**: create a new VM (Type: Other, Version: Other/Unknown,
 no EFI), attach `LexOS.img` as an IDE hard disk (not as an optical
-drive), and boot it.
+drive), and boot it. Note that VirtualBox doesn't emulate the PC
+speaker at all — `beep` will be silent there no matter what, regardless
+of any audio settings.
 
 **A real USB stick** (⚠️ this overwrites everything on the target device
 — double-check `/dev/sdX` before running this):
@@ -172,8 +188,8 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 Inside the `uranium` text editor: arrow keys, Home/End and Delete move
 around and edit like any text editor, Enter inserts a real line break.
 `Ctrl+B` saves and exits, `Ctrl+H` saves without exiting (flashes
-`Saved.` in the status line), and `Esc` asks `Are you sure? Y/N` before
-discarding unsaved changes and returning to the shell.
+`Saved.` in the status line), and `Esc` exits without saving. All three
+first ask `Are you sure? Y/N` — `N` cancels back into the editor.
 
 Inside the hex editor: arrow keys move the cursor, hex digits edit the
 byte under it a nibble at a time, `S` opens the one-line mini-assembler
