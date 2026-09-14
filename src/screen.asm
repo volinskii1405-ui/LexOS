@@ -1,6 +1,7 @@
 ; screen.asm — screen output (VGA text mode, direct writes to video memory)
 ; Exports: clear_screen, print_char, print_string, print_prompt,
-; print_banner, print_hex_byte, print_dec_byte, update_hw_cursor, scroll_screen
+; print_banner, print_hex_byte, print_dec_byte, update_hw_cursor,
+; scroll_screen, screen_putc_at
 ;
 ; Unlike the real-mode version, here video memory (VIDEO_MEM = 0xB8000) is
 ; NOT a segment but an ordinary linear address - ES/DS already cover the
@@ -233,6 +234,40 @@ print_string:
     call print_char
     jmp .loop
 .done:
+    popa
+    ret
+
+; ============================================================
+; Writes a single character straight to video memory at an arbitrary
+; (row, col) with an explicit color - unlike print_char, this does NOT
+; move the screen cursor and ignores current_color. Used to draw
+; standalone UI elements (see src/user.asm's first-boot setup window)
+; without disturbing the normal cursor-tracked output.
+; Input: dl = row, dh = col, bl = character, bh = color attribute
+;
+; character/color go in bx, never dx, because "mul" always overwrites
+; the WHOLE of dx (even just to zero its high half), which would wipe
+; out dh the moment row*80 is computed - print_char has the exact same
+; constraint and resolves it the same way. row/col (dl/dh) are read out
+; into ecx and stashed on the stack before the mul for the same reason.
+; ============================================================
+screen_putc_at:
+    pusha
+    xor ecx, ecx
+    mov cl, dh                ; ecx = col, captured before mul can clobber dx
+    push ecx
+
+    xor eax, eax
+    mov al, dl                 ; eax = row
+    mov ecx, SCREEN_COLS
+    mul ecx                    ; eax = row * 80 (edx is clobbered - fine, unused)
+
+    pop ecx
+    add eax, ecx                ; eax = row * 80 + col
+    shl eax, 1                  ; eax = offset in bytes
+    mov edi, eax
+
+    mov [VIDEO_MEM + edi], bx  ; bl = character, bh = color attribute
     popa
     ret
 

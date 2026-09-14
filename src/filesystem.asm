@@ -373,6 +373,12 @@ fs_rm:
     jmp .end
 
 .found:
+    push ax                 ; fs_reject_if_user_cfg overwrites ax with its result -
+    call fs_reject_if_user_cfg  ; save the slot index first, restore it after
+    cmp ax, 1
+    pop ax
+    je .end                 ; protected - the message is already printed
+
     push ax
     call fs_read_slot
     pop ax
@@ -610,6 +616,12 @@ fs_ren:
     jmp .end
 
 .found_old:
+    push ax
+    call fs_reject_if_user_cfg
+    cmp ax, 1
+    pop ax
+    je .end                 ; protected - the message is already printed
+
     mov [fs_tmp_slot], ax
 
     mov si, fs_tmp_name2
@@ -988,6 +1000,12 @@ fs_mv:
     jmp .end
 
 .found_src:
+    push ax
+    call fs_reject_if_user_cfg
+    cmp ax, 1
+    pop ax
+    je .end                 ; protected - the message is already printed
+
     mov [fs_tmp_slot], ax
     call fs_get_type
     cmp ax, FS_TYPE_FILE
