@@ -26,8 +26,20 @@ $(BUILD_DIR)/os-image.bin: $(BUILD_DIR)/boot.bin $(BUILD_DIR)/kernel.bin
 	fi
 	truncate -s 112640 $@
 
+# Audio backend for `beep` (see README > Running the pre-built image).
+# Override if the default doesn't work for you, e.g.: make run AUDIODEV=alsa
+UNAME_S := $(shell uname -s 2>/dev/null)
+ifeq ($(UNAME_S),Darwin)
+	AUDIODEV ?= coreaudio
+else ifeq ($(OS),Windows_NT)
+	AUDIODEV ?= dsound
+else
+	AUDIODEV ?= pa
+endif
+
 run: $(BUILD_DIR)/os-image.bin
-	qemu-system-i386 -drive format=raw,file=$(BUILD_DIR)/os-image.bin
+	qemu-system-i386 -drive format=raw,file=$(BUILD_DIR)/os-image.bin \
+		-audiodev $(AUDIODEV),id=snd0 -machine pcspk-audiodev=snd0
 
 clean:
 	rm -rf $(BUILD_DIR)
