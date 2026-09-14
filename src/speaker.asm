@@ -1,5 +1,5 @@
-; speaker.asm — PC-спикер через канал 2 PIT (порт 0x42/0x43) и порт 0x61
-; Экспортирует: do_beep_cmd (команда beep)
+; speaker.asm — PC speaker via PIT channel 2 (port 0x42/0x43) and port 0x61
+; Exports: do_beep_cmd (beep command)
 
 PIT_CHANNEL2 equ 0x42
 PIT_COMMAND  equ 0x43

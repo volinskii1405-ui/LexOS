@@ -1,11 +1,11 @@
-; rtc.asm — чтение времени/даты из CMOS RTC (порты 0x70/0x71)
-; Значения в CMOS обычно хранятся в BCD - переводим в обычные числа.
-; Экспортирует: cmd_show_date (команда date), cmd_show_time (команда time)
+; rtc.asm — reads time/date from the CMOS RTC (ports 0x70/0x71)
+; Values in CMOS are usually stored in BCD - we convert them to plain numbers.
+; Exports: cmd_show_date (date command), cmd_show_time (time command)
 
 CMOS_INDEX equ 0x70
 CMOS_DATA  equ 0x71
 
-; --- Ждёт, пока RTC не закончит обновление (регистр A, бит 7 = UIP) ---
+; --- Waits until the RTC finishes updating (register A, bit 7 = UIP) ---
 rtc_wait_ready:
     push ax
 .wait:
@@ -17,63 +17,63 @@ rtc_wait_ready:
     pop ax
     ret
 
-; --- Читает регистр CMOS (номер в al) -> al ---
+; --- Reads a CMOS register (number in al) -> al ---
 rtc_read_reg:
     out CMOS_INDEX, al
     in al, CMOS_DATA
     ret
 
-; --- Переводит BCD-байт в al в обычное число (старший ниббл*10 + младший) ---
+; --- Converts a BCD byte in al to a plain number (high nibble*10 + low nibble) ---
 bcd_to_bin:
     push bx
     mov bl, al
-    and bl, 0x0F        ; bl = единицы
-    shr al, 4           ; al = десятки
+    and bl, 0x0F        ; bl = ones digit
+    shr al, 4           ; al = tens digit
     mov ah, 10
-    mul ah              ; al = десятки*10 (максимум 90, в al помещается)
+    mul ah              ; al = tens*10 (max 90, fits in al)
     add al, bl
     pop bx
     ret
 
-; --- Читает часы:минуты:секунды в bh:bl:cl (обычные числа, не BCD) ---
+; --- Reads hours:minutes:seconds into bh:bl:cl (plain numbers, not BCD) ---
 rtc_read_time:
     call rtc_wait_ready
     mov al, 0x04
     call rtc_read_reg
     call bcd_to_bin
-    mov bh, al               ; часы
+    mov bh, al               ; hours
 
     mov al, 0x02
     call rtc_read_reg
     call bcd_to_bin
-    mov bl, al                ; минуты
+    mov bl, al                ; minutes
 
     mov al, 0x00
     call rtc_read_reg
     call bcd_to_bin
-    mov cl, al                 ; секунды
+    mov cl, al                 ; seconds
     ret
 
-; --- Читает день:месяц:год в bh:bl:cl (год - последние 2 цифры) ---
+; --- Reads day:month:year into bh:bl:cl (year is the last 2 digits) ---
 rtc_read_date:
     call rtc_wait_ready
     mov al, 0x07
     call rtc_read_reg
     call bcd_to_bin
-    mov bh, al               ; день
+    mov bh, al               ; day
 
     mov al, 0x08
     call rtc_read_reg
     call bcd_to_bin
-    mov bl, al                ; месяц
+    mov bl, al                ; month
 
     mov al, 0x09
     call rtc_read_reg
     call bcd_to_bin
-    mov cl, al                 ; год (0-99)
+    mov cl, al                 ; year (0-99)
     ret
 
-; --- time : печатает ЧЧ:ММ:СС ---
+; --- time : prints HH:MM:SS ---
 cmd_show_time:
     push ax
     push bx
@@ -100,7 +100,7 @@ cmd_show_time:
     pop ax
     ret
 
-; --- date : печатает ДД.ММ.ГГГГ (год считаем 2000+гг) ---
+; --- date : prints DD.MM.YYYY (year is treated as 2000+yy) ---
 cmd_show_date:
     push ax
     push bx
@@ -132,7 +132,7 @@ cmd_show_date:
     pop ax
     ret
 
-; --- Печатает al (0-99) как 2 десятичные цифры с ведущим нулём ---
+; --- Prints al (0-99) as 2 decimal digits with a leading zero ---
 print_dec2:
     push ax
     push bx

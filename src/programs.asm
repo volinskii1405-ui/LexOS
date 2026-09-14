@@ -1,12 +1,12 @@
-; programs.asm — исполняемые файлы (тип PROGRAM) и hex-редактор
-; content[0] = длина программы (0..127), content[1..] = сырые байты кода,
-; НЕ ноль-терминированные (0x00 может быть частью настоящего машинного кода).
-; Экспортирует: fs_run, hex_editor, fs_ensure_test_exe
+; programs.asm — executable files (type PROGRAM) and the hex editor
+; content[0] = program length (0..127), content[1..] = raw code bytes,
+; NOT null-terminated (0x00 can be part of actual machine code).
+; Exports: fs_run, hex_editor, fs_ensure_test_exe
 
 ; ============================================================
-; run <имя> : загружает программу в program_exec_buffer и вызывает её
-; обычным near call. Программа должна закончиться инструкцией ret (0xC3),
-; чтобы управление корректно вернулось обратно в шелл.
+; run <name> : loads the program into program_exec_buffer and calls it
+; with an ordinary near call. The program must end with a ret instruction
+; (0xC3) so control returns correctly back to the shell.
 ; ============================================================
 fs_run:
     push ax
@@ -65,7 +65,7 @@ fs_run:
     call fs_read_slot
 
     mov ax, FS_CONTENT_OFFSET
-    call fs_scratch_read_byte     ; al = длина программы
+    call fs_scratch_read_byte     ; al = program length
     xor ah, ah
     mov cx, ax
 
@@ -85,13 +85,13 @@ fs_run:
     jmp .copy_loop
 .copy_done:
 
-    call program_exec_buffer       ; ВЫПОЛНЯЕМ пользовательский код
+    call program_exec_buffer       ; EXECUTE the user code
 
-    ; В protected mode нет BIOS int 10h, поэтому и пользовательские
-    ; программы печатают через "call print_char" (см. test_exe_template
-    ; ниже) - это тот же самый счётчик cursor_row/cursor_col, что и у
-    ; шелла, так что рассинхронизации, которая была возможна в реал-моде
-    ; через отдельный аппаратный курсор BIOS, здесь в принципе нет.
+    ; In protected mode there's no BIOS int 10h, so user programs print
+    ; via "call print_char" (see test_exe_template below) - this is the
+    ; same cursor_row/cursor_col counter that the shell uses, so the
+    ; desync that was possible in real mode via a separate BIOS hardware
+    ; cursor simply cannot happen here.
 
 .end:
     pop di
@@ -102,8 +102,8 @@ fs_run:
     ret
 
 ; ============================================================
-; Строгая проверка hex-символа: вход al=ASCII символ.
-; Выход: carry=1 если НЕ валидный hex-символ; иначе carry=0, al=значение (0-15).
+; Strict hex-character check: input al=ASCII character.
+; Output: carry=1 if NOT a valid hex character; otherwise carry=0, al=value (0-15).
 ; ============================================================
 hex_digit_value_checked:
     cmp al, '0'
@@ -140,8 +140,8 @@ hex_digit_value_checked:
     ret
 
 ; ============================================================
-; Перерисовывает экран hex-редактора: заголовок, сетка 8x16 байт,
-; подсветка текущей позиции курсора инверсией цвета, подвал с подсказкой.
+; Redraws the hex editor screen: header, 8x16 byte grid, highlights the
+; current cursor position by inverting the color, footer with a hint.
 ; ============================================================
 hex_editor_redraw:
     push ax
@@ -164,14 +164,14 @@ hex_editor_redraw:
     mov si, msg_hex_header3
     call print_string
 
-    xor dx, dx                     ; dx = номер строки (0..15)
+    xor dx, dx                     ; dx = row number (0..15)
 .row_loop:
     cmp dx, HEX_GRID_ROWS
     jae .rows_done
 
     mov ax, dx
     mov cl, HEX_GRID_COLS
-    mul cl                          ; ax = dx * 8 = offset начала строки
+    mul cl                          ; ax = dx * 8 = offset of row start
     mov bx, ax                       ; bx = row_start
 
     mov al, bl
@@ -179,7 +179,7 @@ hex_editor_redraw:
     mov si, msg_colon_space
     call print_string
 
-    xor cx, cx                        ; cx = столбец (0..7)
+    xor cx, cx                        ; cx = column (0..7)
 .col_loop:
     cmp cx, HEX_GRID_COLS
     jae .row_done
@@ -189,13 +189,13 @@ hex_editor_redraw:
     cmp ax, PROGRAM_MAX_LEN
     jae .print_dashes
 
-    mov di, ax                          ; di = offset в hex_edit_buffer
+    mov di, ax                          ; di = offset into hex_edit_buffer
 
     cmp di, [hex_cursor_offset]
     jne .no_highlight
     mov al, [current_color]
     mov [hex_saved_color], al
-    mov byte [current_color], 0x70        ; инверсия: чёрный на светло-сером
+    mov byte [current_color], 0x70        ; inverted: black on light gray
     mov byte [hex_is_highlighted], 1
     jmp .fetch_byte
 .no_highlight:
@@ -242,16 +242,16 @@ hex_editor_redraw:
     ret
 
 ; ============================================================
-; hex <имя> : открывает/создаёт файл-программу в интерактивном
-; hex-редакторе. Стрелки — перемещение, hex-цифры — редактирование
-; байта под курсором (сначала старший ниббл, потом младший, курсор
-; сдвигается автоматически). Ctrl+B — сохранить и выйти. ESC — выйти
-; без сохранения.
+; hex <name> : opens/creates a program file in the interactive
+; hex editor. Arrows — move around, hex digits — edit the byte
+; under the cursor (high nibble first, then low nibble, cursor
+; advances automatically). Ctrl+B — save and exit. ESC — exit
+; without saving.
 ; ============================================================
 ; ============================================================
-; Если в fs_tmp_name нет точки, дописывает ".BIN" (если хватает места
-; в пределах FS_NAME_LEN). Используется командой hex для удобства -
-; "hex myapp" превращается в "hex MYAPP.BIN" автоматически.
+; If fs_tmp_name has no dot, appends ".BIN" (if there's room
+; within FS_NAME_LEN). Used by the hex command for convenience -
+; "hex myapp" automatically becomes "hex MYAPP.BIN".
 ; ============================================================
 maybe_add_bin_extension:
     push ax
@@ -276,7 +276,7 @@ maybe_add_bin_extension:
 
 .no_dot_found:
     cmp cx, FS_NAME_LEN - 4
-    ja .done                      ; не влезает ".BIN" - оставляем имя как есть
+    ja .done                      ; ".BIN" doesn't fit - leave the name as-is
 
     mov di, fs_tmp_name
     add di, cx
@@ -448,7 +448,7 @@ hex_editor:
     call hex_digit_value_checked
     jc .editor_loop
 
-    mov dl, al                       ; dl = значение введённого ниббла (0-15)
+    mov dl, al                       ; dl = value of the entered nibble (0-15)
     mov bx, [hex_cursor_offset]
 
     cmp byte [hex_edit_nibble_state], 0
@@ -490,13 +490,13 @@ hex_editor:
 
     mov si, asm_input_buffer
     call read_asm_line
-    jc .editor_loop              ; ESC - отмена, возвращаемся без изменений
+    jc .editor_loop              ; ESC - cancel, return without changes
 
     mov si, asm_input_buffer
     call fs_assemble_line
     jc .asm_error
 
-    ; --- вставляем asm_output_buffer[0..length-1] в hex_edit_buffer с позиции курсора ---
+    ; --- insert asm_output_buffer[0..length-1] into hex_edit_buffer at the cursor position ---
     xor cx, cx
 .insert_loop:
     mov al, [asm_output_length]
@@ -506,7 +506,7 @@ hex_editor:
     mov ax, [hex_cursor_offset]
     add ax, cx
     cmp ax, PROGRAM_MAX_LEN
-    jae .insert_done               ; не помещается целиком - обрезаем вставку
+    jae .insert_done               ; doesn't fit entirely - truncate the insertion
 
     mov bx, ax
     mov si, cx
@@ -518,7 +518,7 @@ hex_editor:
 
 .insert_done:
     mov ax, [hex_cursor_offset]
-    add ax, cx                       ; ax = новая позиция после вставленных байт
+    add ax, cx                       ; ax = new position after the inserted bytes
 
     xor ch, ch
     mov cl, [hex_edit_length]
@@ -633,27 +633,28 @@ hex_editor:
     ret
 
 ; ============================================================
-; Пример программы TEST.BIN: печатает приветствие. В реал-моде это
-; делалось символ за символом через BIOS teletype (int 10h); в
-; protected mode BIOS недоступен, а "call print_char" на каждый
-; символ (5 байт на near call) не влез бы в лимит PROGRAM_MAX_LEN
-; (127 байт) для строки такой длины. Поэтому вместо развёрнутой
-; последовательности - компактный цикл по встроенной строке.
+; Sample program TEST.BIN: prints a greeting. In real mode this
+; was done character by character via the BIOS teletype (int 10h); in
+; protected mode BIOS is unavailable, and a "call print_char" for every
+; character (5 bytes per near call) wouldn't fit within the
+; PROGRAM_MAX_LEN limit (127 bytes) for a string this long. So instead
+; of an unrolled sequence, a compact loop over an embedded string is used.
 ;
-; Программа position-dependent: она всегда копируется в один и тот
-; же фиксированный адрес (program_exec_buffer, см. data.asm), поэтому
-; абсолютный адрес встроенной строки можно посчитать прямо на этапе
-; сборки как program_exec_buffer + (test_msg - test_exe_template).
+; The program is position-dependent: it is always copied to one and the
+; same fixed address (program_exec_buffer, see data.asm), so the
+; absolute address of the embedded string can be computed right at
+; assembly time as program_exec_buffer + (test_msg - test_exe_template).
 ;
-; ВАЖНО про вызов print_char: обычный "call print_char" компилируется
-; в relative call (смещение от адреса СЛЕДУЮЩЕЙ инструкции ТАМ, ГДЕ
-; этот код лежит в самом ядре) - но этот код копируется и выполняется
-; из program_exec_buffer, по СОВСЕМ ДРУГОМУ адресу! Относительное
-; смещение, посчитанное для одного места, ведёт в случайный мусор при
-; исполнении из другого. print_char, в отличие от строки выше, не
-; часть копируемого блока и её адрес фиксирован (ядро не перемещается),
-; поэтому вызываем её так же, как и данные - абсолютным адресом через
-; регистр (call eax), а не относительным near call.
+; IMPORTANT about calling print_char: an ordinary "call print_char"
+; compiles to a relative call (offset from the address of the NEXT
+; instruction WHERE this code sits in the kernel itself) - but this code
+; is copied and executed from program_exec_buffer, at a COMPLETELY
+; DIFFERENT address! A relative offset computed for one location leads
+; to random garbage when executed from another. print_char, unlike the
+; string above, is not part of the copied block and its address is
+; fixed (the kernel doesn't move), so it's called the same way as data -
+; via an absolute address through a register (call eax), not a
+; relative near call.
 ; ============================================================
 test_exe_template:
     mov esi, program_exec_buffer + (test_msg - test_exe_template)
@@ -661,7 +662,7 @@ test_exe_template:
     mov al, [esi]
     cmp al, 0
     je .done
-    mov ebx, print_char    ; НЕ eax - print_char читает символ из al
+    mov ebx, print_char    ; NOT eax - print_char reads the character from al
     call ebx
     inc esi
     jmp .loop
@@ -673,7 +674,7 @@ test_exe_template_end:
 TEST_EXE_LENGTH equ test_exe_template_end - test_exe_template
 
 ; ============================================================
-; Создаёт TEST.BIN в корне при первом запуске (если его ещё нет).
+; Creates TEST.BIN in the root directory on first run (if it doesn't exist yet).
 ; ============================================================
 fs_ensure_test_exe:
     push ax

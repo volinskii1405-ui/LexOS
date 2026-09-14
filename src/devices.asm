@@ -1,19 +1,20 @@
-; devices.asm — менеджер устройств
-; Единая таблица устройств (имя, тип, статус, указатель на init-функцию).
-; devmgr_init проходит по таблице и вызывает init каждого устройства,
-; записывая результат (OK/ERROR) в саму таблицу — вместо того, чтобы
-; разбросанный по разным местам код молча вызывал драйверы напрямую.
-; Экспортирует: devmgr_init, show_devices
+; devices.asm — device manager
+; A single device table (name, type, status, pointer to init function).
+; devmgr_init walks the table and calls each device's init function,
+; writing the result (OK/ERROR) back into the table itself — instead of
+; having code scattered all over the place call drivers directly.
+; Exports: devmgr_init, show_devices
 ;
-; Все указатели в таблице (dw) и весь код этого файла продолжают
-; работать с 16-битными регистрами: устройства и их init-функции -
-; часть самого ядра, а оно целиком лежит ниже 0x10000 (см. примечание
-; в data.asm), так что усечение адреса до 16 бит здесь безопасно.
+; All pointers in the table (dw) and all code in this file keep working
+; with 16-bit registers: devices and their init functions are part of
+; the kernel itself, which lies entirely below 0x10000 (see the note
+; in data.asm), so truncating the address to 16 bits here is safe.
 ;
-; В protected mode пропала возможность проверить диск через BIOS
-; int 13h (BIOS попросту недоступен) - вместо отдельной записи "DISK"
-; с таким BIOS-опросом остаётся только "ATA" (ata_identify), которая
-; и так проверяет тот же физический диск напрямую через контроллер.
+; In protected mode there's no way to check the disk through BIOS
+; int 13h anymore (BIOS is simply unavailable) - so instead of a
+; separate "DISK" entry doing that BIOS probe, only "ATA" (ata_identify)
+; remains, which already checks the same physical disk directly through
+; the controller.
 
 DEV_NAME_LEN equ 8
 
@@ -26,11 +27,11 @@ DEV_TYPE_MISC    equ 5
 DEV_STATUS_ERROR equ 0
 DEV_STATUS_OK    equ 1
 
-; Раскладка одной записи (12 байт):
-;   байты 0..7  - имя (8 символов, дополнено пробелами)
-;   байт 8      - тип (см. DEV_TYPE_*)
-;   байт 9      - статус (заполняется devmgr_init)
-;   байты 10..11 - offset init-функции устройства (near, в пределах ядра)
+; Layout of one record (12 bytes):
+;   bytes 0..7   - name (8 characters, padded with spaces)
+;   byte 8       - type (see DEV_TYPE_*)
+;   byte 9       - status (filled in by devmgr_init)
+;   bytes 10..11 - offset of the device's init function (near, within the kernel)
 DEV_RECORD_SIZE equ DEV_NAME_LEN + 1 + 1 + 2
 
 devices_table:
@@ -68,10 +69,10 @@ devices_table_end:
 DEVICE_COUNT equ (devices_table_end - devices_table) / DEV_RECORD_SIZE
 
 ; ============================================================
-; Инициализирует все устройства из таблицы: вызывает init-функцию
-; каждого и записывает результат (carry=1 => ERROR, carry=0 => OK)
-; обратно в поле статуса той же записи. Вызывать один раз при старте
-; (после idt_setup, до sti).
+; Initializes all devices from the table: calls each one's init
+; function and writes the result (carry=1 => ERROR, carry=0 => OK)
+; back into the status field of the same record. Call once at startup
+; (after idt_setup, before sti).
 ; ============================================================
 devmgr_init:
     push ax
@@ -93,11 +94,11 @@ devmgr_init:
     mov si, devices_table
     add si, ax
 
-    ; "call ax" (16-битный косвенный вызов) в 32-битном сегменте кода
-    ; протолкнул бы в стек только 16-битный адрес возврата, а "ret" у
-    ; вызываемой функции по умолчанию 32-битный - стек бы разъехался.
-    ; Поэтому явно расширяем адрес до 32 бит перед вызовом.
-    movzx eax, word [si + DEV_NAME_LEN + 2]   ; offset init-функции этого устройства
+    ; "call ax" (a 16-bit indirect call) in a 32-bit code segment would
+    ; push only a 16-bit return address onto the stack, while the called
+    ; function's "ret" defaults to 32-bit - the stack would get misaligned.
+    ; So we explicitly widen the address to 32 bits before calling.
+    movzx eax, word [si + DEV_NAME_LEN + 2]   ; offset of this device's init function
     call eax
 
     jc .mark_error
@@ -111,7 +112,7 @@ devmgr_init:
     jmp .loop
 
 .done:
-    sti                     ; все обработчики уже в IDT - можно включать прерывания
+    sti                     ; all handlers are already in the IDT - safe to enable interrupts
     pop si
     pop cx
     pop bx
@@ -119,29 +120,29 @@ devmgr_init:
     ret
 
 ; ============================================================
-; init-функции устройств. Соглашение: carry=0 - успех, carry=1 - ошибка.
+; Device init functions. Convention: carry=0 - success, carry=1 - error.
 ; ============================================================
 
-; --- SCREEN: видеопамять уже доступна по фиксированному линейному
-;     адресу VIDEO_MEM, проверять нечего ---
+; --- SCREEN: video memory is already accessible at the fixed linear
+;     address VIDEO_MEM, nothing to check ---
 dev_init_screen:
     clc
     ret
 
-; --- KEYBOARD: ставим свой обработчик IRQ1 в IDT ---
+; --- KEYBOARD: install our own IRQ1 handler in the IDT ---
 dev_init_keyboard:
     call install_keyboard_isr
     clc
     ret
 
-; --- TIMER: ставим свой обработчик IRQ0 в IDT ---
+; --- TIMER: install our own IRQ0 handler in the IDT ---
 dev_init_timer:
     call install_timer_isr
     clc
     ret
 
-; --- RTC: читаем часы и проверяем, что значение похоже на настоящее
-;     время (0-23) - грубая, но достаточная проверка живого CMOS ---
+; --- RTC: read the clock and check that the value looks like a real
+;     time (0-23) - a crude but sufficient check that CMOS is alive ---
 dev_init_rtc:
     push bx
     push cx
@@ -159,7 +160,7 @@ dev_init_rtc:
     ret
 
 ; ============================================================
-; devices : выводит таблицу устройств (имя, тип, статус)
+; devices : prints the device table (name, type, status)
 ; ============================================================
 show_devices:
     push ax
@@ -188,15 +189,15 @@ show_devices:
     call print_char
     inc si
     a16 loop .print_name
-    ; si теперь указывает точно на байт типа (offset 8 от начала записи)
+    ; si now points exactly at the type byte (offset 8 from the start of the record)
 
     mov al, ' '
     call print_char
 
-    mov al, [si]           ; тип
+    mov al, [si]           ; type
     push ax
     inc si
-    mov al, [si]             ; статус
+    mov al, [si]             ; status
     mov [dev_tmp_status], al
     pop ax
 

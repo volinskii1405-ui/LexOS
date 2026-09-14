@@ -1,13 +1,13 @@
-; grep.asm — поиск текста внутри файла (команда "grep <имя> <текст>")
-; Экспортирует: fs_grep
+; grep.asm — search for text inside a file (the "grep <name> <text>" command)
+; Exports: fs_grep
 ;
-; Читает содержимое файла целиком через fs_load_content (src/fs_extra.asm)
-; в content_buf, затем ищет в нём подстроку grep_needle. Печатает
-; заголовок с числом совпадений, а для каждого совпадения - строку вида
-; "Line <n>, Symbol <col> <текст строки>" с найденным текстом, выделенным
-; ярко-красным цветом (COLOR_RED).
+; Reads the whole file content via fs_load_content (src/fs_extra.asm)
+; into content_buf, then searches it for the grep_needle substring. Prints
+; a header with the number of matches, and for each match a line like
+; "Line <n>, Symbol <col> <line text>" with the found text highlighted
+; in bright red (COLOR_RED).
 
-; --- grep <имя> <текст> : DS:SI указывает на "<имя> <текст>" ---
+; --- grep <name> <text> : DS:SI points to "<name> <text>" ---
 fs_grep:
     push ax
     push bx
@@ -97,7 +97,7 @@ fs_grep:
     mov ax, [fs_tmp_slot]
     call fs_load_content
 
-    ; --- Проход 1: считаем общее число совпадений (для заголовка) ---
+    ; --- Pass 1: count the total number of matches (for the header) ---
     xor bx, bx
     xor cx, cx
 .count_loop:
@@ -128,7 +128,7 @@ fs_grep:
     mov si, msg_grep_quote_nl
     call print_string
 
-    ; --- Проход 2: находим и печатаем каждую строку с совпадением ---
+    ; --- Pass 2: find and print each line containing a match ---
     xor bx, bx
     mov word [grep_line_num], 1
     mov word [grep_line_start], 0
@@ -197,7 +197,7 @@ grep_saved_color db 0
 
 ; ============================================================
 ; content_buf[bx .. bx+needle_len) == grep_needle ?  ax = 1/0.
-; Вызывающий отвечает за то, что bx+needle_len <= content_buf_len.
+; The caller is responsible for ensuring bx+needle_len <= content_buf_len.
 ; ============================================================
 grep_match_at:
     push bx
@@ -232,10 +232,10 @@ grep_match_at:
     ret
 
 ; ============================================================
-; Печатает одно совпадение: "Line <n>, Symbol <col> <строка>",
-; подсвечивая сам найденный текст ярко-красным (COLOR_RED).
-; Вход: grep_match_start = индекс совпадения в content_buf,
-;       grep_line_start/grep_line_num = текущая строка (не трогаются).
+; Prints one match: "Line <n>, Symbol <col> <line>",
+; highlighting the found text itself in bright red (COLOR_RED).
+; Input: grep_match_start = index of the match in content_buf,
+;        grep_line_start/grep_line_num = current line (left untouched).
 ; ============================================================
 grep_report_match:
     push ax
@@ -252,12 +252,12 @@ grep_report_match:
     call print_string
     mov ax, [grep_match_start]
     sub ax, [grep_line_start]
-    inc ax                              ; символы нумеруются с 1
+    inc ax                              ; symbols are numbered starting from 1
     call print_dec_word
     mov si, msg_grep_space
     call print_string
 
-    ; --- находим конец строки (CR, LF или конец буфера) ---
+    ; --- find the end of the line (CR, LF, or end of buffer) ---
     mov bx, [grep_line_start]
 .find_end_loop:
     cmp bx, [content_buf_len]

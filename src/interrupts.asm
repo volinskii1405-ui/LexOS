@@ -1,59 +1,60 @@
-; interrupts.asm — настоящие аппаратные прерывания (IDT, protected mode)
+; interrupts.asm — real hardware interrupts (IDT, protected mode)
 ;
-; В реальном режиме обработчики прерываний ставились прямо в IVT (таблицу
-; векторов по физическому адресу 0x0000:0x0000, 4 байта на вектор). В
-; protected mode такой таблицы больше нет - вместо неё IDT (Interrupt
-; Descriptor Table), запись в которой занимает 8 байт и имеет совсем
-; другой формат (адрес обработчика + селектор кода из GDT + байт атрибутов).
+; In real mode, interrupt handlers were placed directly in the IVT (the
+; vector table at physical address 0x0000:0x0000, 4 bytes per vector). In
+; protected mode that table no longer exists - instead there's the IDT
+; (Interrupt Descriptor Table), where each entry takes 8 bytes and has a
+; completely different format (handler address + code selector from the GDT
+; + attribute byte).
 ;
-; ВАЖНО про PIC: по умолчанию контроллер прерываний (8259) шлёт IRQ0-7 на
-; векторы 8-15 - но в protected mode эти номера заняты исключениями CPU
-; (8 = double fault, 13 = general protection fault и т.д.). Без
-; перенастройки PIC любое аппаратное прерывание выглядело бы для CPU как
-; крах процессора. Поэтому pic_remap переносит IRQ0-7 на векторы 32-39
-; (IRQ_BASE), IRQ8-15 - на 40-47.
+; IMPORTANT about the PIC: by default the interrupt controller (8259) sends
+; IRQ0-7 to vectors 8-15 - but in protected mode those numbers are taken by
+; CPU exceptions (8 = double fault, 13 = general protection fault, etc).
+; Without remapping the PIC, any hardware interrupt would look to the CPU
+; like a processor crash. So pic_remap moves IRQ0-7 to vectors 32-39
+; (IRQ_BASE), and IRQ8-15 to 40-47.
 ;
-; Также в protected mode нет BIOS, поэтому таймер больше не может делать
-; chaining на оригинальный BIOS-обработчик (int 1Ah) - просто считаем тики.
+; Also, there's no BIOS in protected mode, so the timer can no longer chain
+; to the original BIOS handler (int 1Ah) - we just count ticks.
 ;
-; Экспортирует: idt_setup, install_keyboard_isr, install_timer_isr, read_key
+; Exports: idt_setup, install_keyboard_isr, install_timer_isr, read_key
 
-KBD_BUF_SIZE equ 16   ; должно быть степенью двойки (используется через AND-маску)
+KBD_BUF_SIZE equ 16   ; must be a power of two (used via an AND mask)
 
 PIC1_CMD  equ 0x20
 PIC1_DATA equ 0x21
 PIC2_CMD  equ 0xA0
 PIC2_DATA equ 0xA1
 
-IRQ_BASE equ 32          ; куда переносим IRQ0-7 (векторы 32-39)
+IRQ_BASE equ 32          ; where we remap IRQ0-7 to (vectors 32-39)
 
 ; ============================================================
-; Перенастройка PIC (8259): переносим IRQ0-7 на векторы 32-39,
-; IRQ8-15 на 40-47, затем маскируем всё, кроме таймера (IRQ0) и
-; клавиатуры (IRQ1).
+; Remaps the PIC (8259): moves IRQ0-7 to vectors 32-39,
+; IRQ8-15 to 40-47, then masks everything except the timer (IRQ0)
+; and the keyboard (IRQ1).
 ; ============================================================
 pic_remap:
     push ax
 
-    mov al, 0x11              ; ICW1: начать инициализацию, ждём ICW4
+    mov al, 0x11              ; ICW1: start initialization, expect ICW4
     out PIC1_CMD, al
     out PIC2_CMD, al
 
-    mov al, IRQ_BASE            ; ICW2 для master: базовый вектор 32
+    mov al, IRQ_BASE            ; ICW2 for master: base vector 32
     out PIC1_DATA, al
-    mov al, IRQ_BASE + 8         ; ICW2 для slave: базовый вектор 40
+    mov al, IRQ_BASE + 8         ; ICW2 for slave: base vector 40
     out PIC2_DATA, al
 
-    mov al, 0x04                  ; ICW3: у master slave подключён к линии 2
+    mov al, 0x04                  ; ICW3: master's slave is wired to line 2
     out PIC1_DATA, al
-    mov al, 0x02                   ; ICW3: slave знает, что он на линии 2
+    mov al, 0x02                   ; ICW3: slave knows it's on line 2
     out PIC2_DATA, al
 
-    mov al, 0x01                    ; ICW4: режим 8086
+    mov al, 0x01                    ; ICW4: 8086 mode
     out PIC1_DATA, al
     out PIC2_DATA, al
 
-    ; маска: разрешаем таймер (IRQ0) и клавиатуру (IRQ1), остальное глушим
+    ; mask: allow the timer (IRQ0) and keyboard (IRQ1), mute everything else
     mov al, 11111100b
     out PIC1_DATA, al
     mov al, 11111111b
@@ -63,9 +64,9 @@ pic_remap:
     ret
 
 ; ============================================================
-; Заполняет всю IDT заглушкой (default_isr) и загружает её через lidt.
-; Вызывается один раз при старте ядра, ДО установки конкретных
-; обработчиков (install_keyboard_isr/install_timer_isr) и до sti.
+; Fills the whole IDT with a stub (default_isr) and loads it via lidt.
+; Called once at kernel startup, BEFORE installing the specific
+; handlers (install_keyboard_isr/install_timer_isr) and before sti.
 ; ============================================================
 idt_setup:
     pusha
@@ -80,10 +81,11 @@ idt_setup:
     add edi, 8
     loop .fill_loop
 
-    ; Векторы 8,10,11,12,13,14,17 - это исключения, для которых CPU сам
-    ; кладёт в стек код ошибки ПОМИМО обычных EIP/CS/EFLAGS. Обычный
-    ; iret этого не знает и попадёт по неверным адресам, если не убрать
-    ; код ошибки со стека перед iret - поэтому у них отдельная заглушка.
+    ; Vectors 8,10,11,12,13,14,17 are exceptions for which the CPU itself
+    ; pushes an error code onto the stack IN ADDITION to the usual
+    ; EIP/CS/EFLAGS. A plain iret doesn't know about this and will jump to
+    ; the wrong addresses unless the error code is removed from the stack
+    ; before iret - so they get a separate stub.
     mov edi, idt_table + 8 * 8
     mov eax, default_isr_err
     call set_idt_entry_at_edi
@@ -111,26 +113,26 @@ idt_setup:
     popa
     ret
 
-; --- Записывает дескриптор прерывания по адресу edi, обработчик в eax.
-;     Формат: offset_low(2), selector(2), zero(1), type_attr(1), offset_high(2) ---
+; --- Writes an interrupt descriptor at address edi, handler in eax.
+;     Format: offset_low(2), selector(2), zero(1), type_attr(1), offset_high(2) ---
 set_idt_entry_at_edi:
     push eax
     push ebx
 
     mov ebx, eax
-    mov [edi], ax                   ; младшие 16 бит адреса обработчика
-    mov word [edi+2], 0x08           ; селектор кода из GDT (см. boot.asm)
-    mov byte [edi+4], 0              ; зарезервировано
+    mov [edi], ax                   ; low 16 bits of the handler address
+    mov word [edi+2], 0x08           ; code selector from the GDT (see boot.asm)
+    mov byte [edi+4], 0              ; reserved
     mov byte [edi+5], 0x8E            ; present=1, ring0, 32-bit interrupt gate
     shr ebx, 16
-    mov [edi+6], bx                    ; старшие 16 бит адреса
+    mov [edi+6], bx                    ; high 16 bits of the address
 
     pop ebx
     pop eax
     ret
 
 ; ============================================================
-; Ставит обработчик клавиатуры на вектор IRQ_BASE+1 (33 = IRQ1).
+; Installs the keyboard handler on vector IRQ_BASE+1 (33 = IRQ1).
 ; ============================================================
 install_keyboard_isr:
     push eax
@@ -145,7 +147,7 @@ install_keyboard_isr:
     ret
 
 ; ============================================================
-; Ставит обработчик таймера на вектор IRQ_BASE (32 = IRQ0).
+; Installs the timer handler on vector IRQ_BASE (32 = IRQ0).
 ; ============================================================
 install_timer_isr:
     push eax
@@ -160,13 +162,13 @@ install_timer_isr:
     ret
 
 ; ============================================================
-; Обработчик клавиатуры (IRQ1 -> вектор 33).
+; Keyboard handler (IRQ1 -> vector 33).
 ; ============================================================
 keyboard_isr:
     push eax
     push ebx
 
-    in al, 0x60                  ; читаем scancode из контроллера клавиатуры
+    in al, 0x60                  ; read the scancode from the keyboard controller
 
     cmp al, 0xE0
     jne .not_ext_prefix
@@ -174,27 +176,28 @@ keyboard_isr:
     jmp .eoi
 .not_ext_prefix:
 
-    ; Захватываем "этот байт шёл сразу после 0xE0?" в bh и СРАЗУ сбрасываем
-    ; флаг - неважно, окажется байт нажатием, отпусканием или модификатором.
-    ; Раньше флаг сбрасывался только в ветке "расширенная клавиша нажата"
-    ; ниже, а .check_release для ОТПУСКАНИЯ выходил раньше, чем до неё
-    ; доходило - после каждой стрелки/Home/End/Delete флаг залипал в 1,
-    ; и следующая обычная клавиша (например, символ при вводе) ошибочно
-    ; считалась расширенной (al=0 вместо ASCII).
+    ; Capture "did this byte follow right after 0xE0?" into bh and IMMEDIATELY
+    ; clear the flag - regardless of whether the byte turns out to be a key
+    ; press, a release, or a modifier. Previously the flag was cleared only
+    ; in the "extended key pressed" branch below, while .check_release for a
+    ; RELEASE returned earlier than it got there - after every arrow key/
+    ; Home/End/Delete the flag would get stuck at 1, and the next normal key
+    ; (e.g. a character being typed) would be mistakenly treated as extended
+    ; (al=0 instead of ASCII).
     mov bh, [kbd_extended_flag]
     mov byte [kbd_extended_flag], 0
 
-    cmp al, 0x2A                 ; Left Shift (нажатие)
+    cmp al, 0x2A                 ; Left Shift (press)
     je .shift_down
-    cmp al, 0x36                 ; Right Shift (нажатие)
+    cmp al, 0x36                 ; Right Shift (press)
     je .shift_down
-    cmp al, 0xAA                 ; Left Shift (отпускание)
+    cmp al, 0xAA                 ; Left Shift (release)
     je .shift_up
-    cmp al, 0xB6                 ; Right Shift (отпускание)
+    cmp al, 0xB6                 ; Right Shift (release)
     je .shift_up
-    cmp al, 0x1D                  ; Ctrl (нажатие)
+    cmp al, 0x1D                  ; Ctrl (press)
     je .ctrl_down
-    cmp al, 0x9D                  ; Ctrl (отпускание)
+    cmp al, 0x9D                  ; Ctrl (release)
     je .ctrl_up
     jmp .check_release
 
