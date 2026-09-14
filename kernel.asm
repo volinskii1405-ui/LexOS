@@ -76,6 +76,7 @@ main_loop:
 %include "src/headtail.asm"
 %include "src/uranium.asm"
 %include "src/user.asm"
+%include "src/tabcomplete.asm"
 
 ; Pad the remaining space within the sectors the bootloader reads,
 ; so the file size is a multiple of 512 bytes (see KERNEL_SECTORS_1/2 in boot.asm).

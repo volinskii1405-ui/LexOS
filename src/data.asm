@@ -403,6 +403,28 @@ buffer  times (BUFFER_MAX + 1) db 0
 
 empty_string db 0
 
+; --- Tab completion (see src/tabcomplete.asm): the last word being typed
+;     is looked up as a filename prefix in the current directory, and any
+;     remaining characters of the first match are shown as "ghost text"
+;     right after the cursor (drawn straight to video memory via
+;     screen_putc_at, not inserted into the real buffer) until Tab accepts
+;     it or the suggestion changes/disappears. ---
+TAB_PREFIX_MAX equ 20
+tab_prefix_buf     times (TAB_PREFIX_MAX + 1) db 0
+tab_match_name_buf times (FS_NAME_LEN + 1) db 0
+tab_sugg_text      times (FS_NAME_LEN + 1) db 0
+tab_sugg_len      dw 0   ; full suffix length - what Tab inserts
+tab_sugg_draw_len dw 0   ; how much of it actually fit on screen and was
+                         ; drawn - what tab_clear_suggestion erases (can be
+                         ; less than tab_sugg_len near the right edge)
+tab_sugg_row    db 0     ; screen row/col the suggestion was last drawn at -
+tab_sugg_col    db 0     ; a byte each is enough (max 24/79) and matches
+                         ; screen_putc_at's dl/dh row/col inputs directly
+tab_sugg_active db 0
+ATTR_TAB_SUGGESTION_FG equ 0x09   ; bright blue - OR'd onto the current
+                                  ; background so it stays readable under
+                                  ; any `color` the user has set
+
 history_count      dw 0
 history_next_slot  dw 0
 history_cursor      dw -1

@@ -50,75 +50,108 @@ read_command_line:
     cmp al, 0x0D       ; Enter?
     je .enter
 
+    cmp al, 0x09       ; Tab? (see src/tabcomplete.asm)
+    je .tab_key
+
     cmp al, 0x20        ; ignore other control characters
     jb .loop
 
     cmp word [buf_len], BUFFER_MAX
     jae .loop            ; buffer full - ignore the character
 
+    ; the old suggestion (if any) starts exactly where this new character
+    ; is about to be printed, so it MUST be erased before inserting - not
+    ; after, or the erase would wipe out the character we just typed
+    call tab_clear_suggestion
     call insert_char_at_cursor
+    call tab_update_suggestion
+    jmp .loop
+
+.tab_key:
+    call tab_try_complete
     jmp .loop
 
 .history_up:
+    call tab_clear_suggestion
     call history_show_prev
+    call tab_update_suggestion
     jmp .loop
 
 .history_down:
+    call tab_clear_suggestion
     call history_show_next
+    call tab_update_suggestion
     jmp .loop
 
 .cursor_left:
     cmp word [buf_cursor], 0
     je .loop
+    call tab_clear_suggestion
     dec word [buf_cursor]
     dec word [cursor_col]
     call update_hw_cursor
+    call tab_update_suggestion
     jmp .loop
 
 .cursor_right:
     mov ax, [buf_cursor]
     cmp ax, [buf_len]
     jae .loop
+    call tab_clear_suggestion
     inc word [buf_cursor]
     inc word [cursor_col]
     call update_hw_cursor
+    call tab_update_suggestion
     jmp .loop
 
 .cursor_home:
+    call tab_clear_suggestion
     mov ax, [cursor_col]
     sub ax, [buf_cursor]
     mov [cursor_col], ax
     mov word [buf_cursor], 0
     call update_hw_cursor
+    call tab_update_suggestion
     jmp .loop
 
 .cursor_end:
+    call tab_clear_suggestion
     mov ax, [buf_len]
     sub ax, [buf_cursor]           ; ax = how many characters remain to the right
     add [cursor_col], ax
     mov ax, [buf_len]
     mov [buf_cursor], ax
     call update_hw_cursor
+    call tab_update_suggestion
     jmp .loop
 
 .delete_fwd:
     mov ax, [buf_cursor]
     cmp ax, [buf_len]
     jae .loop                       ; cursor is already at the end - nothing to erase
+    call tab_clear_suggestion
     call remove_char_at_cursor
+    call tab_update_suggestion
     jmp .loop
 
 .backspace:
     cmp word [buf_cursor], 0
     je .loop
 
+    call tab_clear_suggestion
     dec word [buf_cursor]
     dec word [cursor_col]
     call update_hw_cursor
     call remove_char_at_cursor
+    call tab_update_suggestion
     jmp .loop
 
 .enter:
+    ; a shown suggestion was only ever painted on screen, never in the
+    ; real buffer - erase it now, before it gets left behind as stale
+    ; blue text once the line scrolls up
+    call tab_clear_suggestion
+
     ; regardless of where the editing cursor was, the newline needs to
     ; be printed from the end of the text - move the screen cursor to
     ; wherever buf_len points

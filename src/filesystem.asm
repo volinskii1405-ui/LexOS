@@ -12,7 +12,8 @@
 ; through fs_read_slot/fs_write_slot, nothing else changed.
 ;
 ; Exports: fs_cat, fs_rm, fs_list, fs_ren, fs_size,
-;          fs_mkdir, fs_cd, fs_ensure_readme, fs_print_prompt
+;          fs_mkdir, fs_cd, fs_ensure_readme, fs_print_prompt,
+;          fs_find_prefix_match, fs_name_has_prefix, fs_read_slot_name
 
 ; --- Reads a slot (index in ax) from disk into SCRATCH_ADDR ---
 fs_read_slot:
@@ -200,6 +201,149 @@ fs_find_by_name:
     pop cx
     pop si
     pop bx
+    ret
+
+; --- Checks whether the slot currently loaded in scratch (via fs_read_slot)
+;     has a name starting with DS:SI (case-insensitive). Used by tab
+;     completion (src/tabcomplete.asm) - unlike fs_name_matches, this is a
+;     prefix check, not a full-name equality check.
+;     Result: ax = 1 if it's a prefix match, otherwise ax = 0 ---
+fs_name_has_prefix:
+    push si
+    push bx
+    push cx
+    push dx
+
+    xor dx, dx                 ; dx = byte offset within the name field
+.loop:
+    mov al, [si]
+    cmp al, 0
+    je .match                   ; the whole prefix matched - success
+
+    cmp dx, FS_NAME_LEN
+    jae .no_match                ; prefix longer than the name field itself
+
+    push ax
+    mov ax, dx
+    call fs_scratch_read_byte
+    mov bl, al
+    pop ax
+    cmp bl, 0
+    je .no_match                  ; the name ended before the prefix did
+
+    call to_upper_al
+    mov cl, al                     ; cl = uppercased prefix character
+    mov al, bl
+    call to_upper_al
+    cmp al, cl
+    jne .no_match
+
+    inc si
+    inc dx
+    jmp .loop
+
+.match:
+    mov ax, 1
+    jmp .end
+
+.no_match:
+    xor ax, ax
+
+.end:
+    pop dx
+    pop cx
+    pop bx
+    pop si
+    ret
+
+; --- Finds the first file/folder IN THE CURRENT DIRECTORY whose name
+;     starts with DS:SI (case-insensitive). An empty prefix matches the
+;     first non-free slot. Used by tab completion.
+;     Result: ax = slot index, or -1 if nothing matches. ---
+fs_find_prefix_match:
+    push bx
+    push cx
+    push dx
+    push si
+
+    mov cx, si
+    call fs_get_current_parent_byte
+    mov dl, al
+
+    xor bx, bx
+.scan:
+    cmp bx, FS_FILE_COUNT
+    jae .not_found
+
+    push ax
+    mov ax, bx
+    call fs_read_slot
+    pop ax
+
+    push ax
+    mov ax, FS_TYPE_OFFSET
+    call fs_scratch_read_byte
+    cmp al, FS_TYPE_FREE
+    pop ax
+    je .next
+
+    push ax
+    mov ax, FS_PARENT_OFFSET
+    call fs_scratch_read_byte
+    cmp al, dl
+    pop ax
+    jne .next
+
+    mov si, cx
+    call fs_name_has_prefix
+    cmp ax, 1
+    je .found
+
+.next:
+    inc bx
+    jmp .scan
+
+.found:
+    mov ax, bx
+    jmp .end
+
+.not_found:
+    mov ax, -1
+
+.end:
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    ret
+
+; --- Copies the name of the slot currently loaded in scratch (via
+;     fs_read_slot) into DS:DI, zero-terminated. Used by tab completion
+;     right after fs_find_prefix_match, which leaves the matched slot
+;     loaded in scratch. ---
+fs_read_slot_name:
+    push ax
+    push bx
+
+    xor bx, bx
+.loop:
+    cmp bx, FS_NAME_LEN
+    jae .done
+    push bx
+    mov ax, bx
+    call fs_scratch_read_byte
+    pop bx
+    cmp al, 0
+    je .done
+    mov [di], al
+    inc di
+    inc bx
+    jmp .loop
+.done:
+    mov byte [di], 0
+
+    pop bx
+    pop ax
     ret
 
 ; --- Finds the first free slot (in any directory). ax=index or -1. ---

@@ -81,6 +81,11 @@ alex@/$
   not just Backspace at the end.
 - Command history (Up/Down), case-insensitive filename lookup, and a
   30+ command set (`help` lists them all, paginated).
+- Tab completion: as you type the last word of the line, if it matches a
+  file in the current directory, the rest of that name shows up in blue
+  right after the cursor - press Tab to accept it, or keep typing to
+  ignore it. Matches the current directory's files only, not command
+  names, and picks the first match on disk rather than an alphabetical one.
 - The very first boot shows a centered setup window (on a green backdrop)
   asking for a nickname and a UTC timezone offset, then drops you into the
   console. Both are saved to `USER.CFG` (a plain two-line text file). The
@@ -295,6 +300,9 @@ src/
   user.asm             first-boot nickname/timezone setup window, USER.CFG
                        load/save/delete-protection, and the shell prompt's
                        `nickname@/path$ `.
+  tabcomplete.asm      Tab completion: matches the word being typed against
+                       filenames in the current directory and shows the
+                       rest as blue "ghost text" until Tab accepts it.
 ```
 
 ## Known limitations
@@ -318,6 +326,10 @@ src/
   displays; `date` always shows the RTC's own (unshifted) date. The offset
   itself isn't validated or clamped — an out-of-range value just wraps
   through the 0-23 hour normalization in `cmd_show_time`.
+- Tab completion only works while the cursor sits at the end of the line,
+  only offers the first on-disk match for the typed prefix (not the
+  alphabetically-first one, and no cycling through other matches), and
+  only completes against filenames — never command names.
 
 ## License
 
