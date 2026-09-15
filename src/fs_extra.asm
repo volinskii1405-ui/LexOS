@@ -382,9 +382,9 @@ fs_append:
 
     ; We turn "\n" (two ordinary characters - backslash and n) in the
     ; append text into a real newline (0x0A) - otherwise there would be no
-    ; way to type multi-line files (e.g. for the batch command): a
-    ; command from the keyboard is always a single line with no real
-    ; Enter inside it
+    ; way to type multi-line files (e.g. a *.hg script for
+    ; fs_run_hg_script): a command from the keyboard is always a single
+    ; line with no real Enter inside it
     mov dx, 1                       ; how many bytes of source text to consume
     cmp al, '\'
     jne .a_have_char
@@ -653,18 +653,27 @@ fs_dup_next_src dw 0
 fs_dup_new_idx  dw 0
 
 ; ============================================================
-; batch <name> : reads a whole text file (up to BATCH_BUF_LEN bytes,
-; through the inline part plus the extra-sector chain) and feeds each
-; line into handle_command line by line - a simple way to run several
-; commands in a row from one file (a "script"). Blank lines are skipped.
+; Runs a *.hg file as a script: reads the whole text file (up to
+; BATCH_BUF_LEN bytes, through the inline part plus the extra-sector
+; chain) and feeds each line into handle_command line by line - typing
+; a script's own name (see shell_looks_like_hg in src/shell.asm) is all
+; it takes to run it, the same way `run` already works for machine-code
+; programs. Blank lines are skipped.
+;
+; Echoes each line before running it, like a real DOS batch file,
+; unless the script contains a line that's exactly "@echo off" (which
+; silences the echo - and itself never runs as a command - for the
+; rest of that script). Every run starts with echo back on.
 ; ============================================================
-fs_batch:
+fs_run_hg_script:
     push ax
     push bx
     push cx
     push dx
     push si
     push di
+
+    mov byte [fs_hg_echo], 1
 
     mov di, fs_tmp_name
     xor cx, cx
@@ -685,13 +694,6 @@ fs_batch:
 .name_done:
     mov byte [di], 0
 
-    cmp byte [fs_tmp_name], 0
-    jne .have_name
-    mov si, msg_fs_usage_batch
-    call print_string
-    jmp .end
-
-.have_name:
     mov si, fs_tmp_name
     call fs_find_by_name
     cmp ax, -1
@@ -829,6 +831,30 @@ fs_batch:
     inc si                               ; skip LF
 .line_end_noadvance:
     mov byte [di], 0
+
+    ; "@echo off" is a directive, not a command: it silences the echo
+    ; below (for the rest of this script) and is never itself run or
+    ; echoed - exactly like a real DOS batch file.
+    push si                              ; si = scan position in the script content -
+    mov si, buffer                       ; save it before reusing si for the compare
+    mov di, msg_hg_echo_off_line
+    call strcmp_eq
+    pop si
+    cmp ax, 1
+    jne .hg_not_echo_directive
+    mov byte [fs_hg_echo], 0
+    jmp .line_loop
+.hg_not_echo_directive:
+
+    cmp byte [fs_hg_echo], 0
+    je .hg_skip_echo
+    push si
+    mov si, buffer
+    call print_string
+    mov si, msg_newline
+    call print_string
+    pop si
+.hg_skip_echo:
 
     call handle_command
     jmp .line_loop

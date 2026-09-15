@@ -74,12 +74,6 @@ handle_command:
     je .do_size
 
     mov si, buffer
-    mov di, cmd_batch_prefix
-    call strcmp_prefix
-    cmp ax, 1
-    je .do_batch
-
-    mov si, buffer
     mov di, cmd_mkdir_prefix
     call strcmp_prefix
     cmp ax, 1
@@ -233,7 +227,17 @@ handle_command:
     cmp byte [buffer], 0
     je .done
 
-    ; Unknown command
+    ; Not a built-in command - if it names a *.hg file, running a script
+    ; is just typing its name (see fs_run_hg_script in src/fs_extra.asm),
+    ; the same way `run` already works for machine-code programs.
+    call shell_looks_like_hg
+    cmp ax, 1
+    jne .truly_unknown
+    mov si, buffer
+    call fs_run_hg_script
+    jmp .done
+
+.truly_unknown:
     mov si, msg_unknown
     call print_string
     mov si, buffer
@@ -303,12 +307,6 @@ handle_command:
     mov si, buffer
     add si, 5                  ; skip "size "
     call fs_size
-    jmp .done
-
-.do_batch:
-    mov si, buffer
-    add si, 6                  ; skip "batch "
-    call fs_batch
     jmp .done
 
 .do_mkdir:
@@ -441,6 +439,53 @@ handle_command:
 
 .done:
     popa
+    ret
+
+; ============================================================
+; Does DS:buffer end in ".hg" (case-insensitive)? Used by handle_command
+; to recognize a bare script filename before falling back to "Unknown
+; command" - see fs_run_hg_script in src/fs_extra.asm.
+; Output: ax = 1 if so, otherwise ax = 0.
+; ============================================================
+shell_looks_like_hg:
+    push si
+    push cx
+
+    mov si, buffer
+    xor cx, cx
+.len_loop:
+    cmp byte [si], 0
+    je .len_done
+    inc si
+    inc cx
+    jmp .len_loop
+.len_done:
+    cmp cx, 3
+    jb .no
+
+    mov si, buffer
+    add si, cx
+    sub si, 3                     ; si -> the last 3 characters
+
+    mov al, [si]
+    cmp al, '.'
+    jne .no
+    mov al, [si + 1]
+    call to_upper_al
+    cmp al, 'H'
+    jne .no
+    mov al, [si + 2]
+    call to_upper_al
+    cmp al, 'G'
+    jne .no
+
+    mov ax, 1
+    jmp .done
+.no:
+    xor ax, ax
+.done:
+    pop cx
+    pop si
     ret
 
 ; ============================================================

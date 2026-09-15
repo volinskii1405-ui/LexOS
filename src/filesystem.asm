@@ -1443,6 +1443,20 @@ fs_mv:
     mov byte [di], 0
     pop si
 
+    ; does the source contain a '*'? then this is a batch move - every
+    ; match in the current directory goes into fs_tmp_path (see
+    ; .batch_move below), the same way a wildcard turns fs_rm's <name>
+    ; into a batch delete.
+    mov si, fs_tmp_name
+.mv_scan_star:
+    cmp byte [si], 0
+    je .single_move
+    cmp byte [si], '*'
+    je .batch_move
+    inc si
+    jmp .mv_scan_star
+
+.single_move:
     mov si, fs_tmp_name
     call fs_find_by_name
     cmp ax, -1
@@ -1525,6 +1539,98 @@ fs_mv:
 
 .write_failed:
     mov si, msg_fs_write_error
+    call print_string
+    jmp .end
+
+; ============================================================
+; Wildcard mv: resolve the destination path once, then scan every FILE
+; (folders aren't moved) in the current directory, move every one whose
+; name matches fs_tmp_name into the destination directory (skipping
+; USER.CFG and any name already taken there), and report how many were
+; moved.
+; ============================================================
+.batch_move:
+    mov si, fs_tmp_path
+    call fs_resolve_path
+    cmp ax, -1
+    je .end                            ; error message already printed
+    mov [fs_mv_dest_byte], al
+
+    xor bx, bx
+    xor cx, cx                          ; cx = how many were moved
+.mvbatch_scan:
+    cmp bx, FS_FILE_COUNT
+    jae .mvbatch_done
+
+    mov ax, bx
+    call fs_read_slot
+
+    mov ax, FS_TYPE_OFFSET
+    call fs_scratch_read_byte
+    cmp al, FS_TYPE_FILE
+    jne .mvbatch_next
+
+    mov ax, FS_PARENT_OFFSET
+    call fs_scratch_read_byte
+    mov dl, al                          ; dl = this slot's own parent byte
+    call fs_get_current_parent_byte     ; al = the current directory's parent byte
+    cmp al, dl
+    jne .mvbatch_next
+
+    mov di, fs_rm_batch_name_buf
+    call fs_read_slot_name
+    mov si, fs_tmp_name
+    mov di, fs_rm_batch_name_buf
+    call fs_name_matches_wildcard
+    cmp ax, 1
+    jne .mvbatch_next
+
+    mov ax, bx
+    call fs_reject_if_user_cfg
+    cmp ax, 1
+    je .mvbatch_next
+
+    ; does a file with this name already exist in the destination dir?
+    push word [fs_current_dir]
+    mov al, [fs_mv_dest_byte]
+    cmp al, FS_ROOT_BYTE
+    jne .mvbatch_dest_normal
+    mov word [fs_current_dir], FS_ROOT
+    jmp .mvbatch_dest_set
+.mvbatch_dest_normal:
+    xor ah, ah
+    mov [fs_current_dir], ax
+.mvbatch_dest_set:
+    mov si, fs_rm_batch_name_buf
+    call fs_find_by_name
+    pop word [fs_current_dir]
+    cmp ax, -1
+    jne .mvbatch_next                    ; taken - skip this file
+
+    mov ax, bx
+    call fs_read_slot
+    mov ax, FS_PARENT_OFFSET
+    mov dl, [fs_mv_dest_byte]
+    call fs_scratch_write_byte
+    mov ax, bx
+    call fs_write_slot
+    jc .mvbatch_next                      ; write failed - skip
+
+    inc cx
+.mvbatch_next:
+    inc bx
+    jmp .mvbatch_scan
+
+.mvbatch_done:
+    cmp cx, 0
+    jne .mvbatch_report
+    mov si, msg_fs_notfound
+    call print_string
+    jmp .end
+.mvbatch_report:
+    mov ax, cx
+    call print_dec_word
+    mov si, msg_mv_moved_suffix
     call print_string
 
 .end:
@@ -1800,6 +1906,20 @@ fs_cp:
     cmp byte [fs_tmp_name2], 0
     je .usage_error
 
+    ; does the source contain a '*'? then <new> is a destination FOLDER,
+    ; not a new name - copy every match into it under its own name (see
+    ; .batch_copy below), the same way a wildcard turns fs_rm's <name>
+    ; into a batch delete.
+    mov si, fs_tmp_name
+.cp_scan_star:
+    cmp byte [si], 0
+    je .single_copy
+    cmp byte [si], '*'
+    je .batch_copy
+    inc si
+    jmp .cp_scan_star
+
+.single_copy:
     mov si, fs_tmp_name
     call fs_find_by_name
     cmp ax, -1
@@ -1914,6 +2034,121 @@ fs_cp:
 
 .write_failed:
     mov si, msg_fs_write_error
+    call print_string
+    jmp .end
+
+; ============================================================
+; Wildcard cp: resolve the destination path once, then scan every FILE
+; (folders aren't copied) in the current directory, copy every one
+; whose name matches fs_tmp_name into the destination directory under
+; its own name (skipping USER.CFG and any name already taken there),
+; and report how many were copied. Each copy gets its own independent
+; extra-sector chain, same as the single-file path above.
+; ============================================================
+.batch_copy:
+    mov si, fs_tmp_name2
+    call fs_resolve_path
+    cmp ax, -1
+    je .end                            ; error message already printed
+    mov [fs_cp_dest_byte], al
+
+    xor bx, bx
+    xor cx, cx                          ; cx = how many were copied
+.cpbatch_scan:
+    cmp bx, FS_FILE_COUNT
+    jae .cpbatch_done
+
+    mov ax, bx
+    call fs_read_slot
+
+    mov ax, FS_TYPE_OFFSET
+    call fs_scratch_read_byte
+    cmp al, FS_TYPE_FILE
+    jne .cpbatch_next
+
+    mov ax, FS_PARENT_OFFSET
+    call fs_scratch_read_byte
+    mov dl, al                          ; dl = this slot's own parent byte
+    call fs_get_current_parent_byte     ; al = the current directory's parent byte
+    cmp al, dl
+    jne .cpbatch_next
+
+    mov di, fs_rm_batch_name_buf
+    call fs_read_slot_name
+    mov si, fs_tmp_name
+    mov di, fs_rm_batch_name_buf
+    call fs_name_matches_wildcard
+    cmp ax, 1
+    jne .cpbatch_next
+
+    mov ax, bx
+    call fs_reject_if_user_cfg
+    cmp ax, 1
+    je .cpbatch_next
+
+    ; does a file with this name already exist in the destination dir?
+    push word [fs_current_dir]
+    mov al, [fs_cp_dest_byte]
+    cmp al, FS_ROOT_BYTE
+    jne .cpbatch_dest_normal
+    mov word [fs_current_dir], FS_ROOT
+    jmp .cpbatch_dest_set
+.cpbatch_dest_normal:
+    xor ah, ah
+    mov [fs_current_dir], ax
+.cpbatch_dest_set:
+    mov si, fs_rm_batch_name_buf
+    call fs_find_by_name
+    pop word [fs_current_dir]
+    cmp ax, -1
+    jne .cpbatch_next                    ; taken - skip this file
+
+    call fs_find_free
+    cmp ax, -1
+    je .cpbatch_done                      ; out of slots - report what we have so far
+    mov [fs_tmp_slot2], ax
+
+    mov ax, bx
+    call fs_read_slot                     ; scratch = full record of the source file
+    mov ax, FS_PARENT_OFFSET
+    mov dl, [fs_cp_dest_byte]
+    call fs_scratch_write_byte
+    mov ax, [fs_tmp_slot2]
+    call fs_write_slot
+    jc .cpbatch_next                      ; write failed - skip
+
+    mov ax, bx
+    call fs_read_slot
+    mov ax, FS_CHAIN_OFFSET
+    call fs_scratch_read_word
+    cmp ax, FS_NO_CHAIN
+    je .cpbatch_no_chain
+    call fs_duplicate_chain
+    mov [fs_cp_new_chain], ax
+    mov ax, [fs_tmp_slot2]
+    call fs_read_slot
+    mov ax, FS_CHAIN_OFFSET
+    mov dx, [fs_cp_new_chain]
+    call fs_scratch_write_word
+    mov ax, [fs_tmp_slot2]
+    call fs_write_slot
+.cpbatch_no_chain:
+
+    inc cx
+.cpbatch_next:
+    inc bx
+    jmp .cpbatch_scan
+
+.cpbatch_done:
+    cmp cx, 0
+    jne .cpbatch_report
+    mov si, msg_fs_notfound
+    call print_string
+    jmp .end
+.cpbatch_report:
+    mov ax, cx
+    call print_dec_word
+    mov si, msg_cp_copied_suffix
     call print_string
 
 .end:
