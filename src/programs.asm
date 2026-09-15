@@ -1,7 +1,8 @@
 ; programs.asm — executable files (type PROGRAM) and the hex editor
 ; content[0] = program length (0..127), content[1..] = raw code bytes,
 ; NOT null-terminated (0x00 can be part of actual machine code).
-; Exports: fs_run, hex_editor, fs_ensure_test_exe
+; Exports: fs_run, hex_editor, fs_ensure_test_exe, fs_ensure_calc_exe,
+;               fs_ensure_programs_dir
 
 ; ============================================================
 ; run <name> : loads the program into program_exec_buffer and calls it
@@ -772,6 +773,283 @@ fs_ensure_test_exe:
     call fs_write_slot
 
 .end:
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+; ============================================================
+; Creates the PROGRAMS directory in the root on first boot (if it
+; doesn't exist yet) - kernel.asm temporarily points fs_current_dir at
+; it before calling fs_ensure_test_exe/fs_ensure_calc_exe below, so
+; both land inside it instead of at the root. Same shape as fs_mkdir
+; (src/filesystem.asm), just silent (no "Directory created." message)
+; and parented at the root unconditionally, matching the other
+; fs_ensure_* first-boot seeders.
+; Output: ax = its slot index (0..254), whether it already existed or
+;         was just created; -1 if the slot table is full.
+; ============================================================
+fs_ensure_programs_dir:
+    push bx
+    push cx
+    push dx
+    push si
+
+    mov si, programs_dir_name
+    call fs_find_by_name
+    cmp ax, -1
+    jne .end4                    ; already exists - ax already holds its slot
+
+    call fs_find_free
+    cmp ax, -1
+    je .end4                     ; slot table full - give up (ax = -1)
+    mov [fs_tmp_slot], ax
+
+    xor bx, bx
+.clear_loop:
+    cmp bx, FS_CONTENT_OFFSET + FS_CONTENT_LEN
+    jae .clear_done
+    push bx
+    mov ax, bx
+    xor dx, dx
+    call fs_scratch_write_byte
+    pop bx
+    inc bx
+    jmp .clear_loop
+.clear_done:
+
+    mov si, programs_dir_name
+    xor bx, bx
+.copy_name:
+    mov al, [si]
+    cmp al, 0
+    je .name_copied
+    mov dl, al
+    mov ax, bx
+    call fs_scratch_write_byte
+    inc si
+    inc bx
+    jmp .copy_name
+.name_copied:
+
+    mov ax, FS_TYPE_OFFSET
+    mov dl, FS_TYPE_DIR
+    call fs_scratch_write_byte
+
+    mov ax, FS_PARENT_OFFSET
+    mov dl, FS_ROOT_BYTE
+    call fs_scratch_write_byte
+
+    mov ax, [fs_tmp_slot]
+    call fs_write_slot           ; ax is preserved (see fs_write_slot) = the new slot
+
+.end4:
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    ret
+
+; ============================================================
+; The calculator behind PROGRAMS/CALC.BIN (see calc_exe_template
+; below): prompts for two signed integers and an operator
+; (+ - * / ^), computes, and prints the result. This is a normal
+; kernel function, not part of the 127-byte program itself - see the
+; note at calc_exe_template for why. Division by zero and an
+; unrecognized operator print an error instead of a result. Being
+; integer-only, a negative exponent is simply treated as 0 (result 1)
+; rather than rejected.
+; ============================================================
+calc_run:
+    push ax
+    push cx
+    push si
+
+    mov si, msg_calc_title
+    call print_string
+
+    mov si, msg_calc_prompt1
+    call print_string
+    call read_command_line
+    mov si, buffer
+    call parse_signed_dec_word
+    mov [calc_num1], ax
+
+    mov si, msg_calc_prompt_op
+    call print_string
+    call read_command_line
+    mov al, [buffer]
+    mov [calc_op], al
+
+    mov si, msg_calc_prompt2
+    call print_string
+    call read_command_line
+    mov si, buffer
+    call parse_signed_dec_word
+    mov [calc_num2], ax
+
+    mov al, [calc_op]
+    cmp al, '+'
+    je .add
+    cmp al, '-'
+    je .sub
+    cmp al, '*'
+    je .mul
+    cmp al, '/'
+    je .div
+    cmp al, '^'
+    je .pow
+
+    mov si, msg_calc_bad_op
+    call print_string
+    jmp .end5
+
+.add:
+    mov ax, [calc_num1]
+    add ax, [calc_num2]
+    jmp .show
+.sub:
+    mov ax, [calc_num1]
+    sub ax, [calc_num2]
+    jmp .show
+.mul:
+    mov ax, [calc_num1]
+    imul word [calc_num2]
+    jmp .show
+.div:
+    cmp word [calc_num2], 0
+    jne .div_ok
+    mov si, msg_calc_div_zero
+    call print_string
+    jmp .end5
+.div_ok:
+    mov ax, [calc_num1]
+    cwd
+    idiv word [calc_num2]
+    jmp .show
+.pow:
+    mov ax, 1
+    mov cx, [calc_num2]
+    cmp cx, 0
+    jle .show                      ; zero or negative exponent -> result 1
+.pow_loop:
+    imul word [calc_num1]
+    loop .pow_loop
+
+.show:
+    mov [calc_result], ax
+    mov si, msg_calc_result
+    call print_string
+    mov ax, [calc_result]
+    call print_dec_signed
+    mov si, msg_newline
+    call print_string
+
+.end5:
+    pop si
+    pop cx
+    pop ax
+    ret
+
+; ============================================================
+; PROGRAMS/CALC.BIN: a tiny stub that just calls calc_run above. The
+; actual calculator logic lives in the kernel proper instead of being
+; squeezed into PROGRAM_MAX_LEN (127 bytes) - the same reasoning
+; test_exe_template uses an absolute call for print_char, just taken
+; all the way: the whole calculator is one "library" call. Position-
+; dependence (see the note at test_exe_template) doesn't apply here -
+; there's no embedded data, only an absolute call.
+; ============================================================
+calc_exe_template:
+    mov ebx, calc_run
+    call ebx
+    ret
+calc_exe_template_end:
+
+CALC_EXE_LENGTH equ calc_exe_template_end - calc_exe_template
+
+; ============================================================
+; Creates PROGRAMS/CALC.BIN on first boot (if it doesn't exist yet) -
+; same shape as fs_ensure_test_exe above, just with calc_exe_template's
+; (much shorter) bytes.
+; ============================================================
+fs_ensure_calc_exe:
+    push ax
+    push bx
+    push cx
+    push dx
+    push si
+
+    mov si, calc_exe_name
+    call fs_find_by_name
+    cmp ax, -1
+    jne .end6
+
+    call fs_find_free
+    cmp ax, -1
+    je .end6
+
+    mov [fs_tmp_slot], ax
+
+    xor bx, bx
+.clear_loop2:
+    cmp bx, FS_CONTENT_OFFSET + FS_CONTENT_LEN
+    jae .clear_done2
+    push bx
+    mov ax, bx
+    xor dx, dx
+    call fs_scratch_write_byte
+    pop bx
+    inc bx
+    jmp .clear_loop2
+.clear_done2:
+
+    mov si, calc_exe_name
+    xor bx, bx
+.copy_name2:
+    mov al, [si]
+    cmp al, 0
+    je .name_copied2
+    mov dl, al
+    mov ax, bx
+    call fs_scratch_write_byte
+    inc si
+    inc bx
+    jmp .copy_name2
+.name_copied2:
+
+    mov ax, FS_TYPE_OFFSET
+    mov dl, FS_TYPE_PROGRAM
+    call fs_scratch_write_byte
+
+    call fs_get_current_parent_byte
+    mov dl, al
+    mov ax, FS_PARENT_OFFSET
+    call fs_scratch_write_byte
+
+    mov dl, CALC_EXE_LENGTH
+    mov ax, FS_CONTENT_OFFSET
+    call fs_scratch_write_byte
+
+    xor bx, bx
+.copy_prog2:
+    cmp bx, CALC_EXE_LENGTH
+    jae .copy_prog_done2
+    mov al, [cs:calc_exe_template + bx]
+    mov dl, al
+    mov ax, bx
+    add ax, FS_CONTENT_OFFSET + 1
+    call fs_scratch_write_byte
+    inc bx
+    jmp .copy_prog2
+.copy_prog_done2:
+
+    mov ax, [fs_tmp_slot]
+    call fs_write_slot
+
+.end6:
     pop si
     pop dx
     pop cx

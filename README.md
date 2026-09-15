@@ -38,12 +38,13 @@ Welcome, alex! (see USER.CFG)
 
 alex@/$ ls
 README
-TEST.BIN
+PROGRAMS  <DIR>
 LICENSE
 USER.CFG
-alex@/$ run test.bin
+alex@/$ cd programs
+alex@/PROGRAMS$ run test.bin
 Hello from executable file!
-alex@/$
+alex@/PROGRAMS$
 ```
 
 ## Features
@@ -88,9 +89,10 @@ alex@/$
   unchanged).
 - `head`/`tail` print the first/last lines of a file (10 by default, or a
   given count).
-- On first boot the root folder is seeded with `README`, a demo `TEST.BIN`,
-  and a `LICENSE` file holding the project's own license text (long enough
-  to spill from the inline area into chained extra sectors).
+- On first boot the root folder is seeded with `README`, a `LICENSE` file
+  holding the project's own license text (long enough to spill from the
+  inline area into chained extra sectors), and a `PROGRAMS` folder holding
+  two demo programs: `TEST.BIN` and `CALC.BIN` (see **Programs** below).
 - `ls` prints folders in bright yellow so they stand out from regular
   files, which stay whatever color you've set with `color`.
 - `df` (or `free`) shows how many of the 24 directory slots and 64 extra
@@ -152,6 +154,14 @@ alex@/$
 
 **Programs**
 - `run` loads a small file from disk and executes it as raw machine code.
+- `PROGRAMS/TEST.BIN` is a demo program: prints a short greeting.
+- `PROGRAMS/CALC.BIN` is a simple integer calculator: prompts for two
+  signed numbers and an operator (`+ - * / ^`), then prints the result -
+  division by zero and an unrecognized operator print an error instead.
+  Both programs are tiny stubs that call into a normal kernel function -
+  the same way any program can call `print_char` by absolute address -
+  rather than squeezing the whole feature into a single file's 127-byte
+  limit.
 
 ## Quick start
 
@@ -322,15 +332,19 @@ src/
   interrupts.asm       IDT, PIC remap, keyboard (IRQ1) and timer (IRQ0).
   devices.asm          device manager/table (the `devices` command).
   ata.asm              ATA PIO driver (the `ataread` command).
+  serial.asm           16550 UART driver for COM1 (`serial`) - included
+                       right after the other device drivers rather than
+                       further down, so its init function's address stays
+                       safely below 0x10000 (see the note in devices.asm).
   filesystem.asm       folder-aware filesystem on top of the ATA driver.
   fs_extra.asm         chained extra sectors for files > 127 bytes, and
                        fs_load_content - the shared file-content reader
                        used by grep/head/tail/uranium.
-  programs.asm         `run`/`hex` commands, the TEST.BIN demo program.
+  programs.asm         `run`/`hex` commands, the TEST.BIN/CALC.BIN demo
+                       programs and the PROGRAMS folder they live in.
   assembler.asm        one-line mini-assembler used by the hex editor.
   rtc.asm              CMOS RTC driver (`date`, `time`).
   speaker.asm          PC speaker driver (`beep`).
-  serial.asm           16550 UART driver for COM1 (`serial`).
   grep.asm             text search within a file (`grep`), with on-screen
                        highlighting of the matched text.
   headtail.asm         `head`/`tail` commands.
