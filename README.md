@@ -66,7 +66,17 @@ alex@/$
   inline bytes into a chain of extra disk sectors, tracked by a small
   on-disk bitmap. `cat`, `size`, `head`, `tail`, `grep`, `cp`, and `rm` all
   understand the chain.
-- `batch` runs every line of a text file as a shell command.
+- Typing a `*.hg` file's own name runs it as a script: every line is fed
+  to the shell as a command, same as `run` already does for machine-code
+  programs. Lines are echoed before they run, like a real DOS batch file,
+  unless the script contains a line that's exactly `@echo off` (silences
+  the echo - and doesn't run as a command itself - for the rest of that
+  script; every run starts back with echo on).
+- `cp`/`mv` also support wildcards: `cp *.txt <folder>` copies every match
+  into `<folder>` under its own name, and `mv *.txt <folder>` moves them
+  the same way; both skip `USER.CFG` and any name already taken in the
+  destination. Without a wildcard, `cp <n> <new>` / `mv <n> <path>` are
+  unchanged.
 - `grep` searches a file's content for a piece of text and prints every
   match as `Line <n>, Symbol <col> <line text>`, with the matched text
   itself highlighted in bright red on screen.
@@ -237,9 +247,9 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `size <n>` | show a file's content length |
 | `rm <n>` | delete a file or folder; `rm *.bin`/`rm *.*` delete every match, `rm -a` deletes everything in the folder (`USER.CFG` is always skipped) |
 | `ren <n> <new>` | rename a file or folder |
-| `cp <n> <new>` | copy a file (independent content, not aliased) |
-| `mv <n> <path>` | move a file into a folder at `path` |
-| `batch <n>` | run every line of file `n` as a shell command |
+| `cp <n> <new>` | copy a file (independent content, not aliased); `cp *.ext <folder>` copies every match into `<folder>` |
+| `mv <n> <path>` | move a file into a folder at `path`; `mv *.ext <folder>` moves every match into `<folder>` |
+| `<n>.hg` | type a script's own name to run every line as a shell command (`@echo off` silences the echo) |
 | `grep <n> <text>` | search file `n` for `text`; prints `Line <n>, Symbol <col> <line>` for each match, with the match highlighted in red |
 | **Editors** | |
 | `uranium <n>` | full-screen text editor (creates the file if it doesn't exist) |
@@ -345,8 +355,10 @@ src/
   only the first 4 KB of a larger file is visible to them - `uranium`
   in particular can't open or grow a file past that size. `grep` is also
   case-sensitive and its search text is capped at 32 characters.
-- `rm`'s wildcard matching only understands `*` (any run of characters,
-  including none) - there's no `?` or character-class syntax. `uranium`'s
+- `rm`/`cp`/`mv`'s wildcard matching only understands `*` (any run of
+  characters, including none) - there's no `?` or character-class syntax.
+  A `cp`/`mv` match whose name is already taken in the destination folder
+  is silently skipped rather than reported individually. `uranium`'s
   `Ctrl+F` search is case-sensitive, like `grep`, and its search text is
   also capped at 32 characters.
 - The mini-assembler resolves labels in one pass, so jumps can only target

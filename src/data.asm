@@ -153,8 +153,8 @@ help_l14 db "  mkdir <n>     - create a folder n", 13, 10, 0
 help_l15 db "  cd <n>        - enter folder n", 13, 10, 0
 help_l16 db "  cd ..         - go to parent folder", 13, 10, 0
 help_l17 db "  cd /a/b       - enter folder by path (cd, cd /, cd // = root)", 13, 10, 0
-help_l18 db "  mv <n> <path> - move file n into folder at path", 13, 10, 0
-help_l19 db "  cp <n> <new>  - copy file n to new (same folder)", 13, 10, 0
+help_l18 db "  mv <n> <path> - move file n into folder (or *.ext for many)", 13, 10, 0
+help_l19 db "  cp <n> <new>  - copy file n to new (*.ext copies into folder <new>)", 13, 10, 0
 help_l20 db "  pwd           - show current folder path", 13, 10, 0
 help_l21 db "  tree          - show all files and folders as a tree", 13, 10, 0
 help_l22 db "  reboot        - restart the system", 13, 10, 0
@@ -171,7 +171,7 @@ help_l32 db "  date          - show current date", 13, 10, 0
 help_l33 db "  time          - show current time", 13, 10, 0
 help_l34 db "  beep [hz]     - play a short tone (frequency in hex)", 13, 10, 0
 help_l35 db "  serial <text> - send text out over COM1", 13, 10, 0
-help_l38 db "  batch <n>     - run each line of file n as a command", 13, 10, 0
+help_l38 db "  <n>.hg        - type its name to run every line as a command", 13, 10, 0
 help_l39 db "  grep <n> <t>  - search file n for text t, highlight matches", 13, 10, 0
 help_l40 db "  head <n> [k]  - print first k lines of file n (default 10)", 13, 10, 0
 help_l41 db "  tail <n> [k]  - print last k lines of file n (default 10)", 13, 10, 0
@@ -222,7 +222,7 @@ msg_fs_renamed     db "Renamed.", 13, 10, 0
 msg_fs_usage_append db "Usage: append <n> <text>", 13, 10, 0
 msg_fs_appended     db "Appended.", 13, 10, 0
 msg_fs_disk_full    db "No free space for more content - saved what fit.", 13, 10, 0
-msg_fs_usage_batch  db "Usage: batch <n>", 13, 10, 0
+msg_hg_echo_off_line db "@echo off", 0
 msg_grep_usage       db "Usage: grep <n> <text>", 13, 10, 0
 msg_grep_header_mid  db " matches found with ", 34, 0
 msg_grep_quote_nl    db 34, 13, 10, 0
@@ -261,9 +261,11 @@ msg_fs_not_a_dir   db "Not a directory.", 13, 10, 0
 
 msg_fs_usage_cp db "Usage: cp <n> <new_name>", 13, 10, 0
 msg_fs_copied   db "Copied.", 13, 10, 0
+msg_cp_copied_suffix db " copied.", 13, 10, 0
 
 msg_fs_usage_mv db "Usage: mv <n> <path>", 13, 10, 0
 msg_fs_moved    db "Moved.", 13, 10, 0
+msg_mv_moved_suffix db " moved.", 13, 10, 0
 msg_fs_path_notfound db "Path not found.", 13, 10, 0
 
 slash_string db "/", 0
@@ -388,7 +390,6 @@ cmd_cat_prefix   db "cat ", 0
 cmd_rm_prefix    db "rm ", 0
 cmd_ren_prefix   db "ren ", 0
 cmd_size_prefix  db "size ", 0
-cmd_batch_prefix db "batch ", 0
 cmd_mkdir_prefix db "mkdir ", 0
 cmd_reboot       db "reboot", 0
 cmd_about        db "about", 0
@@ -491,6 +492,11 @@ uranium_search_text times 33 db 0
 fs_tmp_path times (BUFFER_MAX + 1) db 0
 fs_tmp_slot dw 0
 fs_tmp_slot2 dw 0
+fs_cp_dest_byte db 0
+fs_cp_new_chain dw 0
+fs_mv_dest_byte db 0
+fs_hg_echo db 1                     ; src/fs_extra.asm's fs_run_hg_script: is
+                                     ; the current script echoing its lines?
 fs_tmp_text_ptr dw 0
 fs_tmp_dest_byte db 0
 fs_resolve_found dw 0
