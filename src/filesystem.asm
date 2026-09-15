@@ -13,7 +13,8 @@
 ;
 ; Exports: fs_cat, fs_rm, fs_list, fs_ren, fs_size, fs_df,
 ;          fs_mkdir, fs_cd, fs_ensure_readme, fs_print_prompt,
-;          fs_find_prefix_match, fs_name_has_prefix, fs_read_slot_name
+;          fs_find_prefix_match, fs_name_has_prefix, fs_read_slot_name,
+;          fs_name_matches_wildcard
 
 ; --- Reads a slot (index in ax) from disk into SCRATCH_ADDR ---
 fs_read_slot:
@@ -346,6 +347,84 @@ fs_read_slot_name:
     pop ax
     ret
 
+; ============================================================
+; Case-insensitive glob match: does DS:DI (a plain name, e.g. from
+; fs_read_slot_name) match the pattern DS:SI, where '*' in the pattern
+; matches any run of characters (including none)? No other wildcard
+; (no '?') - that's all `rm`'s batch delete (src/filesystem.asm's
+; fs_rm) needs for things like "*.BIN" or "*.*".
+; Both strings must be null-terminated. Result: ax = 1 if it matches,
+; otherwise ax = 0.
+; ============================================================
+fs_name_matches_wildcard:
+    push bx
+    push cx
+    push dx
+
+    xor cx, cx                  ; cx = 1 once we've seen a '*' (backtrack allowed)
+    mov word [wc_star_p], 0
+
+.loop:
+    cmp byte [di], 0
+    je .name_ended
+
+    cmp byte [si], '*'
+    je .star
+
+    cmp byte [si], 0
+    je .try_backtrack            ; pattern ran out but the name hasn't
+
+    mov al, [si]
+    call to_upper_al
+    mov bl, al
+    mov al, [di]
+    call to_upper_al
+    cmp al, bl
+    jne .try_backtrack
+
+    inc si
+    inc di
+    jmp .loop
+
+.star:
+    inc si
+    mov [wc_star_p], si          ; remember what follows the '*' ...
+    mov dx, di                   ; ... and where in the name it started matching
+    mov cx, 1
+    jmp .loop
+
+.try_backtrack:
+    cmp cx, 0
+    je .no_match
+    inc dx                       ; let the '*' swallow one more character
+    mov di, dx
+    mov si, [wc_star_p]
+    jmp .loop
+
+.name_ended:
+    ; the name is fully consumed - the pattern may only have trailing '*'s left
+.skip_trailing_star:
+    cmp byte [si], '*'
+    jne .check_pattern_end
+    inc si
+    jmp .skip_trailing_star
+.check_pattern_end:
+    cmp byte [si], 0
+    jne .no_match
+    mov ax, 1
+    jmp .done
+
+.no_match:
+    xor ax, ax
+
+.done:
+    pop dx
+    pop cx
+    pop bx
+    ret
+
+wc_star_p dw 0
+
 ; --- Finds the first free slot (in any directory). ax=index or -1. ---
 fs_find_free:
     push bx
@@ -505,9 +584,59 @@ fs_cat_chain dw 0
 ; --- rm <name> ---
 fs_rm:
     push ax
+    push bx
+    push cx
     push dx
     push si
+    push di
 
+    ; --- pull the argument into a local buffer, trimmed at the first
+    ; space (matching every other single-argument command here) ---
+    mov di, fs_rm_pattern_buf
+    xor cx, cx
+.copy_arg:
+    mov al, [si]
+    cmp al, 0
+    je .arg_done
+    cmp al, ' '
+    je .arg_done
+    cmp cx, FS_NAME_LEN + 4
+    jae .arg_skip
+    mov [di], al
+    inc di
+.arg_skip:
+    inc si
+    inc cx
+    jmp .copy_arg
+.arg_done:
+    mov byte [di], 0
+
+    ; "-a" means "everything in this directory" - same as pattern "*"
+    mov si, fs_rm_pattern_buf
+    mov di, msg_rm_dash_a
+    call strcmp_eq
+    cmp ax, 1
+    jne .not_dash_a
+    mov byte [fs_rm_pattern_buf], '*'
+    mov byte [fs_rm_pattern_buf + 1], 0
+    jmp .batch_delete
+.not_dash_a:
+
+    ; does the pattern contain a '*'? if so, this is a batch delete too
+    mov si, fs_rm_pattern_buf
+.scan_star:
+    cmp byte [si], 0
+    je .single_delete
+    cmp byte [si], '*'
+    je .batch_delete
+    inc si
+    jmp .scan_star
+
+; ============================================================
+; No wildcard - the original single-file behavior, unchanged.
+; ============================================================
+.single_delete:
+    mov si, fs_rm_pattern_buf
     call fs_find_by_name
     cmp ax, -1
     jne .found
@@ -551,10 +680,91 @@ fs_rm:
 
     mov si, msg_fs_removed
     call print_string
+    jmp .end
+
+; ============================================================
+; Wildcard / -a: scan every slot in the current directory, delete
+; every one whose name matches fs_rm_pattern_buf (case-insensitive,
+; '*' = any run of characters - see fs_name_matches_wildcard), skip
+; USER.CFG if it's among them, and report how many were removed.
+; ============================================================
+.batch_delete:
+    call fs_get_current_parent_byte
+    mov dl, al                         ; dl = this directory's parent byte
+
+    xor bx, bx
+    xor cx, cx                          ; cx = how many were removed
+.batch_scan:
+    cmp bx, FS_FILE_COUNT
+    jae .batch_done
+
+    mov ax, bx
+    call fs_read_slot
+
+    mov ax, FS_TYPE_OFFSET
+    call fs_scratch_read_byte
+    cmp al, FS_TYPE_FREE
+    je .batch_next
+
+    mov ax, FS_PARENT_OFFSET
+    call fs_scratch_read_byte
+    cmp al, dl
+    jne .batch_next
+
+    mov di, fs_rm_batch_name_buf
+    call fs_read_slot_name
+    mov si, fs_rm_pattern_buf
+    mov di, fs_rm_batch_name_buf
+    call fs_name_matches_wildcard
+    cmp ax, 1
+    jne .batch_next
+
+    mov ax, bx
+    call fs_reject_if_user_cfg
+    cmp ax, 1
+    je .batch_next                       ; protected - message already printed
+
+    mov ax, FS_TYPE_OFFSET
+    call fs_scratch_read_byte
+    cmp al, FS_TYPE_FILE
+    jne .batch_no_chain
+    mov ax, bx
+    call fs_free_chain
+    mov ax, bx
+    call fs_read_slot                     ; re-read - fs_free_chain left scratch
+                                            ; pointing at the last freed extra sector
+.batch_no_chain:
+    push dx                                ; dx holds our parent byte - don't lose it
+    mov ax, FS_TYPE_OFFSET
+    xor dx, dx
+    call fs_scratch_write_byte
+    pop dx
+    mov ax, bx
+    call fs_write_slot
+
+    inc cx
+.batch_next:
+    inc bx
+    jmp .batch_scan
+
+.batch_done:
+    cmp cx, 0
+    jne .batch_report
+    mov si, msg_fs_notfound
+    call print_string
+    jmp .end
+.batch_report:
+    mov ax, cx
+    call print_dec_word
+    mov si, msg_rm_removed_suffix
+    call print_string
 
 .end:
+    pop di
     pop si
     pop dx
+    pop cx
+    pop bx
     pop ax
     ret
 

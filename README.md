@@ -70,6 +70,12 @@ alex@/$
 - `grep` searches a file's content for a piece of text and prints every
   match as `Line <n>, Symbol <col> <line text>`, with the matched text
   itself highlighted in bright red on screen.
+- `rm` supports wildcards: `rm *.bin` deletes every file whose name matches
+  the pattern (`*` stands for any run of characters, case-insensitive), and
+  `rm -a` deletes everything in the current directory. Either way `USER.CFG`
+  is skipped if it's among the matches, and the count of removed files is
+  printed (`rm <n>` with no wildcard still deletes exactly that one file,
+  unchanged).
 - `head`/`tail` print the first/last lines of a file (10 by default, or a
   given count).
 - On first boot the root folder is seeded with `README`, a demo `TEST.BIN`,
@@ -118,7 +124,11 @@ alex@/$
   cursor (with line wrapping and scrolling for content taller than the
   screen), typing inserts, Backspace/Delete remove. `Ctrl+B` saves and
   exits, `Ctrl+H` saves without exiting, and `Esc` exits without saving —
-  all three ask `Are you sure? Y/N` first.
+  all three ask `Are you sure? Y/N` first. `Ctrl+F` prompts for text on the
+  footer row and jumps the cursor to the next case-sensitive match,
+  wrapping around to the start of the file if needed; pressing Enter on an
+  empty prompt repeats the last search, and a footer flash reads
+  `Not found.` when nothing matches.
 - `hex` is an interactive hex editor (arrow keys, nibble-at-a-time input)
   for writing small machine-code programs byte by byte, plus a one-line
   mini-assembler (press `S` inside the editor) so you don't have to
@@ -225,7 +235,7 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `head <n> [k]` | print the first `k` lines of a file (default 10) |
 | `tail <n> [k]` | print the last `k` lines of a file (default 10) |
 | `size <n>` | show a file's content length |
-| `rm <n>` | delete a file or folder |
+| `rm <n>` | delete a file or folder; `rm *.bin`/`rm *.*` delete every match, `rm -a` deletes everything in the folder (`USER.CFG` is always skipped) |
 | `ren <n> <new>` | rename a file or folder |
 | `cp <n> <new>` | copy a file (independent content, not aliased) |
 | `mv <n> <path>` | move a file into a folder at `path` |
@@ -335,6 +345,10 @@ src/
   only the first 4 KB of a larger file is visible to them - `uranium`
   in particular can't open or grow a file past that size. `grep` is also
   case-sensitive and its search text is capped at 32 characters.
+- `rm`'s wildcard matching only understands `*` (any run of characters,
+  including none) - there's no `?` or character-class syntax. `uranium`'s
+  `Ctrl+F` search is case-sensitive, like `grep`, and its search text is
+  also capped at 32 characters.
 - The mini-assembler resolves labels in one pass, so jumps can only target
   a label that already appears earlier in the same program. It also has
   no memory operands (no `[bx]`, no `[label]`) and no 16-bit-register
