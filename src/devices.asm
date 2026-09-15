@@ -8,7 +8,13 @@
 ; All pointers in the table (dw) and all code in this file keep working
 ; with 16-bit registers: devices and their init functions are part of
 ; the kernel itself, which lies entirely below 0x10000 (see the note
-; in data.asm), so truncating the address to 16 bits here is safe.
+; in data.asm), so truncating the address to 16 bits here is safe -
+; PROVIDED each entry's init function lives in a file included early in
+; kernel.asm (this file, screen.asm, input.asm and ata.asm all qualify
+; on their own; serial.asm is included right after ata.asm specifically
+; so serial_init does too - a later position silently truncates the
+; stored pointer instead of failing to assemble, so this has broken
+; before and is worth keeping in mind before reordering %includes).
 ;
 ; In protected mode there's no way to check the disk through BIOS
 ; int 13h anymore (BIOS is simply unavailable) - so instead of a

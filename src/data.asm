@@ -288,8 +288,26 @@ cmd_run_prefix db "run ", 0
 cmd_hex_prefix db "hex ", 0
 
 test_exe_name db "TEST.BIN", 0
+calc_exe_name db "CALC.BIN", 0
+programs_dir_name db "PROGRAMS", 0
 
 program_exec_buffer times PROGRAM_MAX_LEN db 0
+
+; src/programs.asm's calc_run (the calculator behind PROGRAMS/CALC.BIN) -
+; kept here rather than as locals in programs.asm so their addresses
+; stay below 0x10000 (see the note at the top of this file), where
+; it's safe to load them into a 16-bit register.
+calc_num1  dw 0
+calc_num2  dw 0
+calc_op    db 0
+calc_result dw 0
+msg_calc_title    db "LexOS Calculator", 13, 10, 0
+msg_calc_prompt1  db "Number 1: ", 0
+msg_calc_prompt_op db "Operator (+ - * / ^): ", 0
+msg_calc_prompt2  db "Number 2: ", 0
+msg_calc_result   db "Result: ", 0
+msg_calc_bad_op   db "Unknown operator.", 13, 10, 0
+msg_calc_div_zero db "Division by zero.", 13, 10, 0
 
 BATCH_BUF_LEN equ 511
 batch_content_buf times (BATCH_BUF_LEN + 1) db 0
