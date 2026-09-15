@@ -79,6 +79,8 @@ FS_EXTRA_START_SECTOR equ FS_BITMAP_SECTOR + 1
 PROGRAM_MAX_LEN equ FS_CONTENT_LEN - 1   ; 127 bytes max per program
 HEX_GRID_COLS equ 8
 HEX_GRID_ROWS equ 16
+HEX_GRID_START_ROW equ 2               ; rows 0-1 are the header bar
+HEX_FOOTER_ROW equ HEX_GRID_START_ROW + HEX_GRID_ROWS + 1   ; one blank row after the grid
 
 FS_ROOT equ 0xFFFF          ; value of fs_current_dir when we're at the root
 FS_ROOT_BYTE equ 0xFF       ; value of the parent byte for records at the root
@@ -271,7 +273,7 @@ msg_hex_saved        db "Saved.", 13, 10, 0
 msg_hex_header1      db "LexOS Hex Editor - ", 0
 msg_hex_header2      db "  (", 0
 msg_hex_header3      db " bytes)", 13, 10, 13, 10, 0
-msg_hex_footer       db 13, 10, "Hex digits=Edit  Arrows=Move  S=Assemble  Ctrl+B=Save&Exit  ESC=Cancel", 13, 10, 0
+msg_hex_footer       db "Hex digits=Edit  Arrows=Move  S=Assemble  Ctrl+B=Save&Exit  ESC=Cancel", 0
 msg_hex_dashes       db "-- ", 0
 msg_asm_prompt       db "asm> ", 0
 msg_asm_error        db 13, 10, "Bad instruction. Press any key...", 0
@@ -463,6 +465,14 @@ COLOR_RED equ 0x0C      ; bright red on black - highlighting for matched text in
 ;     color the user has set (see fs_list in src/filesystem.asm) ---
 ATTR_LS_DIR equ 0x0E
 fs_list_saved_color db 0
+
+; --- Green header/footer bars for the uranium and hex editors (see
+;     screen_fill_bar_row in src/screen.asm, used from src/uranium.asm
+;     and src/programs.asm). The row is filled solid green first, then
+;     the caller prints its own text over it in bright white. ---
+EDITOR_BAR_BG   equ 0x20   ; plain green - used only for the blank fill
+EDITOR_BAR_TEXT equ 0x2F   ; bright white on green - used for the bar's text
+screen_bar_saved_color db 0
 
 fs_tmp_name times (FS_NAME_LEN + 1) db 0
 fs_tmp_name2 times (FS_NAME_LEN + 1) db 0

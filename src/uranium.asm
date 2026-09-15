@@ -8,9 +8,10 @@
 ; (insertion/deletion shift bytes within content_buf), and on Ctrl+B/Ctrl+H
 ; writes it back to disk via fs_save_content below.
 ;
-; Screen layout: row 0-1 - header (file name, size), rows
-; 2..23 - content window (URANIUM_VISIBLE_ROWS rows), row 24 -
-; hint/status. The cursor is stored as a byte index into content_buf
+; Screen layout: row 0-1 - header bar (file name, size) on a solid green
+; background (screen_fill_bar_row, src/screen.asm), rows 2..23 - content
+; window (URANIUM_VISIBLE_ROWS rows), row 24 - footer bar (hint/status),
+; same green treatment. The cursor is stored as a byte index into content_buf
 ; (uranium_cursor_pos); the screen row/column are recomputed on
 ; every redraw (uranium_redraw), including scrolling (uranium_view_line
 ; - the logical line number of the text at the top of the window), so the
@@ -353,6 +354,12 @@ uranium_redraw:
     pusha
     call clear_screen
 
+    mov al, 0
+    call screen_fill_bar_row
+    mov al, [current_color]
+    mov [screen_bar_saved_color], al
+    mov byte [current_color], EDITOR_BAR_TEXT
+
     mov si, msg_uranium_header1
     call print_string
     mov si, fs_tmp_name
@@ -363,6 +370,9 @@ uranium_redraw:
     call print_dec_word
     mov si, msg_uranium_header3
     call print_string
+
+    mov al, [screen_bar_saved_color]
+    mov [current_color], al
 
     ; --- scrolling: keep the cursor's line within the visible window ---
     call uranium_cursor_line_col          ; ax = cursor line number
@@ -413,9 +423,11 @@ uranium_redraw:
     mov [uranium_target_col], ax
 .have_target:
 
-    mov word [cursor_row], URANIUM_FOOTER_ROW
-    mov word [cursor_col], 0
-    call update_hw_cursor
+    mov al, URANIUM_FOOTER_ROW
+    call screen_fill_bar_row
+    mov al, [current_color]
+    mov [screen_bar_saved_color], al
+    mov byte [current_color], EDITOR_BAR_TEXT
 
     cmp byte [uranium_flash_saved], 0
     je .normal_footer
@@ -427,6 +439,8 @@ uranium_redraw:
     mov si, msg_uranium_footer
     call print_string
 .footer_done:
+    mov al, [screen_bar_saved_color]
+    mov [current_color], al
 
     mov ax, [uranium_target_row]
     mov [cursor_row], ax

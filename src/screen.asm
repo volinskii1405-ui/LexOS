@@ -1,7 +1,7 @@
 ; screen.asm — screen output (VGA text mode, direct writes to video memory)
 ; Exports: clear_screen, print_char, print_string, print_prompt,
 ; print_banner, print_hex_byte, print_dec_byte, update_hw_cursor,
-; scroll_screen, screen_putc_at
+; scroll_screen, screen_putc_at, screen_fill_bar_row
 ;
 ; Unlike the real-mode version, here video memory (VIDEO_MEM = 0xB8000) is
 ; NOT a segment but an ordinary linear address - ES/DS already cover the
@@ -271,6 +271,43 @@ screen_putc_at:
 
     mov [VIDEO_MEM + edi], bx  ; bl = character, bh = color attribute
     popa
+    ret
+
+; ============================================================
+; Fills an entire row with EDITOR_BAR_BG-colored spaces (see
+; src/data.asm), then positions the cursor at (row, 0) so the caller
+; can print its own text over the bar in whatever color it likes -
+; typically EDITOR_BAR_TEXT. Used by the uranium and hex editors
+; (src/uranium.asm, src/programs.asm) for their header/footer bars.
+; Input: al = row (0-24)
+; ============================================================
+screen_fill_bar_row:
+    push ax
+    push bx
+    push cx
+    push dx
+
+    mov dl, al
+    xor dh, dh
+    mov bl, ' '
+    mov bh, EDITOR_BAR_BG
+    mov ecx, SCREEN_COLS      ; "loop" uses ECX in a 32-bit code segment -
+                              ; must be the full register (see clear_screen)
+.fill_loop:
+    call screen_putc_at
+    inc dh
+    loop .fill_loop
+
+    xor ah, ah
+    mov al, dl
+    mov [cursor_row], ax
+    mov word [cursor_col], 0
+    call update_hw_cursor
+
+    pop dx
+    pop cx
+    pop bx
+    pop ax
     ret
 
 ; ============================================================

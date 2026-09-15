@@ -1,16 +1,24 @@
 ; assembler.asm — a tiny single-line assembler (for the hex editor)
 ; Supported instructions (registers lowercase, numbers - hex without a prefix,
 ; character literals 'X'):
-;   mov reg8,imm8   mov reg16,imm16   int imm8   ret   nop   hlt   cli   sti
+;   mov reg8,imm8   mov reg16,imm16   mov reg8,reg8   mov reg16,reg16
+;   add/sub/cmp/and/or/xor reg8,imm8    (any of the 8 8-bit registers,
+;     not just al - via the 0x80 /digit opcode group, see asm_try_alu_imm8)
+;   add/sub/cmp/and/or/xor reg8,reg8   add/sub/cmp/and/or/xor reg16,reg16
+;     (see asm_try_regreg - "reg,imm8" is tried first, "reg,reg" is the
+;     fallback if the second operand isn't a number)
+;   int imm8   ret   nop   hlt   cli   sti
 ;   push reg16   pop reg16   inc reg16   dec reg16
-;   add al,imm8   sub al,imm8   cmp al,imm8
 ;   name:  (label definition)
 ;   jmp name   je name   jne name   jz name   jnz name   loop name
 ; IMPORTANT: labels only work "backward" - a label must already be defined
 ; (i.e. physically located earlier in the buffer) by the time it's
 ; used by jmp/je/jne/loop. There are no "forward" jumps (that would require
-; a two-pass assembler with deferred address resolution).
-; Exports: fs_assemble_line, read_asm_line
+; a two-pass assembler with deferred address resolution). There's also no
+; memory-operand support (no [bx], no [label]) - only registers and
+; immediates, which is what keeps a single instruction's parsing this
+; short.
+; Exports: fs_assemble_line, read_asm_line, asm_try_alu_imm8, asm_try_regreg
 
 ASM_INPUT_MAX equ 20
 ASM_OUTPUT_MAX equ 3
@@ -454,6 +462,104 @@ add_label:
     ret
 
 ; ============================================================
+; Tries "reg8, imm8" via the ADD/OR/AND/SUB/XOR/CMP opcode group
+; (0x80 /digit r/m8, imm8 - 3 bytes: opcode, modrm, imm8). This is
+; what lets add/sub/cmp/and/or/xor work on any of the 8 8-bit
+; registers, not just al.
+; Input: al = digit (0=ADD 1=OR 4=AND 5=SUB 6=XOR 7=CMP), si = operand text
+; Output: carry=0 and asm_output_buffer/length filled on success;
+;         carry=1 on failure (si left wherever it stopped).
+; ============================================================
+asm_try_alu_imm8:
+    push bx
+    push cx
+
+    mov cl, al                     ; cl = digit - survives both calls
+                                    ; below, since each of them saves
+                                    ; and restores cx itself
+    call parse_reg8_name
+    jc .fail
+    mov bl, al                      ; bl = dst reg
+    call skip_comma_and_spaces
+    call parse_immediate_value
+    jc .fail
+
+    mov ah, cl
+    shl ah, 3
+    or ah, bl
+    or ah, 0xC0                       ; ah = modrm = 11 digit dst
+    mov byte [asm_output_buffer], 0x80
+    mov [asm_output_buffer+1], ah
+    mov [asm_output_buffer+2], al
+    mov byte [asm_output_length], 3
+
+    pop cx
+    pop bx
+    clc
+    ret
+
+.fail:
+    pop cx
+    pop bx
+    stc
+    ret
+
+; ============================================================
+; Tries "reg, reg" - both operands the same width, 8-bit or 16-bit,
+; whichever the first one turns out to be - via an r/m,r opcode pair
+; (2 bytes: opcode, modrm = 11 src dst). Used as the reg,reg fallback
+; for mov/add/sub/cmp/and/or/xor once a plain immediate doesn't parse.
+; Input: dl = opcode for the 8-bit form, dh = opcode for the 16-bit
+;        form, si = operand text
+; Output: carry=0 and asm_output_buffer/length filled on success;
+;         carry=1 on failure.
+; ============================================================
+asm_try_regreg:
+    push bx
+
+    call parse_reg16_name
+    jc .try8
+    mov bl, al                        ; bl = dst reg
+    call skip_comma_and_spaces
+    call parse_reg16_name
+    jc .fail
+    mov ah, al
+    shl ah, 3
+    or ah, bl
+    or ah, 0xC0
+    mov al, dh
+    mov [asm_output_buffer], al
+    mov [asm_output_buffer+1], ah
+    mov byte [asm_output_length], 2
+    jmp .ok
+
+.try8:
+    call parse_reg8_name
+    jc .fail
+    mov bl, al
+    call skip_comma_and_spaces
+    call parse_reg8_name
+    jc .fail
+    mov ah, al
+    shl ah, 3
+    or ah, bl
+    or ah, 0xC0
+    mov al, dl
+    mov [asm_output_buffer], al
+    mov [asm_output_buffer+1], ah
+    mov byte [asm_output_length], 2
+
+.ok:
+    pop bx
+    clc
+    ret
+
+.fail:
+    pop bx
+    stc
+    ret
+
+; ============================================================
 ; Assembles a single instruction line (si) into asm_output_buffer.
 ; Success: asm_output_length = number of bytes, carry=0.
 ; Failure (unknown mnemonic/operands): carry=1.
@@ -601,10 +707,12 @@ fs_assemble_line:
 
 .mov_reg8_ok:
     add sp, 2                       ; discard the saved si (wasn't needed)
-    mov bx, ax
+    mov bx, ax                       ; bx = dst reg
     call skip_comma_and_spaces
+    push si
     call parse_immediate_value
-    jc .error
+    jc .mov_reg8_try_reg_src
+    add sp, 2                        ; discard the saved si - immediate worked
     mov ah, 0xB0
     add ah, bl
     mov [asm_output_buffer], ah
@@ -612,11 +720,27 @@ fs_assemble_line:
     mov byte [asm_output_length], 2
     jmp .success
 
-.mov_reg16_ok:
-    mov bx, ax
-    call skip_comma_and_spaces
-    call parse_immediate_value
+.mov_reg8_try_reg_src:
+    pop si                            ; back to right after the comma
+    call parse_reg8_name
     jc .error
+    ; MOV r/m8,r8 (0x88 /r): modrm = 11 src dst
+    mov ah, al
+    shl ah, 3
+    or ah, bl
+    or ah, 0xC0
+    mov byte [asm_output_buffer], 0x88
+    mov [asm_output_buffer+1], ah
+    mov byte [asm_output_length], 2
+    jmp .success
+
+.mov_reg16_ok:
+    mov bx, ax                        ; bx = dst reg
+    call skip_comma_and_spaces
+    push si
+    call parse_immediate_value
+    jc .mov_reg16_try_reg_src
+    add sp, 2
     push ax
     mov ah, 0xB8
     add ah, bl
@@ -625,6 +749,20 @@ fs_assemble_line:
     mov [asm_output_buffer+1], al
     mov [asm_output_buffer+2], ah
     mov byte [asm_output_length], 3
+    jmp .success
+
+.mov_reg16_try_reg_src:
+    pop si
+    call parse_reg16_name
+    jc .error
+    ; MOV r/m16,r16 (0x89 /r): modrm = 11 src dst
+    mov ah, al
+    shl ah, 3
+    or ah, bl
+    or ah, 0xC0
+    mov byte [asm_output_buffer], 0x89
+    mov [asm_output_buffer+1], ah
+    mov byte [asm_output_length], 2
     jmp .success
 .not_mov:
 
@@ -700,56 +838,131 @@ fs_assemble_line:
     jmp .success
 .not_dec:
 
-    ; --- add al, imm8 ---
+    ; --- add reg,imm8  or  add reg,reg (either width) ---
     push si
-    mov di, mnem_add_al_prefix
+    mov di, mnem_add_prefix
     call strcmp_prefix
     pop si
     cmp ax, 1
     jne .not_add
-    add si, 7
+    add si, 4
     call skip_spaces_local
-    call parse_immediate_value
-    jc .error
-    mov byte [asm_output_buffer], 0x04
-    mov [asm_output_buffer+1], al
-    mov byte [asm_output_length], 2
-    jmp .success
+    mov [asm_saved_si], si
+    mov al, 0                        ; digit for ADD
+    call asm_try_alu_imm8
+    jnc .success
+    mov si, [asm_saved_si]
+    mov dl, 0x00                     ; ADD r/m8,r8
+    mov dh, 0x01                     ; ADD r/m16,r16
+    call asm_try_regreg
+    jnc .success
+    jmp .error
 .not_add:
 
-    ; --- sub al, imm8 ---
+    ; --- sub reg,imm8  or  sub reg,reg ---
     push si
-    mov di, mnem_sub_al_prefix
+    mov di, mnem_sub_prefix
     call strcmp_prefix
     pop si
     cmp ax, 1
     jne .not_sub
-    add si, 7
+    add si, 4
     call skip_spaces_local
-    call parse_immediate_value
-    jc .error
-    mov byte [asm_output_buffer], 0x2C
-    mov [asm_output_buffer+1], al
-    mov byte [asm_output_length], 2
-    jmp .success
+    mov [asm_saved_si], si
+    mov al, 5                        ; digit for SUB
+    call asm_try_alu_imm8
+    jnc .success
+    mov si, [asm_saved_si]
+    mov dl, 0x28                     ; SUB r/m8,r8
+    mov dh, 0x29                     ; SUB r/m16,r16
+    call asm_try_regreg
+    jnc .success
+    jmp .error
 .not_sub:
 
-    ; --- cmp al, imm8 ---
+    ; --- cmp reg,imm8  or  cmp reg,reg ---
     push si
-    mov di, mnem_cmp_al_prefix
+    mov di, mnem_cmp_prefix
     call strcmp_prefix
     pop si
     cmp ax, 1
     jne .not_cmp
-    add si, 7
+    add si, 4
     call skip_spaces_local
-    call parse_immediate_value
-    jc .error
-    mov byte [asm_output_buffer], 0x3C
-    mov [asm_output_buffer+1], al
-    mov byte [asm_output_length], 2
-    jmp .success
+    mov [asm_saved_si], si
+    mov al, 7                        ; digit for CMP
+    call asm_try_alu_imm8
+    jnc .success
+    mov si, [asm_saved_si]
+    mov dl, 0x38                     ; CMP r/m8,r8
+    mov dh, 0x39                     ; CMP r/m16,r16
+    call asm_try_regreg
+    jnc .success
+    jmp .error
 .not_cmp:
+
+    ; --- and reg,imm8  or  and reg,reg ---
+    push si
+    mov di, mnem_and_prefix
+    call strcmp_prefix
+    pop si
+    cmp ax, 1
+    jne .not_and
+    add si, 4
+    call skip_spaces_local
+    mov [asm_saved_si], si
+    mov al, 4                        ; digit for AND
+    call asm_try_alu_imm8
+    jnc .success
+    mov si, [asm_saved_si]
+    mov dl, 0x20                     ; AND r/m8,r8
+    mov dh, 0x21                     ; AND r/m16,r16
+    call asm_try_regreg
+    jnc .success
+    jmp .error
+.not_and:
+
+    ; --- or reg,imm8  or  or reg,reg ---
+    push si
+    mov di, mnem_or_prefix
+    call strcmp_prefix
+    pop si
+    cmp ax, 1
+    jne .not_or
+    add si, 3
+    call skip_spaces_local
+    mov [asm_saved_si], si
+    mov al, 1                        ; digit for OR
+    call asm_try_alu_imm8
+    jnc .success
+    mov si, [asm_saved_si]
+    mov dl, 0x08                     ; OR r/m8,r8
+    mov dh, 0x09                     ; OR r/m16,r16
+    call asm_try_regreg
+    jnc .success
+    jmp .error
+.not_or:
+
+    ; --- xor reg,imm8  or  xor reg,reg ---
+    push si
+    mov di, mnem_xor_prefix
+    call strcmp_prefix
+    pop si
+    cmp ax, 1
+    jne .not_xor
+    add si, 4
+    call skip_spaces_local
+    mov [asm_saved_si], si
+    mov al, 6                        ; digit for XOR
+    call asm_try_alu_imm8
+    jnc .success
+    mov si, [asm_saved_si]
+    mov dl, 0x30                     ; XOR r/m8,r8
+    mov dh, 0x31                     ; XOR r/m16,r16
+    call asm_try_regreg
+    jnc .success
+    jmp .error
+.not_xor:
 
     ; --- jmp/je/jne/jz/jnz/loop name (a BACKWARD jump, to an already defined label) ---
     push si
@@ -870,9 +1083,12 @@ mnem_push_prefix db "push ", 0
 mnem_pop_prefix db "pop ", 0
 mnem_inc_prefix db "inc ", 0
 mnem_dec_prefix db "dec ", 0
-mnem_add_al_prefix db "add al,", 0
-mnem_sub_al_prefix db "sub al,", 0
-mnem_cmp_al_prefix db "cmp al,", 0
+mnem_add_prefix db "add ", 0
+mnem_sub_prefix db "sub ", 0
+mnem_cmp_prefix db "cmp ", 0
+mnem_and_prefix db "and ", 0
+mnem_or_prefix  db "or ", 0
+mnem_xor_prefix db "xor ", 0
 mnem_jmp_prefix db "jmp ", 0
 mnem_je_prefix db "je ", 0
 mnem_jne_prefix db "jne ", 0
