@@ -16,9 +16,14 @@
 ; every redraw (uranium_redraw), including scrolling (uranium_view_line
 ; - the logical line number of the text at the top of the window), so the
 ; cursor always stays visible.
+;
+; Ctrl+F prompts for text on the footer row (uranium_do_search) and jumps
+; the cursor to the next case-sensitive match (uranium_find_text), wrapping
+; around the buffer; an empty prompt repeats the last search.
 
 URANIUM_VISIBLE_ROWS equ 22      ; screen rows 2..23
 URANIUM_FOOTER_ROW   equ 24
+URANIUM_SEARCH_MAX   equ 32      ; longest text Ctrl+F will search for
 
 ; ============================================================
 ; uranium <name> : DS:SI points to "<name>"
@@ -148,7 +153,7 @@ uranium_editor:
 .start_editing:
     mov word [uranium_cursor_pos], 0
     mov word [uranium_view_line], 0
-    mov byte [uranium_flash_saved], 0
+    mov byte [uranium_flash_active], 0
 
 .editor_loop:
     call uranium_redraw
@@ -164,6 +169,10 @@ uranium_editor:
     je .confirm_save_only
     cmp al, 'H'
     je .confirm_save_only
+    cmp al, 'f'
+    je .do_search
+    cmp al, 'F'
+    je .do_search
     jmp .editor_loop
 .not_ctrl:
 
@@ -276,6 +285,10 @@ uranium_editor:
     call uranium_backspace
     jmp .editor_loop
 
+.do_search:
+    call uranium_do_search
+    jmp .editor_loop
+
 .confirm_save_and_exit:
     call uranium_confirm_prompt
     cmp ax, 1
@@ -291,7 +304,8 @@ uranium_editor:
     jne .editor_loop
     mov ax, [fs_tmp_slot]
     call fs_save_content
-    mov byte [uranium_flash_saved], 1
+    mov word [uranium_flash_text], msg_uranium_saved_flash
+    mov byte [uranium_flash_active], 1
     jmp .editor_loop
 
 .confirm_discard_exit:
@@ -317,7 +331,9 @@ uranium_tmp_line_start dw 0
 uranium_target_row   dw 0
 uranium_target_col   dw 0
 uranium_have_target  dw 0
-uranium_flash_saved  db 0
+uranium_flash_active db 0                   ; show a one-shot message in the
+                                             ; footer on the next redraw
+uranium_flash_text   dw msg_uranium_saved_flash  ; which message (see above)
 
 ; ============================================================
 ; Shows the "Are you sure?" prompt full-screen and waits for Y/N.
@@ -344,6 +360,161 @@ uranium_confirm_prompt:
 .no:
     xor ax, ax
     ret
+
+; ============================================================
+; Ctrl+F: prompts for search text on the footer row (reusing
+; read_command_line, same as the nickname/timezone prompts in
+; src/user.asm - tab completion is turned off for the same reason: it
+; makes no sense while typing search text instead of a filename), then
+; jumps the cursor to the next match via uranium_find_text. An empty
+; prompt (just Enter) repeats the last search text, if any. Flashes
+; "Not found." in the footer (uranium_flash_active/uranium_flash_text,
+; shown by uranium_redraw) when nothing matches.
+; ============================================================
+uranium_do_search:
+    pusha
+
+    mov byte [tab_complete_enabled], 0
+
+    mov al, URANIUM_FOOTER_ROW
+    call screen_fill_bar_row
+    mov al, [current_color]
+    mov [screen_bar_saved_color], al
+    mov byte [current_color], EDITOR_BAR_TEXT
+    mov word [cursor_row], URANIUM_FOOTER_ROW
+    mov word [cursor_col], 0
+    call update_hw_cursor
+    mov si, msg_uranium_search_prompt
+    call print_string
+
+    call read_command_line
+
+    mov byte [tab_complete_enabled], 1
+    mov al, [screen_bar_saved_color]
+    mov [current_color], al
+
+    cmp byte [buffer], 0
+    je .use_last                    ; empty input - reuse the last search text
+
+    mov si, buffer
+    mov di, uranium_search_text
+    xor cx, cx
+.copy_query:
+    mov al, [si]
+    cmp al, 0
+    je .query_done
+    cmp cx, URANIUM_SEARCH_MAX
+    jae .query_done
+    mov [di], al
+    inc si
+    inc di
+    inc cx
+    jmp .copy_query
+.query_done:
+    mov byte [di], 0
+
+.use_last:
+    cmp byte [uranium_search_text], 0
+    je .done                         ; nothing typed yet, ever - nothing to search for
+
+    call uranium_find_text
+    cmp ax, 1
+    jne .not_found
+
+    mov [uranium_cursor_pos], bx
+    jmp .done
+
+.not_found:
+    mov word [uranium_flash_text], msg_uranium_notfound_flash
+    mov byte [uranium_flash_active], 1
+
+.done:
+    popa
+    ret
+
+; ============================================================
+; Case-sensitive substring search (matches grep's documented behavior -
+; see src/grep.asm) for uranium_search_text within content_buf,
+; starting just after uranium_cursor_pos and wrapping around to the
+; start so repeated Ctrl+F presses cycle through every match instead of
+; always landing on the same one.
+; Output: ax = 1 and bx = index of the match's first byte if found,
+; else ax = 0 (bx undefined).
+; ============================================================
+uranium_find_text:
+    push cx
+    push dx
+    push si
+    push di
+    push bp
+
+    mov si, uranium_search_text
+    xor cx, cx
+.measure:
+    cmp byte [si], 0
+    je .measured
+    inc si
+    inc cx
+    jmp .measure
+.measured:
+    mov [uranium_find_pat_len], cx
+
+    mov bx, [uranium_cursor_pos]
+    inc bx
+    cmp bx, [content_buf_len]
+    jb .start_ok
+    xor bx, bx
+.start_ok:
+    mov word [uranium_find_scanned], 0
+
+.try_pos:
+    mov cx, [uranium_find_pat_len]
+    mov dx, bx
+    add dx, cx
+    cmp dx, [content_buf_len]
+    ja .no_match_here                ; the pattern would run past the end of the text
+
+    mov si, uranium_search_text
+    mov di, bx
+.cmp_loop:
+    cmp cx, 0
+    je .found
+    mov al, [si]
+    cmp al, [content_buf + di]
+    jne .no_match_here
+    inc si
+    inc di
+    dec cx
+    jmp .cmp_loop
+
+.no_match_here:
+    inc bx
+    cmp bx, [content_buf_len]
+    jb .after_wrap
+    xor bx, bx
+.after_wrap:
+    inc word [uranium_find_scanned]
+    mov dx, [content_buf_len]
+    inc dx                           ; every start position 0..content_buf_len, once
+    cmp [uranium_find_scanned], dx
+    jae .not_found
+    jmp .try_pos
+
+.found:
+    mov ax, 1
+    jmp .done
+.not_found:
+    xor ax, ax
+.done:
+    pop bp
+    pop di
+    pop si
+    pop dx
+    pop cx
+    ret
+
+uranium_find_pat_len dw 0
+uranium_find_scanned dw 0
 
 ; ============================================================
 ; Redraws the entire editor screen: header, content window
@@ -429,10 +600,10 @@ uranium_redraw:
     mov [screen_bar_saved_color], al
     mov byte [current_color], EDITOR_BAR_TEXT
 
-    cmp byte [uranium_flash_saved], 0
+    cmp byte [uranium_flash_active], 0
     je .normal_footer
-    mov byte [uranium_flash_saved], 0
-    mov si, msg_uranium_saved_flash
+    mov byte [uranium_flash_active], 0
+    mov si, [uranium_flash_text]
     call print_string
     jmp .footer_done
 .normal_footer:
@@ -750,3 +921,4 @@ fs_save_content:
 
 fs_save_inline_count dw 0
 fs_save_prev          dw 0
+

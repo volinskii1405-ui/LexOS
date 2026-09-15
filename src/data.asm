@@ -212,6 +212,8 @@ msg_df_free        db " free", 13, 10, 0
 msg_fs_full       db "No free file slots.", 13, 10, 0
 msg_fs_notfound   db "Not found.", 13, 10, 0
 msg_fs_removed    db "Removed.", 13, 10, 0
+msg_rm_dash_a         db "-a", 0
+msg_rm_removed_suffix db " removed.", 13, 10, 0
 msg_fs_empty      db "Empty.", 13, 10, 0
 msg_fs_write_error db "Disk write error.", 13, 10, 0
 msg_fs_usage_ren   db "Usage: ren <n> <new_name>", 13, 10, 0
@@ -234,8 +236,10 @@ msg_uranium_not_text db "That is a program file. Use hex to edit it.", 13, 10, 0
 msg_uranium_header1  db "LexOS Editor - ", 0
 msg_uranium_header2  db "  (", 0
 msg_uranium_header3  db " bytes)", 13, 10, 13, 10, 0
-msg_uranium_footer   db "Ctrl+B=Save&Exit  Ctrl+H=Save  ESC=Exit", 0
+msg_uranium_footer   db "Ctrl+B=Save&Exit  Ctrl+H=Save  Ctrl+F=Find  ESC=Exit", 0
 msg_uranium_saved_flash db "Saved.", 0
+msg_uranium_notfound_flash db "Not found.", 0
+msg_uranium_search_prompt db "Find: ", 0
 msg_uranium_confirm  db "Are you sure?", 13, 10, 13, 10, "Y - YES.         N - NO.", 0
 
 msg_user_setup_title  db "LexOS - First Boot Setup", 0
@@ -476,6 +480,14 @@ screen_bar_saved_color db 0
 
 fs_tmp_name times (FS_NAME_LEN + 1) db 0
 fs_tmp_name2 times (FS_NAME_LEN + 1) db 0
+fs_rm_pattern_buf    times (FS_NAME_LEN + 5) db 0
+fs_rm_batch_name_buf times (FS_NAME_LEN + 1) db 0
+
+; src/uranium.asm's Ctrl+F search text (size must match URANIUM_SEARCH_MAX+1
+; there) - kept here rather than in uranium.asm itself so its address stays
+; below 0x10000 (see the note at the top of this file), where it's safe to
+; load into a 16-bit register.
+uranium_search_text times 33 db 0
 fs_tmp_path times (BUFFER_MAX + 1) db 0
 fs_tmp_slot dw 0
 fs_tmp_slot2 dw 0
