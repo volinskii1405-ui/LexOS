@@ -47,7 +47,18 @@ kernel_start:
     call print_string
 
     call fs_ensure_readme    ; creates README.TXT in the root if it doesn't exist yet
-    call fs_ensure_test_exe  ; creates TEST.BIN in the root if it doesn't exist yet
+
+    call fs_ensure_programs_dir  ; creates the PROGRAMS folder in the root if needed
+    cmp ax, -1
+    je .no_programs_dir           ; slot table full - nothing to seed it with
+    push word [fs_current_dir]
+    xor ah, ah
+    mov [fs_current_dir], ax      ; so fs_ensure_test_exe/fs_ensure_calc_exe land inside it
+    call fs_ensure_test_exe  ; creates PROGRAMS/TEST.BIN if it doesn't exist yet
+    call fs_ensure_calc_exe  ; creates PROGRAMS/CALC.BIN if it doesn't exist yet
+    pop word [fs_current_dir]
+.no_programs_dir:
+
     call fs_ensure_license   ; creates LICENSE in the root if it doesn't exist yet
     call fs_ensure_user_cfg  ; loads USER.CFG, or runs first-boot setup to create it
 
@@ -65,13 +76,25 @@ main_loop:
 %include "src/interrupts.asm"
 %include "src/devices.asm"
 %include "src/ata.asm"
+
+; serial.asm comes right here, straight after the other device drivers,
+; rather than further down with the rest of the shell's features - see
+; the note in devices.asm: devmgr_init's table stores each device's init
+; function as a 16-bit offset, which only stays correct while that
+; function's address is below 0x10000. serial_init is the one entry
+; whose file historically sat far enough into the kernel for that to
+; matter (it briefly broke - a silent truncation, not an assembler
+; error - when the calculator below pushed everything after it further
+; in): keeping every device driver grouped this early guarantees the
+; margin regardless of how large the later files grow.
+%include "src/serial.asm"
+
 %include "src/filesystem.asm"
 %include "src/fs_extra.asm"
 %include "src/programs.asm"
 %include "src/assembler.asm"
 %include "src/rtc.asm"
 %include "src/speaker.asm"
-%include "src/serial.asm"
 %include "src/grep.asm"
 %include "src/headtail.asm"
 %include "src/uranium.asm"

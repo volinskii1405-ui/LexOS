@@ -11,7 +11,7 @@
 ; Exports: fs_extra_alloc, fs_extra_free, fs_extra_read,
 ;               fs_extra_write, fs_scratch_read_word,
 ;               fs_scratch_write_word, fs_free_chain, fs_append,
-;               fs_load_content, print_dec_word
+;               fs_load_content, print_dec_word, print_dec_signed
 
 ; ============================================================
 ; Reads a 16-bit field scratch[offset] (offset in ax) -> ax.
@@ -913,6 +913,28 @@ print_dec_word:
     call print_char             ; print_char preserves all registers (pusha/popa)
     mov cx, 1
     mov ax, dx
+    ret
+
+; ============================================================
+; Prints ax as a signed decimal number (-32768..32767): a leading '-'
+; if negative, then the absolute value via print_dec_word. Used by
+; PROGRAMS/CALC.BIN's calc_run (src/programs.asm) to show a result that
+; may be negative.
+; ============================================================
+print_dec_signed:
+    push ax
+
+    cmp ax, 0
+    jge .positive
+    push ax
+    mov al, '-'
+    call print_char
+    pop ax
+    neg ax
+.positive:
+    call print_dec_word
+
+    pop ax
     ret
 
 ; --- Creates a LICENSE file with the project's full license text at boot
