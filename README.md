@@ -1,15 +1,39 @@
+<div align="center">
+
 # LexOS
 
-A small x86 operating system written from scratch in NASM assembly — its own
-32-bit protected-mode kernel, a real ATA (PIO) disk driver, a folder-aware
-filesystem, a command shell with line editing and history, and a built-in
-hex/assembly editor for writing and running your own tiny programs. No
-libc, no bootloader framework, no BIOS calls once the kernel starts — every
-byte that touches the screen, keyboard, disk, clock, or speaker goes
-through hardware ports that this project drives itself.
+**A small x86 operating system, written from scratch in NASM assembly.**
 
-On first boot, a green backdrop and a centered window ask for a nickname
-and a UTC offset:
+[![Language](https://img.shields.io/badge/language-x86%20assembly-blue?style=flat-square)](https://www.nasm.us/)
+[![Mode](https://img.shields.io/badge/mode-32--bit%20protected%20mode-informational?style=flat-square)]()
+[![Emulator](https://img.shields.io/badge/tested%20on-QEMU-orange?style=flat-square)](https://www.qemu.org/)
+[![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
+
+</div>
+
+Its own 32-bit protected-mode kernel, a real ATA (PIO) disk driver, a
+folder-aware filesystem, a command shell with line editing and history, and
+a built-in hex/assembly editor for writing and running your own tiny
+programs. No libc, no bootloader framework, no BIOS calls once the kernel
+starts — every byte that touches the screen, keyboard, disk, clock, or
+speaker goes through hardware ports that this project drives itself.
+
+## Contents
+
+- [Screenshots](#screenshots)
+- [Features](#features)
+- [Quick start](#quick-start)
+- [Running the pre-built image](#running-the-pre-built-image)
+- [Command reference](#command-reference)
+- [How it works](#how-it-works)
+- [Project layout](#project-layout)
+- [Known limitations](#known-limitations)
+- [License](#license)
+
+## Screenshots
+
+**First boot** — a green backdrop and a centered window ask for a nickname
+and a UTC offset, then saves both to `USER.CFG`:
 
 ```
             ┌──────────────────────────────────────────────────────┐
@@ -25,7 +49,8 @@ and a UTC offset:
             └──────────────────────────────────────────────────────┘
 ```
 
-Then it drops you straight into the console:
+**Straight into the console** — `ls`, `cd`, and `run`-ning a program from
+the `PROGRAMS` folder:
 
 ```
 ======================================
@@ -49,7 +74,7 @@ alex@/PROGRAMS$
 
 ## Features
 
-**Kernel**
+### Kernel
 - Boots straight into 32-bit protected mode: the boot sector loads the
   kernel, enables the A20 line, installs a flat GDT, and switches out of
   real mode before the kernel ever runs.
@@ -59,7 +84,7 @@ alex@/PROGRAMS$
   code) instead of only the two IRQs the kernel actually uses, so a bug
   faults cleanly instead of triple-faulting the machine.
 
-**Filesystem**
+### Filesystem
 - A simple folder-aware filesystem on top of the ATA driver — files and
   folders live in fixed-size sectors, with parent pointers for
   subdirectories (`mkdir`, `cd`, `pwd`, `tree`, `mv`, `cp`, `ren`).
@@ -98,7 +123,7 @@ alex@/PROGRAMS$
 - `df` (or `free`) shows how many of the 24 directory slots and 64 extra
   disk sectors are in use.
 
-**Shell**
+### Shell
 - Real line editing: Left/Right/Home/End/Delete work anywhere in the line,
   not just Backspace at the end.
 - Command history (Up/Down), case-insensitive filename lookup, and a
@@ -122,7 +147,7 @@ alex@/PROGRAMS$
   refuse to touch it (with an explanatory message), though `cat`/`grep`/
   `head`/`tail` can still read it like any other file.
 
-**Drivers**
+### Drivers
 - Keyboard and PIT timer via IRQ1/IRQ0, not `int 0x16`/BIOS polling.
 - ATA PIO disk driver talking directly to ports `0x1F0-0x1F7`.
 - VGA text-mode output straight to linear memory (`0xB8000`) with a
@@ -131,7 +156,7 @@ alex@/PROGRAMS$
   driver for COM1 (`serial`) — handy for debugging with
   `qemu ... -serial stdio`.
 
-**Editors**
+### Editors
 - `uranium` is a full-screen, nano-style text editor: arrow keys move the
   cursor (with line wrapping and scrolling for content taller than the
   screen), typing inserts, Backspace/Delete remove. `Ctrl+B` saves and
@@ -152,7 +177,7 @@ alex@/PROGRAMS$
   `cmp ax,bx`, ...), plus `add`/`sub`/`cmp`/`and`/`or`/`xor` with an
   immediate on any of the 8 8-bit registers, not just `al`.
 
-**Programs**
+### Programs
 - `run` loads a small file from disk and executes it as raw machine code.
 - `PROGRAMS/TEST.BIN` is a demo program: prints a short greeting.
 - `PROGRAMS/CALC.BIN` is a simple integer calculator: prompts for two
