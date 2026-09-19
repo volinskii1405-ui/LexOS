@@ -59,6 +59,10 @@ kernel_start:
     pop word [fs_current_dir]
 .no_programs_dir:
 
+    call fs_ensure_tmp_dir   ; creates the TMP folder in the root if needed, and
+                             ; caches its slot index so fs_find_free knows when
+                             ; to hand out a RAM-backed slot instead of a disk one
+
     call fs_ensure_license   ; creates LICENSE in the root if it doesn't exist yet
     call fs_ensure_user_cfg  ; loads USER.CFG, or runs first-boot setup to create it
 
@@ -100,6 +104,15 @@ main_loop:
 %include "src/uranium.asm"
 %include "src/user.asm"
 %include "src/tabcomplete.asm"
+
+; src/atadma.asm (Bus Master IDE / ATA DMA) is included here, at the very
+; end, rather than next to src/ata.asm above: none of its own code needs
+; 16-bit addressing (see the note at its own top), but its size would
+; still shift everything after it - and the margin below 0x10000 is
+; already thin (see src/devices.asm) - so it goes where appending it
+; can't push anything else past that mark, same reasoning as the
+; *.hg save area and the ATA DMA state right below it.
+%include "src/atadma.asm"
 
 ; --- fs_run_hg_script's (src/fs_extra.asm) nested-script save area ---
 ; Deliberately placed here, after every %include, so appending it can
@@ -167,6 +180,198 @@ fs_hg_restore_state:
     mov al, [hg_save_echo + ebx]
     mov [fs_hg_echo], al
     popad
+    ret
+
+; print_string32: same job as print_string (src/screen.asm) - print the
+; null-terminated string at DS:ESI, one print_char (screen.asm; doesn't
+; touch ESI itself) at a time - but through plain ESI-based `lodsb`
+; instead of print_string's "a16 lodsb". That a16 forces a 16-bit
+; effective address, so print_string can only ever print a string
+; living below 0x10000 (see src/devices.asm); this version has no such
+; limit, so any NEW message text this kernel needs can live right here
+; at the tail rather than competing with batch_content_buf and friends
+; for that thin margin.
+print_string32:
+    pushad
+.loop:
+    lodsb
+    cmp al, 0
+    je .done
+    call print_char
+    jmp .loop
+.done:
+    popad
+    ret
+
+; --- src/atadma.asm's Bus Master IDE (ATA DMA) state ---
+; Placed here for the same reason as the *.hg save area above: it's
+; reached only through 32-bit registers/direct memory operands (never
+; the 16-bit mov si/di src/ata.asm's PIO path uses), so it doesn't need
+; to sit below 0x10000 and appending it can't push anything else past
+; that mark. ata_prdt is a single Physical Region Descriptor (one entry
+; is enough - every transfer here is exactly one 512-byte sector):
+; dword physical address, word byte count, word flags (0x8000 = EOT).
+align 4
+ata_prdt            dd 0     ; physical address of the transfer buffer
+ata_prdt_len        dw 0     ; byte count for that one entry (always 512)
+ata_prdt_flags      dw 0     ; 0x8000 = end-of-table
+ata_bmide_base      dw 0     ; Bus Master IDE base I/O port (0 until found)
+ata_dma_available   db 0     ; 1 once ata_dma_probe finds a controller
+
+; --- fs_read_slot/fs_write_slot's (src/filesystem.asm) RAM-backed
+; slots, see the note above FS_RAM_FILE_COUNT in data.asm. Living here
+; for the same reason as everything else on this page: reached only
+; through 32-bit registers, so the 4 KB buffer doesn't need to sit
+; below 0x10000 and appending it can't push anything else past that
+; mark. fs_tmp_dir_slot caches the TMP folder's own (ordinary,
+; disk-backed) slot index once fs_ensure_tmp_dir finds or creates it -
+; FS_TMP_DIR_UNSET is a value fs_current_dir can never actually hold
+; (unlike FS_ROOT, which it can), so fs_find_free's "is the CURRENT
+; directory the TMP folder" check can't misfire while TMP hasn't been
+; set up yet (fs_ensure_tmp_dir itself calls fs_find_free, to allocate
+; TMP's own slot, before this is ever assigned).
+FS_TMP_DIR_UNSET equ 0xFFFE
+fs_tmp_dir_slot dw FS_TMP_DIR_UNSET
+fs_ram_slots    times 512 * FS_RAM_FILE_COUNT db 0
+
+; fs_ram_slot_read / fs_ram_slot_write: ax = full slot index
+; (FS_FILE_COUNT..FS_TOTAL_SLOTS-1) - copies the corresponding 512-byte
+; record between fs_ram_slots and SCRATCH_ADDR. No disk I/O at all, so
+; unlike ata_read_sector/ata_write_sector this can't fail.
+fs_ram_slot_read:
+    pushad
+    movzx eax, ax
+    sub eax, FS_FILE_COUNT
+    imul eax, eax, 512
+    mov esi, fs_ram_slots
+    add esi, eax
+    mov edi, SCRATCH_ADDR
+    mov ecx, 512
+    rep movsb
+    popad
+    ret
+
+fs_ram_slot_write:
+    pushad
+    movzx eax, ax
+    sub eax, FS_FILE_COUNT
+    imul eax, eax, 512
+    mov edi, fs_ram_slots
+    add edi, eax
+    mov esi, SCRATCH_ADDR
+    mov ecx, 512
+    rep movsb
+    popad
+    ret
+
+; --- src/assembler.asm's mnemonic table ---
+; Moved here from assembler.asm itself: with everything else added to
+; this kernel over time, that file's position had crept close enough to
+; 0x10000 that these ~20 short strings (the last things there still
+; reached through the 16-bit mov di/si most of this kernel uses) were
+; the tightest point below it - and the RAM-disk feature just above
+; this comment finally pushed them past it, silently truncating every
+; "mov di, mnem_xxx" in src/assembler.asm to garbage (confirmed by
+; searching build/kernel.bin for the encoded bytes directly - the
+; NASM listing's own displayed immediates for label references can be
+; stale; see the note at the top of src/devices.asm).
+;
+; Rather than re-litigate that margin every time this kernel grows,
+; match_mnemonic_exact and match_mnemonic_prefix32 below reach this
+; table through EDI/ESI (32-bit) instead, so - like everything else on
+; this page - it doesn't matter that it now sits past 0x10000: nothing
+; here needs that margin at all.
+mnem_ret         db "ret", 0
+mnem_nop         db "nop", 0
+mnem_hlt         db "hlt", 0
+mnem_cli         db "cli", 0
+mnem_sti         db "sti", 0
+mnem_int_prefix  db "int ", 0
+mnem_mov_prefix  db "mov ", 0
+mnem_push_prefix db "push ", 0
+mnem_pop_prefix  db "pop ", 0
+mnem_inc_prefix  db "inc ", 0
+mnem_dec_prefix  db "dec ", 0
+mnem_add_prefix  db "add ", 0
+mnem_sub_prefix  db "sub ", 0
+mnem_cmp_prefix  db "cmp ", 0
+mnem_and_prefix  db "and ", 0
+mnem_or_prefix   db "or ", 0
+mnem_xor_prefix  db "xor ", 0
+mnem_jmp_prefix  db "jmp ", 0
+mnem_je_prefix   db "je ", 0
+mnem_jne_prefix  db "jne ", 0
+mnem_jz_prefix   db "jz ", 0
+mnem_jnz_prefix  db "jnz ", 0
+mnem_loop_prefix db "loop ", 0
+
+; match_mnemonic_exact: like the old local version in src/assembler.asm
+; (si must match the null-terminated string at EDI, followed by end-of-
+; line or a space), but through EDI instead of DI, so - unlike that
+; version - the string it's matched against doesn't need to live below
+; 0x10000. si is zero-extended into esi first: callers only ever set
+; the 16-bit si (the typed-instruction buffer, always below 0x10000),
+; so esi's own upper bits can't be trusted to already be zero.
+; carry=1 if it doesn't match.
+match_mnemonic_exact:
+    push esi
+    push edi
+    movzx esi, si
+.loop:
+    mov al, [edi]
+    cmp al, 0
+    je .mnem_ended
+    mov ah, [esi]
+    cmp al, ah
+    jne .no_match
+    inc esi
+    inc edi
+    jmp .loop
+.mnem_ended:
+    mov al, [esi]
+    cmp al, 0
+    je .match
+    cmp al, ' '
+    je .match
+    jmp .no_match
+.match:
+    pop edi
+    pop esi
+    clc
+    ret
+.no_match:
+    pop edi
+    pop esi
+    stc
+    ret
+
+; match_mnemonic_prefix32: same job as strcmp_prefix (src/input.asm) -
+; does si start with the null-terminated prefix at EDI? - but through
+; EDI/ESI so the prefix can live anywhere, same reasoning as
+; match_mnemonic_exact above. si is not advanced; ax=1 on a match, 0
+; otherwise (matching strcmp_prefix's own contract).
+match_mnemonic_prefix32:
+    push esi
+    push edi
+    movzx esi, si
+.loop:
+    mov al, [edi]
+    cmp al, 0
+    je .match
+    mov ah, [esi]
+    cmp al, ah
+    jne .no_match
+    inc esi
+    inc edi
+    jmp .loop
+.match:
+    mov ax, 1
+    jmp .done
+.no_match:
+    xor ax, ax
+.done:
+    pop edi
+    pop esi
     ret
 
 ; Pad the remaining space within the sectors the bootloader reads,

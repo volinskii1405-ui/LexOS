@@ -34,6 +34,21 @@ FS_NAME_LEN       equ 16
 FS_CONTENT_LEN    equ 128
 FS_SCRATCH_ADDR   equ SCRATCH_ADDR
 
+; Slot indices FS_FILE_COUNT..FS_TOTAL_SLOTS-1 are RAM-backed (see
+; fs_ram_slots at the tail of kernel.asm): fs_read_slot/fs_write_slot
+; copy them to/from RAM instead of a real disk sector, so files created
+; directly inside the TMP folder never touch the disk at all - handy
+; scratch space that doesn't eat into the 24 real directory slots.
+; Every other filesystem function (ls, cat, rm, find-by-name, wildcard
+; cp/mv, ...) just iterates 0..FS_TOTAL_SLOTS-1 instead of
+; 0..FS_FILE_COUNT-1, so a RAM slot is indistinguishable from a disk one
+; except in that one guaranteed-not-persisted-across-reboots way. Content
+; past the 127 inline bytes still chains into the ordinary (disk-backed)
+; extra-sector pool like any other file - only the up-to-127-byte
+; primary record itself is RAM-only.
+FS_RAM_FILE_COUNT equ 8
+FS_TOTAL_SLOTS    equ FS_FILE_COUNT + FS_RAM_FILE_COUNT
+
 ; Sector read/write - always through our own ATA driver (direct port
 ; access, bypassing the BIOS). In protected mode we have no access to
 ; the BIOS at all (no v86 mode/thunk into real mode), so this isn't a
@@ -205,6 +220,7 @@ msg_history_empty db "No command history yet.", 13, 10, 0
 
 msg_df_slots_label db "Directory slots: ", 0
 msg_df_extra_label db "Extra sectors:   ", 0
+msg_df_ram_label   db "RAM slots (TMP): ", 0
 msg_df_slash       db "/", 0
 msg_df_used        db " used, ", 0
 msg_df_free        db " free", 13, 10, 0
@@ -291,6 +307,7 @@ cmd_hex_prefix db "hex ", 0
 test_exe_name db "TEST.BIN", 0
 calc_exe_name db "CALC.BIN", 0
 programs_dir_name db "PROGRAMS", 0
+tmp_dir_name       db "TMP", 0
 
 program_exec_buffer times PROGRAM_MAX_LEN db 0
 

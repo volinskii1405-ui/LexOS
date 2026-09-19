@@ -64,6 +64,7 @@ Welcome, alex! (see USER.CFG)
 alex@/$ ls
 README
 PROGRAMS  <DIR>
+TMP  <DIR>
 LICENSE
 USER.CFG
 alex@/$ cd programs
@@ -119,12 +120,23 @@ alex@/PROGRAMS$
   given count).
 - On first boot the root folder is seeded with `README`, a `LICENSE` file
   holding the project's own license text (long enough to spill from the
-  inline area into chained extra sectors), and a `PROGRAMS` folder holding
-  two demo programs: `TEST.BIN` and `CALC.BIN` (see **Programs** below).
+  inline area into chained extra sectors), a `PROGRAMS` folder holding
+  two demo programs: `TEST.BIN` and `CALC.BIN` (see **Programs** below),
+  and a `TMP` folder for scratch files (see below).
 - `ls` prints folders in bright yellow so they stand out from regular
   files, which stay whatever color you've set with `color`.
-- `df` (or `free`) shows how many of the 24 directory slots and 64 extra
-  disk sectors are in use.
+- `df` (or `free`) shows how many of the 24 directory slots, 64 extra
+  disk sectors, and 8 `TMP` RAM slots (see below) are in use.
+- `TMP` is a RAM disk: create a file while `cd`'d directly into it (not
+  a subfolder within it) and its up-to-127-byte primary record lives
+  entirely in memory instead of costing one of the 24 real directory
+  slots - `ls`, `cat`, `rm`, wildcards and everything else treat it like
+  any other file, but it vanishes on reboot along with everything else
+  that was only ever in RAM. Content past 127 bytes still chains into
+  the ordinary disk-backed extra-sector pool, same as any file. Placing
+  a file into `TMP` by path from a different directory (`cp x.txt tmp`
+  while elsewhere) still creates a normal disk-backed file - only
+  creating it while actually `cd`'d into `TMP` gets the RAM slot.
 
 ### Shell
 - Real line editing: Left/Right/Home/End/Delete work anywhere in the line,
@@ -152,7 +164,15 @@ alex@/PROGRAMS$
 
 ### Drivers
 - Keyboard and PIT timer via IRQ1/IRQ0, not `int 0x16`/BIOS polling.
-- ATA PIO disk driver talking directly to ports `0x1F0-0x1F7`.
+- ATA disk driver talking directly to ports `0x1F0-0x1F7`. At boot it
+  walks PCI config space (ports `0xCF8`/`0xCFC`, no BIOS) looking for a
+  Bus Master IDE controller; if one turns up, every sector transfer
+  goes through it via DMA (the controller moves the 512 bytes on its
+  own while the CPU just polls a status bit) instead of a 256-iteration
+  PIO in/out loop. Falls back to the original PIO path automatically
+  wherever no such controller is found - `run`, `cat`, `cp`, saving in
+  `uranium`, and everything else built on `ata_read_sector`/
+  `ata_write_sector` work identically either way.
 - VGA text-mode output straight to linear memory (`0xB8000`) with a
   hardware cursor driven through the CRTC ports — no `int 0x10`.
 - CMOS RTC (`date`, `time`), PC speaker (`beep`), and a minimal 16550 UART
@@ -359,18 +379,29 @@ src/
   shell.asm            command parsing/dispatch.
   interrupts.asm       IDT, PIC remap, keyboard (IRQ1) and timer (IRQ0).
   devices.asm          device manager/table (the `devices` command).
-  ata.asm              ATA PIO driver (the `ataread` command).
+  ata.asm              ATA driver (the `ataread` command); dispatches to
+                       atadma.asm's DMA path when available, PIO otherwise.
+  atadma.asm           Bus Master IDE (ATA DMA): PCI enumeration and the
+                       actual DMA sector transfers. %included at the very
+                       end of kernel.asm rather than next to ata.asm, since
+                       (unlike ata.asm) its own code never needs to sit
+                       below 0x10000 - see the note at its top.
   serial.asm           16550 UART driver for COM1 (`serial`) - included
                        right after the other device drivers rather than
                        further down, so its init function's address stays
                        safely below 0x10000 (see the note in devices.asm).
-  filesystem.asm       folder-aware filesystem on top of the ATA driver.
+  filesystem.asm       folder-aware filesystem on top of the ATA driver,
+                       including the RAM-backed TMP folder (fs_find_free/
+                       fs_read_slot/fs_write_slot - see data.asm's note
+                       above FS_RAM_FILE_COUNT).
   fs_extra.asm         chained extra sectors for files > 127 bytes, and
                        fs_load_content - the shared file-content reader
                        used by grep/head/tail/uranium.
   programs.asm         `run`/`hex` commands, the TEST.BIN/CALC.BIN demo
-                       programs and the PROGRAMS folder they live in.
-  assembler.asm        one-line mini-assembler used by the hex editor.
+                       programs, and the PROGRAMS/TMP folders they live in.
+  assembler.asm        one-line mini-assembler used by the hex editor; its
+                       mnemonic table lives at the tail of kernel.asm
+                       instead of here (see the note above mnem_ret there).
   rtc.asm              CMOS RTC driver (`date`, `time`).
   speaker.asm          PC speaker driver (`beep`).
   grep.asm             text search within a file (`grep`), with on-screen
@@ -388,6 +419,20 @@ src/
 
 ## Known limitations
 
+- `TMP`'s RAM benefit only applies to a file created while actually
+  `cd`'d into it, and only to that file's own up-to-127-byte primary
+  record - a subfolder created inside `TMP` gets its own RAM slot the
+  same way, but files placed inside *that* subfolder fall back to the
+  normal disk pool (its current directory is the subfolder, not `TMP`
+  itself), and content past 127 bytes always chains into the ordinary
+  disk-backed extra-sector pool regardless of where the file lives.
+  There are only 8 RAM slots total (`FS_RAM_FILE_COUNT` in
+  `src/data.asm`).
+- ATA DMA only looks at PCI bus 0, function 0 (see `ata_dma_probe` in
+  `src/atadma.asm`) and only understands an I/O-space BAR4 - enough for
+  QEMU's own IDE controller (what this project is tested against), but
+  a real board that puts it somewhere else falls back to the original
+  PIO path with no error message, just slower transfers.
 - One file's inline metadata + content lives in a single 512-byte sector;
   content past that grows through a chain of extra sectors, but the pool
   is fixed at 64 sectors and file/folder names are capped at 8 characters

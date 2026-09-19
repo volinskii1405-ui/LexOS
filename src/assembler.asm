@@ -108,41 +108,8 @@ skip_comma_and_spaces:
     call skip_spaces_local
     ret
 
-; ============================================================
-; Checks an EXACT match of a mnemonic with no operands: si must
-; match di (a null-terminated string), and right after it must be
-; either the end of the line or a space. carry=1 if it doesn't match.
-; ============================================================
-match_mnemonic_exact:
-    push si
-    push di
-.loop:
-    mov al, [di]
-    cmp al, 0
-    je .mnem_ended
-    mov ah, [si]
-    cmp al, ah
-    jne .no_match
-    inc si
-    inc di
-    jmp .loop
-.mnem_ended:
-    mov al, [si]
-    cmp al, 0
-    je .match
-    cmp al, ' '
-    je .match
-    jmp .no_match
-.match:
-    pop di
-    pop si
-    clc
-    ret
-.no_match:
-    pop di
-    pop si
-    stc
-    ret
+; match_mnemonic_exact now lives at the tail of kernel.asm, reached
+; through EDI instead of DI - see the note there.
 
 ; ============================================================
 ; Looks for a 2-letter 8-bit register name (al,cl,dl,bl,ah,ch,dh,bh)
@@ -621,7 +588,7 @@ fs_assemble_line:
 
     ; --- instructions with no operands ---
     push si
-    mov di, mnem_ret
+    mov edi, mnem_ret
     call match_mnemonic_exact
     pop si
     jc .not_ret
@@ -631,7 +598,7 @@ fs_assemble_line:
 .not_ret:
 
     push si
-    mov di, mnem_nop
+    mov edi, mnem_nop
     call match_mnemonic_exact
     pop si
     jc .not_nop
@@ -641,7 +608,7 @@ fs_assemble_line:
 .not_nop:
 
     push si
-    mov di, mnem_hlt
+    mov edi, mnem_hlt
     call match_mnemonic_exact
     pop si
     jc .not_hlt
@@ -651,7 +618,7 @@ fs_assemble_line:
 .not_hlt:
 
     push si
-    mov di, mnem_cli
+    mov edi, mnem_cli
     call match_mnemonic_exact
     pop si
     jc .not_cli
@@ -661,7 +628,7 @@ fs_assemble_line:
 .not_cli:
 
     push si
-    mov di, mnem_sti
+    mov edi, mnem_sti
     call match_mnemonic_exact
     pop si
     jc .not_sti
@@ -672,8 +639,8 @@ fs_assemble_line:
 
     ; --- int imm8 ---
     push si
-    mov di, mnem_int_prefix
-    call strcmp_prefix
+    mov edi, mnem_int_prefix
+    call match_mnemonic_prefix32
     pop si
     cmp ax, 1
     jne .not_int
@@ -689,8 +656,8 @@ fs_assemble_line:
 
     ; --- mov reg8/16, imm ---
     push si
-    mov di, mnem_mov_prefix
-    call strcmp_prefix
+    mov edi, mnem_mov_prefix
+    call match_mnemonic_prefix32
     pop si
     cmp ax, 1
     jne .not_mov
@@ -768,8 +735,8 @@ fs_assemble_line:
 
     ; --- push reg16 ---
     push si
-    mov di, mnem_push_prefix
-    call strcmp_prefix
+    mov edi, mnem_push_prefix
+    call match_mnemonic_prefix32
     pop si
     cmp ax, 1
     jne .not_push
@@ -786,8 +753,8 @@ fs_assemble_line:
 
     ; --- pop reg16 ---
     push si
-    mov di, mnem_pop_prefix
-    call strcmp_prefix
+    mov edi, mnem_pop_prefix
+    call match_mnemonic_prefix32
     pop si
     cmp ax, 1
     jne .not_pop
@@ -804,8 +771,8 @@ fs_assemble_line:
 
     ; --- inc reg16 ---
     push si
-    mov di, mnem_inc_prefix
-    call strcmp_prefix
+    mov edi, mnem_inc_prefix
+    call match_mnemonic_prefix32
     pop si
     cmp ax, 1
     jne .not_inc
@@ -822,8 +789,8 @@ fs_assemble_line:
 
     ; --- dec reg16 ---
     push si
-    mov di, mnem_dec_prefix
-    call strcmp_prefix
+    mov edi, mnem_dec_prefix
+    call match_mnemonic_prefix32
     pop si
     cmp ax, 1
     jne .not_dec
@@ -840,8 +807,8 @@ fs_assemble_line:
 
     ; --- add reg,imm8  or  add reg,reg (either width) ---
     push si
-    mov di, mnem_add_prefix
-    call strcmp_prefix
+    mov edi, mnem_add_prefix
+    call match_mnemonic_prefix32
     pop si
     cmp ax, 1
     jne .not_add
@@ -861,8 +828,8 @@ fs_assemble_line:
 
     ; --- sub reg,imm8  or  sub reg,reg ---
     push si
-    mov di, mnem_sub_prefix
-    call strcmp_prefix
+    mov edi, mnem_sub_prefix
+    call match_mnemonic_prefix32
     pop si
     cmp ax, 1
     jne .not_sub
@@ -882,8 +849,8 @@ fs_assemble_line:
 
     ; --- cmp reg,imm8  or  cmp reg,reg ---
     push si
-    mov di, mnem_cmp_prefix
-    call strcmp_prefix
+    mov edi, mnem_cmp_prefix
+    call match_mnemonic_prefix32
     pop si
     cmp ax, 1
     jne .not_cmp
@@ -903,8 +870,8 @@ fs_assemble_line:
 
     ; --- and reg,imm8  or  and reg,reg ---
     push si
-    mov di, mnem_and_prefix
-    call strcmp_prefix
+    mov edi, mnem_and_prefix
+    call match_mnemonic_prefix32
     pop si
     cmp ax, 1
     jne .not_and
@@ -924,8 +891,8 @@ fs_assemble_line:
 
     ; --- or reg,imm8  or  or reg,reg ---
     push si
-    mov di, mnem_or_prefix
-    call strcmp_prefix
+    mov edi, mnem_or_prefix
+    call match_mnemonic_prefix32
     pop si
     cmp ax, 1
     jne .not_or
@@ -945,8 +912,8 @@ fs_assemble_line:
 
     ; --- xor reg,imm8  or  xor reg,reg ---
     push si
-    mov di, mnem_xor_prefix
-    call strcmp_prefix
+    mov edi, mnem_xor_prefix
+    call match_mnemonic_prefix32
     pop si
     cmp ax, 1
     jne .not_xor
@@ -966,8 +933,8 @@ fs_assemble_line:
 
     ; --- jmp/je/jne/jz/jnz/loop name (a BACKWARD jump, to an already defined label) ---
     push si
-    mov di, mnem_jmp_prefix
-    call strcmp_prefix
+    mov edi, mnem_jmp_prefix
+    call match_mnemonic_prefix32
     pop si
     cmp ax, 1
     jne .not_jmp
@@ -977,8 +944,8 @@ fs_assemble_line:
 .not_jmp:
 
     push si
-    mov di, mnem_jne_prefix
-    call strcmp_prefix
+    mov edi, mnem_jne_prefix
+    call match_mnemonic_prefix32
     pop si
     cmp ax, 1
     jne .not_jne
@@ -988,8 +955,8 @@ fs_assemble_line:
 .not_jne:
 
     push si
-    mov di, mnem_jnz_prefix
-    call strcmp_prefix
+    mov edi, mnem_jnz_prefix
+    call match_mnemonic_prefix32
     pop si
     cmp ax, 1
     jne .not_jnz
@@ -999,8 +966,8 @@ fs_assemble_line:
 .not_jnz:
 
     push si
-    mov di, mnem_je_prefix
-    call strcmp_prefix
+    mov edi, mnem_je_prefix
+    call match_mnemonic_prefix32
     pop si
     cmp ax, 1
     jne .not_je
@@ -1010,8 +977,8 @@ fs_assemble_line:
 .not_je:
 
     push si
-    mov di, mnem_jz_prefix
-    call strcmp_prefix
+    mov edi, mnem_jz_prefix
+    call match_mnemonic_prefix32
     pop si
     cmp ax, 1
     jne .not_jz
@@ -1021,8 +988,8 @@ fs_assemble_line:
 .not_jz:
 
     push si
-    mov di, mnem_loop_prefix
-    call strcmp_prefix
+    mov edi, mnem_loop_prefix
+    call match_mnemonic_prefix32
     pop si
     cmp ax, 1
     jne .not_loop
@@ -1069,32 +1036,11 @@ fs_assemble_line:
     stc
     ret
 
-; ============================================================
-; Mnemonics
-; ============================================================
-mnem_ret db "ret", 0
-mnem_nop db "nop", 0
-mnem_hlt db "hlt", 0
-mnem_cli db "cli", 0
-mnem_sti db "sti", 0
-mnem_int_prefix db "int ", 0
-mnem_mov_prefix db "mov ", 0
-mnem_push_prefix db "push ", 0
-mnem_pop_prefix db "pop ", 0
-mnem_inc_prefix db "inc ", 0
-mnem_dec_prefix db "dec ", 0
-mnem_add_prefix db "add ", 0
-mnem_sub_prefix db "sub ", 0
-mnem_cmp_prefix db "cmp ", 0
-mnem_and_prefix db "and ", 0
-mnem_or_prefix  db "or ", 0
-mnem_xor_prefix db "xor ", 0
-mnem_jmp_prefix db "jmp ", 0
-mnem_je_prefix db "je ", 0
-mnem_jne_prefix db "jne ", 0
-mnem_jz_prefix db "jz ", 0
-mnem_jnz_prefix db "jnz ", 0
-mnem_loop_prefix db "loop ", 0
+; Mnemonics (mnem_ret and friends) used to live here, but the table
+; moved to the tail of kernel.asm - see the note there for why, and
+; match_mnemonic_exact/match_mnemonic_prefix32 below for how they're
+; still reached (through 32-bit registers, not the mov di this file
+; used to use for them).
 
 asm_input_buffer times (ASM_INPUT_MAX + 1) db 0
 asm_output_buffer times ASM_OUTPUT_MAX db 0
