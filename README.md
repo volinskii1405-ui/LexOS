@@ -92,12 +92,15 @@ alex@/PROGRAMS$
   inline bytes into a chain of extra disk sectors, tracked by a small
   on-disk bitmap. `cat`, `size`, `head`, `tail`, `grep`, `cp`, and `rm` all
   understand the chain.
-- Typing a `*.hg` file's own name runs it as a script: every line is fed
-  to the shell as a command, same as `run` already does for machine-code
-  programs. Lines are echoed before they run, like a real DOS batch file,
-  unless the script contains a line that's exactly `@echo off` (silences
-  the echo - and doesn't run as a command itself - for the rest of that
-  script; every run starts back with echo on).
+- Typing a `*.hg` file's own bare name (no arguments) runs it as a
+  script: every line is fed to the shell as a command, same as `run`
+  already does for machine-code programs. Lines are echoed before they
+  run, like a real DOS batch file, unless the script contains a line
+  that's exactly `@echo off` (silences the echo - and doesn't run as a
+  command itself - for the rest of that script; every run starts back
+  with echo on). A script's own line can name another `*.hg` file - each
+  nested script gets its own echo state and resumes the outer one
+  correctly when it finishes, up to `HG_MAX_NESTED` (3) levels deep.
 - `cp`/`mv` also support wildcards: `cp *.txt <folder>` copies every match
   into `<folder>` under its own name, and `mv *.txt <folder>` moves them
   the same way; both skip `USER.CFG` and any name already taken in the
@@ -400,6 +403,9 @@ src/
   is silently skipped rather than reported individually. `uranium`'s
   `Ctrl+F` search is case-sensitive, like `grep`, and its search text is
   also capped at 32 characters.
+- `*.hg` scripts can call other `*.hg` scripts, but only `HG_MAX_NESTED`
+  (3) levels deep - a 4th nested call is refused with a message rather
+  than running.
 - The mini-assembler resolves labels in one pass, so jumps can only target
   a label that already appears earlier in the same program. It also has
   no memory operands (no `[bx]`, no `[label]`) and no 16-bit-register

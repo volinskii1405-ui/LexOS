@@ -16,6 +16,19 @@
 ; stored pointer instead of failing to assemble, so this has broken
 ; before and is worth keeping in mind before reordering %includes).
 ;
+; The margin is tight: as of the *.hg nesting fix in src/fs_extra.asm,
+; the highest address anything still loads into a 16-bit register sits
+; only ~139 bytes below 0x10000 (src/assembler.asm's mnemonic table -
+; check with a byte-level scan of build/kernel.bin for
+; "66 B8/B9/BA/BB/BE/BF <imm16>" in the 0x8000-0x10000 range, since the
+; NASM listing's displayed immediates for label references can be stale;
+; see fs_hg_save_state/fs_hg_restore_state in kernel.asm for how new,
+; sizeable data was added without touching this margin at all - through
+; 32-bit registers instead of the 16-bit ones everything before that
+; point uses). Adding much more than that ahead of assembler.asm (i.e.
+; in any file included before it) without moving to 32-bit addressing
+; risks pushing it past 0x10000 exactly like this file's own bug.
+;
 ; In protected mode there's no way to check the disk through BIOS
 ; int 13h anymore (BIOS is simply unavailable) - so instead of a
 ; separate "DISK" entry doing that BIOS probe, only "ATA" (ata_identify)

@@ -101,6 +101,74 @@ main_loop:
 %include "src/user.asm"
 %include "src/tabcomplete.asm"
 
+; --- fs_run_hg_script's (src/fs_extra.asm) nested-script save area ---
+; Deliberately placed here, after every %include, so appending it can
+; never push some earlier label past the 0x10000 boundary the way adding
+; the calculator once pushed serial_init's address past it (see the note
+; at the top of src/devices.asm) - fs_hg_save_state/fs_hg_restore_state
+; only ever reach it through 32-bit registers (mov edi/esi, not the usual
+; 16-bit mov di/si), so unlike batch_content_buf itself, it doesn't need
+; to sit below 0x10000 at all.
+HG_MAX_NESTED equ 3      ; how many already-running scripts can be paused
+                          ; while a nested one runs (total depth: this + 1)
+fs_hg_depth       db 0
+hg_save_buf       times (BATCH_BUF_LEN + 1) * HG_MAX_NESTED db 0
+hg_save_remaining times HG_MAX_NESTED dw 0
+hg_save_chain     times HG_MAX_NESTED dw 0
+hg_save_echo      times HG_MAX_NESTED db 0
+
+; fs_hg_save_state / fs_hg_restore_state: copy fs_run_hg_script's live
+; state (batch_content_buf, fs_batch_remaining, fs_batch_chain,
+; fs_hg_echo - all in src/data.asm/src/fs_extra.asm) to/from slot number
+; eax (0..HG_MAX_NESTED-1) of hg_save_buf & friends just above. Called
+; from fs_run_hg_script (src/fs_extra.asm) only when a script's line
+; names another *.hg file, so the paused outer script's data isn't
+; clobbered by the nested one - reachable from there through an ordinary
+; call regardless of address, same as any other function in this kernel.
+;
+; Addressed entirely through 32-bit registers (mov edi/esi/ebx, not the
+; usual 16-bit mov di/si most of this kernel uses) specifically so this
+; code and the hg_save_buf data above are both free to sit here, past
+; the 0x10000 mark batch_content_buf itself must stay under - see the
+; note at the top of src/devices.asm.
+fs_hg_save_state:
+    pushad
+    mov ebx, eax
+    imul eax, ebx, BATCH_BUF_LEN + 1
+    mov edi, hg_save_buf
+    add edi, eax
+    mov esi, batch_content_buf
+    mov ecx, BATCH_BUF_LEN + 1
+    rep movsb
+
+    mov ax, [fs_batch_remaining]
+    mov [hg_save_remaining + ebx*2], ax
+    mov ax, [fs_batch_chain]
+    mov [hg_save_chain + ebx*2], ax
+    mov al, [fs_hg_echo]
+    mov [hg_save_echo + ebx], al
+    popad
+    ret
+
+fs_hg_restore_state:
+    pushad
+    mov ebx, eax
+    imul eax, ebx, BATCH_BUF_LEN + 1
+    mov esi, hg_save_buf
+    add esi, eax
+    mov edi, batch_content_buf
+    mov ecx, BATCH_BUF_LEN + 1
+    rep movsb
+
+    mov ax, [hg_save_remaining + ebx*2]
+    mov [fs_batch_remaining], ax
+    mov ax, [hg_save_chain + ebx*2]
+    mov [fs_batch_chain], ax
+    mov al, [hg_save_echo + ebx]
+    mov [fs_hg_echo], al
+    popad
+    ret
+
 ; Pad the remaining space within the sectors the bootloader reads,
 ; so the file size is a multiple of 512 bytes (see KERNEL_SECTORS_1/2 in boot.asm).
 times (512*96)-($-$$) db 0

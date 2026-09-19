@@ -223,6 +223,7 @@ msg_fs_usage_append db "Usage: append <n> <text>", 13, 10, 0
 msg_fs_appended     db "Appended.", 13, 10, 0
 msg_fs_disk_full    db "No free space for more content - saved what fit.", 13, 10, 0
 msg_hg_echo_off_line db "@echo off", 0
+msg_hg_too_deep      db "Scripts nested too deeply.", 13, 10, 0
 msg_grep_usage       db "Usage: grep <n> <text>", 13, 10, 0
 msg_grep_header_mid  db " matches found with ", 34, 0
 msg_grep_quote_nl    db 34, 13, 10, 0
