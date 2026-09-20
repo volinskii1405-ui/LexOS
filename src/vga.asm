@@ -17,7 +17,12 @@
 ; src/screen.asm - every access goes through DX rather than an
 ; immediate port number ("out ib, al" can't encode a port that big).
 ;
-; Exports: vga_enter_mode13, vga_leave_mode13
+; Also exports vga_draw_char/vga_draw_string, simple text-in-mode-13h
+; drawing built on the very font bitmaps vga_save_font/vga_restore_font
+; already save on the way in and out - reused here as a font renderer,
+; since mode 13h has no character generator of its own to fall back on.
+;
+; Exports: vga_enter_mode13, vga_leave_mode13, vga_draw_char, vga_draw_string
 
 VGA_MISC_WRITE  equ 0x3C2
 VGA_MISC_READ   equ 0x3CC
@@ -196,6 +201,79 @@ vga_restore_font:
     mov ecx, VGA_FONT_SIZE
     rep movsb
 
+    popa
+    ret
+
+; ============================================================
+; Draws one character in mode 13h, using the glyph bitmap
+; vga_save_font already captured (32-byte stride per character, only
+; the first 16 rows/bytes used - the standard BIOS font layout).
+; Input: ebx = x, edx = y (top-left pixel), ecx = character code
+; (0..255), [vga_draw_color] = the color to draw set bits in
+; (untouched pixels are left as whatever was already there).
+; ============================================================
+vga_draw_char:
+    pusha
+
+    mov eax, ecx
+    and eax, 0xFF
+    shl eax, 5                      ; * 32 (this glyph's slot)
+    add eax, vga_saved_font
+    mov esi, eax
+
+    xor ecx, ecx                    ; row = 0..15
+.row_loop:
+    cmp ecx, 16
+    jae .done
+
+    mov al, [esi + ecx]              ; this row's 8 pixels, MSB = leftmost
+
+    push ecx
+    mov edi, edx
+    add edi, ecx
+    imul edi, edi, 320
+    add edi, ebx
+    add edi, VGA_FB
+
+    mov cl, 8
+.col_loop:
+    test al, 0x80
+    jz .skip_pixel
+    push eax
+    mov ah, [vga_draw_color]
+    mov [edi], ah
+    pop eax
+.skip_pixel:
+    shl al, 1
+    inc edi
+    dec cl
+    jnz .col_loop
+
+    pop ecx
+    inc ecx
+    jmp .row_loop
+.done:
+    popa
+    ret
+
+; ============================================================
+; Draws a null-terminated string, 8 pixels per character, left to
+; right, no wrapping. Input: ebx = x, edx = y, esi = string,
+; [vga_draw_color] = color (see vga_draw_char).
+; ============================================================
+vga_draw_string:
+    pusha
+.loop:
+    mov al, [esi]
+    cmp al, 0
+    je .done
+    xor ecx, ecx
+    mov cl, al
+    call vga_draw_char
+    add ebx, 8
+    inc esi
+    jmp .loop
+.done:
     popa
     ret
 
@@ -455,3 +533,5 @@ vga_default_palette:
 
 vga_saved_dac times 48 db 0
 vga_saved_font times VGA_FONT_SIZE db 0
+
+vga_draw_color db 15
