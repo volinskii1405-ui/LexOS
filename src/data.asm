@@ -28,7 +28,7 @@ SECTOR_COUNT equ 8
 ;   byte 8       - type (0=free, 1=file, 2=folder)
 ;   byte 9       - parent (slot index of the parent folder, 0xFF = root)
 ;   bytes 10..   - content (zero-terminated, unused for folders)
-FS_START_SECTOR   equ 126     ; sector 1=bootloader, 2..125=kernel (124 sectors)
+FS_START_SECTOR   equ 186     ; sector 1=bootloader, 2..185=kernel (184 sectors)
 FS_FILE_COUNT     equ 24
 FS_NAME_LEN       equ 16
 FS_CONTENT_LEN    equ 128
@@ -83,7 +83,7 @@ FS_EXTRA_CONTENT_LEN equ 508
 FS_EXTRA_USED_OFFSET equ 508
 FS_EXTRA_NEXT_OFFSET equ 510
 
-FS_EXTRA_COUNT equ 64
+FS_EXTRA_COUNT equ 300         ; bumped for PAINT.BIN's .BMP saves (see src/paint.asm)
 FS_BITMAP_SECTOR equ FS_START_SECTOR + FS_FILE_COUNT
 FS_EXTRA_START_SECTOR equ FS_BITMAP_SECTOR + 1
 
@@ -252,6 +252,10 @@ msg_grep_space       db " ", 0
 msg_head_usage       db "Usage: head <n> [lines]", 13, 10, 0
 msg_tail_usage       db "Usage: tail <n> [lines]", 13, 10, 0
 msg_uranium_usage    db "Usage: uranium <n>", 13, 10, 0
+msg_paint_usage      db "Usage: paint <n>", 13, 10, 0
+msg_paint_intro      db "PAINT - mouse to draw, 1-9/A-F color, W/S brush size, ESC to save & quit.", 13, 10, 0
+msg_paint_saved      db "Saved ", 0
+msg_view_usage       db "Usage: view <n>", 13, 10, 0
 msg_uranium_not_text db "That is a program file. Use hex to edit it.", 13, 10, 0
 msg_uranium_header1  db "LexOS Editor - ", 0
 msg_uranium_header2  db "  (", 0
@@ -310,10 +314,28 @@ cmd_hex_prefix db "hex ", 0
 test_exe_name db "TEST.BIN", 0
 calc_exe_name db "CALC.BIN", 0
 snake_exe_name db "SNAKE.BIN", 0
+snake_hs_name db "SNAKE.HS", 0
 programs_dir_name db "PROGRAMS", 0
 tmp_dir_name       db "TMP", 0
 
 program_exec_buffer times PROGRAM_MAX_LEN db 0
+
+; src/assembler.asm's mini-assembler buffers - moved here from
+; assembler.asm itself, for the same reason as calc_num1 and friends
+; below: every one of these is handed to a callee as a plain
+; "mov si/di, <buffer>" pointer (read_asm_line, fs_assemble_line,
+; add_label, ...), so their own address needs to stay below 0x10000,
+; not just the code that touches them. Sizes are spelled out in bytes
+; rather than via assembler.asm's ASM_INPUT_MAX/LABEL_NAME_LEN/etc
+; equ's, to avoid a forward reference across files for no real benefit.
+asm_input_buffer times 21 db 0        ; ASM_INPUT_MAX(20) + 1
+asm_output_buffer times 3 db 0        ; ASM_OUTPUT_MAX
+asm_output_length db 0
+asm_saved_si dw 0
+asm_jump_opcode db 0
+asm_label_name_buf times 9 db 0       ; LABEL_NAME_LEN(8) + 1
+label_table times 80 db 0             ; LABEL_RECORD_SIZE(10) * LABEL_MAX_COUNT(8)
+label_count db 0
 
 ; src/programs.asm's calc_run (the calculator behind PROGRAMS/CALC.BIN) -
 ; kept here rather than as locals in programs.asm so their addresses
@@ -338,6 +360,7 @@ msg_snake_intro    db "SNAKE - arrows or WASD to move, ESC to quit.", 13, 10, 0
 msg_snake_gameover db "Game over!", 13, 10, 0
 msg_snake_quit     db "Quit.", 13, 10, 0
 msg_snake_score    db "Score: ", 0
+msg_snake_highscore db "Best:  ", 0
 
 BATCH_BUF_LEN equ 511
 batch_content_buf times (BATCH_BUF_LEN + 1) db 0
@@ -461,6 +484,8 @@ cmd_grep_prefix  db "grep ", 0
 cmd_head_prefix  db "head ", 0
 cmd_tail_prefix  db "tail ", 0
 cmd_uranium_prefix db "uranium ", 0
+cmd_paint_prefix db "paint ", 0
+cmd_view_prefix  db "view ", 0
 cmd_history      db "history", 0
 cmd_df           db "df", 0
 cmd_free         db "free", 0

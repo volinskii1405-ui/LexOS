@@ -54,10 +54,13 @@ pic_remap:
     out PIC1_DATA, al
     out PIC2_DATA, al
 
-    ; mask: allow the timer (IRQ0) and keyboard (IRQ1), mute everything else
-    mov al, 11111100b
+    ; mask: allow the timer (IRQ0), keyboard (IRQ1) and the cascade line
+    ; to the slave PIC (IRQ2 - without it, none of IRQ8-15 can ever
+    ; reach the CPU); on the slave, allow the PS/2 mouse (IRQ12). Mute
+    ; everything else.
+    mov al, 11111000b
     out PIC1_DATA, al
-    mov al, 11111111b
+    mov al, 11101111b
     out PIC2_DATA, al
 
     pop ax
