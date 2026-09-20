@@ -18,29 +18,44 @@
 ; globals from src/filesystem.asm that every command already uses this
 ; same way.
 ;
-; .BMP format used: 320x200, 8 bits/pixel, a 256-entry palette (of
-; which only the low 16 entries - this kernel's whole color range -
-; are ever non-black), stored the standard bottom-up way. Building it
-; needs no more memory than one disk sector at a time: the fixed
-; 1078-byte header+palette block is just a literal table
-; (bmp_header_palette below), and pixel bytes are read directly out of
-; (or, for view, written directly into) the mode 13h framebuffer
-; (VGA_FB, src/vga.asm) - never staged through a memory buffer, which
-; is why this doesn't reuse content_buf/fs_save_content (a 64000-byte
-; picture is far bigger than CONTENT_BUF_LEN).
+; .BMP format used: up to 320x200 (paint <name> [width] [height] can
+; ask for smaller - see paint_editor - to save a proportionally
+; smaller file; the mode 13h screen itself can't be more than 320x200,
+; so that's also the hard ceiling), 8 bits/pixel, a 256-entry palette
+; (of which only the low 16 entries - this kernel's whole color range
+; - are ever non-black), stored the standard bottom-up way, rows
+; padded to a multiple of 4 bytes as the format requires. Building it
+; needs no more memory than one disk sector at a time: the header+
+; palette block is a literal table (bmp_header_palette below) with its
+; per-image fields patched in place before use, and pixel bytes are
+; read directly out of (or, for view, written directly into) the mode
+; 13h framebuffer (VGA_FB, src/vga.asm) - never staged through a
+; memory buffer, which is why this doesn't reuse content_buf/
+; fs_save_content (even a 320x200 picture is far bigger than
+; CONTENT_BUF_LEN).
 
 PAINT_BRUSH_MIN  equ 1
 PAINT_BRUSH_MAX  equ 16
 BMP_PIXEL_OFFSET equ 1078          ; 14 (file header) + 40 (info header) + 1024 (palette)
-BMP_TOTAL_SIZE   equ BMP_PIXEL_OFFSET + (320*200)
 
 ; ============================================================
-; paint <name> : DS:SI points to "<name>" (auto-adds .BMP if there's
-; no dot, same convenience as "hex"). Arrows or WASD don't apply here -
-; the mouse moves the cursor, its left button draws a
-; paint_brush-sized square in paint_color. 1-9/A-F pick the color (the
-; whole 16-color range), W/S grow/shrink the brush, ESC saves and
-; exits.
+; paint <name> [width] [height] : DS:SI points to "<name> [w] [h]"
+; (auto-adds .BMP to the name if there's no dot, same convenience as
+; "hex"). width/height set how much of the screen gets saved - real
+; VGA mode 13h hardware is a fixed 320x200 framebuffer, so there's no
+; video mode with more pixels than that to switch to, and anything
+; larger is silently clamped down to it. Leaving them out (or writing
+; 0, same convention as head/tail's own optional [k] - src/headtail.asm)
+; keeps the old full-screen 320x200 behavior. A smaller canvas is
+; boxed off with a border and clipped to on screen, and - the actual
+; point of choosing one - saves a proportionally smaller .BMP file,
+; since the pixel data is exactly width*height bytes rather than
+; always the full 64000.
+;
+; Arrows or WASD don't apply here - the mouse moves the cursor, its
+; left button draws a paint_brush-sized square in paint_color. 1-9/A-F
+; pick the color (the whole 16-color range), W/S grow/shrink the
+; brush, Backspace toggles an eraser, ESC saves and exits.
 ; ============================================================
 paint_editor:
     push ax
@@ -69,6 +84,24 @@ paint_editor:
 .name_done:
     mov byte [di], 0
 
+.skip_space_w:
+    cmp byte [si], ' '
+    jne .parse_w
+    inc si
+    jmp .skip_space_w
+.parse_w:
+    call parse_dec_word
+    mov [paint_arg_w], ax
+
+.skip_space_h:
+    cmp byte [si], ' '
+    jne .parse_h
+    inc si
+    jmp .skip_space_h
+.parse_h:
+    call parse_dec_word
+    mov [paint_arg_h], ax
+
     cmp byte [fs_tmp_name], 0
     jne .have_name
     mov si, msg_paint_usage
@@ -78,8 +111,39 @@ paint_editor:
 .have_name:
     call paint_maybe_add_bmp_extension
 
+    mov byte [paint_size_clamped], 0
+
+    movzx eax, word [paint_arg_w]
+    test eax, eax
+    jnz .w_given
+    mov eax, 320
+.w_given:
+    cmp eax, 320
+    jbe .w_ok
+    mov eax, 320
+    mov byte [paint_size_clamped], 1
+.w_ok:
+    mov [paint_canvas_w], eax
+
+    movzx eax, word [paint_arg_h]
+    test eax, eax
+    jnz .h_given
+    mov eax, 200
+.h_given:
+    cmp eax, 200
+    jbe .h_ok
+    mov eax, 200
+    mov byte [paint_size_clamped], 1
+.h_ok:
+    mov [paint_canvas_h], eax
+
     mov si, msg_paint_intro
     call print_string
+    cmp byte [paint_size_clamped], 0
+    je .no_clamp_note
+    mov si, msg_paint_size_clamped
+    call print_string
+.no_clamp_note:
     mov ecx, 1200
     call speaker_delay_ms
 
@@ -90,20 +154,44 @@ paint_editor:
     xor al, al
     rep stosb
 
+    mov eax, [paint_canvas_w]
+    cmp eax, 320
+    jne .draw_border
+    mov eax, [paint_canvas_h]
+    cmp eax, 200
+    je .no_border
+.draw_border:
+    call paint_draw_canvas_border
+.no_border:
+
     mov byte [paint_color], 4          ; red
     mov byte [paint_brush], 4
     mov byte [paint_quit], 0
     mov byte [paint_have_last], 0
+    mov byte [paint_cursor_shown], 0
+    mov byte [paint_erasing], 0
 
 .loop:
-    call paint_poll_keys
-    cmp byte [paint_quit], 1
-    je .save_and_exit
+    call paint_cursor_erase             ; undo last frame's overlay before
+    call paint_poll_keys                ; touching real pixels - poll_keys
+    cmp byte [paint_quit], 1            ; can't move the mouse, but the ESC
+    je .save_and_exit                   ; check must still see real content
 
     call paint_handle_mouse
+    call paint_cursor_show
 
-    mov ecx, 20
-    call speaker_delay_ms
+    ; Pacing this loop with speaker_delay_ms (as everywhere else in this
+    ; kernel) made the cursor visibly laggy: that function can only wait
+    ; in whole ~55ms PIT-tick units (IRQ0 runs at the default 18.2 Hz and
+    ; nothing here reprograms it - see src/speaker.asm), so even a
+    ; request for "20ms" actually cost a full tick, capping mouse/cursor
+    ; updates at ~18/sec. A single hlt has no such floor: it just
+    ; suspends the CPU until the very next interrupt of ANY kind - a
+    ; mouse packet, a keystroke, or that same 18.2 Hz timer as a
+    ; fallback - so a moving mouse (which interrupts far more often than
+    ; 18 times a second) is polled essentially as fast as it reports,
+    ; while an idle one still doesn't spin the CPU at 100%.
+    hlt
     jmp .loop
 
 .save_and_exit:
@@ -183,6 +271,14 @@ view_bmp_file:
     mov [fs_tmp_slot], ax
 
     call vga_enter_mode13
+
+    mov edi, VGA_FB                 ; a picture saved smaller than the
+    mov ecx, VGA_FB_SIZE             ; full screen (see paint_editor)
+    xor al, al                       ; only fills its own top-left
+    rep stosb                        ; corner - clear the rest to black
+                                      ; first instead of leaving whatever
+                                      ; was in video memory before
+
     call view_load_bmp
     call read_key
     call vga_leave_mode13
@@ -238,6 +334,75 @@ paint_maybe_add_bmp_extension:
     pop ax
     ret
 
+; --- Sets one pixel at (eax, ebx) to dl, clipped to the physical screen ---
+paint_set_pixel:
+    pusha
+    cmp eax, 0
+    jl .done
+    cmp eax, 319
+    jg .done
+    cmp ebx, 0
+    jl .done
+    cmp ebx, 199
+    jg .done
+    imul ebx, ebx, 320
+    add ebx, eax
+    add ebx, VGA_FB
+    mov [ebx], dl
+.done:
+    popa
+    ret
+
+; ============================================================
+; Marks where the paint_canvas_w x paint_canvas_h box (top-left
+; anchored, same as where paint_fill_brush clips drawing to and
+; paint_save_bmp reads pixels from) ends, in dark gray - only called
+; when it's smaller than the full screen (see paint_editor). Drawn at
+; column w and row h, one step PAST the box's own last drawable column
+; (w-1) and row (h-1), rather than tracing the box's own edge: those
+; columns/rows are already outside paint_fill_brush's clip and
+; paint_source_byte's range (both stop at w-1/h-1), so this marker can
+; never end up saved as part of the picture, however far the user
+; drags into what's already visibly outside it. There's no such "one
+; step past" room on the top/left, since the box is pinned to the
+; screen's own (0,0) - only the two edges below can exist at all.
+; ============================================================
+paint_draw_canvas_border:
+    pusha
+    mov esi, [paint_canvas_w]          ; w
+    mov edi, [paint_canvas_h]          ; h
+    mov dl, 8                          ; dark gray
+
+    cmp edi, 200                       ; bottom edge: y = h, x = 0..w
+    jae .skip_bottom                   ; (no room if h is already 200)
+    xor ecx, ecx
+.bottom_loop:
+    cmp ecx, esi
+    jg .bottom_done
+    mov eax, ecx
+    mov ebx, edi
+    call paint_set_pixel
+    inc ecx
+    jmp .bottom_loop
+.bottom_done:
+.skip_bottom:
+
+    cmp esi, 320                       ; right edge: x = w, y = 0..h
+    jae .skip_right                    ; (no room if w is already 320)
+    xor ecx, ecx
+.right_loop:
+    cmp ecx, edi
+    jg .right_done
+    mov eax, esi
+    mov ebx, ecx
+    call paint_set_pixel
+    inc ecx
+    jmp .right_loop
+.right_done:
+.skip_right:
+    popa
+    ret
+
 ; ============================================================
 ; Drains the keyboard ring buffer: 1-9/A-F pick the color, W/S resize
 ; the brush, ESC sets paint_quit. Non-blocking, same shape as
@@ -267,6 +432,12 @@ paint_poll_keys:
     cmp al, 0
     je .loop                          ; ignore arrows/other special keys
 
+    cmp al, 8                         ; Backspace
+    jne .not_backspace
+    call paint_toggle_eraser
+    jmp .loop
+.not_backspace:
+
     call to_upper_al
 
     cmp al, '1'
@@ -275,7 +446,8 @@ paint_poll_keys:
     ja .not_digit
     sub al, '0'
     mov [paint_color], al
-    jmp .loop
+    mov byte [paint_erasing], 0       ; picking a color explicitly always
+    jmp .loop                         ; means "stop erasing", even mid-toggle
 .not_digit:
     cmp al, 'A'
     jb .not_hex_letter
@@ -284,6 +456,7 @@ paint_poll_keys:
     sub al, 'A'
     add al, 10
     mov [paint_color], al
+    mov byte [paint_erasing], 0
     jmp .loop
 .not_hex_letter:
     cmp al, 'W'
@@ -300,6 +473,34 @@ paint_poll_keys:
     dec byte [paint_brush]
     jmp .loop
 
+.done:
+    popa
+    ret
+
+paint_erasing     db 0
+paint_saved_color db 4
+
+; ============================================================
+; Backspace toggles between the current color and an eraser (paint_color
+; forced to 0, black - the canvas's own starting color, so "erasing"
+; just means painting back over it). Pressing Backspace again restores
+; whatever color was in use before - paint_saved_color is only ever
+; written on the way INTO eraser mode, so it always holds that.
+; ============================================================
+paint_toggle_eraser:
+    pusha
+    cmp byte [paint_erasing], 0
+    jne .turn_off
+
+    mov al, [paint_color]
+    mov [paint_saved_color], al
+    mov byte [paint_color], 0
+    mov byte [paint_erasing], 1
+    jmp .done
+.turn_off:
+    mov al, [paint_saved_color]
+    mov [paint_color], al
+    mov byte [paint_erasing], 0
 .done:
     popa
     ret
@@ -438,8 +639,9 @@ paint_draw_line:
     ret
 
 ; ============================================================
-; Fills a paint_brush x paint_brush square (clipped to the 320x200
-; screen) centered at (ebx, edx) with paint_color.
+; Fills a paint_brush x paint_brush square (clipped to the
+; paint_canvas_w x paint_canvas_h box, top-left anchored - see
+; paint_editor) centered at (ebx, edx) with paint_color.
 ; ============================================================
 paint_fill_brush:
     pusha
@@ -463,8 +665,8 @@ paint_fill_brush:
     add edx, ebx
     cmp edx, 0
     jl .next_row
-    cmp edx, 199
-    jg .next_row
+    cmp edx, [paint_canvas_h]
+    jge .next_row
 
     xor ecx, ecx                       ; col
 .col_loop:
@@ -475,8 +677,8 @@ paint_fill_brush:
     add eax, ecx
     cmp eax, 0
     jl .next_col
-    cmp eax, 319
-    jg .next_col
+    cmp eax, [paint_canvas_w]
+    jge .next_col
 
     push eax
     push ecx
@@ -501,15 +703,129 @@ paint_fill_brush:
     ret
 
 ; ============================================================
+; Software mouse cursor: mode 13h has no hardware cursor overlay (that's
+; a text-mode-only VGA feature), so the pointer has to be drawn into the
+; framebuffer like anything else - and undrawn again before the next
+; frame, or it would leave a trail and get saved into the picture.
+; Toggling each cursor pixel by XORing it with 0x0F does both jobs with
+; no separate save/restore buffer: applying it twice at the same spot
+; is its own exact inverse, and since the palette's low and high 8
+; entries are the same 8 hues at normal/bright intensity (the standard
+; VGA layout - see bmp_header_palette below), XORing the low nibble
+; swaps each color for a strongly contrasting one (black<->white,
+; blue<->yellow, red<->cyan, ...) instead of some indistinguishable
+; near-match.
+; Shape: a small crosshair (a filled square brush would obscure exactly
+; what it's pointing at).
+; ============================================================
+paint_cursor_shown db 0
+paint_cursor_x     dd 0
+paint_cursor_y     dd 0
+
+; --- Toggles one pixel at (eax, ebx), clipped to the screen ---
+paint_cursor_toggle_pixel:
+    pusha
+    cmp eax, 0
+    jl .done
+    cmp eax, 319
+    jg .done
+    cmp ebx, 0
+    jl .done
+    cmp ebx, 199
+    jg .done
+
+    push eax
+    push ebx
+    imul ebx, ebx, 320
+    add ebx, eax
+    add ebx, VGA_FB
+    mov al, [ebx]
+    xor al, 0x0F
+    mov [ebx], al
+    pop ebx
+    pop eax
+.done:
+    popa
+    ret
+
+; --- Toggles every pixel of the crosshair centered at (ebx, edx) ---
+paint_cursor_toggle:
+    pusha
+    mov esi, ebx                        ; cx
+    mov edi, edx                        ; cy
+
+    mov ecx, -3
+.h_loop:
+    cmp ecx, 3
+    jg .h_done
+    mov eax, esi
+    add eax, ecx
+    mov ebx, edi
+    call paint_cursor_toggle_pixel
+    inc ecx
+    jmp .h_loop
+.h_done:
+
+    mov ecx, -3
+.v_loop:
+    cmp ecx, 3
+    jg .v_done
+    cmp ecx, 0
+    je .v_skip                          ; center pixel: already toggled above
+    mov eax, esi
+    mov ebx, edi
+    add ebx, ecx
+    call paint_cursor_toggle_pixel
+.v_skip:
+    inc ecx
+    jmp .v_loop
+.v_done:
+    popa
+    ret
+
+; --- Removes the cursor overlay drawn at its last-shown position, if any ---
+paint_cursor_erase:
+    pusha
+    cmp byte [paint_cursor_shown], 0
+    je .done
+    mov ebx, [paint_cursor_x]
+    mov edx, [paint_cursor_y]
+    call paint_cursor_toggle
+    mov byte [paint_cursor_shown], 0
+.done:
+    popa
+    ret
+
+; --- Draws the cursor overlay at the current mouse position ---
+paint_cursor_show:
+    pusha
+    mov ebx, [mouse_x]
+    mov edx, [mouse_y]
+    call paint_cursor_toggle
+    mov [paint_cursor_x], ebx
+    mov [paint_cursor_y], edx
+    mov byte [paint_cursor_shown], 1
+    popa
+    ret
+
+; ============================================================
 ; Byte source for saving: position 0..BMP_PIXEL_OFFSET-1 comes from
-; the fixed header+palette table, the rest from the framebuffer
+; the header+palette table (paint_save_bmp patches its per-image
+; fields in before this is ever called), the rest from the framebuffer
 ; (BMP rows are stored bottom-up, so row 0 of the file is the
-; framebuffer's LAST row).
+; framebuffer's LAST row). A .BMP row must be padded to a multiple of
+; 4 bytes - paint_stride is that padded width; when the canvas itself
+; isn't already a multiple of 4 wide, the columns from paint_canvas_w
+; up to paint_stride are that row's padding, always written as 0.
+; The physical framebuffer's own stride is always 320 regardless of
+; paint_canvas_w, since that's the real VGA hardware layout - only the
+; BMP file's row width varies.
 ; Input: ecx = absolute stream position. Output: al = byte value.
 ; ============================================================
 paint_source_byte:
     push ebx
     push edx
+    push esi
 
     cmp ecx, BMP_PIXEL_OFFSET
     jae .pixel
@@ -520,18 +836,27 @@ paint_source_byte:
 
 .pixel:
     mov eax, ecx
-    sub eax, BMP_PIXEL_OFFSET
+    sub eax, BMP_PIXEL_OFFSET           ; eax = position within pixel data
+
+    mov esi, [paint_stride]
     xor edx, edx
-    mov ebx, 320
-    div ebx                             ; eax = bmp row (0..199), edx = col
-    mov ebx, 199
-    sub ebx, eax                        ; ebx = framebuffer row
+    div esi                              ; eax = bmp row, edx = col within stride
+
+    cmp edx, [paint_canvas_w]
+    jb .in_bounds
+    xor al, al                           ; row-padding byte
+    jmp .done
+.in_bounds:
+    mov ebx, [paint_canvas_h]
+    dec ebx
+    sub ebx, eax                         ; ebx = framebuffer row
     imul ebx, ebx, 320
     add ebx, edx
     add ebx, VGA_FB
     mov al, [ebx]
 
 .done:
+    pop esi
     pop edx
     pop ebx
     ret
@@ -545,9 +870,36 @@ paint_source_byte:
 ; the same two-phase shape for the same reason. Once the chain is
 ; built, the slot is read back and its FS_TOTAL_LEN_OFFSET/
 ; FS_CHAIN_OFFSET fields are patched with the real values.
+;
+; paint_canvas_w/paint_canvas_h (set by paint_editor from its optional
+; [width] [height] arguments) decide the saved image's real size here:
+; paint_stride/paint_save_total_size are computed from them first, and
+; the same numbers are patched directly into bmp_header_palette's
+; bfSize/biWidth/biHeight/biSizeImage fields (a plain 32-bit store
+; already writes each dword in the little-endian order a .BMP expects)
+; so every reader of the file - paint_source_byte included - agrees
+; with what's actually in it.
 ; ============================================================
 paint_save_bmp:
     pusha
+
+    mov eax, [paint_canvas_w]
+    add eax, 3
+    and eax, 0xFFFFFFFC
+    mov [paint_stride], eax              ; padded (multiple-of-4) row width
+    imul eax, [paint_canvas_h]
+    mov [paint_pixel_bytes], eax
+    add eax, BMP_PIXEL_OFFSET
+    mov [paint_save_total_size], eax
+
+    mov eax, [paint_save_total_size]
+    mov dword [bmp_header_palette + 2], eax    ; bfSize
+    mov eax, [paint_canvas_w]
+    mov dword [bmp_header_palette + 18], eax   ; biWidth
+    mov eax, [paint_canvas_h]
+    mov dword [bmp_header_palette + 22], eax   ; biHeight
+    mov eax, [paint_pixel_bytes]
+    mov dword [bmp_header_palette + 34], eax   ; biSizeImage
 
     mov si, fs_tmp_name
     call fs_find_by_name
@@ -629,7 +981,7 @@ paint_save_bmp:
 
 .chain_loop:
     mov eax, [paint_write_pos]
-    cmp eax, BMP_TOTAL_SIZE
+    cmp eax, [paint_save_total_size]
     jae .chain_done
 
     call fs_extra_alloc
@@ -657,7 +1009,7 @@ paint_save_bmp:
     cmp bx, 508
     jae .fill_done
     mov ecx, [paint_write_pos]
-    cmp ecx, BMP_TOTAL_SIZE
+    cmp ecx, [paint_save_total_size]
     jae .fill_zero
     call paint_source_byte
     jmp .fill_have
@@ -689,7 +1041,7 @@ paint_save_bmp:
     mov ax, [fs_tmp_slot]
     call fs_read_slot
     mov ax, FS_TOTAL_LEN_OFFSET
-    mov dx, BMP_TOTAL_SIZE
+    mov dx, [paint_save_total_size]
     call fs_scratch_write_word
     mov ax, FS_CHAIN_OFFSET
     mov dx, [paint_chain_first]
@@ -702,37 +1054,74 @@ paint_save_bmp:
     ret
 
 ; ============================================================
-; Byte sink for viewing: mirrors paint_source_byte - positions before
-; BMP_PIXEL_OFFSET (header/palette) are ignored, since view_bmp_file
-; only ever opens files this same code wrote.
+; Byte sink for viewing: mirrors paint_source_byte, reading instead of
+; writing - except view has no width/height of its own to work from
+; the way paint_save_bmp does, since it's reading a file it didn't
+; just create. Positions 18-21 and 22-25 are the file's own biWidth/
+; biHeight (always inside the inline region well before pixel data
+; starts at BMP_PIXEL_OFFSET, so both are already known by the time
+; any pixel byte arrives here - see view_load_bmp) - captured into
+; view_bmp_w/view_bmp_h as they stream past, the same 4 bytes at a
+; time a plain dword store would read, since nothing here gets to see
+; more than one byte at once. Everything from BMP_PIXEL_OFFSET on is
+; pixel data, placed the same way paint_source_byte reads it back out:
+; row-padding columns (see paint_source_byte) are simply discarded.
 ; Input: ecx = absolute stream position, al = byte value.
 ; ============================================================
 view_consume_byte:
-    push eax
     push ebx
     push edx
+    push esi
 
+    cmp ecx, 18
+    jb .check_pixel
+    cmp ecx, 25
+    ja .check_pixel
+    cmp ecx, 21
+    jbe .capture_w
+    mov ebx, ecx
+    sub ebx, 22
+    mov [view_bmp_h + ebx], al
+    jmp .exit
+.capture_w:
+    mov ebx, ecx
+    sub ebx, 18
+    mov [view_bmp_w + ebx], al
+    jmp .exit
+
+.check_pixel:
     cmp ecx, BMP_PIXEL_OFFSET
-    jb .done
+    jb .exit
 
-    push eax
-    mov eax, ecx
+    push eax                        ; al (the byte to write) must survive
+    mov eax, ecx                    ; eax being reused for the row/col math
     sub eax, BMP_PIXEL_OFFSET
+
+    mov esi, [view_bmp_w]
+    add esi, 3
+    and esi, 0xFFFFFFFC              ; esi = stride
     xor edx, edx
-    mov ebx, 320
-    div ebx
-    mov ebx, 199
-    sub ebx, eax
+    div esi                           ; eax = bmp row, edx = col within stride
+
+    cmp edx, [view_bmp_w]
+    jae .pop_only                    ; row-padding byte - discard
+
+    mov ebx, [view_bmp_h]
+    dec ebx
+    sub ebx, eax                     ; ebx = framebuffer row
     imul ebx, ebx, 320
     add ebx, edx
     add ebx, VGA_FB
     pop eax
     mov [ebx], al
+    jmp .exit
+.pop_only:
+    pop eax
 
-.done:
+.exit:
+    pop esi
     pop edx
     pop ebx
-    pop eax
     ret
 
 ; ============================================================
@@ -759,6 +1148,43 @@ view_load_bmp:
     jmp .inline_loop
 .inline_done:
 
+    ; view_bmp_w/view_bmp_h are fully assembled by now (offsets 18-25,
+    ; well inside the inline region the loop above just finished) -
+    ; clamp them to what the screen can actually hold, in case this is
+    ; some file other than one paint_save_bmp itself wrote (garbage
+    ; dimensions here would otherwise divide by zero below, or walk the
+    ; framebuffer out of bounds), then compute the real byte length so
+    ; the chain walk knows where genuine data ends and a sector's own
+    ; trailing padding begins.
+    mov eax, [view_bmp_w]
+    cmp eax, 1
+    jae .w_min_ok
+    mov eax, 1
+.w_min_ok:
+    cmp eax, 320
+    jbe .w_max_ok
+    mov eax, 320
+.w_max_ok:
+    mov [view_bmp_w], eax
+
+    mov eax, [view_bmp_h]
+    cmp eax, 1
+    jae .h_min_ok
+    mov eax, 1
+.h_min_ok:
+    cmp eax, 200
+    jbe .h_max_ok
+    mov eax, 200
+.h_max_ok:
+    mov [view_bmp_h], eax
+
+    mov eax, [view_bmp_w]
+    add eax, 3
+    and eax, 0xFFFFFFFC
+    imul eax, [view_bmp_h]
+    add eax, BMP_PIXEL_OFFSET
+    mov [view_total_size], eax
+
     mov ax, FS_CHAIN_OFFSET
     call fs_scratch_read_word
     mov [paint_read_chain], ax
@@ -775,7 +1201,7 @@ view_load_bmp:
     cmp bx, 508
     jae .fill_done
     mov ecx, [paint_read_pos]
-    cmp ecx, BMP_TOTAL_SIZE
+    cmp ecx, [view_total_size]
     jae .skip_consume
     mov ax, bx
     call fs_scratch_read_byte
@@ -851,3 +1277,25 @@ paint_line_dy     dd 0
 paint_line_sx     dd 0
 paint_line_sy     dd 0
 paint_line_err    dd 0
+
+; --- Canvas size: set by paint_editor from its optional [width]
+; [height] arguments (paint_arg_w/paint_arg_h are just scratch for the
+; raw parsed values, 0 meaning "not given"), clamped to the physical
+; 320x200 screen. Defaults keep every byte-for-byte behavior this file
+; had before canvas sizes existed. ---
+paint_arg_w            dw 0
+paint_arg_h            dw 0
+paint_canvas_w         dd 320
+paint_canvas_h         dd 200
+paint_size_clamped     db 0
+paint_stride           dd 320
+paint_pixel_bytes      dd 0
+paint_save_total_size  dd 0
+
+; --- view_bmp_file's own copy of the image size, read out of the
+; FILE's header (see view_consume_byte) rather than set by any
+; argument, since view never chooses a size - it just displays
+; whatever paint already saved. ---
+view_bmp_w         dd 0
+view_bmp_h         dd 0
+view_total_size    dd 0

@@ -195,6 +195,8 @@ help_l43 db "  history       - list previously run commands", 13, 10, 0
 help_l44 db "  df / free     - show directory slot / extra sector usage", 13, 10, 0
 help_l45 db "  run <n>.com   - run a small MS-DOS .com program", 13, 10, 0
 help_l46 db "  recv <n> <hex size> - receive a file over COM1 (serial)", 13, 10, 0
+help_l47 db "  paint <n> [w] [h] - mouse picture editor, saves to n.BMP (default 320x200)", 13, 10, 0
+help_l48 db "  view <n>      - display a picture saved by paint (.BMP)", 13, 10, 0
 
 help_lines:
     dw help_l01, help_l02, help_l03, help_l04, help_l05
@@ -205,7 +207,7 @@ help_lines:
     dw help_l29, help_l30, help_l31, help_l32, help_l33
     dw help_l34, help_l35, help_l38, help_l39, help_l40
     dw help_l41, help_l42, help_l43, help_l44, help_l45
-    dw help_l46
+    dw help_l46, help_l47, help_l48
 help_lines_end:
 
 HELP_LINE_COUNT equ (help_lines_end - help_lines) / 2
@@ -252,8 +254,9 @@ msg_grep_space       db " ", 0
 msg_head_usage       db "Usage: head <n> [lines]", 13, 10, 0
 msg_tail_usage       db "Usage: tail <n> [lines]", 13, 10, 0
 msg_uranium_usage    db "Usage: uranium <n>", 13, 10, 0
-msg_paint_usage      db "Usage: paint <n>", 13, 10, 0
+msg_paint_usage      db "Usage: paint <n> [width] [height]", 13, 10, 0
 msg_paint_intro      db "PAINT - mouse to draw, 1-9/A-F color, W/S brush size, ESC to save & quit.", 13, 10, 0
+msg_paint_size_clamped db "Canvas size clamped to the 320x200 screen.", 13, 10, 0
 msg_paint_saved      db "Saved ", 0
 msg_view_usage       db "Usage: view <n>", 13, 10, 0
 msg_uranium_not_text db "That is a program file. Use hex to edit it.", 13, 10, 0
