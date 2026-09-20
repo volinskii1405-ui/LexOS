@@ -7,14 +7,17 @@
 ;   src/shell.asm       - command parsing and execution
 ;   src/interrupts.asm  - IDT, PIC remapping, IRQ0/IRQ1 handlers
 ;   src/devices.asm     - device manager: device table + their init functions
-;   src/ata.asm         - ATA driver (PIO), direct controller port access
+;   src/ata.asm         - ATA driver, direct controller port access;
+;                         dispatches to src/atadma.asm's DMA path when available
+;   src/atadma.asm      - Bus Master IDE (ATA DMA) via direct PCI access
 ;   src/filesystem.asm  - filesystem layered on top of ATA
 ;   src/fs_extra.asm    - extra sector chains for files > 127 bytes (append, batch)
 ;   src/programs.asm    - executable files (run), hex editor, TEST.BIN example
+;   src/dosrun.asm      - runs a *.com MS-DOS program (run <n>.com)
 ;   src/assembler.asm   - single-line mini-assembler for the hex editor
 ;   src/rtc.asm         - clock/date from CMOS RTC (date/time commands)
 ;   src/speaker.asm     - PC speaker (beep command)
-;   src/serial.asm      - COM1 UART (serial command, useful for debugging)
+;   src/serial.asm      - COM1 UART (serial/recv commands, useful for debugging)
 ;
 ; We run in a flat memory model: CS/DS/ES/FS/GS/SS all cover
 ; 0..4GB, so unlike the 16-bit real-mode version there are NO
@@ -38,6 +41,11 @@ kernel_start:
     ; ES/DS/FS/GS/SS were already set up by the bootloader to the flat data
     ; selector (0x10) and stay that way for the entire life of the kernel - a separate
     ; setup of ES for video memory (as in real mode) is no longer needed.
+
+    lgdt [com_gdt_descriptor]   ; src/dosrun.asm's two extra (16-bit) segments for
+                                ; running *.com files - see the note above com_gdt_start
+                                ; in this file. Safe to install unconditionally: entries
+                                ; 0x08/0x10 are byte-for-byte the same as boot.asm's own.
 
     call devmgr_init         ; initializes all devices (screen/keyboard/disk/timer)
 
@@ -113,6 +121,12 @@ main_loop:
 ; can't push anything else past that mark, same reasoning as the
 ; *.hg save area and the ATA DMA state right below it.
 %include "src/atadma.asm"
+
+; src/dosrun.asm (.com program support) is included here for the same
+; reason as src/atadma.asm just above: none of its own code needs
+; 16-bit addressing (see the note at its own top), so it costs nothing
+; to keep it out of the way of the margin described in src/devices.asm.
+%include "src/dosrun.asm"
 
 ; --- fs_run_hg_script's (src/fs_extra.asm) nested-script save area ---
 ; Deliberately placed here, after every %include, so appending it can
@@ -373,6 +387,53 @@ match_mnemonic_prefix32:
     pop edi
     pop esi
     ret
+
+; --- src/dosrun.asm's (.com program support) extended GDT and saved
+; state ---
+; boot.asm's original GDT only has the null/flat-code(0x08)/flat-
+; data(0x10) entries; running a .com needs two more, 16-bit, 64 KB
+; segments (both based at COM_LOAD_ADDR, matching the "tiny" memory
+; model a real .com expects: CS=DS=ES=SS all the same segment). Rather
+; than reach across into boot.asm (a separate NASM invocation - its
+; labels aren't visible here at all) to extend ITS table, kernel_start
+; just installs this one instead, once, via lgdt - safe because entries
+; 0x08/0x10 here are byte-for-byte identical to boot.asm's, so nothing
+; already using those selectors is affected.
+;
+; COM_LOAD_ADDR is fixed, so - unlike a general-purpose segment
+; descriptor - these never need patching at runtime: the base bytes are
+; just computed once, here, from the constant.
+COM_LOAD_ADDR equ 0x100000     ; 1 MB mark: plain, unused RAM on any PC memory map
+COM_CODE_SEL  equ 0x18
+COM_DATA_SEL  equ 0x20         ; a GDT selector value - unrelated to the
+                                ; same-looking IDT vector 0x20 (IRQ0/INT 20h)
+                                ; or PIC1_CMD port 0x20 used elsewhere in this
+                                ; kernel; three unrelated things that just
+                                ; happen to share a hex value.
+
+com_gdt_start:
+    dd 0, 0                                             ; null
+    dw 0xFFFF, 0x0000
+    db 0x00, 10011010b, 11001111b, 0x00                  ; flat code (0x08)
+    dw 0xFFFF, 0x0000
+    db 0x00, 10010010b, 11001111b, 0x00                  ; flat data (0x10)
+    dw 0xFFFF, (COM_LOAD_ADDR) & 0xFFFF
+    db ((COM_LOAD_ADDR) >> 16) & 0xFF, 10011010b, 0x00, ((COM_LOAD_ADDR) >> 24) & 0xFF   ; com code (0x18)
+    dw 0xFFFF, (COM_LOAD_ADDR) & 0xFFFF
+    db ((COM_LOAD_ADDR) >> 16) & 0xFF, 10010010b, 0x00, ((COM_LOAD_ADDR) >> 24) & 0xFF   ; com data (0x20)
+com_gdt_end:
+
+com_gdt_descriptor:
+    dw com_gdt_end - com_gdt_start - 1
+    dd com_gdt_start
+
+; fs_run_com's (src/dosrun.asm) saved kernel context, restored by
+; com_exit_now when the .com program terminates.
+com_saved_esp      dd 0
+com_saved_pic_mask db 0
+com_saved_idt20    times 8 db 0
+com_saved_idt21    times 8 db 0
+com_shift_held     db 0     ; com_poll_key's own Shift-key tracking
 
 ; Pad the remaining space within the sectors the bootloader reads,
 ; so the file size is a multiple of 512 bytes (see KERNEL_SECTORS_1/2 in boot.asm).

@@ -193,6 +193,8 @@ help_l41 db "  tail <n> [k]  - print last k lines of file n (default 10)", 13, 1
 help_l42 db "  uranium <n>   - open file n in the full-screen text editor", 13, 10, 0
 help_l43 db "  history       - list previously run commands", 13, 10, 0
 help_l44 db "  df / free     - show directory slot / extra sector usage", 13, 10, 0
+help_l45 db "  run <n>.com   - run a small MS-DOS .com program", 13, 10, 0
+help_l46 db "  recv <n> <hex size> - receive a file over COM1 (serial)", 13, 10, 0
 
 help_lines:
     dw help_l01, help_l02, help_l03, help_l04, help_l05
@@ -202,7 +204,8 @@ help_lines:
     dw help_l24, help_l25, help_l26, help_l27, help_l28
     dw help_l29, help_l30, help_l31, help_l32, help_l33
     dw help_l34, help_l35, help_l38, help_l39, help_l40
-    dw help_l41, help_l42, help_l43, help_l44
+    dw help_l41, help_l42, help_l43, help_l44, help_l45
+    dw help_l46
 help_lines_end:
 
 HELP_LINE_COUNT equ (help_lines_end - help_lines) / 2
@@ -367,6 +370,10 @@ msg_ata_usage      db "Usage: ataread <lba (hex)>", 13, 10, 0
 
 msg_beep_usage     db "Usage: beep [freq_hz_in_hex]", 13, 10, 0
 msg_serial_sent    db "Sent over COM1.", 13, 10, 0
+msg_recv_usage     db "Usage: recv <name> <hex size, max 1000>", 13, 10, 0
+msg_recv_waiting   db "Waiting for ", 0
+msg_recv_waiting2  db " bytes on COM1...", 13, 10, 0
+msg_recv_done      db "Received.", 13, 10, 0
 
 dev_tmp_status db 0
 
@@ -434,6 +441,7 @@ cmd_time         db "time", 0
 cmd_beep         db "beep", 0
 cmd_beep_prefix  db "beep ", 0
 cmd_serial_prefix db "serial ", 0
+cmd_recv_prefix   db "recv ", 0
 cmd_cd           db "cd", 0
 cmd_cd_prefix    db "cd ", 0
 cmd_cp_prefix    db "cp ", 0

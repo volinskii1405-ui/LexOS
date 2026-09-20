@@ -3,6 +3,8 @@
 ; NOT null-terminated (0x00 can be part of actual machine code).
 ; Exports: fs_run, hex_editor, fs_ensure_test_exe, fs_ensure_calc_exe,
 ;               fs_ensure_programs_dir, fs_ensure_tmp_dir
+; fs_run dispatches a *.com file (a plain FS_TYPE_FILE) to fs_run_com
+; (src/dosrun.asm) instead of the raw-machine-code path below.
 
 ; ============================================================
 ; run <name> : loads the program into program_exec_buffer and calls it
@@ -57,6 +59,17 @@ fs_run:
     cmp ax, FS_TYPE_PROGRAM
     je .is_program
 
+    cmp ax, FS_TYPE_FILE
+    jne .not_program
+    call fs_name_ends_with_com
+    cmp ax, 1
+    jne .not_program
+
+    mov ax, [fs_tmp_slot]
+    call fs_run_com                ; src/dosrun.asm
+    jmp .end
+
+.not_program:
     mov si, msg_run_notprogram
     call print_string
     jmp .end
@@ -100,6 +113,58 @@ fs_run:
     pop cx
     pop bx
     pop ax
+    ret
+
+; ============================================================
+; Does fs_tmp_name (the name `run` was given, exactly as typed) end in
+; ".com" (case-insensitive)? Used to recognize a .com program (a plain
+; FS_TYPE_FILE - unlike LexOS's own FS_TYPE_PROGRAM files, run through
+; fs_run_com in src/dosrun.asm instead of the raw-machine-code path
+; above. Output: ax = 1 if so, otherwise ax = 0.
+; ============================================================
+fs_name_ends_with_com:
+    push si
+    push cx
+
+    mov si, fs_tmp_name
+    xor cx, cx
+.len_loop:
+    cmp byte [si], 0
+    je .len_done
+    inc si
+    inc cx
+    jmp .len_loop
+.len_done:
+    cmp cx, 4
+    jb .no
+
+    mov si, fs_tmp_name
+    add si, cx
+    sub si, 4                     ; si -> the last 4 characters
+
+    mov al, [si]
+    cmp al, '.'
+    jne .no
+    mov al, [si + 1]
+    call to_upper_al
+    cmp al, 'C'
+    jne .no
+    mov al, [si + 2]
+    call to_upper_al
+    cmp al, 'O'
+    jne .no
+    mov al, [si + 3]
+    call to_upper_al
+    cmp al, 'M'
+    jne .no
+
+    mov ax, 1
+    jmp .done
+.no:
+    xor ax, ax
+.done:
+    pop cx
+    pop si
     ret
 
 ; ============================================================

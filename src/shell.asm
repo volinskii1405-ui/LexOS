@@ -182,6 +182,12 @@ handle_command:
     je .do_serial
 
     mov si, buffer
+    mov di, cmd_recv_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_recv
+
+    mov si, buffer
     mov di, cmd_grep_prefix
     call strcmp_prefix
     cmp ax, 1
@@ -404,6 +410,12 @@ handle_command:
     mov si, buffer
     add si, 7                  ; skip "serial "
     call cmd_serial
+    jmp .done
+
+.do_recv:
+    mov si, buffer
+    add si, 5                  ; skip "recv "
+    call cmd_recv
     jmp .done
 
 .do_grep:

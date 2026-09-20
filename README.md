@@ -210,6 +210,36 @@ alex@/PROGRAMS$
   the same way any program can call `print_char` by absolute address -
   rather than squeezing the whole feature into a single file's 127-byte
   limit.
+- `run <n>.com` runs a small MS-DOS `.com` program - real 16-bit x86
+  machine code, not LexOS's own format, executed directly (no BIOS, no
+  real-mode switch, no v86 mode: it runs through a 16-bit code segment
+  under this same 32-bit protected-mode kernel, and `int 20h`/`int 21h`
+  land on LexOS's own handlers for it). Only a small, curated subset of
+  DOS calls is understood - enough for simple, self-contained programs
+  that print text and read keystrokes, **not** real DOS software (which
+  leans on file I/O, memory management, and dozens of other calls this
+  doesn't implement): `int 20h` (exit), and `int 21h` `AH=01h` (read
+  char, echoed), `02h` (print char), `08h` (read char, no echo), `09h`
+  (print a `$`-terminated string), `0Bh` (check keyboard status), `4Ch`
+  (exit with a return code). Anything else is silently ignored rather
+  than crashing. Capped at 4 KB, same as any other file's visible
+  content (`fs_load_content`).
+- `recv <n> <hex size>` is how a `.com` file (or any other binary file)
+  actually gets onto LexOS's disk in the first place: it receives that
+  many raw bytes over COM1 (the same serial port `serial`/`beep`'s
+  neighbor use) and saves them as a new file, or overwrites an existing
+  plain one. On the host side, point QEMU's serial port at something
+  you can write into - `-serial pipe:NAME` (two FIFOs, `NAME.in`/
+  `NAME.out`) or `-serial tcp::PORT,server,nowait` both work; plain
+  `-serial stdio` doesn't, that's the host's own terminal, not a
+  separate stream you can feed a file into. Then, after typing `recv`:
+  ```sh
+  # pipe backend
+  cat myprogram.com > /path/to/NAME.in
+  # TCP backend
+  nc 127.0.0.1 PORT < myprogram.com
+  ```
+  Also capped at 4 KB (`CONTENT_BUF_LEN`), like `run <n>.com` above.
 
 ## Quick start
 
@@ -288,6 +318,7 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `date` / `time` | show the current date / time (from the CMOS RTC) |
 | `beep [hz]` | play a short tone (frequency in hex, default 880 Hz) |
 | `serial <text>` | send text out over the COM1 UART |
+| `recv <n> <hex size>` | receive a file over COM1 (see **Programs** below for host-side setup) |
 | `reboot` / `shutdown` | restart / power off |
 | `history` | list previously run commands, numbered oldest first |
 | `df` / `free` | show directory slot / extra sector usage |
@@ -313,7 +344,7 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `uranium <n>` | full-screen text editor (creates the file if it doesn't exist) |
 | `hex <n>` | hex/assembly editor (auto-adds `.BIN` if the name has no dot) |
 | **Programs** | |
-| `run <n>` | execute a program file |
+| `run <n>` | execute a program file, or a `.com` MS-DOS program (see below) |
 
 Inside the `uranium` text editor: arrow keys, Home/End and Delete move
 around and edit like any text editor, Enter inserts a real line break.
@@ -386,10 +417,11 @@ src/
                        end of kernel.asm rather than next to ata.asm, since
                        (unlike ata.asm) its own code never needs to sit
                        below 0x10000 - see the note at its top.
-  serial.asm           16550 UART driver for COM1 (`serial`) - included
-                       right after the other device drivers rather than
-                       further down, so its init function's address stays
-                       safely below 0x10000 (see the note in devices.asm).
+  serial.asm           16550 UART driver for COM1 (`serial`, `recv`) -
+                       included right after the other device drivers
+                       rather than further down, so its init function's
+                       address stays safely below 0x10000 (see the note
+                       in devices.asm).
   filesystem.asm       folder-aware filesystem on top of the ATA driver,
                        including the RAM-backed TMP folder (fs_find_free/
                        fs_read_slot/fs_write_slot - see data.asm's note
@@ -399,6 +431,12 @@ src/
                        used by grep/head/tail/uranium.
   programs.asm         `run`/`hex` commands, the TEST.BIN/CALC.BIN demo
                        programs, and the PROGRAMS/TMP folders they live in.
+  dosrun.asm           runs a *.com MS-DOS program directly under this
+                       32-bit kernel (no BIOS, no real-mode switch, no
+                       v86 mode) through a 16-bit code segment and a
+                       small int 20h/21h emulation layer. %included at
+                       the very end of kernel.asm, same reasoning as
+                       atadma.asm above.
   assembler.asm        one-line mini-assembler used by the hex editor; its
                        mnemonic table lives at the tail of kernel.asm
                        instead of here (see the note above mnem_ret there).
@@ -433,6 +471,14 @@ src/
   QEMU's own IDE controller (what this project is tested against), but
   a real board that puts it somewhere else falls back to the original
   PIO path with no error message, just slower transfers.
+- `.com` program support (`src/dosrun.asm`) understands only the DOS
+  calls listed under **Programs** above - real DOS software (which
+  reaches for file I/O, memory management, and dozens of other `int
+  21h` functions this doesn't implement) won't run, only small,
+  self-contained programs written specifically against that subset.
+  Labels/relocations aren't a concern (a `.com` is already position-
+  independent machine code by convention), but there's no `.exe` (MZ)
+  support - no header parsing, no segment relocation.
 - One file's inline metadata + content lives in a single 512-byte sector;
   content past that grows through a chain of extra sectors, but the pool
   is fixed at 64 sectors and file/folder names are capped at 8 characters
