@@ -272,13 +272,9 @@ view_bmp_file:
 
     call vga_enter_mode13
 
-    mov edi, VGA_FB                 ; a picture saved smaller than the
-    mov ecx, VGA_FB_SIZE             ; full screen (see paint_editor)
-    xor al, al                       ; only fills its own top-left
-    rep stosb                        ; corner - clear the rest to black
-                                      ; first instead of leaving whatever
-                                      ; was in video memory before
-
+    ; view_load_bmp itself clears the screen and centers the picture,
+    ; once it knows the real (possibly smaller than 320x200) size out
+    ; of the file's own header - there's nothing to do here first.
     call view_load_bmp
     call read_key
     call vga_leave_mode13
@@ -1108,8 +1104,10 @@ view_consume_byte:
 
     mov ebx, [view_bmp_h]
     dec ebx
-    sub ebx, eax                     ; ebx = framebuffer row
+    sub ebx, eax                     ; ebx = row within the picture
+    add ebx, [view_offset_y]         ; shift to its centered position
     imul ebx, ebx, 320
+    add edx, [view_offset_x]         ; ditto for the column
     add ebx, edx
     add ebx, VGA_FB
     pop eax
@@ -1122,6 +1120,57 @@ view_consume_byte:
     pop esi
     pop edx
     pop ebx
+    ret
+
+; ============================================================
+; Draws "Resolution WxH" near the top of the green border above a
+; picture smaller than the full screen (see view_load_bmp) - only when
+; view_offset_y leaves at least 18 pixels of room there (16 for the
+; font's own glyph height, plus a couple to breathe), so the text
+; never ends up stamped over the picture itself; a picture that's
+; narrower but still full-height (view_offset_y stays 0, letterboxed
+; left/right instead of top/bottom) just goes without the label, since
+; there's nowhere left to draw a row of text that wouldn't cross into
+; either the picture or off the bottom of the screen.
+; ============================================================
+view_draw_resolution_label:
+    pusha
+    cmp dword [view_offset_y], 18
+    jl .done
+
+    mov edi, view_res_label
+    mov esi, view_res_prefix
+.copy_prefix:
+    mov al, [esi]
+    cmp al, 0
+    je .prefix_done
+    mov [edi], al
+    inc esi
+    inc edi
+    jmp .copy_prefix
+.prefix_done:
+
+    mov ax, word [view_bmp_w]
+    call snake_word_to_dec_buf
+
+    mov byte [edi], 'x'
+    inc edi
+
+    mov ax, word [view_bmp_h]
+    call snake_word_to_dec_buf
+
+    mov byte [edi], 0
+
+    mov byte [vga_draw_color], 15      ; white, for contrast against the
+                                         ; green border (see vga_draw_char,
+                                         ; src/vga.asm)
+    mov ebx, 8
+    mov edx, 4
+    mov esi, view_res_label
+    call vga_draw_string
+
+.done:
+    popa
     ret
 
 ; ============================================================
@@ -1184,6 +1233,48 @@ view_load_bmp:
     imul eax, [view_bmp_h]
     add eax, BMP_PIXEL_OFFSET
     mov [view_total_size], eax
+
+    ; Now that the real (clamped) size is known, decide where the
+    ; picture sits and what the rest of the screen looks like, before
+    ; any pixel byte arrives: view_consume_byte adds view_offset_x/y to
+    ; every pixel it places, so setting them here (0 for a full-screen
+    ; picture, otherwise the centering math below) is enough to center
+    ; a smaller one instead of leaving it pinned to the top-left corner.
+    mov dword [view_offset_x], 0
+    mov dword [view_offset_y], 0
+
+    mov eax, [view_bmp_w]
+    cmp eax, 320
+    jne .smaller
+    mov eax, [view_bmp_h]
+    cmp eax, 200
+    je .full_size
+.smaller:
+    mov eax, 320
+    sub eax, [view_bmp_w]
+    shr eax, 1
+    mov [view_offset_x], eax
+    mov eax, 200
+    sub eax, [view_bmp_h]
+    shr eax, 1
+    mov [view_offset_y], eax
+
+    mov edi, VGA_FB                  ; green border/letterbox around a
+    mov ecx, VGA_FB_SIZE             ; picture smaller than the full
+    mov al, 2                        ; screen, instead of leaving
+    rep stosb                        ; whatever was in video memory
+                                       ; before, or plain black - see
+                                       ; view_draw_resolution_label just
+                                       ; below for the size label on it
+
+    call view_draw_resolution_label
+    jmp .placement_done
+.full_size:
+    mov edi, VGA_FB
+    mov ecx, VGA_FB_SIZE
+    xor al, al
+    rep stosb
+.placement_done:
 
     mov ax, FS_CHAIN_OFFSET
     call fs_scratch_read_word
@@ -1299,3 +1390,12 @@ paint_save_total_size  dd 0
 view_bmp_w         dd 0
 view_bmp_h         dd 0
 view_total_size    dd 0
+
+; --- Where a smaller-than-320x200 picture gets centered (see
+; view_load_bmp) - both stay 0 for a full-screen one, so
+; view_consume_byte's "add the offset" is a no-op then. ---
+view_offset_x      dd 0
+view_offset_y      dd 0
+
+view_res_prefix db "Resolution ", 0
+view_res_label  times 24 db 0
