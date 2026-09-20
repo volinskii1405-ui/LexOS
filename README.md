@@ -228,17 +228,19 @@ alex@/PROGRAMS$
   actually gets onto LexOS's disk in the first place: it receives that
   many raw bytes over COM1 (the same serial port `serial`/`beep`'s
   neighbor use) and saves them as a new file, or overwrites an existing
-  plain one. On the host side, point QEMU's serial port at something
-  you can write into - `-serial pipe:NAME` (two FIFOs, `NAME.in`/
-  `NAME.out`) or `-serial tcp::PORT,server,nowait` both work; plain
-  `-serial stdio` doesn't, that's the host's own terminal, not a
-  separate stream you can feed a file into. Then, after typing `recv`:
+  plain one. Plain `-serial stdio` (or `make run`) doesn't expose
+  anything a host program can feed a file into - `make run-serial`
+  does, exposing COM1 as a TCP socket on `localhost:4444`
+  (`SERIALPORT=` to change the port). With that running:
   ```sh
-  # pipe backend
-  cat myprogram.com > /path/to/NAME.in
-  # TCP backend
-  nc 127.0.0.1 PORT < myprogram.com
+  printf '%x\n' $(wc -c < myprogram.com)   # -> the hex size `recv` wants
   ```
+  then, inside LexOS, `recv myprogram.com <that hex size>`, and from
+  another terminal on the host, while it's printing "Waiting...":
+  ```sh
+  nc 127.0.0.1 4444 < myprogram.com
+  ```
+  (no `nc`? `sudo dnf install nmap-ncat` on Fedora, or `socat - TCP:127.0.0.1:4444 < myprogram.com`).
   Also capped at 4 KB (`CONTENT_BUF_LEN`), like `run <n>.com` above.
 
 ## Quick start
@@ -247,9 +249,10 @@ You need `nasm` and an i386-capable VM — `qemu-system-i386` is what this
 project is developed and tested against.
 
 ```sh
-make        # assembles boot.asm + kernel.asm into build/os-image.bin
-make run    # builds, then boots it in QEMU
-make clean  # remove build/
+make             # assembles boot.asm + kernel.asm into build/os-image.bin
+make run         # builds, then boots it in QEMU
+make run-serial  # same, but also exposes COM1 on localhost:4444 for `recv`
+make clean       # remove build/
 ```
 
 `os-image.bin` is a raw disk image: `dd` it to a USB stick, or point any
