@@ -16,9 +16,15 @@
 ;          fs_find_prefix_match, fs_name_has_prefix, fs_read_slot_name,
 ;          fs_name_matches_wildcard
 
-; --- Reads a slot (index in ax) from disk into SCRATCH_ADDR ---
+; --- Reads a slot (index in ax) into SCRATCH_ADDR: a real disk sector
+;     for ax < FS_FILE_COUNT, or a copy from fs_ram_slots (kernel.asm)
+;     for a RAM slot (FS_FILE_COUNT..FS_TOTAL_SLOTS-1) - see the note
+;     above FS_RAM_FILE_COUNT in data.asm. ---
 fs_read_slot:
     push ax
+
+    cmp ax, FS_FILE_COUNT
+    jae .ram_slot
 
     add ax, FS_START_SECTOR       ; ax = absolute LBA sector
     call ata_read_sector
@@ -26,10 +32,19 @@ fs_read_slot:
     pop ax
     ret
 
-; --- Writes SCRATCH_ADDR to disk into a slot (index in ax).
+.ram_slot:
+    call fs_ram_slot_read
+    pop ax
+    ret
+
+; --- Writes SCRATCH_ADDR into a slot (index in ax) - real disk or RAM,
+;     same split as fs_read_slot above.
 ;     Returns: carry=0 on success, carry=1 on error. ---
 fs_write_slot:
     push ax
+
+    cmp ax, FS_FILE_COUNT
+    jae .ram_slot
 
     add ax, FS_START_SECTOR
     call ata_write_sector
@@ -42,6 +57,12 @@ fs_write_slot:
     stc
     ret
 .ok:
+    clc
+    ret
+
+.ram_slot:
+    call fs_ram_slot_write        ; always succeeds - it's just memory
+    pop ax
     clc
     ret
 
@@ -159,7 +180,7 @@ fs_find_by_name:
 
     xor bx, bx
 .scan:
-    cmp bx, FS_FILE_COUNT
+    cmp bx, FS_TOTAL_SLOTS
     jae .not_found
 
     push ax
@@ -273,7 +294,7 @@ fs_find_prefix_match:
 
     xor bx, bx
 .scan:
-    cmp bx, FS_FILE_COUNT
+    cmp bx, FS_TOTAL_SLOTS
     jae .not_found
 
     push ax
@@ -425,9 +446,21 @@ fs_name_matches_wildcard:
 
 wc_star_p dw 0
 
-; --- Finds the first free slot (in any directory). ax=index or -1. ---
+; --- Finds the first free slot. ax=index or -1.
+;     Ordinarily scans the real disk slots (0..FS_FILE_COUNT-1); while
+;     the current directory IS the TMP folder itself (fs_tmp_dir_slot,
+;     src/programs.asm's fs_ensure_tmp_dir), scans the RAM-backed range
+;     instead (FS_FILE_COUNT..FS_TOTAL_SLOTS-1, see data.asm), so a file
+;     created directly inside TMP never touches the real disk pool at
+;     all. A file placed into TMP some other way (cp/mv by path from a
+;     different directory) still lands on disk, same as any other file -
+;     only creating it while `cd`'d into TMP gets the RAM slot. ---
 fs_find_free:
     push bx
+
+    mov ax, [fs_current_dir]
+    cmp ax, [fs_tmp_dir_slot]
+    je .scan_ram
 
     xor bx, bx
 .scan:
@@ -448,6 +481,27 @@ fs_find_free:
 
     inc bx
     jmp .scan
+
+.scan_ram:
+    mov bx, FS_FILE_COUNT
+.scan_ram_loop:
+    cmp bx, FS_TOTAL_SLOTS
+    jae .not_found
+
+    push ax
+    mov ax, bx
+    call fs_read_slot
+    pop ax
+
+    push ax
+    mov ax, FS_TYPE_OFFSET
+    call fs_scratch_read_byte
+    cmp al, FS_TYPE_FREE
+    pop ax
+    je .found
+
+    inc bx
+    jmp .scan_ram_loop
 
 .found:
     mov ax, bx
@@ -695,7 +749,7 @@ fs_rm:
     xor bx, bx
     xor cx, cx                          ; cx = how many were removed
 .batch_scan:
-    cmp bx, FS_FILE_COUNT
+    cmp bx, FS_TOTAL_SLOTS
     jae .batch_done
 
     mov ax, bx
@@ -784,7 +838,7 @@ fs_list:
 
     xor bx, bx
 .scan:
-    cmp bx, FS_FILE_COUNT
+    cmp bx, FS_TOTAL_SLOTS
     jae .scan_done
 
     push bx
@@ -941,6 +995,42 @@ fs_df:
     mov si, msg_df_used
     call print_string
     mov ax, FS_EXTRA_COUNT
+    sub ax, cx
+    call print_dec_word
+    mov si, msg_df_free
+    call print_string
+
+    mov si, msg_df_ram_label
+    call print_string
+
+    xor bx, bx
+    xor cx, cx                    ; cx = number of used RAM slots
+.scan_ram:
+    cmp bx, FS_RAM_FILE_COUNT
+    jae .ram_done
+    push bx
+    mov ax, bx
+    add ax, FS_FILE_COUNT
+    call fs_read_slot
+    pop bx
+    mov ax, FS_TYPE_OFFSET
+    call fs_scratch_read_byte
+    cmp al, FS_TYPE_FREE
+    je .ram_free
+    inc cx
+.ram_free:
+    inc bx
+    jmp .scan_ram
+.ram_done:
+    mov ax, cx
+    call print_dec_word
+    mov si, msg_df_slash
+    call print_string
+    mov ax, FS_RAM_FILE_COUNT
+    call print_dec_word
+    mov si, msg_df_used
+    call print_string
+    mov ax, FS_RAM_FILE_COUNT
     sub ax, cx
     call print_dec_word
     mov si, msg_df_free
@@ -1559,7 +1649,7 @@ fs_mv:
     xor bx, bx
     xor cx, cx                          ; cx = how many were moved
 .mvbatch_scan:
-    cmp bx, FS_FILE_COUNT
+    cmp bx, FS_TOTAL_SLOTS
     jae .mvbatch_done
 
     mov ax, bx
@@ -2055,7 +2145,7 @@ fs_cp:
     xor bx, bx
     xor cx, cx                          ; cx = how many were copied
 .cpbatch_scan:
-    cmp bx, FS_FILE_COUNT
+    cmp bx, FS_TOTAL_SLOTS
     jae .cpbatch_done
 
     mov ax, bx
@@ -2255,7 +2345,7 @@ fs_tree_print_children:
 
     xor bx, bx
 .scan:
-    cmp bx, FS_FILE_COUNT
+    cmp bx, FS_TOTAL_SLOTS
     jae .scan_done
 
     push bx

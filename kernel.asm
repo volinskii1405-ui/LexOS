@@ -7,14 +7,17 @@
 ;   src/shell.asm       - command parsing and execution
 ;   src/interrupts.asm  - IDT, PIC remapping, IRQ0/IRQ1 handlers
 ;   src/devices.asm     - device manager: device table + their init functions
-;   src/ata.asm         - ATA driver (PIO), direct controller port access
+;   src/ata.asm         - ATA driver, direct controller port access;
+;                         dispatches to src/atadma.asm's DMA path when available
+;   src/atadma.asm      - Bus Master IDE (ATA DMA) via direct PCI access
 ;   src/filesystem.asm  - filesystem layered on top of ATA
 ;   src/fs_extra.asm    - extra sector chains for files > 127 bytes (append, batch)
 ;   src/programs.asm    - executable files (run), hex editor, TEST.BIN example
+;   src/dosrun.asm      - runs a *.com MS-DOS program (run <n>.com)
 ;   src/assembler.asm   - single-line mini-assembler for the hex editor
 ;   src/rtc.asm         - clock/date from CMOS RTC (date/time commands)
 ;   src/speaker.asm     - PC speaker (beep command)
-;   src/serial.asm      - COM1 UART (serial command, useful for debugging)
+;   src/serial.asm      - COM1 UART (serial/recv commands, useful for debugging)
 ;
 ; We run in a flat memory model: CS/DS/ES/FS/GS/SS all cover
 ; 0..4GB, so unlike the 16-bit real-mode version there are NO
@@ -39,6 +42,11 @@ kernel_start:
     ; selector (0x10) and stay that way for the entire life of the kernel - a separate
     ; setup of ES for video memory (as in real mode) is no longer needed.
 
+    lgdt [com_gdt_descriptor]   ; src/dosrun.asm's two extra (16-bit) segments for
+                                ; running *.com files - see the note above com_gdt_start
+                                ; in this file. Safe to install unconditionally: entries
+                                ; 0x08/0x10 are byte-for-byte the same as boot.asm's own.
+
     call devmgr_init         ; initializes all devices (screen/keyboard/disk/timer)
 
     call clear_screen
@@ -58,6 +66,10 @@ kernel_start:
     call fs_ensure_calc_exe  ; creates PROGRAMS/CALC.BIN if it doesn't exist yet
     pop word [fs_current_dir]
 .no_programs_dir:
+
+    call fs_ensure_tmp_dir   ; creates the TMP folder in the root if needed, and
+                             ; caches its slot index so fs_find_free knows when
+                             ; to hand out a RAM-backed slot instead of a disk one
 
     call fs_ensure_license   ; creates LICENSE in the root if it doesn't exist yet
     call fs_ensure_user_cfg  ; loads USER.CFG, or runs first-boot setup to create it
@@ -100,6 +112,328 @@ main_loop:
 %include "src/uranium.asm"
 %include "src/user.asm"
 %include "src/tabcomplete.asm"
+
+; src/atadma.asm (Bus Master IDE / ATA DMA) is included here, at the very
+; end, rather than next to src/ata.asm above: none of its own code needs
+; 16-bit addressing (see the note at its own top), but its size would
+; still shift everything after it - and the margin below 0x10000 is
+; already thin (see src/devices.asm) - so it goes where appending it
+; can't push anything else past that mark, same reasoning as the
+; *.hg save area and the ATA DMA state right below it.
+%include "src/atadma.asm"
+
+; src/dosrun.asm (.com program support) is included here for the same
+; reason as src/atadma.asm just above: none of its own code needs
+; 16-bit addressing (see the note at its own top), so it costs nothing
+; to keep it out of the way of the margin described in src/devices.asm.
+%include "src/dosrun.asm"
+
+; --- fs_run_hg_script's (src/fs_extra.asm) nested-script save area ---
+; Deliberately placed here, after every %include, so appending it can
+; never push some earlier label past the 0x10000 boundary the way adding
+; the calculator once pushed serial_init's address past it (see the note
+; at the top of src/devices.asm) - fs_hg_save_state/fs_hg_restore_state
+; only ever reach it through 32-bit registers (mov edi/esi, not the usual
+; 16-bit mov di/si), so unlike batch_content_buf itself, it doesn't need
+; to sit below 0x10000 at all.
+HG_MAX_NESTED equ 3      ; how many already-running scripts can be paused
+                          ; while a nested one runs (total depth: this + 1)
+fs_hg_depth       db 0
+hg_save_buf       times (BATCH_BUF_LEN + 1) * HG_MAX_NESTED db 0
+hg_save_remaining times HG_MAX_NESTED dw 0
+hg_save_chain     times HG_MAX_NESTED dw 0
+hg_save_echo      times HG_MAX_NESTED db 0
+
+; fs_hg_save_state / fs_hg_restore_state: copy fs_run_hg_script's live
+; state (batch_content_buf, fs_batch_remaining, fs_batch_chain,
+; fs_hg_echo - all in src/data.asm/src/fs_extra.asm) to/from slot number
+; eax (0..HG_MAX_NESTED-1) of hg_save_buf & friends just above. Called
+; from fs_run_hg_script (src/fs_extra.asm) only when a script's line
+; names another *.hg file, so the paused outer script's data isn't
+; clobbered by the nested one - reachable from there through an ordinary
+; call regardless of address, same as any other function in this kernel.
+;
+; Addressed entirely through 32-bit registers (mov edi/esi/ebx, not the
+; usual 16-bit mov di/si most of this kernel uses) specifically so this
+; code and the hg_save_buf data above are both free to sit here, past
+; the 0x10000 mark batch_content_buf itself must stay under - see the
+; note at the top of src/devices.asm.
+fs_hg_save_state:
+    pushad
+    mov ebx, eax
+    imul eax, ebx, BATCH_BUF_LEN + 1
+    mov edi, hg_save_buf
+    add edi, eax
+    mov esi, batch_content_buf
+    mov ecx, BATCH_BUF_LEN + 1
+    rep movsb
+
+    mov ax, [fs_batch_remaining]
+    mov [hg_save_remaining + ebx*2], ax
+    mov ax, [fs_batch_chain]
+    mov [hg_save_chain + ebx*2], ax
+    mov al, [fs_hg_echo]
+    mov [hg_save_echo + ebx], al
+    popad
+    ret
+
+fs_hg_restore_state:
+    pushad
+    mov ebx, eax
+    imul eax, ebx, BATCH_BUF_LEN + 1
+    mov esi, hg_save_buf
+    add esi, eax
+    mov edi, batch_content_buf
+    mov ecx, BATCH_BUF_LEN + 1
+    rep movsb
+
+    mov ax, [hg_save_remaining + ebx*2]
+    mov [fs_batch_remaining], ax
+    mov ax, [hg_save_chain + ebx*2]
+    mov [fs_batch_chain], ax
+    mov al, [hg_save_echo + ebx]
+    mov [fs_hg_echo], al
+    popad
+    ret
+
+; print_string32: same job as print_string (src/screen.asm) - print the
+; null-terminated string at DS:ESI, one print_char (screen.asm; doesn't
+; touch ESI itself) at a time - but through plain ESI-based `lodsb`
+; instead of print_string's "a16 lodsb". That a16 forces a 16-bit
+; effective address, so print_string can only ever print a string
+; living below 0x10000 (see src/devices.asm); this version has no such
+; limit, so any NEW message text this kernel needs can live right here
+; at the tail rather than competing with batch_content_buf and friends
+; for that thin margin.
+print_string32:
+    pushad
+.loop:
+    lodsb
+    cmp al, 0
+    je .done
+    call print_char
+    jmp .loop
+.done:
+    popad
+    ret
+
+; --- src/atadma.asm's Bus Master IDE (ATA DMA) state ---
+; Placed here for the same reason as the *.hg save area above: it's
+; reached only through 32-bit registers/direct memory operands (never
+; the 16-bit mov si/di src/ata.asm's PIO path uses), so it doesn't need
+; to sit below 0x10000 and appending it can't push anything else past
+; that mark. ata_prdt is a single Physical Region Descriptor (one entry
+; is enough - every transfer here is exactly one 512-byte sector):
+; dword physical address, word byte count, word flags (0x8000 = EOT).
+align 4
+ata_prdt            dd 0     ; physical address of the transfer buffer
+ata_prdt_len        dw 0     ; byte count for that one entry (always 512)
+ata_prdt_flags      dw 0     ; 0x8000 = end-of-table
+ata_bmide_base      dw 0     ; Bus Master IDE base I/O port (0 until found)
+ata_dma_available   db 0     ; 1 once ata_dma_probe finds a controller
+
+; --- fs_read_slot/fs_write_slot's (src/filesystem.asm) RAM-backed
+; slots, see the note above FS_RAM_FILE_COUNT in data.asm. Living here
+; for the same reason as everything else on this page: reached only
+; through 32-bit registers, so the 4 KB buffer doesn't need to sit
+; below 0x10000 and appending it can't push anything else past that
+; mark. fs_tmp_dir_slot caches the TMP folder's own (ordinary,
+; disk-backed) slot index once fs_ensure_tmp_dir finds or creates it -
+; FS_TMP_DIR_UNSET is a value fs_current_dir can never actually hold
+; (unlike FS_ROOT, which it can), so fs_find_free's "is the CURRENT
+; directory the TMP folder" check can't misfire while TMP hasn't been
+; set up yet (fs_ensure_tmp_dir itself calls fs_find_free, to allocate
+; TMP's own slot, before this is ever assigned).
+FS_TMP_DIR_UNSET equ 0xFFFE
+fs_tmp_dir_slot dw FS_TMP_DIR_UNSET
+fs_ram_slots    times 512 * FS_RAM_FILE_COUNT db 0
+
+; fs_ram_slot_read / fs_ram_slot_write: ax = full slot index
+; (FS_FILE_COUNT..FS_TOTAL_SLOTS-1) - copies the corresponding 512-byte
+; record between fs_ram_slots and SCRATCH_ADDR. No disk I/O at all, so
+; unlike ata_read_sector/ata_write_sector this can't fail.
+fs_ram_slot_read:
+    pushad
+    movzx eax, ax
+    sub eax, FS_FILE_COUNT
+    imul eax, eax, 512
+    mov esi, fs_ram_slots
+    add esi, eax
+    mov edi, SCRATCH_ADDR
+    mov ecx, 512
+    rep movsb
+    popad
+    ret
+
+fs_ram_slot_write:
+    pushad
+    movzx eax, ax
+    sub eax, FS_FILE_COUNT
+    imul eax, eax, 512
+    mov edi, fs_ram_slots
+    add edi, eax
+    mov esi, SCRATCH_ADDR
+    mov ecx, 512
+    rep movsb
+    popad
+    ret
+
+; --- src/assembler.asm's mnemonic table ---
+; Moved here from assembler.asm itself: with everything else added to
+; this kernel over time, that file's position had crept close enough to
+; 0x10000 that these ~20 short strings (the last things there still
+; reached through the 16-bit mov di/si most of this kernel uses) were
+; the tightest point below it - and the RAM-disk feature just above
+; this comment finally pushed them past it, silently truncating every
+; "mov di, mnem_xxx" in src/assembler.asm to garbage (confirmed by
+; searching build/kernel.bin for the encoded bytes directly - the
+; NASM listing's own displayed immediates for label references can be
+; stale; see the note at the top of src/devices.asm).
+;
+; Rather than re-litigate that margin every time this kernel grows,
+; match_mnemonic_exact and match_mnemonic_prefix32 below reach this
+; table through EDI/ESI (32-bit) instead, so - like everything else on
+; this page - it doesn't matter that it now sits past 0x10000: nothing
+; here needs that margin at all.
+mnem_ret         db "ret", 0
+mnem_nop         db "nop", 0
+mnem_hlt         db "hlt", 0
+mnem_cli         db "cli", 0
+mnem_sti         db "sti", 0
+mnem_int_prefix  db "int ", 0
+mnem_mov_prefix  db "mov ", 0
+mnem_push_prefix db "push ", 0
+mnem_pop_prefix  db "pop ", 0
+mnem_inc_prefix  db "inc ", 0
+mnem_dec_prefix  db "dec ", 0
+mnem_add_prefix  db "add ", 0
+mnem_sub_prefix  db "sub ", 0
+mnem_cmp_prefix  db "cmp ", 0
+mnem_and_prefix  db "and ", 0
+mnem_or_prefix   db "or ", 0
+mnem_xor_prefix  db "xor ", 0
+mnem_jmp_prefix  db "jmp ", 0
+mnem_je_prefix   db "je ", 0
+mnem_jne_prefix  db "jne ", 0
+mnem_jz_prefix   db "jz ", 0
+mnem_jnz_prefix  db "jnz ", 0
+mnem_loop_prefix db "loop ", 0
+
+; match_mnemonic_exact: like the old local version in src/assembler.asm
+; (si must match the null-terminated string at EDI, followed by end-of-
+; line or a space), but through EDI instead of DI, so - unlike that
+; version - the string it's matched against doesn't need to live below
+; 0x10000. si is zero-extended into esi first: callers only ever set
+; the 16-bit si (the typed-instruction buffer, always below 0x10000),
+; so esi's own upper bits can't be trusted to already be zero.
+; carry=1 if it doesn't match.
+match_mnemonic_exact:
+    push esi
+    push edi
+    movzx esi, si
+.loop:
+    mov al, [edi]
+    cmp al, 0
+    je .mnem_ended
+    mov ah, [esi]
+    cmp al, ah
+    jne .no_match
+    inc esi
+    inc edi
+    jmp .loop
+.mnem_ended:
+    mov al, [esi]
+    cmp al, 0
+    je .match
+    cmp al, ' '
+    je .match
+    jmp .no_match
+.match:
+    pop edi
+    pop esi
+    clc
+    ret
+.no_match:
+    pop edi
+    pop esi
+    stc
+    ret
+
+; match_mnemonic_prefix32: same job as strcmp_prefix (src/input.asm) -
+; does si start with the null-terminated prefix at EDI? - but through
+; EDI/ESI so the prefix can live anywhere, same reasoning as
+; match_mnemonic_exact above. si is not advanced; ax=1 on a match, 0
+; otherwise (matching strcmp_prefix's own contract).
+match_mnemonic_prefix32:
+    push esi
+    push edi
+    movzx esi, si
+.loop:
+    mov al, [edi]
+    cmp al, 0
+    je .match
+    mov ah, [esi]
+    cmp al, ah
+    jne .no_match
+    inc esi
+    inc edi
+    jmp .loop
+.match:
+    mov ax, 1
+    jmp .done
+.no_match:
+    xor ax, ax
+.done:
+    pop edi
+    pop esi
+    ret
+
+; --- src/dosrun.asm's (.com program support) extended GDT and saved
+; state ---
+; boot.asm's original GDT only has the null/flat-code(0x08)/flat-
+; data(0x10) entries; running a .com needs two more, 16-bit, 64 KB
+; segments (both based at COM_LOAD_ADDR, matching the "tiny" memory
+; model a real .com expects: CS=DS=ES=SS all the same segment). Rather
+; than reach across into boot.asm (a separate NASM invocation - its
+; labels aren't visible here at all) to extend ITS table, kernel_start
+; just installs this one instead, once, via lgdt - safe because entries
+; 0x08/0x10 here are byte-for-byte identical to boot.asm's, so nothing
+; already using those selectors is affected.
+;
+; COM_LOAD_ADDR is fixed, so - unlike a general-purpose segment
+; descriptor - these never need patching at runtime: the base bytes are
+; just computed once, here, from the constant.
+COM_LOAD_ADDR equ 0x100000     ; 1 MB mark: plain, unused RAM on any PC memory map
+COM_CODE_SEL  equ 0x18
+COM_DATA_SEL  equ 0x20         ; a GDT selector value - unrelated to the
+                                ; same-looking IDT vector 0x20 (IRQ0/INT 20h)
+                                ; or PIC1_CMD port 0x20 used elsewhere in this
+                                ; kernel; three unrelated things that just
+                                ; happen to share a hex value.
+
+com_gdt_start:
+    dd 0, 0                                             ; null
+    dw 0xFFFF, 0x0000
+    db 0x00, 10011010b, 11001111b, 0x00                  ; flat code (0x08)
+    dw 0xFFFF, 0x0000
+    db 0x00, 10010010b, 11001111b, 0x00                  ; flat data (0x10)
+    dw 0xFFFF, (COM_LOAD_ADDR) & 0xFFFF
+    db ((COM_LOAD_ADDR) >> 16) & 0xFF, 10011010b, 0x00, ((COM_LOAD_ADDR) >> 24) & 0xFF   ; com code (0x18)
+    dw 0xFFFF, (COM_LOAD_ADDR) & 0xFFFF
+    db ((COM_LOAD_ADDR) >> 16) & 0xFF, 10010010b, 0x00, ((COM_LOAD_ADDR) >> 24) & 0xFF   ; com data (0x20)
+com_gdt_end:
+
+com_gdt_descriptor:
+    dw com_gdt_end - com_gdt_start - 1
+    dd com_gdt_start
+
+; fs_run_com's (src/dosrun.asm) saved kernel context, restored by
+; com_exit_now when the .com program terminates.
+com_saved_esp      dd 0
+com_saved_pic_mask db 0
+com_saved_idt20    times 8 db 0
+com_saved_idt21    times 8 db 0
+com_shift_held     db 0     ; com_poll_key's own Shift-key tracking
 
 ; Pad the remaining space within the sectors the bootloader reads,
 ; so the file size is a multiple of 512 bytes (see KERNEL_SECTORS_1/2 in boot.asm).

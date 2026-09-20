@@ -16,6 +16,25 @@
 ; stored pointer instead of failing to assemble, so this has broken
 ; before and is worth keeping in mind before reordering %includes).
 ;
+; Watch this margin: it has broken twice now, both times because
+; something ahead of a still-16-bit-addressed table grew just enough to
+; push that table past 0x10000 (this file's own serial_init bug, and
+; later src/assembler.asm's mnemonic table when the RAM-disk feature
+; below was added - both silent truncations, not assembler errors).
+; Check it with a byte-level scan of build/kernel.bin for
+; "66 B8/B9/BA/BB/BE/BF <imm16>" in the 0x8000-0x10000 range (the NASM
+; listing's own displayed immediates for label references can be
+; stale). As of the RAM-disk feature, the tightest point is
+; src/assembler.asm's reg8_names/reg16_names register-name tables, with
+; a comfortable ~2100 bytes of margin below 0x10000 - assembler.asm's
+; mnemonic table used to be the tight point instead, until it was moved
+; to the tail of kernel.asm specifically to fix this (see the note
+; above mnem_ret there for the full story, and
+; fs_hg_save_state/fs_hg_restore_state right above it for the general
+; pattern: reach new, sizeable, or already-tight-on-margin data through
+; 32-bit registers - mov edi/esi, not the 16-bit mov di/si most of this
+; kernel still uses - and it doesn't matter where it ends up).
+;
 ; In protected mode there's no way to check the disk through BIOS
 ; int 13h anymore (BIOS is simply unavailable) - so instead of a
 ; separate "DISK" entry doing that BIOS probe, only "ATA" (ata_identify)

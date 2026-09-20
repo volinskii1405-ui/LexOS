@@ -182,6 +182,12 @@ handle_command:
     je .do_serial
 
     mov si, buffer
+    mov di, cmd_recv_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_recv
+
+    mov si, buffer
     mov di, cmd_grep_prefix
     call strcmp_prefix
     cmp ax, 1
@@ -406,6 +412,12 @@ handle_command:
     call cmd_serial
     jmp .done
 
+.do_recv:
+    mov si, buffer
+    add si, 5                  ; skip "recv "
+    call cmd_recv
+    jmp .done
+
 .do_grep:
     mov si, buffer
     add si, 5                  ; skip "grep "
@@ -442,9 +454,12 @@ handle_command:
     ret
 
 ; ============================================================
-; Does DS:buffer end in ".hg" (case-insensitive)? Used by handle_command
-; to recognize a bare script filename before falling back to "Unknown
-; command" - see fs_run_hg_script in src/fs_extra.asm.
+; Does DS:buffer hold nothing but a bare "something.hg" filename
+; (case-insensitive, no arguments)? Used by handle_command to recognize a
+; script invocation before falling back to "Unknown command" - see
+; fs_run_hg_script in src/fs_extra.asm. A space anywhere disqualifies it
+; (a script is run by typing its name alone), so "somecmd file.hg" is
+; never mistaken for a script when "somecmd" isn't a real command.
 ; Output: ax = 1 if so, otherwise ax = 0.
 ; ============================================================
 shell_looks_like_hg:
@@ -456,6 +471,8 @@ shell_looks_like_hg:
 .len_loop:
     cmp byte [si], 0
     je .len_done
+    cmp byte [si], ' '
+    je .no
     inc si
     inc cx
     jmp .len_loop

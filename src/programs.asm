@@ -2,7 +2,9 @@
 ; content[0] = program length (0..127), content[1..] = raw code bytes,
 ; NOT null-terminated (0x00 can be part of actual machine code).
 ; Exports: fs_run, hex_editor, fs_ensure_test_exe, fs_ensure_calc_exe,
-;               fs_ensure_programs_dir
+;               fs_ensure_programs_dir, fs_ensure_tmp_dir
+; fs_run dispatches a *.com file (a plain FS_TYPE_FILE) to fs_run_com
+; (src/dosrun.asm) instead of the raw-machine-code path below.
 
 ; ============================================================
 ; run <name> : loads the program into program_exec_buffer and calls it
@@ -57,6 +59,17 @@ fs_run:
     cmp ax, FS_TYPE_PROGRAM
     je .is_program
 
+    cmp ax, FS_TYPE_FILE
+    jne .not_program
+    call fs_name_ends_with_com
+    cmp ax, 1
+    jne .not_program
+
+    mov ax, [fs_tmp_slot]
+    call fs_run_com                ; src/dosrun.asm
+    jmp .end
+
+.not_program:
     mov si, msg_run_notprogram
     call print_string
     jmp .end
@@ -100,6 +113,58 @@ fs_run:
     pop cx
     pop bx
     pop ax
+    ret
+
+; ============================================================
+; Does fs_tmp_name (the name `run` was given, exactly as typed) end in
+; ".com" (case-insensitive)? Used to recognize a .com program (a plain
+; FS_TYPE_FILE - unlike LexOS's own FS_TYPE_PROGRAM files, run through
+; fs_run_com in src/dosrun.asm instead of the raw-machine-code path
+; above. Output: ax = 1 if so, otherwise ax = 0.
+; ============================================================
+fs_name_ends_with_com:
+    push si
+    push cx
+
+    mov si, fs_tmp_name
+    xor cx, cx
+.len_loop:
+    cmp byte [si], 0
+    je .len_done
+    inc si
+    inc cx
+    jmp .len_loop
+.len_done:
+    cmp cx, 4
+    jb .no
+
+    mov si, fs_tmp_name
+    add si, cx
+    sub si, 4                     ; si -> the last 4 characters
+
+    mov al, [si]
+    cmp al, '.'
+    jne .no
+    mov al, [si + 1]
+    call to_upper_al
+    cmp al, 'C'
+    jne .no
+    mov al, [si + 2]
+    call to_upper_al
+    cmp al, 'O'
+    jne .no
+    mov al, [si + 3]
+    call to_upper_al
+    cmp al, 'M'
+    jne .no
+
+    mov ax, 1
+    jmp .done
+.no:
+    xor ax, ax
+.done:
+    pop cx
+    pop si
     ret
 
 ; ============================================================
@@ -846,6 +911,84 @@ fs_ensure_programs_dir:
     call fs_write_slot           ; ax is preserved (see fs_write_slot) = the new slot
 
 .end4:
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    ret
+
+; ============================================================
+; Creates the TMP folder in the root (if it doesn't exist yet) exactly
+; like fs_ensure_programs_dir just above, and either way caches its
+; slot index in fs_tmp_dir_slot (kernel.asm) - fs_find_free
+; (src/filesystem.asm) checks fs_current_dir against that to decide
+; whether a new file/folder should get a RAM-backed slot instead of a
+; real disk one (see the note above FS_RAM_FILE_COUNT in data.asm).
+; Called once at boot, while fs_current_dir is still FS_ROOT, same as
+; fs_ensure_programs_dir - so fs_find_free's own call here (to allocate
+; TMP's OWN slot) still correctly searches the real disk slots: at that
+; point fs_tmp_dir_slot is still FS_TMP_DIR_UNSET, which fs_current_dir
+; (FS_ROOT here) can never equal.
+; Output: ax = its slot index; -1 if the slot table is full.
+; ============================================================
+fs_ensure_tmp_dir:
+    push bx
+    push cx
+    push dx
+    push si
+
+    mov si, tmp_dir_name
+    call fs_find_by_name
+    cmp ax, -1
+    jne .found
+
+    call fs_find_free
+    cmp ax, -1
+    je .end5                     ; slot table full - give up (ax = -1)
+    mov [fs_tmp_slot], ax
+
+    xor bx, bx
+.clear_loop:
+    cmp bx, FS_CONTENT_OFFSET + FS_CONTENT_LEN
+    jae .clear_done
+    push bx
+    mov ax, bx
+    xor dx, dx
+    call fs_scratch_write_byte
+    pop bx
+    inc bx
+    jmp .clear_loop
+.clear_done:
+
+    mov si, tmp_dir_name
+    xor bx, bx
+.copy_name:
+    mov al, [si]
+    cmp al, 0
+    je .name_copied
+    mov dl, al
+    mov ax, bx
+    call fs_scratch_write_byte
+    inc si
+    inc bx
+    jmp .copy_name
+.name_copied:
+
+    mov ax, FS_TYPE_OFFSET
+    mov dl, FS_TYPE_DIR
+    call fs_scratch_write_byte
+
+    mov ax, FS_PARENT_OFFSET
+    mov dl, FS_ROOT_BYTE
+    call fs_scratch_write_byte
+
+    mov ax, [fs_tmp_slot]
+    call fs_write_slot           ; ax is preserved (see fs_write_slot) = the new slot
+
+.found:
+    mov [fs_tmp_dir_slot], ax
+
+.end5:
     pop si
     pop dx
     pop cx

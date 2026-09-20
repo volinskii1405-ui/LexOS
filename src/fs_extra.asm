@@ -664,6 +664,17 @@ fs_dup_new_idx  dw 0
 ; unless the script contains a line that's exactly "@echo off" (which
 ; silences the echo - and itself never runs as a command - for the
 ; rest of that script). Every run starts with echo back on.
+;
+; A script's own line can name another *.hg file: since running one
+; overwrites the shared batch_content_buf/fs_batch_remaining/
+; fs_batch_chain/fs_hg_echo this function uses to track ITS OWN
+; position, a nested call first saves the outer invocation's copy of all
+; four (fs_hg_save_state, into hg_save_buf & friends at the tail of
+; kernel.asm) and restores it once the nested script finishes, so the
+; outer script resumes exactly where it left off instead of reading
+; whatever the nested script left behind. Nesting is capped at
+; HG_MAX_NESTED levels (kernel.asm) - past that, the nested call is
+; refused with a message instead of running.
 ; ============================================================
 fs_run_hg_script:
     push ax
@@ -672,6 +683,16 @@ fs_run_hg_script:
     push dx
     push si
     push di
+
+    cmp byte [fs_hg_depth], HG_MAX_NESTED
+    ja .too_deep
+    cmp byte [fs_hg_depth], 0
+    je .no_save_needed
+    movzx eax, byte [fs_hg_depth]
+    dec eax
+    call fs_hg_save_state
+.no_save_needed:
+    inc byte [fs_hg_depth]
 
     mov byte [fs_hg_echo], 1
 
@@ -846,6 +867,8 @@ fs_run_hg_script:
     jmp .line_loop
 .hg_not_echo_directive:
 
+    cmp byte [buffer], 0
+    je .hg_skip_echo               ; blank line - nothing to echo (handle_command no-ops on it below)
     cmp byte [fs_hg_echo], 0
     je .hg_skip_echo
     push si
@@ -859,7 +882,19 @@ fs_run_hg_script:
     call handle_command
     jmp .line_loop
 
+.too_deep:
+    mov si, msg_hg_too_deep
+    call print_string
+    jmp .fully_done
+
 .end:
+    dec byte [fs_hg_depth]
+    cmp byte [fs_hg_depth], 0
+    je .fully_done
+    movzx eax, byte [fs_hg_depth]
+    dec eax
+    call fs_hg_restore_state
+.fully_done:
     pop di
     pop si
     pop dx
@@ -870,6 +905,10 @@ fs_run_hg_script:
 
 fs_batch_remaining dw 0
 fs_batch_chain dw 0
+
+; fs_hg_save_state/fs_hg_restore_state (called just above) live at the
+; tail of kernel.asm, after every %include, alongside the hg_save_buf
+; data they use - see the comment there for why.
 
 ; ============================================================
 ; Prints ax as a decimal number (0-65535), with no leading zeros.

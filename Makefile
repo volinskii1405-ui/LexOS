@@ -2,7 +2,7 @@ ASM = nasm
 BUILD_DIR = build
 SRC_FILES = kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/serial.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/assembler.asm src/rtc.asm src/speaker.asm src/grep.asm src/headtail.asm src/uranium.asm src/user.asm src/tabcomplete.asm
 
-.PHONY: all run clean
+.PHONY: all run run-serial clean
 
 all: $(BUILD_DIR)/os-image.bin
 
@@ -40,6 +40,16 @@ endif
 run: $(BUILD_DIR)/os-image.bin
 	qemu-system-i386 -drive format=raw,file=$(BUILD_DIR)/os-image.bin \
 		-audiodev $(AUDIODEV),id=snd0 -machine pcspk-audiodev=snd0
+
+# Same as `run`, but also exposes COM1 as a TCP socket on localhost, so
+# `recv <name> <hex size>` (see README) has something to actually receive
+# from - e.g. `nc 127.0.0.1 4444 < myfile.com` in another terminal, after
+# typing `recv` in LexOS. Override the port with SERIALPORT=xxxx.
+SERIALPORT ?= 4444
+run-serial: $(BUILD_DIR)/os-image.bin
+	qemu-system-i386 -drive format=raw,file=$(BUILD_DIR)/os-image.bin \
+		-audiodev $(AUDIODEV),id=snd0 -machine pcspk-audiodev=snd0 \
+		-serial tcp::$(SERIALPORT),server,nowait
 
 clean:
 	rm -rf $(BUILD_DIR)

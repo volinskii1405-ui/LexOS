@@ -34,6 +34,21 @@ FS_NAME_LEN       equ 16
 FS_CONTENT_LEN    equ 128
 FS_SCRATCH_ADDR   equ SCRATCH_ADDR
 
+; Slot indices FS_FILE_COUNT..FS_TOTAL_SLOTS-1 are RAM-backed (see
+; fs_ram_slots at the tail of kernel.asm): fs_read_slot/fs_write_slot
+; copy them to/from RAM instead of a real disk sector, so files created
+; directly inside the TMP folder never touch the disk at all - handy
+; scratch space that doesn't eat into the 24 real directory slots.
+; Every other filesystem function (ls, cat, rm, find-by-name, wildcard
+; cp/mv, ...) just iterates 0..FS_TOTAL_SLOTS-1 instead of
+; 0..FS_FILE_COUNT-1, so a RAM slot is indistinguishable from a disk one
+; except in that one guaranteed-not-persisted-across-reboots way. Content
+; past the 127 inline bytes still chains into the ordinary (disk-backed)
+; extra-sector pool like any other file - only the up-to-127-byte
+; primary record itself is RAM-only.
+FS_RAM_FILE_COUNT equ 8
+FS_TOTAL_SLOTS    equ FS_FILE_COUNT + FS_RAM_FILE_COUNT
+
 ; Sector read/write - always through our own ATA driver (direct port
 ; access, bypassing the BIOS). In protected mode we have no access to
 ; the BIOS at all (no v86 mode/thunk into real mode), so this isn't a
@@ -178,6 +193,8 @@ help_l41 db "  tail <n> [k]  - print last k lines of file n (default 10)", 13, 1
 help_l42 db "  uranium <n>   - open file n in the full-screen text editor", 13, 10, 0
 help_l43 db "  history       - list previously run commands", 13, 10, 0
 help_l44 db "  df / free     - show directory slot / extra sector usage", 13, 10, 0
+help_l45 db "  run <n>.com   - run a small MS-DOS .com program", 13, 10, 0
+help_l46 db "  recv <n> <hex size> - receive a file over COM1 (serial)", 13, 10, 0
 
 help_lines:
     dw help_l01, help_l02, help_l03, help_l04, help_l05
@@ -187,7 +204,8 @@ help_lines:
     dw help_l24, help_l25, help_l26, help_l27, help_l28
     dw help_l29, help_l30, help_l31, help_l32, help_l33
     dw help_l34, help_l35, help_l38, help_l39, help_l40
-    dw help_l41, help_l42, help_l43, help_l44
+    dw help_l41, help_l42, help_l43, help_l44, help_l45
+    dw help_l46
 help_lines_end:
 
 HELP_LINE_COUNT equ (help_lines_end - help_lines) / 2
@@ -205,6 +223,7 @@ msg_history_empty db "No command history yet.", 13, 10, 0
 
 msg_df_slots_label db "Directory slots: ", 0
 msg_df_extra_label db "Extra sectors:   ", 0
+msg_df_ram_label   db "RAM slots (TMP): ", 0
 msg_df_slash       db "/", 0
 msg_df_used        db " used, ", 0
 msg_df_free        db " free", 13, 10, 0
@@ -223,6 +242,7 @@ msg_fs_usage_append db "Usage: append <n> <text>", 13, 10, 0
 msg_fs_appended     db "Appended.", 13, 10, 0
 msg_fs_disk_full    db "No free space for more content - saved what fit.", 13, 10, 0
 msg_hg_echo_off_line db "@echo off", 0
+msg_hg_too_deep      db "Scripts nested too deeply.", 13, 10, 0
 msg_grep_usage       db "Usage: grep <n> <text>", 13, 10, 0
 msg_grep_header_mid  db " matches found with ", 34, 0
 msg_grep_quote_nl    db 34, 13, 10, 0
@@ -290,6 +310,7 @@ cmd_hex_prefix db "hex ", 0
 test_exe_name db "TEST.BIN", 0
 calc_exe_name db "CALC.BIN", 0
 programs_dir_name db "PROGRAMS", 0
+tmp_dir_name       db "TMP", 0
 
 program_exec_buffer times PROGRAM_MAX_LEN db 0
 
@@ -349,6 +370,10 @@ msg_ata_usage      db "Usage: ataread <lba (hex)>", 13, 10, 0
 
 msg_beep_usage     db "Usage: beep [freq_hz_in_hex]", 13, 10, 0
 msg_serial_sent    db "Sent over COM1.", 13, 10, 0
+msg_recv_usage     db "Usage: recv <name> <hex size, max 1000>", 13, 10, 0
+msg_recv_waiting   db "Waiting for ", 0
+msg_recv_waiting2  db " bytes on COM1...", 13, 10, 0
+msg_recv_done      db "Received.", 13, 10, 0
 
 dev_tmp_status db 0
 
@@ -416,6 +441,7 @@ cmd_time         db "time", 0
 cmd_beep         db "beep", 0
 cmd_beep_prefix  db "beep ", 0
 cmd_serial_prefix db "serial ", 0
+cmd_recv_prefix   db "recv ", 0
 cmd_cd           db "cd", 0
 cmd_cd_prefix    db "cd ", 0
 cmd_cp_prefix    db "cp ", 0

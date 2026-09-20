@@ -6,6 +6,8 @@
 ; segment SCRATCH_SEG:0000.
 ; Exports: ata_identify (for the device manager), ata_read_sector,
 ;          ata_write_sector, show_ata_sector (the ataread command)
+; ata_read_sector/ata_write_sector dispatch to src/atadma.asm's DMA
+; versions when available - see the comment on each below.
 
 ATA_DATA        equ 0x1F0
 ATA_ERROR       equ 0x1F1
@@ -102,6 +104,10 @@ ata_identify:
     in ax, dx
     loop .drain_loop
 
+    call ata_dma_probe           ; src/atadma.asm - upgrades ata_read_sector/
+                                  ; ata_write_sector to DMA if a Bus Master IDE
+                                  ; controller is found, PIO otherwise
+
     pop dx
     pop cx
     pop ax
@@ -116,11 +122,18 @@ ata_identify:
     ret
 
 ; ============================================================
-; Reads ONE sector (512 bytes) via direct PIO, bypassing BIOS,
-; into the scratch buffer SCRATCH_ADDR. Input: ax = LBA (0-65535).
-; Output: carry=1 on error.
+; Reads ONE sector (512 bytes) into the scratch buffer SCRATCH_ADDR.
+; Input: ax = LBA (0-65535). Output: carry=1 on error.
+; Goes through Bus Master IDE DMA (src/atadma.asm) when ata_dma_probe
+; found a controller for it at boot, otherwise falls back to the
+; original direct-PIO loop below - same contract either way, so nothing
+; outside this function needs to care which one ran.
 ; ============================================================
 ata_read_sector:
+    cmp byte [ata_dma_available], 0
+    je .pio
+    jmp ata_dma_read_sector
+.pio:
     push ax
     push bx
     push cx
@@ -191,10 +204,16 @@ ata_read_sector:
     ret
 
 ; ============================================================
-; Writes ONE sector (512 bytes) from the scratch buffer SCRATCH_ADDR via
-; direct PIO, bypassing BIOS. Input: ax = LBA. Output: carry=1 on error.
+; Writes ONE sector (512 bytes) from the scratch buffer SCRATCH_ADDR.
+; Input: ax = LBA. Output: carry=1 on error. Goes through Bus Master
+; IDE DMA (src/atadma.asm) when available, same as ata_read_sector
+; above - see the comment there.
 ; ============================================================
 ata_write_sector:
+    cmp byte [ata_dma_available], 0
+    je .pio
+    jmp ata_dma_write_sector
+.pio:
     push ax
     push bx
     push cx

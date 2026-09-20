@@ -1,15 +1,39 @@
+<div align="center">
+
 # LexOS
 
-A small x86 operating system written from scratch in NASM assembly — its own
-32-bit protected-mode kernel, a real ATA (PIO) disk driver, a folder-aware
-filesystem, a command shell with line editing and history, and a built-in
-hex/assembly editor for writing and running your own tiny programs. No
-libc, no bootloader framework, no BIOS calls once the kernel starts — every
-byte that touches the screen, keyboard, disk, clock, or speaker goes
-through hardware ports that this project drives itself.
+**A small x86 operating system, written from scratch in NASM assembly.**
 
-On first boot, a green backdrop and a centered window ask for a nickname
-and a UTC offset:
+[![Language](https://img.shields.io/badge/language-x86%20assembly-blue?style=flat-square)](https://www.nasm.us/)
+[![Mode](https://img.shields.io/badge/mode-32--bit%20protected%20mode-informational?style=flat-square)]()
+[![Emulator](https://img.shields.io/badge/tested%20on-QEMU-orange?style=flat-square)](https://www.qemu.org/)
+[![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
+
+</div>
+
+Its own 32-bit protected-mode kernel, a real ATA (PIO) disk driver, a
+folder-aware filesystem, a command shell with line editing and history, and
+a built-in hex/assembly editor for writing and running your own tiny
+programs. No libc, no bootloader framework, no BIOS calls once the kernel
+starts — every byte that touches the screen, keyboard, disk, clock, or
+speaker goes through hardware ports that this project drives itself.
+
+## Contents
+
+- [Screenshots](#screenshots)
+- [Features](#features)
+- [Quick start](#quick-start)
+- [Running the pre-built image](#running-the-pre-built-image)
+- [Command reference](#command-reference)
+- [How it works](#how-it-works)
+- [Project layout](#project-layout)
+- [Known limitations](#known-limitations)
+- [License](#license)
+
+## Screenshots
+
+**First boot** — a green backdrop and a centered window ask for a nickname
+and a UTC offset, then saves both to `USER.CFG`:
 
 ```
             ┌──────────────────────────────────────────────────────┐
@@ -25,7 +49,8 @@ and a UTC offset:
             └──────────────────────────────────────────────────────┘
 ```
 
-Then it drops you straight into the console:
+**Straight into the console** — `ls`, `cd`, and `run`-ning a program from
+the `PROGRAMS` folder:
 
 ```
 ======================================
@@ -39,6 +64,7 @@ Welcome, alex! (see USER.CFG)
 alex@/$ ls
 README
 PROGRAMS  <DIR>
+TMP  <DIR>
 LICENSE
 USER.CFG
 alex@/$ cd programs
@@ -49,7 +75,7 @@ alex@/PROGRAMS$
 
 ## Features
 
-**Kernel**
+### Kernel
 - Boots straight into 32-bit protected mode: the boot sector loads the
   kernel, enables the A20 line, installs a flat GDT, and switches out of
   real mode before the kernel ever runs.
@@ -59,7 +85,7 @@ alex@/PROGRAMS$
   code) instead of only the two IRQs the kernel actually uses, so a bug
   faults cleanly instead of triple-faulting the machine.
 
-**Filesystem**
+### Filesystem
 - A simple folder-aware filesystem on top of the ATA driver — files and
   folders live in fixed-size sectors, with parent pointers for
   subdirectories (`mkdir`, `cd`, `pwd`, `tree`, `mv`, `cp`, `ren`).
@@ -67,12 +93,15 @@ alex@/PROGRAMS$
   inline bytes into a chain of extra disk sectors, tracked by a small
   on-disk bitmap. `cat`, `size`, `head`, `tail`, `grep`, `cp`, and `rm` all
   understand the chain.
-- Typing a `*.hg` file's own name runs it as a script: every line is fed
-  to the shell as a command, same as `run` already does for machine-code
-  programs. Lines are echoed before they run, like a real DOS batch file,
-  unless the script contains a line that's exactly `@echo off` (silences
-  the echo - and doesn't run as a command itself - for the rest of that
-  script; every run starts back with echo on).
+- Typing a `*.hg` file's own bare name (no arguments) runs it as a
+  script: every line is fed to the shell as a command, same as `run`
+  already does for machine-code programs. Lines are echoed before they
+  run, like a real DOS batch file, unless the script contains a line
+  that's exactly `@echo off` (silences the echo - and doesn't run as a
+  command itself - for the rest of that script; every run starts back
+  with echo on). A script's own line can name another `*.hg` file - each
+  nested script gets its own echo state and resumes the outer one
+  correctly when it finishes, up to `HG_MAX_NESTED` (3) levels deep.
 - `cp`/`mv` also support wildcards: `cp *.txt <folder>` copies every match
   into `<folder>` under its own name, and `mv *.txt <folder>` moves them
   the same way; both skip `USER.CFG` and any name already taken in the
@@ -91,14 +120,25 @@ alex@/PROGRAMS$
   given count).
 - On first boot the root folder is seeded with `README`, a `LICENSE` file
   holding the project's own license text (long enough to spill from the
-  inline area into chained extra sectors), and a `PROGRAMS` folder holding
-  two demo programs: `TEST.BIN` and `CALC.BIN` (see **Programs** below).
+  inline area into chained extra sectors), a `PROGRAMS` folder holding
+  two demo programs: `TEST.BIN` and `CALC.BIN` (see **Programs** below),
+  and a `TMP` folder for scratch files (see below).
 - `ls` prints folders in bright yellow so they stand out from regular
   files, which stay whatever color you've set with `color`.
-- `df` (or `free`) shows how many of the 24 directory slots and 64 extra
-  disk sectors are in use.
+- `df` (or `free`) shows how many of the 24 directory slots, 64 extra
+  disk sectors, and 8 `TMP` RAM slots (see below) are in use.
+- `TMP` is a RAM disk: create a file while `cd`'d directly into it (not
+  a subfolder within it) and its up-to-127-byte primary record lives
+  entirely in memory instead of costing one of the 24 real directory
+  slots - `ls`, `cat`, `rm`, wildcards and everything else treat it like
+  any other file, but it vanishes on reboot along with everything else
+  that was only ever in RAM. Content past 127 bytes still chains into
+  the ordinary disk-backed extra-sector pool, same as any file. Placing
+  a file into `TMP` by path from a different directory (`cp x.txt tmp`
+  while elsewhere) still creates a normal disk-backed file - only
+  creating it while actually `cd`'d into `TMP` gets the RAM slot.
 
-**Shell**
+### Shell
 - Real line editing: Left/Right/Home/End/Delete work anywhere in the line,
   not just Backspace at the end.
 - Command history (Up/Down), case-insensitive filename lookup, and a
@@ -122,16 +162,24 @@ alex@/PROGRAMS$
   refuse to touch it (with an explanatory message), though `cat`/`grep`/
   `head`/`tail` can still read it like any other file.
 
-**Drivers**
+### Drivers
 - Keyboard and PIT timer via IRQ1/IRQ0, not `int 0x16`/BIOS polling.
-- ATA PIO disk driver talking directly to ports `0x1F0-0x1F7`.
+- ATA disk driver talking directly to ports `0x1F0-0x1F7`. At boot it
+  walks PCI config space (ports `0xCF8`/`0xCFC`, no BIOS) looking for a
+  Bus Master IDE controller; if one turns up, every sector transfer
+  goes through it via DMA (the controller moves the 512 bytes on its
+  own while the CPU just polls a status bit) instead of a 256-iteration
+  PIO in/out loop. Falls back to the original PIO path automatically
+  wherever no such controller is found - `run`, `cat`, `cp`, saving in
+  `uranium`, and everything else built on `ata_read_sector`/
+  `ata_write_sector` work identically either way.
 - VGA text-mode output straight to linear memory (`0xB8000`) with a
   hardware cursor driven through the CRTC ports — no `int 0x10`.
 - CMOS RTC (`date`, `time`), PC speaker (`beep`), and a minimal 16550 UART
   driver for COM1 (`serial`) — handy for debugging with
   `qemu ... -serial stdio`.
 
-**Editors**
+### Editors
 - `uranium` is a full-screen, nano-style text editor: arrow keys move the
   cursor (with line wrapping and scrolling for content taller than the
   screen), typing inserts, Backspace/Delete remove. `Ctrl+B` saves and
@@ -152,7 +200,7 @@ alex@/PROGRAMS$
   `cmp ax,bx`, ...), plus `add`/`sub`/`cmp`/`and`/`or`/`xor` with an
   immediate on any of the 8 8-bit registers, not just `al`.
 
-**Programs**
+### Programs
 - `run` loads a small file from disk and executes it as raw machine code.
 - `PROGRAMS/TEST.BIN` is a demo program: prints a short greeting.
 - `PROGRAMS/CALC.BIN` is a simple integer calculator: prompts for two
@@ -162,6 +210,38 @@ alex@/PROGRAMS$
   the same way any program can call `print_char` by absolute address -
   rather than squeezing the whole feature into a single file's 127-byte
   limit.
+- `run <n>.com` runs a small MS-DOS `.com` program - real 16-bit x86
+  machine code, not LexOS's own format, executed directly (no BIOS, no
+  real-mode switch, no v86 mode: it runs through a 16-bit code segment
+  under this same 32-bit protected-mode kernel, and `int 20h`/`int 21h`
+  land on LexOS's own handlers for it). Only a small, curated subset of
+  DOS calls is understood - enough for simple, self-contained programs
+  that print text and read keystrokes, **not** real DOS software (which
+  leans on file I/O, memory management, and dozens of other calls this
+  doesn't implement): `int 20h` (exit), and `int 21h` `AH=01h` (read
+  char, echoed), `02h` (print char), `08h` (read char, no echo), `09h`
+  (print a `$`-terminated string), `0Bh` (check keyboard status), `4Ch`
+  (exit with a return code). Anything else is silently ignored rather
+  than crashing. Capped at 4 KB, same as any other file's visible
+  content (`fs_load_content`).
+- `recv <n> <hex size>` is how a `.com` file (or any other binary file)
+  actually gets onto LexOS's disk in the first place: it receives that
+  many raw bytes over COM1 (the same serial port `serial`/`beep`'s
+  neighbor use) and saves them as a new file, or overwrites an existing
+  plain one. Plain `-serial stdio` (or `make run`) doesn't expose
+  anything a host program can feed a file into - `make run-serial`
+  does, exposing COM1 as a TCP socket on `localhost:4444`
+  (`SERIALPORT=` to change the port). With that running:
+  ```sh
+  printf '%x\n' $(wc -c < myprogram.com)   # -> the hex size `recv` wants
+  ```
+  then, inside LexOS, `recv myprogram.com <that hex size>`, and from
+  another terminal on the host, while it's printing "Waiting...":
+  ```sh
+  nc 127.0.0.1 4444 < myprogram.com
+  ```
+  (no `nc`? `sudo dnf install nmap-ncat` on Fedora, or `socat - TCP:127.0.0.1:4444 < myprogram.com`).
+  Also capped at 4 KB (`CONTENT_BUF_LEN`), like `run <n>.com` above.
 
 ## Quick start
 
@@ -169,9 +249,10 @@ You need `nasm` and an i386-capable VM — `qemu-system-i386` is what this
 project is developed and tested against.
 
 ```sh
-make        # assembles boot.asm + kernel.asm into build/os-image.bin
-make run    # builds, then boots it in QEMU
-make clean  # remove build/
+make             # assembles boot.asm + kernel.asm into build/os-image.bin
+make run         # builds, then boots it in QEMU
+make run-serial  # same, but also exposes COM1 on localhost:4444 for `recv`
+make clean       # remove build/
 ```
 
 `os-image.bin` is a raw disk image: `dd` it to a USB stick, or point any
@@ -240,6 +321,7 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `date` / `time` | show the current date / time (from the CMOS RTC) |
 | `beep [hz]` | play a short tone (frequency in hex, default 880 Hz) |
 | `serial <text>` | send text out over the COM1 UART |
+| `recv <n> <hex size>` | receive a file over COM1 (see **Programs** below for host-side setup) |
 | `reboot` / `shutdown` | restart / power off |
 | `history` | list previously run commands, numbered oldest first |
 | `df` / `free` | show directory slot / extra sector usage |
@@ -265,7 +347,7 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `uranium <n>` | full-screen text editor (creates the file if it doesn't exist) |
 | `hex <n>` | hex/assembly editor (auto-adds `.BIN` if the name has no dot) |
 | **Programs** | |
-| `run <n>` | execute a program file |
+| `run <n>` | execute a program file, or a `.com` MS-DOS program (see below) |
 
 Inside the `uranium` text editor: arrow keys, Home/End and Delete move
 around and edit like any text editor, Enter inserts a real line break.
@@ -331,18 +413,36 @@ src/
   shell.asm            command parsing/dispatch.
   interrupts.asm       IDT, PIC remap, keyboard (IRQ1) and timer (IRQ0).
   devices.asm          device manager/table (the `devices` command).
-  ata.asm              ATA PIO driver (the `ataread` command).
-  serial.asm           16550 UART driver for COM1 (`serial`) - included
-                       right after the other device drivers rather than
-                       further down, so its init function's address stays
-                       safely below 0x10000 (see the note in devices.asm).
-  filesystem.asm       folder-aware filesystem on top of the ATA driver.
+  ata.asm              ATA driver (the `ataread` command); dispatches to
+                       atadma.asm's DMA path when available, PIO otherwise.
+  atadma.asm           Bus Master IDE (ATA DMA): PCI enumeration and the
+                       actual DMA sector transfers. %included at the very
+                       end of kernel.asm rather than next to ata.asm, since
+                       (unlike ata.asm) its own code never needs to sit
+                       below 0x10000 - see the note at its top.
+  serial.asm           16550 UART driver for COM1 (`serial`, `recv`) -
+                       included right after the other device drivers
+                       rather than further down, so its init function's
+                       address stays safely below 0x10000 (see the note
+                       in devices.asm).
+  filesystem.asm       folder-aware filesystem on top of the ATA driver,
+                       including the RAM-backed TMP folder (fs_find_free/
+                       fs_read_slot/fs_write_slot - see data.asm's note
+                       above FS_RAM_FILE_COUNT).
   fs_extra.asm         chained extra sectors for files > 127 bytes, and
                        fs_load_content - the shared file-content reader
                        used by grep/head/tail/uranium.
   programs.asm         `run`/`hex` commands, the TEST.BIN/CALC.BIN demo
-                       programs and the PROGRAMS folder they live in.
-  assembler.asm        one-line mini-assembler used by the hex editor.
+                       programs, and the PROGRAMS/TMP folders they live in.
+  dosrun.asm           runs a *.com MS-DOS program directly under this
+                       32-bit kernel (no BIOS, no real-mode switch, no
+                       v86 mode) through a 16-bit code segment and a
+                       small int 20h/21h emulation layer. %included at
+                       the very end of kernel.asm, same reasoning as
+                       atadma.asm above.
+  assembler.asm        one-line mini-assembler used by the hex editor; its
+                       mnemonic table lives at the tail of kernel.asm
+                       instead of here (see the note above mnem_ret there).
   rtc.asm              CMOS RTC driver (`date`, `time`).
   speaker.asm          PC speaker driver (`beep`).
   grep.asm             text search within a file (`grep`), with on-screen
@@ -360,6 +460,28 @@ src/
 
 ## Known limitations
 
+- `TMP`'s RAM benefit only applies to a file created while actually
+  `cd`'d into it, and only to that file's own up-to-127-byte primary
+  record - a subfolder created inside `TMP` gets its own RAM slot the
+  same way, but files placed inside *that* subfolder fall back to the
+  normal disk pool (its current directory is the subfolder, not `TMP`
+  itself), and content past 127 bytes always chains into the ordinary
+  disk-backed extra-sector pool regardless of where the file lives.
+  There are only 8 RAM slots total (`FS_RAM_FILE_COUNT` in
+  `src/data.asm`).
+- ATA DMA only looks at PCI bus 0, function 0 (see `ata_dma_probe` in
+  `src/atadma.asm`) and only understands an I/O-space BAR4 - enough for
+  QEMU's own IDE controller (what this project is tested against), but
+  a real board that puts it somewhere else falls back to the original
+  PIO path with no error message, just slower transfers.
+- `.com` program support (`src/dosrun.asm`) understands only the DOS
+  calls listed under **Programs** above - real DOS software (which
+  reaches for file I/O, memory management, and dozens of other `int
+  21h` functions this doesn't implement) won't run, only small,
+  self-contained programs written specifically against that subset.
+  Labels/relocations aren't a concern (a `.com` is already position-
+  independent machine code by convention), but there's no `.exe` (MZ)
+  support - no header parsing, no segment relocation.
 - One file's inline metadata + content lives in a single 512-byte sector;
   content past that grows through a chain of extra sectors, but the pool
   is fixed at 64 sectors and file/folder names are capped at 8 characters
@@ -375,6 +497,9 @@ src/
   is silently skipped rather than reported individually. `uranium`'s
   `Ctrl+F` search is case-sensitive, like `grep`, and its search text is
   also capped at 32 characters.
+- `*.hg` scripts can call other `*.hg` scripts, but only `HG_MAX_NESTED`
+  (3) levels deep - a 4th nested call is refused with a message rather
+  than running.
 - The mini-assembler resolves labels in one pass, so jumps can only target
   a label that already appears earlier in the same program. It also has
   no memory operands (no `[bx]`, no `[label]`) and no 16-bit-register
