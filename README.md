@@ -121,7 +121,7 @@ alex@/PROGRAMS$
 - On first boot the root folder is seeded with `README`, a `LICENSE` file
   holding the project's own license text (long enough to spill from the
   inline area into chained extra sectors), a `PROGRAMS` folder holding
-  two demo programs: `TEST.BIN` and `CALC.BIN` (see **Programs** below),
+  three demo programs: `TEST.BIN`, `CALC.BIN` and `SNAKE.BIN` (see **Programs** below),
   and a `TMP` folder for scratch files (see below).
 - `ls` prints folders in bright yellow so they stand out from regular
   files, which stay whatever color you've set with `color`.
@@ -211,6 +211,13 @@ alex@/PROGRAMS$
   the same way any program can call `print_char` by absolute address -
   rather than squeezing the whole feature into a single file's 127-byte
   limit.
+- `PROGRAMS/SNAKE.BIN` is a graphical snake game: switches to VGA mode
+  13h (320x200, 256 colors) for the actual game, arrows or WASD to
+  move, ESC to quit early. The shell's own text console is completely
+  untouched by this - `src/vga.asm` saves every VGA register and a
+  raw copy of the text framebuffer before switching modes, and restores
+  them exactly afterward (whether the snake dies or the game is quit),
+  so it's back to normal immediately after.
 - `run <n>.com` runs a small MS-DOS `.com` program - real 16-bit x86
   machine code, not LexOS's own format, executed directly (no BIOS, no
   real-mode switch, no v86 mode: it runs through a 16-bit code segment
@@ -435,6 +442,11 @@ src/
                        used by grep/head/tail/uranium.
   programs.asm         `run`/`hex` commands, the TEST.BIN/CALC.BIN demo
                        programs, and the PROGRAMS/TMP folders they live in.
+  vga.asm              switches the VGA hardware to/from mode 13h (320x200,
+                       256 colors) by programming its registers directly -
+                       no BIOS int 10h in protected mode. Used by SNAKE.BIN.
+  snake.asm            PROGRAMS/SNAKE.BIN, a graphical snake game built on
+                       vga.asm's mode switch.
   dosrun.asm           runs a *.com MS-DOS program directly under this
                        32-bit kernel (no BIOS, no real-mode switch, no
                        v86 mode) through a 16-bit code segment and a

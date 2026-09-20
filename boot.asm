@@ -26,7 +26,7 @@
 KERNEL_LOAD_SEG  equ 0x0000
 KERNEL_LOAD_OFF  equ 0x8000     ; must match ORG in kernel.asm
 KERNEL_SECTORS_1 equ 64         ; part 1: up to the 0x10000 boundary (see above)
-KERNEL_SECTORS_2 equ 32         ; part 2: right after the boundary
+KERNEL_SECTORS_2 equ 48         ; part 2: right after the boundary
 KERNEL_LOAD_SEG2 equ 0x1000     ; = physical 0x10000, continuation of part 1
 KERNEL_LOAD_OFF2 equ 0x0000
 
