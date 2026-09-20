@@ -26,8 +26,9 @@ SNAKE_GRID_H  equ 25           ; 200 / 8
 SNAKE_MAX_LEN equ 200
 
 ; ============================================================
-; PROGRAMS/SNAKE.BIN's actual game loop. Runs until the snake dies
-; (wall or itself) or the player presses ESC.
+; PROGRAMS/SNAKE.BIN's actual game loop. A death (wall or itself) just
+; restarts a fresh game after a short "GAME OVER" flash - only ESC
+; actually leaves.
 ; ============================================================
 snake_run:
     pusha
@@ -46,21 +47,8 @@ snake_run:
 .have_seed:
     mov [snake_rng], eax
 
-    mov byte [snake_len], 3
-    mov byte [snake_dir_x], 1
-    mov byte [snake_dir_y], 0
-    mov byte [snake_body_x + 0], 20
-    mov byte [snake_body_y + 0], 12
-    mov byte [snake_body_x + 1], 19
-    mov byte [snake_body_y + 1], 12
-    mov byte [snake_body_x + 2], 18
-    mov byte [snake_body_y + 2], 12
-
-    mov byte [snake_alive], 1
     mov byte [snake_quit], 0
-    mov word [snake_score], 0
-
-    call snake_place_food
+    call snake_reset
 
 .game_loop:
     call snake_poll_keys
@@ -79,30 +67,62 @@ snake_run:
 
 .game_over:
     call snake_draw
-    mov ecx, 600
+    mov ebx, 124                        ; center "GAME OVER" (9 chars * 8px)
+    mov edx, 92
+    mov esi, msg_snake_gameover_hud
+    mov byte [vga_draw_color], 12    ; light red
+    call vga_draw_string
+
+    mov ecx, 900
     call speaker_delay_ms
+
+    call snake_poll_keys              ; catch an ESC pressed during the flash
+    cmp byte [snake_quit], 1
+    je .done
+
+    call snake_reset
+    jmp .game_loop
 
 .done:
     call vga_leave_mode13
 
     mov si, msg_newline
     call print_string
-    cmp byte [snake_alive], 0
-    jne .print_quit_msg
-    mov si, msg_snake_gameover
-    call print_string
-    jmp .print_score
-.print_quit_msg:
     mov si, msg_snake_quit
     call print_string
-.print_score:
     mov si, msg_snake_score
     call print_string
-    xor ax, ax
     mov ax, [snake_score]
     call print_dec_word
     mov si, msg_newline
     call print_string
+
+    popa
+    ret
+
+; ============================================================
+; (Re)starts a fresh game: snake back to its starting position/length,
+; direction, and score, and a freshly placed food. Doesn't touch
+; snake_quit or the RNG seed, so it's safe to call both on first entry
+; and after every death.
+; ============================================================
+snake_reset:
+    pusha
+
+    mov byte [snake_len], 3
+    mov byte [snake_dir_x], 1
+    mov byte [snake_dir_y], 0
+    mov byte [snake_body_x + 0], 20
+    mov byte [snake_body_y + 0], 12
+    mov byte [snake_body_x + 1], 19
+    mov byte [snake_body_y + 1], 12
+    mov byte [snake_body_x + 2], 18
+    mov byte [snake_body_y + 2], 12
+
+    mov byte [snake_alive], 1
+    mov word [snake_score], 0
+
+    call snake_place_food
 
     popa
     ret
@@ -355,7 +375,78 @@ snake_draw:
     jmp .draw_loop
 .draw_done:
 
+    ; HUD: score top-left, exit hint top-right - drawn last so the
+    ; snake/food never cover it.
+    mov byte [vga_draw_color], 15        ; white
+    mov ebx, 2
+    mov edx, 2
+    mov esi, msg_hud_score
+    call vga_draw_string
+
+    mov edi, snake_score_str
+    mov ax, [snake_score]
+    call snake_word_to_dec_buf
+    mov byte [edi], 0
+    mov ebx, 2 + 8*7                     ; right after "Score: " (7 chars)
+    mov edx, 2
+    mov esi, snake_score_str
+    call vga_draw_string
+
+    mov ebx, 320 - 8*10 - 2              ; "ESC - EXIT" is 10 chars
+    mov edx, 2
+    mov esi, msg_hud_exit
+    call vga_draw_string
+
     popa
+    ret
+
+; ============================================================
+; Converts ax (0..65535) into decimal ASCII digits written at [edi],
+; advancing edi past them - no null terminator (the caller adds one
+; if needed). Same digit-extraction as print_dec_word (fs_extra.asm),
+; just writing to a buffer instead of the text-mode console.
+; ============================================================
+snake_word_to_dec_buf:
+    push ax
+    push bx
+    push cx
+    push dx
+
+    xor cx, cx
+    mov bx, 10000
+    call .digit
+    mov bx, 1000
+    call .digit
+    mov bx, 100
+    call .digit
+    mov bx, 10
+    call .digit
+
+    add al, '0'
+    mov [edi], al
+    inc edi
+
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    ret
+
+.digit:
+    xor dx, dx
+    div bx
+    cmp al, 0
+    jne .print_it
+    cmp cx, 0
+    jne .print_it
+    mov ax, dx
+    ret
+.print_it:
+    add al, '0'
+    mov [edi], al
+    inc edi
+    mov cx, 1
+    mov ax, dx
     ret
 
 ; ============================================================
@@ -522,3 +613,12 @@ snake_score   dw 0
 snake_rng     dd 12345
 food_x        db 0
 food_y        db 0
+
+; Mode-13h HUD text - drawn via vga_draw_string (src/vga.asm), which
+; takes esi as an ordinary 32-bit pointer, so - unlike the messages
+; printed after returning to text mode (see the note at the top of
+; this file) - these are fine to keep right here.
+msg_hud_score        db "Score: ", 0
+msg_hud_exit         db "ESC - EXIT", 0
+msg_snake_gameover_hud db "GAME OVER", 0
+snake_score_str       times 6 db 0   ; up to 5 digits + null
