@@ -95,6 +95,7 @@ paint_editor:
     mov byte [paint_quit], 0
     mov byte [paint_have_last], 0
     mov byte [paint_cursor_shown], 0
+    mov byte [paint_erasing], 0
 
 .loop:
     call paint_cursor_erase             ; undo last frame's overlay before
@@ -105,8 +106,18 @@ paint_editor:
     call paint_handle_mouse
     call paint_cursor_show
 
-    mov ecx, 20
-    call speaker_delay_ms
+    ; Pacing this loop with speaker_delay_ms (as everywhere else in this
+    ; kernel) made the cursor visibly laggy: that function can only wait
+    ; in whole ~55ms PIT-tick units (IRQ0 runs at the default 18.2 Hz and
+    ; nothing here reprograms it - see src/speaker.asm), so even a
+    ; request for "20ms" actually cost a full tick, capping mouse/cursor
+    ; updates at ~18/sec. A single hlt has no such floor: it just
+    ; suspends the CPU until the very next interrupt of ANY kind - a
+    ; mouse packet, a keystroke, or that same 18.2 Hz timer as a
+    ; fallback - so a moving mouse (which interrupts far more often than
+    ; 18 times a second) is polled essentially as fast as it reports,
+    ; while an idle one still doesn't spin the CPU at 100%.
+    hlt
     jmp .loop
 
 .save_and_exit:
@@ -270,6 +281,12 @@ paint_poll_keys:
     cmp al, 0
     je .loop                          ; ignore arrows/other special keys
 
+    cmp al, 8                         ; Backspace
+    jne .not_backspace
+    call paint_toggle_eraser
+    jmp .loop
+.not_backspace:
+
     call to_upper_al
 
     cmp al, '1'
@@ -278,7 +295,8 @@ paint_poll_keys:
     ja .not_digit
     sub al, '0'
     mov [paint_color], al
-    jmp .loop
+    mov byte [paint_erasing], 0       ; picking a color explicitly always
+    jmp .loop                         ; means "stop erasing", even mid-toggle
 .not_digit:
     cmp al, 'A'
     jb .not_hex_letter
@@ -287,6 +305,7 @@ paint_poll_keys:
     sub al, 'A'
     add al, 10
     mov [paint_color], al
+    mov byte [paint_erasing], 0
     jmp .loop
 .not_hex_letter:
     cmp al, 'W'
@@ -303,6 +322,34 @@ paint_poll_keys:
     dec byte [paint_brush]
     jmp .loop
 
+.done:
+    popa
+    ret
+
+paint_erasing     db 0
+paint_saved_color db 4
+
+; ============================================================
+; Backspace toggles between the current color and an eraser (paint_color
+; forced to 0, black - the canvas's own starting color, so "erasing"
+; just means painting back over it). Pressing Backspace again restores
+; whatever color was in use before - paint_saved_color is only ever
+; written on the way INTO eraser mode, so it always holds that.
+; ============================================================
+paint_toggle_eraser:
+    pusha
+    cmp byte [paint_erasing], 0
+    jne .turn_off
+
+    mov al, [paint_color]
+    mov [paint_saved_color], al
+    mov byte [paint_color], 0
+    mov byte [paint_erasing], 1
+    jmp .done
+.turn_off:
+    mov al, [paint_saved_color]
+    mov [paint_color], al
+    mov byte [paint_erasing], 0
 .done:
     popa
     ret

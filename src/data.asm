@@ -195,6 +195,8 @@ help_l43 db "  history       - list previously run commands", 13, 10, 0
 help_l44 db "  df / free     - show directory slot / extra sector usage", 13, 10, 0
 help_l45 db "  run <n>.com   - run a small MS-DOS .com program", 13, 10, 0
 help_l46 db "  recv <n> <hex size> - receive a file over COM1 (serial)", 13, 10, 0
+help_l47 db "  paint <n>     - mouse-drawn picture editor, saves to n.BMP", 13, 10, 0
+help_l48 db "  view <n>      - display a picture saved by paint (.BMP)", 13, 10, 0
 
 help_lines:
     dw help_l01, help_l02, help_l03, help_l04, help_l05
@@ -205,7 +207,7 @@ help_lines:
     dw help_l29, help_l30, help_l31, help_l32, help_l33
     dw help_l34, help_l35, help_l38, help_l39, help_l40
     dw help_l41, help_l42, help_l43, help_l44, help_l45
-    dw help_l46
+    dw help_l46, help_l47, help_l48
 help_lines_end:
 
 HELP_LINE_COUNT equ (help_lines_end - help_lines) / 2
