@@ -1003,7 +1003,9 @@ fs_ensure_tmp_dir:
 ; note at calc_exe_template for why. Division by zero and an
 ; unrecognized operator print an error instead of a result. Being
 ; integer-only, a negative exponent is simply treated as 0 (result 1)
-; rather than rejected.
+; rather than rejected. All values are 16-bit signed, so a result (or,
+; for /, the -32768 / -1 case) that doesn't fit prints an overflow
+; error instead of a silently wrapped/wrong number.
 ; ============================================================
 calc_run:
     push ax
@@ -1052,14 +1054,17 @@ calc_run:
 .add:
     mov ax, [calc_num1]
     add ax, [calc_num2]
+    jo .overflow
     jmp .show
 .sub:
     mov ax, [calc_num1]
     sub ax, [calc_num2]
+    jo .overflow
     jmp .show
 .mul:
     mov ax, [calc_num1]
-    imul word [calc_num2]
+    imul word [calc_num2]          ; one-operand imul sets OF/CF if DX
+    jo .overflow                   ; isn't just the sign-extension of AX
     jmp .show
 .div:
     cmp word [calc_num2], 0
@@ -1068,6 +1073,15 @@ calc_run:
     call print_string
     jmp .end5
 .div_ok:
+    ; -32768 / -1 is the one 16-bit idiv that overflows (quotient would
+    ; be +32768, which doesn't fit) - it traps the CPU instead of just
+    ; giving a wrong answer, so it must be caught before idiv runs.
+    cmp word [calc_num1], 0x8000
+    jne .div_safe
+    cmp word [calc_num2], -1
+    jne .div_safe
+    jmp .overflow
+.div_safe:
     mov ax, [calc_num1]
     cwd
     idiv word [calc_num2]
@@ -1079,7 +1093,14 @@ calc_run:
     jle .show                      ; zero or negative exponent -> result 1
 .pow_loop:
     imul word [calc_num1]
+    jo .overflow
     loop .pow_loop
+    jmp .show
+
+.overflow:
+    mov si, msg_calc_overflow
+    call print_string
+    jmp .end5
 
 .show:
     mov [calc_result], ax
