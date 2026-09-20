@@ -38,6 +38,7 @@ VGA_FB          equ 0xA0000
 VGA_FB_SIZE     equ 320*200
 VGA_TEXT_FB     equ 0xB8000
 VGA_TEXT_SIZE   equ 80*25*2
+VGA_FONT_SIZE   equ 8192      ; generous for a 256-char 8x16 font (4096 bytes)
 
 ; ============================================================
 ; Switches the VGA hardware into mode 13h (320x200, 256 colors, one
@@ -46,6 +47,16 @@ VGA_TEXT_SIZE   equ 80*25*2
 ; ============================================================
 vga_enter_mode13:
     call vga_save_regs
+
+    ; Mode 13h's linear (chain-4) addressing spreads every byte we draw
+    ; across all 4 memory planes at that byte's underlying offset - and
+    ; the low few KB of plane 2 is exactly where the text font's glyph
+    ; bitmaps live. Drawing a full-screen picture WILL stomp on them,
+    ; so save them first (while still in normal text addressing) or
+    ; every character would come back blank after vga_leave_mode13,
+    ; even though the character/attribute bytes themselves are fine.
+    call vga_save_font
+
     mov esi, vga_mode13_regs
     call vga_apply_regs
 
@@ -60,7 +71,7 @@ vga_enter_mode13:
 
 ; ============================================================
 ; Switches back to the normal 80x25 text mode, restoring the exact
-; registers, palette and text framebuffer contents saved by
+; registers, palette, font and text framebuffer contents saved by
 ; vga_enter_mode13.
 ; ============================================================
 vga_leave_mode13:
@@ -74,6 +85,118 @@ vga_leave_mode13:
     mov edi, VGA_TEXT_FB
     mov ecx, VGA_TEXT_SIZE
     rep movsb
+
+    ; Put the glyph bitmaps back (see the note in vga_enter_mode13) -
+    ; this switches addressing again internally, so re-apply the real
+    ; text-mode registers afterward to leave things exactly as they
+    ; were.
+    call vga_restore_font
+    mov esi, vga_saved_regs
+    call vga_apply_regs
+    ret
+
+; ============================================================
+; Saves the font (plane 2, 8 KB - generous for a 256-char 8x16 font
+; with room to spare) into vga_saved_font. Must be called while still
+; in normal text-mode addressing. Temporarily reconfigures the
+; Sequencer/Graphics Controller for planar sequential access to read
+; plane 2 through the 0xA0000 window, then puts the real registers
+; back (vga_saved_regs is already populated by the time this runs -
+; see vga_enter_mode13).
+; ============================================================
+vga_save_font:
+    pusha
+
+    mov dx, VGA_SEQ_INDEX
+    mov al, 0x02
+    out dx, al
+    mov dx, VGA_SEQ_DATA
+    mov al, 0x04                    ; Map Mask: plane 2 (harmless for reads)
+    out dx, al
+
+    mov dx, VGA_SEQ_INDEX
+    mov al, 0x04
+    out dx, al
+    mov dx, VGA_SEQ_DATA
+    mov al, 0x07                    ; sequential addressing, chain-4 off
+    out dx, al
+
+    mov dx, VGA_GC_INDEX
+    mov al, 0x04
+    out dx, al
+    mov dx, VGA_GC_DATA
+    mov al, 0x02                    ; Read Map Select: plane 2
+    out dx, al
+
+    mov dx, VGA_GC_INDEX
+    mov al, 0x05
+    out dx, al
+    mov dx, VGA_GC_DATA
+    xor al, al                      ; Graphics Mode: read mode 0
+    out dx, al
+
+    mov dx, VGA_GC_INDEX
+    mov al, 0x06
+    out dx, al
+    mov dx, VGA_GC_DATA
+    mov al, 0x04                    ; Misc: A0000-AFFFF window, no odd/even
+    out dx, al
+
+    mov esi, VGA_FB
+    mov edi, vga_saved_font
+    mov ecx, VGA_FONT_SIZE
+    rep movsb
+
+    ; back to whatever addressing mode was actually active before this
+    mov esi, vga_saved_regs
+    call vga_apply_regs
+
+    popa
+    ret
+
+; ============================================================
+; Writes vga_saved_font back into plane 2, the same way vga_save_font
+; reads it - see the note there. Leaves the Sequencer/Graphics
+; Controller in the write-focused setup; the caller (vga_leave_mode13)
+; re-applies the real registers right after.
+; ============================================================
+vga_restore_font:
+    pusha
+
+    mov dx, VGA_SEQ_INDEX
+    mov al, 0x02
+    out dx, al
+    mov dx, VGA_SEQ_DATA
+    mov al, 0x04                    ; Map Mask: only plane 2 gets written
+    out dx, al
+
+    mov dx, VGA_SEQ_INDEX
+    mov al, 0x04
+    out dx, al
+    mov dx, VGA_SEQ_DATA
+    mov al, 0x07
+    out dx, al
+
+    mov dx, VGA_GC_INDEX
+    mov al, 0x05
+    out dx, al
+    mov dx, VGA_GC_DATA
+    xor al, al
+    out dx, al
+
+    mov dx, VGA_GC_INDEX
+    mov al, 0x06
+    out dx, al
+    mov dx, VGA_GC_DATA
+    mov al, 0x04
+    out dx, al
+
+    mov esi, vga_saved_font
+    mov edi, VGA_FB
+    mov ecx, VGA_FONT_SIZE
+    rep movsb
+
+    popa
     ret
 
 ; ============================================================
@@ -201,6 +324,20 @@ vga_write_dac:
 vga_apply_regs:
     pusha
 
+    ; Put the sequencer into synchronous reset before touching the
+    ; Misc Output register or anything else timing-related - changing
+    ; those while it's still clocking along on the OLD settings is
+    ; what left the screen blank after a switch (data was byte-correct
+    ; on a memory dump, but nothing new ever got displayed). The
+    ; seq_loop below naturally releases the reset again by writing
+    ; index 0's real value (part of the normal 5-byte table).
+    mov dx, VGA_SEQ_INDEX
+    xor al, al
+    out dx, al
+    mov dx, VGA_SEQ_DATA
+    mov al, 0x01
+    out dx, al
+
     mov al, [esi]
     mov dx, VGA_MISC_WRITE
     out dx, al
@@ -317,3 +454,4 @@ vga_default_palette:
     db 63, 63, 63        ; 15 white
 
 vga_saved_dac times 48 db 0
+vga_saved_font times VGA_FONT_SIZE db 0

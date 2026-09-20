@@ -440,4 +440,4 @@ com_shift_held     db 0     ; com_poll_key's own Shift-key tracking
 
 ; Pad the remaining space within the sectors the bootloader reads,
 ; so the file size is a multiple of 512 bytes (see KERNEL_SECTORS_1/2 in boot.asm).
-times (512*112)-($-$$) db 0
+times (512*124)-($-$$) db 0
