@@ -28,7 +28,7 @@ SECTOR_COUNT equ 8
 ;   byte 8       - type (0=free, 1=file, 2=folder)
 ;   byte 9       - parent (slot index of the parent folder, 0xFF = root)
 ;   bytes 10..   - content (zero-terminated, unused for folders)
-FS_START_SECTOR   equ 98      ; sector 1=bootloader, 2..97=kernel (96 sectors)
+FS_START_SECTOR   equ 114     ; sector 1=bootloader, 2..113=kernel (112 sectors)
 FS_FILE_COUNT     equ 24
 FS_NAME_LEN       equ 16
 FS_CONTENT_LEN    equ 128
@@ -309,6 +309,7 @@ cmd_hex_prefix db "hex ", 0
 
 test_exe_name db "TEST.BIN", 0
 calc_exe_name db "CALC.BIN", 0
+snake_exe_name db "SNAKE.BIN", 0
 programs_dir_name db "PROGRAMS", 0
 tmp_dir_name       db "TMP", 0
 
@@ -330,6 +331,13 @@ msg_calc_result   db "Result: ", 0
 msg_calc_bad_op   db "Unknown operator.", 13, 10, 0
 msg_calc_div_zero db "Division by zero.", 13, 10, 0
 msg_calc_overflow db "Overflow (result doesn't fit in 16 bits).", 13, 10, 0
+
+; src/snake.asm's snake_run (the game behind PROGRAMS/SNAKE.BIN) - kept
+; here for the same reason as the calc_* messages above.
+msg_snake_intro    db "SNAKE - arrows or WASD to move, ESC to quit.", 13, 10, 0
+msg_snake_gameover db "Game over!", 13, 10, 0
+msg_snake_quit     db "Quit.", 13, 10, 0
+msg_snake_score    db "Score: ", 0
 
 BATCH_BUF_LEN equ 511
 batch_content_buf times (BATCH_BUF_LEN + 1) db 0
