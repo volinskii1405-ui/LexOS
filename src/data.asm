@@ -28,7 +28,7 @@ SECTOR_COUNT equ 8
 ;   byte 8       - type (0=free, 1=file, 2=folder)
 ;   byte 9       - parent (slot index of the parent folder, 0xFF = root)
 ;   bytes 10..   - content (zero-terminated, unused for folders)
-FS_START_SECTOR   equ 114     ; sector 1=bootloader, 2..113=kernel (112 sectors)
+FS_START_SECTOR   equ 126     ; sector 1=bootloader, 2..125=kernel (124 sectors)
 FS_FILE_COUNT     equ 24
 FS_NAME_LEN       equ 16
 FS_CONTENT_LEN    equ 128
