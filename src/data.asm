@@ -329,6 +329,7 @@ msg_calc_prompt2  db "Number 2: ", 0
 msg_calc_result   db "Result: ", 0
 msg_calc_bad_op   db "Unknown operator.", 13, 10, 0
 msg_calc_div_zero db "Division by zero.", 13, 10, 0
+msg_calc_overflow db "Overflow (result doesn't fit in 16 bits).", 13, 10, 0
 
 BATCH_BUF_LEN equ 511
 batch_content_buf times (BATCH_BUF_LEN + 1) db 0

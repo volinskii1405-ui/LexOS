@@ -205,7 +205,8 @@ alex@/PROGRAMS$
 - `PROGRAMS/TEST.BIN` is a demo program: prints a short greeting.
 - `PROGRAMS/CALC.BIN` is a simple integer calculator: prompts for two
   signed numbers and an operator (`+ - * / ^`), then prints the result -
-  division by zero and an unrecognized operator print an error instead.
+  division by zero, an unrecognized operator, and a result too big for
+  16 bits (e.g. `20000 + 20000`) all print an error instead.
   Both programs are tiny stubs that call into a normal kernel function -
   the same way any program can call `print_char` by absolute address -
   rather than squeezing the whole feature into a single file's 127-byte
