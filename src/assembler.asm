@@ -127,11 +127,15 @@ reg8_names:
     db 'b','h', 7
 REG8_COUNT equ 8
 
+; reg8_names now lives past the 0x10000 mark a 16-bit register can
+; address (see the note at the top of src/devices.asm), so this reaches
+; it through edi instead of di - the one thing that had to change,
+; since [edi+n]/cmp/mov all still work exactly the same either way.
 parse_reg8_name:
     push bx
     push cx
     push dx
-    push di
+    push edi
 
     mov dl, [si]
     mov dh, [si+1]
@@ -144,18 +148,19 @@ parse_reg8_name:
     mov al, bl
     mov cl, 3
     mul cl
-    mov di, reg8_names
-    add di, ax
+    movzx eax, ax
+    mov edi, reg8_names
+    add edi, eax
 
-    cmp dl, [di]
+    cmp dl, [edi]
     jne .next
-    cmp dh, [di+1]
+    cmp dh, [edi+1]
     jne .next
 
-    mov al, [di+2]
+    mov al, [edi+2]
     xor ah, ah
     add si, 2
-    pop di
+    pop edi
     pop dx
     pop cx
     pop bx
@@ -167,7 +172,7 @@ parse_reg8_name:
     jmp .scan
 
 .not_found:
-    pop di
+    pop edi
     pop dx
     pop cx
     pop bx
@@ -188,11 +193,12 @@ reg16_names:
     db 'd','i', 7
 REG16_COUNT equ 8
 
+; reg16_names has the same >0x10000 issue as reg8_names above.
 parse_reg16_name:
     push bx
     push cx
     push dx
-    push di
+    push edi
 
     mov dl, [si]
     mov dh, [si+1]
@@ -205,18 +211,19 @@ parse_reg16_name:
     mov al, bl
     mov cl, 3
     mul cl
-    mov di, reg16_names
-    add di, ax
+    movzx eax, ax
+    mov edi, reg16_names
+    add edi, eax
 
-    cmp dl, [di]
+    cmp dl, [edi]
     jne .next
-    cmp dh, [di+1]
+    cmp dh, [edi+1]
     jne .next
 
-    mov al, [di+2]
+    mov al, [edi+2]
     xor ah, ah
     add si, 2
-    pop di
+    pop edi
     pop dx
     pop cx
     pop bx
@@ -228,7 +235,7 @@ parse_reg16_name:
     jmp .scan
 
 .not_found:
-    pop di
+    pop edi
     pop dx
     pop cx
     pop bx
@@ -1041,13 +1048,12 @@ fs_assemble_line:
 ; match_mnemonic_exact/match_mnemonic_prefix32 below for how they're
 ; still reached (through 32-bit registers, not the mov di this file
 ; used to use for them).
-
-asm_input_buffer times (ASM_INPUT_MAX + 1) db 0
-asm_output_buffer times ASM_OUTPUT_MAX db 0
-asm_output_length db 0
-asm_saved_si dw 0
-asm_jump_opcode db 0
-asm_label_name_buf times (LABEL_NAME_LEN + 1) db 0
-
-label_table times (LABEL_RECORD_SIZE * LABEL_MAX_COUNT) db 0
-label_count db 0
+;
+; asm_input_buffer/asm_output_buffer/asm_label_name_buf/label_table
+; and friends used to live here too, but every one of them is handed
+; to callees (read_asm_line, fs_assemble_line, add_label, ...) as a
+; plain "mov si/di, <buffer>" pointer - rewriting all of those call
+; sites and callees to carry the address in esi/edi instead would have
+; touched most of this file. Being tiny (under 150 bytes total), they
+; were moved to src/data.asm instead, near the very start of the
+; kernel image, where a 16-bit mov is safe - see the note there.

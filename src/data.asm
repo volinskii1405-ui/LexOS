@@ -315,6 +315,23 @@ tmp_dir_name       db "TMP", 0
 
 program_exec_buffer times PROGRAM_MAX_LEN db 0
 
+; src/assembler.asm's mini-assembler buffers - moved here from
+; assembler.asm itself, for the same reason as calc_num1 and friends
+; below: every one of these is handed to a callee as a plain
+; "mov si/di, <buffer>" pointer (read_asm_line, fs_assemble_line,
+; add_label, ...), so their own address needs to stay below 0x10000,
+; not just the code that touches them. Sizes are spelled out in bytes
+; rather than via assembler.asm's ASM_INPUT_MAX/LABEL_NAME_LEN/etc
+; equ's, to avoid a forward reference across files for no real benefit.
+asm_input_buffer times 21 db 0        ; ASM_INPUT_MAX(20) + 1
+asm_output_buffer times 3 db 0        ; ASM_OUTPUT_MAX
+asm_output_length db 0
+asm_saved_si dw 0
+asm_jump_opcode db 0
+asm_label_name_buf times 9 db 0       ; LABEL_NAME_LEN(8) + 1
+label_table times 80 db 0             ; LABEL_RECORD_SIZE(10) * LABEL_MAX_COUNT(8)
+label_count db 0
+
 ; src/programs.asm's calc_run (the calculator behind PROGRAMS/CALC.BIN) -
 ; kept here rather than as locals in programs.asm so their addresses
 ; stay below 0x10000 (see the note at the top of this file), where
