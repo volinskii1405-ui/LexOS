@@ -212,6 +212,18 @@ handle_command:
     je .do_uranium
 
     mov si, buffer
+    mov di, cmd_paint_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_paint
+
+    mov si, buffer
+    mov di, cmd_view_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_view
+
+    mov si, buffer
     mov di, cmd_history
     call strcmp_eq
     cmp ax, 1
@@ -440,6 +452,18 @@ handle_command:
     mov si, buffer
     add si, 8                  ; skip "uranium "
     call uranium_editor
+    jmp .done
+
+.do_paint:
+    mov si, buffer
+    add si, 6                  ; skip "paint "
+    call paint_editor
+    jmp .done
+
+.do_view:
+    mov si, buffer
+    add si, 5                  ; skip "view "
+    call view_bmp_file
     jmp .done
 
 .do_history:

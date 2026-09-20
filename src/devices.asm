@@ -89,6 +89,11 @@ devices_table:
     db DEV_TYPE_MISC
     db 0
     dw serial_init
+
+    db "MOUSE   "
+    db DEV_TYPE_INPUT
+    db 0
+    dw dev_init_mouse
 devices_table_end:
 
 DEVICE_COUNT equ (devices_table_end - devices_table) / DEV_RECORD_SIZE

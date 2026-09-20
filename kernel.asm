@@ -101,12 +101,14 @@ main_loop:
 ; in): keeping every device driver grouped this early guarantees the
 ; margin regardless of how large the later files grow.
 %include "src/serial.asm"
+%include "src/mouse.asm"
 
 %include "src/filesystem.asm"
 %include "src/fs_extra.asm"
 %include "src/programs.asm"
 %include "src/vga.asm"
 %include "src/snake.asm"
+%include "src/paint.asm"
 %include "src/assembler.asm"
 %include "src/rtc.asm"
 %include "src/speaker.asm"
@@ -440,4 +442,4 @@ com_shift_held     db 0     ; com_poll_key's own Shift-key tracking
 
 ; Pad the remaining space within the sectors the bootloader reads,
 ; so the file size is a multiple of 512 bytes (see KERNEL_SECTORS_1/2 in boot.asm).
-times (512*124)-($-$$) db 0
+times (512*184)-($-$$) db 0

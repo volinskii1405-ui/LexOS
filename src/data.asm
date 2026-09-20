@@ -28,7 +28,7 @@ SECTOR_COUNT equ 8
 ;   byte 8       - type (0=free, 1=file, 2=folder)
 ;   byte 9       - parent (slot index of the parent folder, 0xFF = root)
 ;   bytes 10..   - content (zero-terminated, unused for folders)
-FS_START_SECTOR   equ 126     ; sector 1=bootloader, 2..125=kernel (124 sectors)
+FS_START_SECTOR   equ 186     ; sector 1=bootloader, 2..185=kernel (184 sectors)
 FS_FILE_COUNT     equ 24
 FS_NAME_LEN       equ 16
 FS_CONTENT_LEN    equ 128
@@ -83,7 +83,7 @@ FS_EXTRA_CONTENT_LEN equ 508
 FS_EXTRA_USED_OFFSET equ 508
 FS_EXTRA_NEXT_OFFSET equ 510
 
-FS_EXTRA_COUNT equ 64
+FS_EXTRA_COUNT equ 300         ; bumped for PAINT.BIN's .BMP saves (see src/paint.asm)
 FS_BITMAP_SECTOR equ FS_START_SECTOR + FS_FILE_COUNT
 FS_EXTRA_START_SECTOR equ FS_BITMAP_SECTOR + 1
 
@@ -252,6 +252,10 @@ msg_grep_space       db " ", 0
 msg_head_usage       db "Usage: head <n> [lines]", 13, 10, 0
 msg_tail_usage       db "Usage: tail <n> [lines]", 13, 10, 0
 msg_uranium_usage    db "Usage: uranium <n>", 13, 10, 0
+msg_paint_usage      db "Usage: paint <n>", 13, 10, 0
+msg_paint_intro      db "PAINT - mouse to draw, 1-9/A-F color, W/S brush size, ESC to save & quit.", 13, 10, 0
+msg_paint_saved      db "Saved ", 0
+msg_view_usage       db "Usage: view <n>", 13, 10, 0
 msg_uranium_not_text db "That is a program file. Use hex to edit it.", 13, 10, 0
 msg_uranium_header1  db "LexOS Editor - ", 0
 msg_uranium_header2  db "  (", 0
@@ -480,6 +484,8 @@ cmd_grep_prefix  db "grep ", 0
 cmd_head_prefix  db "head ", 0
 cmd_tail_prefix  db "tail ", 0
 cmd_uranium_prefix db "uranium ", 0
+cmd_paint_prefix db "paint ", 0
+cmd_view_prefix  db "view ", 0
 cmd_history      db "history", 0
 cmd_df           db "df", 0
 cmd_free         db "free", 0
