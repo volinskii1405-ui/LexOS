@@ -94,13 +94,16 @@ paint_editor:
     mov byte [paint_brush], 4
     mov byte [paint_quit], 0
     mov byte [paint_have_last], 0
+    mov byte [paint_cursor_shown], 0
 
 .loop:
-    call paint_poll_keys
-    cmp byte [paint_quit], 1
-    je .save_and_exit
+    call paint_cursor_erase             ; undo last frame's overlay before
+    call paint_poll_keys                ; touching real pixels - poll_keys
+    cmp byte [paint_quit], 1            ; can't move the mouse, but the ESC
+    je .save_and_exit                   ; check must still see real content
 
     call paint_handle_mouse
+    call paint_cursor_show
 
     mov ecx, 20
     call speaker_delay_ms
@@ -497,6 +500,112 @@ paint_fill_brush:
     inc ebx
     jmp .row_loop
 .done:
+    popa
+    ret
+
+; ============================================================
+; Software mouse cursor: mode 13h has no hardware cursor overlay (that's
+; a text-mode-only VGA feature), so the pointer has to be drawn into the
+; framebuffer like anything else - and undrawn again before the next
+; frame, or it would leave a trail and get saved into the picture.
+; Toggling each cursor pixel by XORing it with 0x0F does both jobs with
+; no separate save/restore buffer: applying it twice at the same spot
+; is its own exact inverse, and since the palette's low and high 8
+; entries are the same 8 hues at normal/bright intensity (the standard
+; VGA layout - see bmp_header_palette below), XORing the low nibble
+; swaps each color for a strongly contrasting one (black<->white,
+; blue<->yellow, red<->cyan, ...) instead of some indistinguishable
+; near-match.
+; Shape: a small crosshair (a filled square brush would obscure exactly
+; what it's pointing at).
+; ============================================================
+paint_cursor_shown db 0
+paint_cursor_x     dd 0
+paint_cursor_y     dd 0
+
+; --- Toggles one pixel at (eax, ebx), clipped to the screen ---
+paint_cursor_toggle_pixel:
+    pusha
+    cmp eax, 0
+    jl .done
+    cmp eax, 319
+    jg .done
+    cmp ebx, 0
+    jl .done
+    cmp ebx, 199
+    jg .done
+
+    push eax
+    push ebx
+    imul ebx, ebx, 320
+    add ebx, eax
+    add ebx, VGA_FB
+    mov al, [ebx]
+    xor al, 0x0F
+    mov [ebx], al
+    pop ebx
+    pop eax
+.done:
+    popa
+    ret
+
+; --- Toggles every pixel of the crosshair centered at (ebx, edx) ---
+paint_cursor_toggle:
+    pusha
+    mov esi, ebx                        ; cx
+    mov edi, edx                        ; cy
+
+    mov ecx, -3
+.h_loop:
+    cmp ecx, 3
+    jg .h_done
+    mov eax, esi
+    add eax, ecx
+    mov ebx, edi
+    call paint_cursor_toggle_pixel
+    inc ecx
+    jmp .h_loop
+.h_done:
+
+    mov ecx, -3
+.v_loop:
+    cmp ecx, 3
+    jg .v_done
+    cmp ecx, 0
+    je .v_skip                          ; center pixel: already toggled above
+    mov eax, esi
+    mov ebx, edi
+    add ebx, ecx
+    call paint_cursor_toggle_pixel
+.v_skip:
+    inc ecx
+    jmp .v_loop
+.v_done:
+    popa
+    ret
+
+; --- Removes the cursor overlay drawn at its last-shown position, if any ---
+paint_cursor_erase:
+    pusha
+    cmp byte [paint_cursor_shown], 0
+    je .done
+    mov ebx, [paint_cursor_x]
+    mov edx, [paint_cursor_y]
+    call paint_cursor_toggle
+    mov byte [paint_cursor_shown], 0
+.done:
+    popa
+    ret
+
+; --- Draws the cursor overlay at the current mouse position ---
+paint_cursor_show:
+    pusha
+    mov ebx, [mouse_x]
+    mov edx, [mouse_y]
+    call paint_cursor_toggle
+    mov [paint_cursor_x], ebx
+    mov [paint_cursor_y], edx
+    mov byte [paint_cursor_shown], 1
     popa
     ret
 
