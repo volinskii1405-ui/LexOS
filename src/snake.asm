@@ -38,6 +38,8 @@ snake_run:
     mov ecx, 1500
     call speaker_delay_ms
 
+    call snake_load_highscore
+
     call vga_enter_mode13
 
     mov eax, [timer_ticks]
@@ -73,7 +75,13 @@ snake_run:
     mov byte [vga_draw_color], 12    ; light red
     call vga_draw_string
 
-    mov ecx, 900
+    mov bx, 150                          ; low "sad" tone
+    call speaker_set_freq
+    mov ecx, 350
+    call speaker_delay_ms
+    call speaker_off
+
+    mov ecx, 550
     call speaker_delay_ms
 
     call snake_poll_keys              ; catch an ESC pressed during the flash
@@ -93,6 +101,12 @@ snake_run:
     mov si, msg_snake_score
     call print_string
     mov ax, [snake_score]
+    call print_dec_word
+    mov si, msg_newline
+    call print_string
+    mov si, msg_snake_highscore
+    call print_string
+    mov ax, [snake_highscore]
     call print_dec_word
     mov si, msg_newline
     call print_string
@@ -124,6 +138,134 @@ snake_reset:
 
     call snake_place_food
 
+    popa
+    ret
+
+; ============================================================
+; Loads the saved high score (a plain decimal-text file, colocated
+; wherever SNAKE.BIN is being run from) into snake_highscore, or
+; leaves it at 0 if the file doesn't exist yet.
+; ============================================================
+snake_load_highscore:
+    pusha
+    mov word [snake_highscore], 0
+
+    mov si, snake_hs_name
+    call fs_find_by_name
+    cmp ax, -1
+    je .done
+
+    call fs_load_content
+    ; content_buf might still hold a longer, unrelated previous load past
+    ; content_buf_len (fs_load_content doesn't clear the rest of it) -
+    ; terminate it explicitly so parse_dec_word can't run into stale digits.
+    mov bx, [content_buf_len]
+    mov byte [content_buf + bx], 0
+    mov si, content_buf
+    call parse_dec_word
+    mov [snake_highscore], ax
+
+.done:
+    popa
+    ret
+
+; ============================================================
+; Writes snake_highscore out as plain decimal text, creating the file
+; (same shape as fs_ensure_readme in src/filesystem.asm) if it doesn't
+; already exist. Silently does nothing if the slot table is full.
+; ============================================================
+snake_save_highscore:
+    pusha
+
+    mov edi, content_buf
+    mov ax, [snake_highscore]
+    call snake_word_to_dec_buf
+    mov byte [edi], 0
+    mov eax, edi
+    sub eax, content_buf
+    mov [content_buf_len], ax
+
+    mov si, snake_hs_name
+    call fs_find_by_name
+    cmp ax, -1
+    jne .have_slot
+
+    call fs_find_free
+    cmp ax, -1
+    je .done
+
+    mov [fs_tmp_slot], ax
+
+    xor bx, bx
+.clear_loop:
+    cmp bx, FS_CONTENT_OFFSET + FS_CONTENT_LEN
+    jae .clear_done
+    push bx
+    mov ax, bx
+    xor dx, dx
+    call fs_scratch_write_byte
+    pop bx
+    inc bx
+    jmp .clear_loop
+.clear_done:
+
+    mov si, snake_hs_name
+    xor bx, bx
+.copy_name:
+    mov al, [si]
+    cmp al, 0
+    je .name_copied
+    mov dl, al
+    mov ax, bx
+    call fs_scratch_write_byte
+    inc si
+    inc bx
+    jmp .copy_name
+.name_copied:
+
+    mov ax, FS_TYPE_OFFSET
+    mov dl, FS_TYPE_FILE
+    call fs_scratch_write_byte
+
+    call fs_get_current_parent_byte
+    mov dl, al
+    mov ax, FS_PARENT_OFFSET
+    call fs_scratch_write_byte
+
+    jmp .write_content
+
+.have_slot:
+    mov [fs_tmp_slot], ax
+    call fs_read_slot
+
+.write_content:
+    mov si, content_buf
+    mov bx, FS_CONTENT_OFFSET
+    mov cx, [content_buf_len]
+.copy_content:
+    cmp cx, 0
+    je .content_copied
+    mov al, [si]
+    mov dl, al
+    mov ax, bx
+    call fs_scratch_write_byte
+    inc si
+    inc bx
+    dec cx
+    jmp .copy_content
+.content_copied:
+
+    mov ax, FS_TOTAL_LEN_OFFSET
+    mov dx, [content_buf_len]
+    call fs_scratch_write_word
+    mov ax, FS_CHAIN_OFFSET
+    mov dx, FS_NO_CHAIN
+    call fs_scratch_write_word
+
+    mov ax, [fs_tmp_slot]
+    call fs_write_slot
+
+.done:
     popa
     ret
 
@@ -258,6 +400,18 @@ snake_advance:
     jae .move_body
     inc byte [snake_len]
     add word [snake_score], 10
+
+    mov bx, 1200
+    call speaker_set_freq
+    mov ecx, 50
+    call speaker_delay_ms
+    call speaker_off
+
+    mov ax, [snake_score]
+    cmp ax, [snake_highscore]
+    jbe .move_body
+    mov [snake_highscore], ax
+    call snake_save_highscore
 
 .move_body:
     movzx ecx, byte [snake_len]
@@ -395,6 +549,20 @@ snake_draw:
     mov ebx, 320 - 8*10 - 2              ; "ESC - EXIT" is 10 chars
     mov edx, 2
     mov esi, msg_hud_exit
+    call vga_draw_string
+
+    mov ebx, 2
+    mov edx, 2 + 16                       ; second HUD line
+    mov esi, msg_hud_highscore
+    call vga_draw_string
+
+    mov edi, snake_score_str
+    mov ax, [snake_highscore]
+    call snake_word_to_dec_buf
+    mov byte [edi], 0
+    mov ebx, 2 + 8*6                      ; right after "High: " (6 chars)
+    mov edx, 2 + 16
+    mov esi, snake_score_str
     call vga_draw_string
 
     popa
@@ -610,6 +778,7 @@ snake_ate     db 0
 snake_alive   db 1
 snake_quit    db 0
 snake_score   dw 0
+snake_highscore dw 0
 snake_rng     dd 12345
 food_x        db 0
 food_y        db 0
@@ -620,5 +789,6 @@ food_y        db 0
 ; this file) - these are fine to keep right here.
 msg_hud_score        db "Score: ", 0
 msg_hud_exit         db "ESC - EXIT", 0
+msg_hud_highscore    db "High: ", 0
 msg_snake_gameover_hud db "GAME OVER", 0
 snake_score_str       times 6 db 0   ; up to 5 digits + null

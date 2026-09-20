@@ -310,6 +310,7 @@ cmd_hex_prefix db "hex ", 0
 test_exe_name db "TEST.BIN", 0
 calc_exe_name db "CALC.BIN", 0
 snake_exe_name db "SNAKE.BIN", 0
+snake_hs_name db "SNAKE.HS", 0
 programs_dir_name db "PROGRAMS", 0
 tmp_dir_name       db "TMP", 0
 
@@ -355,6 +356,7 @@ msg_snake_intro    db "SNAKE - arrows or WASD to move, ESC to quit.", 13, 10, 0
 msg_snake_gameover db "Game over!", 13, 10, 0
 msg_snake_quit     db "Quit.", 13, 10, 0
 msg_snake_score    db "Score: ", 0
+msg_snake_highscore db "Best:  ", 0
 
 BATCH_BUF_LEN equ 511
 batch_content_buf times (BATCH_BUF_LEN + 1) db 0
