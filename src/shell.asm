@@ -224,6 +224,12 @@ handle_command:
     je .do_view
 
     mov si, buffer
+    mov di, cmd_play_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_play
+
+    mov si, buffer
     mov di, cmd_history
     call strcmp_eq
     cmp ax, 1
@@ -465,6 +471,12 @@ handle_command:
     mov si, buffer
     add si, 5                  ; skip "view "
     call view_bmp_file
+    jmp .done
+
+.do_play:
+    mov si, buffer
+    add si, 5                  ; skip "play "
+    call play_file
     jmp .done
 
 .do_history:

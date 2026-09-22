@@ -114,6 +114,7 @@ main_loop:
 %include "src/assembler.asm"
 %include "src/rtc.asm"
 %include "src/speaker.asm"
+%include "src/sound.asm"
 %include "src/grep.asm"
 %include "src/headtail.asm"
 %include "src/uranium.asm"

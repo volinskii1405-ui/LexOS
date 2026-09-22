@@ -1,6 +1,6 @@
 ASM = nasm
 BUILD_DIR = build
-SRC_FILES = kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/serial.asm src/mouse.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/vga.asm src/snake.asm src/paint.asm src/sweeper.asm src/assembler.asm src/rtc.asm src/speaker.asm src/grep.asm src/headtail.asm src/uranium.asm src/user.asm src/tabcomplete.asm
+SRC_FILES = kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/serial.asm src/mouse.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/vga.asm src/snake.asm src/paint.asm src/sweeper.asm src/assembler.asm src/rtc.asm src/speaker.asm src/sound.asm src/grep.asm src/headtail.asm src/uranium.asm src/user.asm src/tabcomplete.asm
 
 .PHONY: all run run-serial clean
 
@@ -39,7 +39,8 @@ endif
 
 run: $(BUILD_DIR)/os-image.bin
 	qemu-system-i386 -drive format=raw,file=$(BUILD_DIR)/os-image.bin \
-		-audiodev $(AUDIODEV),id=snd0 -machine pcspk-audiodev=snd0
+		-audiodev $(AUDIODEV),id=snd0 -machine pcspk-audiodev=snd0 \
+		-device adlib,audiodev=snd0,iobase=0x220
 
 # Same as `run`, but also exposes COM1 as a TCP socket on localhost, so
 # `recv <name> <hex size>` (see README) has something to actually receive
@@ -49,6 +50,7 @@ SERIALPORT ?= 4444
 run-serial: $(BUILD_DIR)/os-image.bin
 	qemu-system-i386 -drive format=raw,file=$(BUILD_DIR)/os-image.bin \
 		-audiodev $(AUDIODEV),id=snd0 -machine pcspk-audiodev=snd0 \
+		-device adlib,audiodev=snd0,iobase=0x220 \
 		-serial tcp::$(SERIALPORT),server,nowait
 
 clean:
