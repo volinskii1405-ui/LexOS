@@ -278,6 +278,82 @@ vga_draw_string:
     ret
 
 ; ============================================================
+; Same job as vga_draw_char, downsampled to 4x8 pixels (every OTHER
+; row and column of the 8x16 glyph vga_saved_font already has, rather
+; than a proper resize) - a plain half-scale font for a HUD that needs
+; to take up less of a small 320x200 screen (src/snake.asm's Score/
+; High lines, say) than the full-size 8x16 glyphs cost.
+; Input: ebx = x, edx = y (top-left pixel), ecx = character code
+; (0..255), [vga_draw_color] = color (see vga_draw_char).
+; ============================================================
+vga_draw_char_small:
+    pusha
+
+    mov eax, ecx
+    and eax, 0xFF
+    shl eax, 5                      ; * 32 (this glyph's slot)
+    add eax, vga_saved_font
+    mov esi, eax
+
+    xor ecx, ecx                    ; output row = 0..7
+.row_loop:
+    cmp ecx, 8
+    jae .done
+
+    mov eax, ecx
+    shl eax, 1                       ; source row = ecx*2 (even rows only)
+    mov al, [esi + eax]               ; that row's 8 source pixels
+
+    push ecx
+    mov edi, edx
+    add edi, ecx
+    imul edi, edi, 320
+    add edi, ebx
+    add edi, VGA_FB
+
+    mov cl, 4                         ; 4 output columns
+.col_loop:
+    test al, 0x80                     ; sample the current even source column
+    jz .skip_pixel
+    push eax
+    mov ah, [vga_draw_color]
+    mov [edi], ah
+    pop eax
+.skip_pixel:
+    shl al, 2                          ; advance TWO source columns (even ones)
+    inc edi
+    dec cl
+    jnz .col_loop
+
+    pop ecx
+    inc ecx
+    jmp .row_loop
+.done:
+    popa
+    ret
+
+; ============================================================
+; Same job as vga_draw_string, using vga_draw_char_small - 4 pixels
+; per character plus 1 of spacing, left to right, no wrapping.
+; Input: ebx = x, edx = y, esi = string, [vga_draw_color] = color.
+; ============================================================
+vga_draw_string_small:
+    pusha
+.loop:
+    mov al, [esi]
+    cmp al, 0
+    je .done
+    xor ecx, ecx
+    mov cl, al
+    call vga_draw_char_small
+    add ebx, 5
+    inc esi
+    jmp .loop
+.done:
+    popa
+    ret
+
+; ============================================================
 ; Saves the current MISC/SEQ/CRTC/GC/AC registers into vga_saved_regs
 ; (laid out identically to vga_mode13_regs, so both can be fed to
 ; vga_apply_regs) and snapshots the text framebuffer into
