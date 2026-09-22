@@ -69,7 +69,7 @@ snake_run:
 
 .game_over:
     call snake_draw
-    mov ebx, 138                        ; center "GAME OVER" (9 chars * 5px,
+    mov ebx, 124                        ; center "GAME OVER" (9 chars * 8px,
     mov edx, 92                         ; small font - see snake_draw)
     mov esi, msg_snake_gameover_hud
     mov byte [vga_draw_color], 12    ; light red
@@ -530,11 +530,11 @@ snake_draw:
 .draw_done:
 
     ; HUD: score top-left, exit hint top-right - drawn last so the
-    ; snake/food never cover it. vga_draw_string_small (4px/char
-    ; instead of the normal 8px/char - src/vga.asm) keeps this from
-    ; eating into a screen that's only 320x200 to begin with, at
-    ; SNAKE_CELL=8 pixels per grid cell - the full-size font used to
-    ; cost a good four rows of the actual play area up here.
+    ; snake/food never cover it. vga_draw_string_small (half height,
+    ; full 8px/char width - src/vga.asm) keeps this from eating into a
+    ; screen that's only 320x200 to begin with, at SNAKE_CELL=8 pixels
+    ; per grid cell - the full-height 8x16 glyphs used to cost a good
+    ; four rows of the actual play area up here.
     mov byte [vga_draw_color], 15        ; white
     mov ebx, 2
     mov edx, 2
@@ -545,12 +545,12 @@ snake_draw:
     mov ax, [snake_score]
     call snake_word_to_dec_buf
     mov byte [edi], 0
-    mov ebx, 2 + 5*7                     ; right after "Score: " (7 chars)
+    mov ebx, 2 + 8*7                     ; right after "Score: " (7 chars)
     mov edx, 2
     mov esi, snake_score_str
     call vga_draw_string_small
 
-    mov ebx, 320 - 5*10 - 2              ; "ESC - EXIT" is 10 chars
+    mov ebx, 320 - 8*10 - 2              ; "ESC - EXIT" is 10 chars
     mov edx, 2
     mov esi, msg_hud_exit
     call vga_draw_string_small
@@ -564,7 +564,7 @@ snake_draw:
     mov ax, [snake_highscore]
     call snake_word_to_dec_buf
     mov byte [edi], 0
-    mov ebx, 2 + 5*6                      ; right after "High: " (6 chars)
+    mov ebx, 2 + 8*6                      ; right after "High: " (6 chars)
     mov edx, 2 + 9
     mov esi, snake_score_str
     call vga_draw_string_small

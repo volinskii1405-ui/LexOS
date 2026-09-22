@@ -617,12 +617,12 @@ sweeper_draw:
     mov edi, sweep_score_str
     call snake_word_to_dec_buf
     mov byte [edi], 0
-    mov ebx, 2 + 5*7                     ; right after "Mines: " (7 chars)
+    mov ebx, 2 + 8*7                     ; right after "Mines: " (7 chars)
     mov edx, 4
     mov esi, sweep_score_str
     call vga_draw_string_small
 
-    mov ebx, 320 - 5*10 - 2              ; "ESC - EXIT" is 10 chars
+    mov ebx, 320 - 8*10 - 2              ; "ESC - EXIT" is 10 chars
     mov edx, 4
     mov esi, msg_sweep_hud_exit
     call vga_draw_string_small
@@ -634,7 +634,7 @@ sweeper_draw:
     jmp .grid
 
 .show_dead_msg:
-    mov ebx, 150
+    mov ebx, 140                          ; center "BOOM!" (5 chars * 8px)
     mov edx, 4
     mov esi, msg_sweep_boom
     mov byte [vga_draw_color], 12        ; light red
@@ -642,7 +642,7 @@ sweeper_draw:
     jmp .grid
 
 .show_won_msg:
-    mov ebx, 150
+    mov ebx, 128                          ; center "YOU WIN!" (8 chars * 8px)
     mov edx, 4
     mov esi, msg_sweep_win
     mov byte [vga_draw_color], 10        ; light green
@@ -761,7 +761,7 @@ sweeper_draw_cell:
     call snake_word_to_dec_buf
     mov byte [edi], 0
     mov ebx, [sweep_draw_px]
-    add ebx, 6
+    add ebx, 4
     mov edx, [sweep_draw_py]
     add edx, 4
     mov esi, sweep_score_str

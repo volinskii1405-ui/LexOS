@@ -278,11 +278,19 @@ vga_draw_string:
     ret
 
 ; ============================================================
-; Same job as vga_draw_char, downsampled to 4x8 pixels (every OTHER
-; row and column of the 8x16 glyph vga_saved_font already has, rather
-; than a proper resize) - a plain half-scale font for a HUD that needs
-; to take up less of a small 320x200 screen (src/snake.asm's Score/
-; High lines, say) than the full-size 8x16 glyphs cost.
+; Same job as vga_draw_char, at half HEIGHT only (8 rows instead of
+; 16 - full 8-column width, untouched). A first version also halved
+; the width (4 columns, sampling only every OTHER row and column of
+; the 8x16 glyph) to save as much space as possible, but that turned
+; out too small to read at all: dropping every other COLUMN erases
+; the strokes that make one letter look different from another at a
+; width that narrow. Halving only the height keeps every glyph fully
+; recognizable - it's letter shape that carries readability, not row
+; count - while still shrinking a HUD line's vertical footprint,
+; which was the actual point (see src/snake.asm's Score/High lines).
+; Each output row is the OR of the two source rows it replaces,
+; rather than simply dropping one of them, so a horizontal stroke
+; that only happens to fall on an odd source row doesn't just vanish.
 ; Input: ebx = x, edx = y (top-left pixel), ecx = character code
 ; (0..255), [vga_draw_color] = color (see vga_draw_char).
 ; ============================================================
@@ -300,9 +308,12 @@ vga_draw_char_small:
     cmp ecx, 8
     jae .done
 
-    mov eax, ecx
-    shl eax, 1                       ; source row = ecx*2 (even rows only)
-    mov al, [esi + eax]               ; that row's 8 source pixels
+    mov edi, ecx
+    shl edi, 1                       ; edi = source row A index (2*ecx)
+    mov al, [esi + edi]               ; al = row A's 8 source pixels
+    inc edi
+    mov ah, [esi + edi]                ; ah = row B's (2*ecx + 1)
+    or al, ah                           ; al = the two OR'd together
 
     push ecx
     mov edi, edx
@@ -311,16 +322,16 @@ vga_draw_char_small:
     add edi, ebx
     add edi, VGA_FB
 
-    mov cl, 4                         ; 4 output columns
+    mov cl, 8                         ; 8 output columns - full width
 .col_loop:
-    test al, 0x80                     ; sample the current even source column
+    test al, 0x80
     jz .skip_pixel
     push eax
     mov ah, [vga_draw_color]
     mov [edi], ah
     pop eax
 .skip_pixel:
-    shl al, 2                          ; advance TWO source columns (even ones)
+    shl al, 1
     inc edi
     dec cl
     jnz .col_loop
@@ -333,8 +344,9 @@ vga_draw_char_small:
     ret
 
 ; ============================================================
-; Same job as vga_draw_string, using vga_draw_char_small - 4 pixels
-; per character plus 1 of spacing, left to right, no wrapping.
+; Same job as vga_draw_string, using vga_draw_char_small - 8 pixels
+; per character (full width, only the height is halved - see there),
+; left to right, no wrapping.
 ; Input: ebx = x, edx = y, esi = string, [vga_draw_color] = color.
 ; ============================================================
 vga_draw_string_small:
@@ -346,7 +358,7 @@ vga_draw_string_small:
     xor ecx, ecx
     mov cl, al
     call vga_draw_char_small
-    add ebx, 5
+    add ebx, 8
     inc esi
     jmp .loop
 .done:
