@@ -243,6 +243,19 @@ alex@/PROGRAMS$
   just whether it was pressed at some point - src/interrupts.asm's
   keyboard handler now tracks that too (`key_held`), alongside the
   press-only event queue everything else already used.
+- `turtle <name>` runs a LOGO-style turtle graphics script - one
+  command per line (or several per line; the parser only cares about
+  tokens, whitespace and newlines are equivalent) like `FORWARD 10` /
+  `LEFT 90` / `BACKWARD 30` / `RIGHT 20`, plus `PENUP`/`PENDOWN`,
+  `HOME`, `CLEARSCREEN`, `COLOR <0-15>`, and a nestable
+  `REPEAT n [ ... ]`. Same VGA mode 13h save-and-restore footing as
+  SNAKE.BIN, shown until any key is pressed once the script finishes
+  (like `view <name>` for a saved picture). No FPU anywhere in this
+  kernel, so an arbitrary-angle FORWARD/BACKWARD leans on
+  turtle_sin_table - 360 entries, Q8 fixed point, computed once in
+  Python and pasted in as data rather than derived at runtime; the
+  turtle's own position is kept in that same fixed point across moves,
+  rounded to a whole pixel only when a line segment is actually drawn.
 - `run <n>.com` runs a small MS-DOS `.com` program - real 16-bit x86
   machine code, not LexOS's own format, executed directly (no BIOS, no
   real-mode switch, no v86 mode: it runs through a 16-bit code segment
@@ -482,6 +495,9 @@ src/
   chip8.asm            `chip8 <name>`, a CHIP-8 interpreter - same
                        vga.asm mode switch as snake.asm, reuses
                        sound.asm's audio_timer_start for its 60Hz timer.
+  turtle.asm           `turtle <name>`, a LOGO-style turtle graphics
+                       script interpreter - same vga.asm mode switch
+                       as snake.asm.
   dosrun.asm           runs a *.com MS-DOS program directly under this
                        32-bit kernel (no BIOS, no real-mode switch, no
                        v86 mode) through a 16-bit code segment and a
