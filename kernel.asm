@@ -66,6 +66,9 @@ kernel_start:
     call fs_ensure_calc_exe  ; creates PROGRAMS/CALC.BIN if it doesn't exist yet
     call fs_ensure_snake_exe ; creates PROGRAMS/SNAKE.BIN if it doesn't exist yet
     call fs_ensure_sweeper_exe ; creates PROGRAMS/SWEEPER.BIN if it doesn't exist yet
+    call fs_ensure_tetris_exe ; creates PROGRAMS/TETRIS.BIN if it doesn't exist yet
+    call fs_ensure_g2048_exe ; creates PROGRAMS/2048.BIN if it doesn't exist yet
+    call fs_ensure_convert_exe ; creates PROGRAMS/CONVERT.BIN if it doesn't exist yet
     pop word [fs_current_dir]
 .no_programs_dir:
 
@@ -111,6 +114,9 @@ main_loop:
 %include "src/snake.asm"
 %include "src/paint.asm"
 %include "src/sweeper.asm"
+%include "src/tetris.asm"
+%include "src/game2048.asm"
+%include "src/convert.asm"
 %include "src/assembler.asm"
 %include "src/rtc.asm"
 %include "src/speaker.asm"

@@ -322,6 +322,11 @@ calc_exe_name db "CALC.BIN", 0
 snake_exe_name db "SNAKE.BIN", 0
 snake_hs_name db "SNAKE.HS", 0
 sweeper_exe_name db "SWEEPER.BIN", 0
+convert_exe_name db "CONVERT.BIN", 0
+tetris_exe_name db "TETRIS.BIN", 0
+tetris_hs_name db "TETRIS.HS", 0
+g2048_exe_name db "2048.BIN", 0
+g2048_hs_name db "2048.HS", 0
 programs_dir_name db "PROGRAMS", 0
 tmp_dir_name       db "TMP", 0
 
@@ -361,6 +366,17 @@ msg_calc_bad_op   db "Unknown operator.", 13, 10, 0
 msg_calc_div_zero db "Division by zero.", 13, 10, 0
 msg_calc_overflow db "Overflow (result doesn't fit in 16 bits).", 13, 10, 0
 
+; src/convert.asm's convert_run (the base converter behind
+; PROGRAMS/CONVERT.BIN) - kept here for the same reason as the calc_*
+; messages above.
+msg_convert_title      db "LexOS Base Converter", 13, 10, 0
+msg_convert_prompt     db "Number (decimal, 0x hex, or 0b binary): ", 0
+msg_convert_dec_label  db "Decimal: ", 0
+msg_convert_hex_label  db "Hex:     0x", 0
+msg_convert_oct_label  db "Octal:   0o", 0
+msg_convert_bin_label  db "Binary:  0b", 0
+msg_convert_bad_hex    db "Bad hex value (1-4 digits, 0-FFFF).", 13, 10, 0
+
 ; src/snake.asm's snake_run (the game behind PROGRAMS/SNAKE.BIN) - kept
 ; here for the same reason as the calc_* messages above.
 msg_snake_intro    db "SNAKE - arrows or WASD to move, ESC to quit.", 13, 10, 0
@@ -373,6 +389,20 @@ msg_snake_highscore db "Best:  ", 0
 ; kept here for the same reason as the snake_* messages above.
 msg_sweeper_intro  db "SWEEPER - left click reveal, right click flag, R restart, ESC quit.", 13, 10, 0
 msg_sweeper_quit   db "Quit.", 13, 10, 0
+
+; src/tetris.asm's tetris_run (the game behind PROGRAMS/TETRIS.BIN) -
+; kept here for the same reason as the snake_* messages above.
+msg_tetris_intro   db "TETRIS - arrows move/rotate, space hard drop, ESC quit.", 13, 10, 0
+msg_tetris_quit    db "Quit.", 13, 10, 0
+msg_tetris_score   db "Score: ", 0
+msg_tetris_highscore db "Best:  ", 0
+
+; src/game2048.asm's g2048_run (the game behind PROGRAMS/2048.BIN) -
+; kept here for the same reason as the snake_* messages above.
+msg_g2048_intro    db "2048 - arrows or WASD to slide, ESC to quit.", 13, 10, 0
+msg_g2048_quit     db "Quit.", 13, 10, 0
+msg_g2048_score    db "Score: ", 0
+msg_g2048_highscore db "Best:  ", 0
 
 BATCH_BUF_LEN equ 511
 batch_content_buf times (BATCH_BUF_LEN + 1) db 0

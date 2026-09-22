@@ -121,8 +121,9 @@ alex@/PROGRAMS$
 - On first boot the root folder is seeded with `README`, a `LICENSE` file
   holding the project's own license text (long enough to spill from the
   inline area into chained extra sectors), a `PROGRAMS` folder holding
-  three demo programs: `TEST.BIN`, `CALC.BIN` and `SNAKE.BIN` (see **Programs** below),
-  and a `TMP` folder for scratch files (see below).
+  `TEST.BIN`, `CALC.BIN`, `CONVERT.BIN`, `SNAKE.BIN`, `SWEEPER.BIN`,
+  `TETRIS.BIN` and `2048.BIN` (see **Programs** below), and a `TMP`
+  folder for scratch files (see below).
 - `ls` prints folders in bright yellow so they stand out from regular
   files, which stay whatever color you've set with `color`.
 - `df` (or `free`) shows how many of the 24 directory slots, 64 extra
@@ -218,6 +219,18 @@ alex@/PROGRAMS$
   raw copy of the text framebuffer before switching modes, and restores
   them exactly afterward (whether the snake dies or the game is quit),
   so it's back to normal immediately after.
+- `PROGRAMS/TETRIS.BIN` and `PROGRAMS/2048.BIN` are two more VGA mode
+  13h games, on the same save-and-restore footing as SNAKE.BIN. Tetris
+  is the classic 7-piece falling-block game (arrows to move, up to
+  rotate, space to hard drop, gravity speeds up every 10 lines); 2048
+  is the sliding-tile puzzle (arrows or WASD to slide a whole row/
+  column at once, merging equal tiles). Both save a high score file
+  next to themselves, the same way SNAKE.BIN does.
+- `PROGRAMS/CONVERT.BIN` is a base converter: prompts for one number -
+  plain decimal, `0x`-prefixed hex, or `0b`-prefixed binary - and
+  prints it back out as decimal, hex, octal, and binary, all on one
+  screen. One-shot like CALC.BIN, not a loop: run it again to convert
+  another value.
 - `run <n>.com` runs a small MS-DOS `.com` program - real 16-bit x86
   machine code, not LexOS's own format, executed directly (no BIOS, no
   real-mode switch, no v86 mode: it runs through a 16-bit code segment
@@ -447,6 +460,13 @@ src/
                        no BIOS int 10h in protected mode. Used by SNAKE.BIN.
   snake.asm            PROGRAMS/SNAKE.BIN, a graphical snake game built on
                        vga.asm's mode switch.
+  tetris.asm           PROGRAMS/TETRIS.BIN, the falling-block game, same
+                       vga.asm mode switch as snake.asm.
+  game2048.asm         PROGRAMS/2048.BIN, the sliding-tile puzzle, same
+                       vga.asm mode switch as snake.asm.
+  convert.asm          PROGRAMS/CONVERT.BIN, a decimal/hex/octal/binary
+                       base converter - a text-mode program like calc_run
+                       (programs.asm), not a vga.asm one.
   dosrun.asm           runs a *.com MS-DOS program directly under this
                        32-bit kernel (no BIOS, no real-mode switch, no
                        v86 mode) through a 16-bit code segment and a
