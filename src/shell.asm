@@ -224,6 +224,18 @@ handle_command:
     je .do_view
 
     mov si, buffer
+    mov di, cmd_play_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_play
+
+    mov si, buffer
+    mov di, cmd_chip8_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_chip8
+
+    mov si, buffer
     mov di, cmd_history
     call strcmp_eq
     cmp ax, 1
@@ -291,8 +303,9 @@ handle_command:
     add si, 6                  ; skip "color "
     call parse_hex_byte
     mov [current_color], al
-    mov si, msg_color_ok
-    call print_string
+    call repaint_screen_color   ; applies it to what's already on screen
+    mov si, msg_color_ok        ; too, not just future output - see the
+    call print_string           ; note above repaint_screen_color itself
     jmp .done
 
 .do_sector:
@@ -464,6 +477,18 @@ handle_command:
     mov si, buffer
     add si, 5                  ; skip "view "
     call view_bmp_file
+    jmp .done
+
+.do_play:
+    mov si, buffer
+    add si, 5                  ; skip "play "
+    call play_file
+    jmp .done
+
+.do_chip8:
+    mov si, buffer
+    add si, 6                  ; skip "chip8 "
+    call chip8_run
     jmp .done
 
 .do_history:

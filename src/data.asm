@@ -28,7 +28,7 @@ SECTOR_COUNT equ 8
 ;   byte 8       - type (0=free, 1=file, 2=folder)
 ;   byte 9       - parent (slot index of the parent folder, 0xFF = root)
 ;   bytes 10..   - content (zero-terminated, unused for folders)
-FS_START_SECTOR   equ 186     ; sector 1=bootloader, 2..185=kernel (184 sectors)
+FS_START_SECTOR   equ 314     ; sector 1=bootloader, 2..313=kernel (312 sectors)
 FS_FILE_COUNT     equ 24
 FS_NAME_LEN       equ 16
 FS_CONTENT_LEN    equ 128
@@ -197,6 +197,8 @@ help_l45 db "  run <n>.com   - run a small MS-DOS .com program", 13, 10, 0
 help_l46 db "  recv <n> <hex size> - receive a file over COM1 (serial)", 13, 10, 0
 help_l47 db "  paint <n> [w] [h] - mouse picture editor, saves to n.BMP (default 320x200)", 13, 10, 0
 help_l48 db "  view <n>      - display a picture saved by paint (.BMP)", 13, 10, 0
+help_l49 db "  play <n.imf | n.wav> - play AdLib music or 8-bit mono PCM audio", 13, 10, 0
+help_l50 db "  chip8 <n>    - run a CHIP-8 ROM (1234/qwer/asdf/zxcv keypad)", 13, 10, 0
 
 help_lines:
     dw help_l01, help_l02, help_l03, help_l04, help_l05
@@ -207,7 +209,7 @@ help_lines:
     dw help_l29, help_l30, help_l31, help_l32, help_l33
     dw help_l34, help_l35, help_l38, help_l39, help_l40
     dw help_l41, help_l42, help_l43, help_l44, help_l45
-    dw help_l46, help_l47, help_l48
+    dw help_l46, help_l47, help_l48, help_l49, help_l50
 help_lines_end:
 
 HELP_LINE_COUNT equ (help_lines_end - help_lines) / 2
@@ -255,10 +257,18 @@ msg_head_usage       db "Usage: head <n> [lines]", 13, 10, 0
 msg_tail_usage       db "Usage: tail <n> [lines]", 13, 10, 0
 msg_uranium_usage    db "Usage: uranium <n>", 13, 10, 0
 msg_paint_usage      db "Usage: paint <n> [width] [height]", 13, 10, 0
-msg_paint_intro      db "PAINT - mouse to draw, 1-9/A-F color, W/S brush size, ESC to save & quit.", 13, 10, 0
+msg_paint_intro      db "PAINT - mouse draw, 1-9/A-F color, W/S size, K fill, N clear, ESC save & quit.", 13, 10, 0
 msg_paint_size_clamped db "Canvas size clamped to the 320x200 screen.", 13, 10, 0
 msg_paint_saved      db "Saved ", 0
 msg_view_usage       db "Usage: view <n>", 13, 10, 0
+msg_play_usage       db "Usage: play <n.imf | n.wav>", 13, 10, 0
+msg_play_bad_wav     db "Not a supported WAV (need 8-bit unsigned PCM, mono).", 13, 10, 0
+
+; src/chip8.asm's chip8_run - kept here for the same reason as the
+; msg_play_* messages above.
+msg_chip8_usage      db "Usage: chip8 <n>", 13, 10, 0
+msg_chip8_intro      db "CHIP-8 - 1234/qwer/asdf/zxcv keypad, ESC to quit.", 13, 10, 0
+msg_chip8_quit       db "Quit.", 13, 10, 0
 msg_uranium_not_text db "That is a program file. Use hex to edit it.", 13, 10, 0
 msg_uranium_header1  db "LexOS Editor - ", 0
 msg_uranium_header2  db "  (", 0
@@ -318,6 +328,12 @@ test_exe_name db "TEST.BIN", 0
 calc_exe_name db "CALC.BIN", 0
 snake_exe_name db "SNAKE.BIN", 0
 snake_hs_name db "SNAKE.HS", 0
+sweeper_exe_name db "SWEEPER.BIN", 0
+convert_exe_name db "CONVERT.BIN", 0
+tetris_exe_name db "TETRIS.BIN", 0
+tetris_hs_name db "TETRIS.HS", 0
+g2048_exe_name db "2048.BIN", 0
+g2048_hs_name db "2048.HS", 0
 programs_dir_name db "PROGRAMS", 0
 tmp_dir_name       db "TMP", 0
 
@@ -357,6 +373,17 @@ msg_calc_bad_op   db "Unknown operator.", 13, 10, 0
 msg_calc_div_zero db "Division by zero.", 13, 10, 0
 msg_calc_overflow db "Overflow (result doesn't fit in 16 bits).", 13, 10, 0
 
+; src/convert.asm's convert_run (the base converter behind
+; PROGRAMS/CONVERT.BIN) - kept here for the same reason as the calc_*
+; messages above.
+msg_convert_title      db "LexOS Base Converter", 13, 10, 0
+msg_convert_prompt     db "Number (decimal, 0x hex, or 0b binary): ", 0
+msg_convert_dec_label  db "Decimal: ", 0
+msg_convert_hex_label  db "Hex:     0x", 0
+msg_convert_oct_label  db "Octal:   0o", 0
+msg_convert_bin_label  db "Binary:  0b", 0
+msg_convert_bad_hex    db "Bad hex value (1-4 digits, 0-FFFF).", 13, 10, 0
+
 ; src/snake.asm's snake_run (the game behind PROGRAMS/SNAKE.BIN) - kept
 ; here for the same reason as the calc_* messages above.
 msg_snake_intro    db "SNAKE - arrows or WASD to move, ESC to quit.", 13, 10, 0
@@ -364,6 +391,25 @@ msg_snake_gameover db "Game over!", 13, 10, 0
 msg_snake_quit     db "Quit.", 13, 10, 0
 msg_snake_score    db "Score: ", 0
 msg_snake_highscore db "Best:  ", 0
+
+; src/sweeper.asm's sweeper_run (the game behind PROGRAMS/SWEEPER.BIN) -
+; kept here for the same reason as the snake_* messages above.
+msg_sweeper_intro  db "SWEEPER - left click reveal, right click flag, R restart, ESC quit.", 13, 10, 0
+msg_sweeper_quit   db "Quit.", 13, 10, 0
+
+; src/tetris.asm's tetris_run (the game behind PROGRAMS/TETRIS.BIN) -
+; kept here for the same reason as the snake_* messages above.
+msg_tetris_intro   db "TETRIS - arrows move/rotate, space hard drop, ESC quit.", 13, 10, 0
+msg_tetris_quit    db "Quit.", 13, 10, 0
+msg_tetris_score   db "Score: ", 0
+msg_tetris_highscore db "Best:  ", 0
+
+; src/game2048.asm's g2048_run (the game behind PROGRAMS/2048.BIN) -
+; kept here for the same reason as the snake_* messages above.
+msg_g2048_intro    db "2048 - arrows or WASD to slide, ESC to quit.", 13, 10, 0
+msg_g2048_quit     db "Quit.", 13, 10, 0
+msg_g2048_score    db "Score: ", 0
+msg_g2048_highscore db "Best:  ", 0
 
 BATCH_BUF_LEN equ 511
 batch_content_buf times (BATCH_BUF_LEN + 1) db 0
@@ -489,6 +535,8 @@ cmd_tail_prefix  db "tail ", 0
 cmd_uranium_prefix db "uranium ", 0
 cmd_paint_prefix db "paint ", 0
 cmd_view_prefix  db "view ", 0
+cmd_play_prefix  db "play ", 0
+cmd_chip8_prefix db "chip8 ", 0
 cmd_history      db "history", 0
 cmd_df           db "df", 0
 cmd_free         db "free", 0

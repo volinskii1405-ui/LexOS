@@ -65,6 +65,10 @@ kernel_start:
     call fs_ensure_test_exe  ; creates PROGRAMS/TEST.BIN if it doesn't exist yet
     call fs_ensure_calc_exe  ; creates PROGRAMS/CALC.BIN if it doesn't exist yet
     call fs_ensure_snake_exe ; creates PROGRAMS/SNAKE.BIN if it doesn't exist yet
+    call fs_ensure_sweeper_exe ; creates PROGRAMS/SWEEPER.BIN if it doesn't exist yet
+    call fs_ensure_tetris_exe ; creates PROGRAMS/TETRIS.BIN if it doesn't exist yet
+    call fs_ensure_g2048_exe ; creates PROGRAMS/2048.BIN if it doesn't exist yet
+    call fs_ensure_convert_exe ; creates PROGRAMS/CONVERT.BIN if it doesn't exist yet
     pop word [fs_current_dir]
 .no_programs_dir:
 
@@ -109,9 +113,15 @@ main_loop:
 %include "src/vga.asm"
 %include "src/snake.asm"
 %include "src/paint.asm"
+%include "src/sweeper.asm"
+%include "src/tetris.asm"
+%include "src/game2048.asm"
+%include "src/convert.asm"
 %include "src/assembler.asm"
 %include "src/rtc.asm"
 %include "src/speaker.asm"
+%include "src/sound.asm"
+%include "src/chip8.asm"
 %include "src/grep.asm"
 %include "src/headtail.asm"
 %include "src/uranium.asm"
@@ -442,4 +452,4 @@ com_shift_held     db 0     ; com_poll_key's own Shift-key tracking
 
 ; Pad the remaining space within the sectors the bootloader reads,
 ; so the file size is a multiple of 512 bytes (see KERNEL_SECTORS_1/2 in boot.asm).
-times (512*184)-($-$$) db 0
+times (512*312)-($-$$) db 0

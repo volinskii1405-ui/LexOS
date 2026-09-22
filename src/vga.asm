@@ -278,6 +278,94 @@ vga_draw_string:
     ret
 
 ; ============================================================
+; Same job as vga_draw_char, at half HEIGHT only (8 rows instead of
+; 16 - full 8-column width, untouched). A first version also halved
+; the width (4 columns, sampling only every OTHER row and column of
+; the 8x16 glyph) to save as much space as possible, but that turned
+; out too small to read at all: dropping every other COLUMN erases
+; the strokes that make one letter look different from another at a
+; width that narrow. Halving only the height keeps every glyph fully
+; recognizable - it's letter shape that carries readability, not row
+; count - while still shrinking a HUD line's vertical footprint,
+; which was the actual point (see src/snake.asm's Score/High lines).
+; Each output row is the OR of the two source rows it replaces,
+; rather than simply dropping one of them, so a horizontal stroke
+; that only happens to fall on an odd source row doesn't just vanish.
+; Input: ebx = x, edx = y (top-left pixel), ecx = character code
+; (0..255), [vga_draw_color] = color (see vga_draw_char).
+; ============================================================
+vga_draw_char_small:
+    pusha
+
+    mov eax, ecx
+    and eax, 0xFF
+    shl eax, 5                      ; * 32 (this glyph's slot)
+    add eax, vga_saved_font
+    mov esi, eax
+
+    xor ecx, ecx                    ; output row = 0..7
+.row_loop:
+    cmp ecx, 8
+    jae .done
+
+    mov edi, ecx
+    shl edi, 1                       ; edi = source row A index (2*ecx)
+    mov al, [esi + edi]               ; al = row A's 8 source pixels
+    inc edi
+    mov ah, [esi + edi]                ; ah = row B's (2*ecx + 1)
+    or al, ah                           ; al = the two OR'd together
+
+    push ecx
+    mov edi, edx
+    add edi, ecx
+    imul edi, edi, 320
+    add edi, ebx
+    add edi, VGA_FB
+
+    mov cl, 8                         ; 8 output columns - full width
+.col_loop:
+    test al, 0x80
+    jz .skip_pixel
+    push eax
+    mov ah, [vga_draw_color]
+    mov [edi], ah
+    pop eax
+.skip_pixel:
+    shl al, 1
+    inc edi
+    dec cl
+    jnz .col_loop
+
+    pop ecx
+    inc ecx
+    jmp .row_loop
+.done:
+    popa
+    ret
+
+; ============================================================
+; Same job as vga_draw_string, using vga_draw_char_small - 8 pixels
+; per character (full width, only the height is halved - see there),
+; left to right, no wrapping.
+; Input: ebx = x, edx = y, esi = string, [vga_draw_color] = color.
+; ============================================================
+vga_draw_string_small:
+    pusha
+.loop:
+    mov al, [esi]
+    cmp al, 0
+    je .done
+    xor ecx, ecx
+    mov cl, al
+    call vga_draw_char_small
+    add ebx, 8
+    inc esi
+    jmp .loop
+.done:
+    popa
+    ret
+
+; ============================================================
 ; Saves the current MISC/SEQ/CRTC/GC/AC registers into vga_saved_regs
 ; (laid out identically to vga_mode13_regs, so both can be fed to
 ; vga_apply_regs) and snapshots the text framebuffer into

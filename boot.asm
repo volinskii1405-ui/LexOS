@@ -10,15 +10,22 @@
 ;
 ; IMPORTANT: int 13h/ah=42h (extended read) addresses memory via a 16-bit
 ; segment:offset, NOT a linear 32-bit address - a single call cannot
-; read data that crosses the 64 KB segment boundary (0x10000). With
-; KERNEL_LOAD_OFF=0x8000 this limits a SINGLE call to 64 sectors (32 KB,
-; exactly up to 0x10000). That's not enough for the kernel, so we load it in TWO calls
-; back to back: the first, as before, 64 sectors into 0x0000:0x8000 (physically
-; 0x8000..0xFFFF); the second, the remaining sectors into 0x1000:0x0000 (physically
-; 0x10000..). The physical addresses are contiguous (0x8000+64*512 = exactly 0x10000),
-; so for the kernel itself (assembled as a single flat binary with
-; ORG 0x8000) this boundary simply doesn't exist - it has no idea
-; that it was loaded by two separate BIOS calls.
+; read data that crosses a 64 KB segment boundary, and (since the
+; offset it starts a read at is itself 16-bit) can never transfer more
+; than 64 KB - 128 sectors - even into an EMPTY segment starting at
+; offset 0. With KERNEL_LOAD_OFF=0x8000 this limits the FIRST call to
+; 64 sectors (32 KB, exactly up to the 0x10000 boundary); every call
+; after that starts at offset 0 of its own segment, so each can carry
+; up to the full 128 sectors before hitting that same 64 KB ceiling
+; again. The kernel needs more than 64+128 sectors by now, so it's
+; loaded in THREE calls back to back: 64 sectors into 0x0000:0x8000
+; (physically 0x8000..0xFFFF), then 128 into 0x1000:0x0000 (physically
+; 0x10000..0x1FFFF), then the rest into 0x2000:0x0000 (physically
+; 0x20000..). The physical addresses are contiguous across all three
+; (each segment's base picks up exactly where the previous call's
+; transfer ended), so for the kernel itself (assembled as a single
+; flat binary with ORG 0x8000) none of these boundaries exist - it has
+; no idea it was loaded by three separate BIOS calls.
 
 [BITS 16]
 [ORG 0x7C00]
@@ -26,9 +33,16 @@
 KERNEL_LOAD_SEG  equ 0x0000
 KERNEL_LOAD_OFF  equ 0x8000     ; must match ORG in kernel.asm
 KERNEL_SECTORS_1 equ 64         ; part 1: up to the 0x10000 boundary (see above)
-KERNEL_SECTORS_2 equ 120        ; part 2: right after the boundary
+KERNEL_SECTORS_2 equ 128        ; part 2: the next 64 KB - the most a single
+                                  ; call can ever carry (see above)
 KERNEL_LOAD_SEG2 equ 0x1000     ; = physical 0x10000, continuation of part 1
 KERNEL_LOAD_OFF2 equ 0x0000
+KERNEL_SECTORS_3 equ 120        ; part 3: whatever's left - bumped for
+                                  ; src/chip8.asm (well under the 128-
+                                  ; sector ceiling this call can carry,
+                                  ; on purpose - see the comment above)
+KERNEL_LOAD_SEG3 equ 0x2000     ; = physical 0x20000, continuation of part 2
+KERNEL_LOAD_OFF3 equ 0x0000
 
 start:
     cli
@@ -44,7 +58,7 @@ start:
     mov si, msg_booting
     call print_string_16
 
-    ; --- read the kernel with two calls (LBA extended read, see comment above) ---
+    ; --- read the kernel with three calls (LBA extended read, see comment above) ---
     mov dl, [boot_drive]
     mov si, dap
     mov ah, 0x42
@@ -53,6 +67,12 @@ start:
 
     mov dl, [boot_drive]
     mov si, dap2
+    mov ah, 0x42
+    int 0x13
+    jc disk_error
+
+    mov dl, [boot_drive]
+    mov si, dap3
     mov ah, 0x42
     int 0x13
     jc disk_error
@@ -119,6 +139,15 @@ dap2:
     dw KERNEL_LOAD_OFF2
     dw KERNEL_LOAD_SEG2
     dq 1 + KERNEL_SECTORS_1
+
+; --- part 3, right after the second ---
+dap3:
+    db 0x10
+    db 0
+    dw KERNEL_SECTORS_3
+    dw KERNEL_LOAD_OFF3
+    dw KERNEL_LOAD_SEG3
+    dq 1 + KERNEL_SECTORS_1 + KERNEL_SECTORS_2
 
 boot_drive     db 0
 msg_booting    db "Booting LexOS (32-bit)...", 13, 10, 0

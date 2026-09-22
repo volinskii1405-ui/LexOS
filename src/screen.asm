@@ -1,7 +1,7 @@
 ; screen.asm — screen output (VGA text mode, direct writes to video memory)
-; Exports: clear_screen, print_char, print_string, print_prompt,
-; print_banner, print_hex_byte, print_dec_byte, update_hw_cursor,
-; scroll_screen, screen_putc_at, screen_fill_bar_row
+; Exports: clear_screen, repaint_screen_color, print_char, print_string,
+; print_prompt, print_banner, print_hex_byte, print_dec_byte,
+; update_hw_cursor, scroll_screen, screen_putc_at, screen_fill_bar_row
 ;
 ; Unlike the real-mode version, here video memory (VIDEO_MEM = 0xB8000) is
 ; NOT a segment but an ordinary linear address - ES/DS already cover the
@@ -33,6 +33,27 @@ clear_screen:
     mov word [cursor_row], 0
     mov word [cursor_col], 0
     call update_hw_cursor
+    popa
+    ret
+
+; ============================================================
+; Repaints every on-screen cell's color attribute to current_color,
+; leaving the characters themselves untouched (unlike clear_screen,
+; which blanks everything to spaces). Used by the "color" command so
+; a new color takes effect on what's already on screen immediately,
+; not just on whatever gets printed after it - current_color by
+; itself (print_char reads it fresh for each new character) only ever
+; affects future output.
+; ============================================================
+repaint_screen_color:
+    pusha
+    xor edi, edi
+    mov ecx, SCREEN_COLS * SCREEN_ROWS
+    mov al, [current_color]
+.loop:
+    mov [VIDEO_MEM + edi + 1], al        ; +1: the attribute byte of each
+    add edi, 2                            ; (char, attribute) word - see
+    loop .loop                             ; clear_screen's own note above
     popa
     ret
 

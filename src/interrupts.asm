@@ -17,7 +17,8 @@
 ; Also, there's no BIOS in protected mode, so the timer can no longer chain
 ; to the original BIOS handler (int 1Ah) - we just count ticks.
 ;
-; Exports: idt_setup, install_keyboard_isr, install_timer_isr, read_key
+; Exports: idt_setup, install_keyboard_isr, install_timer_isr, read_key,
+;          key_held
 
 KBD_BUF_SIZE equ 16   ; must be a power of two (used via an AND mask)
 
@@ -170,6 +171,7 @@ install_timer_isr:
 keyboard_isr:
     push eax
     push ebx
+    push ecx
 
     in al, 0x60                  ; read the scancode from the keyboard controller
 
@@ -220,8 +222,23 @@ keyboard_isr:
 
 .check_release:
     test al, 0x80
-    jnz .eoi                      ; key release (normal or extended, the
-                                   ; extended flag was already cleared above) - ignore
+    jz .track_press
+
+    ; key release - key_held tracks live press/release state (used by
+    ; src/chip8.asm's "is this key held right now" queries, EX9E/EXA1) -
+    ; everything else here still only cares about presses, via kbd_buf/
+    ; push_key_to_buffer below, so a release has nothing further to do
+    ; once key_held is updated.
+    mov cl, al
+    and cl, 0x7F                  ; break code -> its make code
+    movzx ecx, cl
+    mov byte [key_held + ecx], 0
+    jmp .eoi
+
+.track_press:
+    mov cl, al
+    movzx ecx, cl
+    mov byte [key_held + ecx], 1
 
     mov bl, al                     ; bl = scancode of the pressed key
 
@@ -253,6 +270,7 @@ keyboard_isr:
     mov al, 0x20
     out PIC1_CMD, al                 ; EOI to the interrupt controller (PIC)
 
+    pop ecx
     pop ebx
     pop eax
     iret
@@ -371,6 +389,16 @@ kbd_buf_tail db 0
 kbd_shift_held db 0
 kbd_ctrl_held db 0
 kbd_extended_flag db 0
+
+; Live press/release state, one byte per possible (non-extended) Set-1
+; make code - 0x80 covers every make code, since bit 7 of a scancode
+; byte is exactly what distinguishes a make code from its own break
+; code. Unlike kbd_buf above (an event queue of presses only, read
+; once and gone), this is a level: still 1 for as long as a key is
+; physically held down. src/chip8.asm is the first thing that actually
+; needs that - EX9E/EXA1 ask "is this key down right now", which a
+; press-only event queue can't answer.
+key_held times 0x80 db 0
 
 timer_ticks dd 0
 
