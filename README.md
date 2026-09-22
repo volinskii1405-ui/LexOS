@@ -231,6 +231,18 @@ alex@/PROGRAMS$
   prints it back out as decimal, hex, octal, and binary, all on one
   screen. One-shot like CALC.BIN, not a loop: run it again to convert
   another value.
+- `chip8 <name>` interprets a CHIP-8 ROM - not LexOS's own format
+  (like `run <n>.com` below, but for a much older and simpler bytecode
+  VM: the 35-opcode interpreted machine mid-70s COSMAC VIP calculators
+  ran, the target of most public-domain "here's a tiny Pong/Tetris/
+  Space Invaders clone" ROMs floating around online). Same VGA mode
+  13h save-and-restore footing as SNAKE.BIN, scaled 5x (64x32 -> 320x160,
+  leaving a strip for the ESC hint). The 16-key hex keypad maps to
+  `1234`/`qwer`/`asdf`/`zxcv`. `EX9E`/`EXA1` ("skip if this key is/
+  isn't held") need to know whether a key is down *right now*, not
+  just whether it was pressed at some point - src/interrupts.asm's
+  keyboard handler now tracks that too (`key_held`), alongside the
+  press-only event queue everything else already used.
 - `run <n>.com` runs a small MS-DOS `.com` program - real 16-bit x86
   machine code, not LexOS's own format, executed directly (no BIOS, no
   real-mode switch, no v86 mode: it runs through a 16-bit code segment
@@ -467,6 +479,9 @@ src/
   convert.asm          PROGRAMS/CONVERT.BIN, a decimal/hex/octal/binary
                        base converter - a text-mode program like calc_run
                        (programs.asm), not a vga.asm one.
+  chip8.asm            `chip8 <name>`, a CHIP-8 interpreter - same
+                       vga.asm mode switch as snake.asm, reuses
+                       sound.asm's audio_timer_start for its 60Hz timer.
   dosrun.asm           runs a *.com MS-DOS program directly under this
                        32-bit kernel (no BIOS, no real-mode switch, no
                        v86 mode) through a 16-bit code segment and a

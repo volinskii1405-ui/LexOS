@@ -121,6 +121,7 @@ main_loop:
 %include "src/rtc.asm"
 %include "src/speaker.asm"
 %include "src/sound.asm"
+%include "src/chip8.asm"
 %include "src/grep.asm"
 %include "src/headtail.asm"
 %include "src/uranium.asm"
@@ -451,4 +452,4 @@ com_shift_held     db 0     ; com_poll_key's own Shift-key tracking
 
 ; Pad the remaining space within the sectors the bootloader reads,
 ; so the file size is a multiple of 512 bytes (see KERNEL_SECTORS_1/2 in boot.asm).
-times (512*264)-($-$$) db 0
+times (512*312)-($-$$) db 0

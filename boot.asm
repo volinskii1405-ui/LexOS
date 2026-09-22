@@ -37,8 +37,10 @@ KERNEL_SECTORS_2 equ 128        ; part 2: the next 64 KB - the most a single
                                   ; call can ever carry (see above)
 KERNEL_LOAD_SEG2 equ 0x1000     ; = physical 0x10000, continuation of part 1
 KERNEL_LOAD_OFF2 equ 0x0000
-KERNEL_SECTORS_3 equ 72         ; part 3: whatever's left - bumped for
-                                  ; PROGRAMS/SWEEPER.BIN (src/sweeper.asm)
+KERNEL_SECTORS_3 equ 120        ; part 3: whatever's left - bumped for
+                                  ; src/chip8.asm (well under the 128-
+                                  ; sector ceiling this call can carry,
+                                  ; on purpose - see the comment above)
 KERNEL_LOAD_SEG3 equ 0x2000     ; = physical 0x20000, continuation of part 2
 KERNEL_LOAD_OFF3 equ 0x0000
 
