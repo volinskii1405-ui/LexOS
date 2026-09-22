@@ -28,7 +28,7 @@ SECTOR_COUNT equ 8
 ;   byte 8       - type (0=free, 1=file, 2=folder)
 ;   byte 9       - parent (slot index of the parent folder, 0xFF = root)
 ;   bytes 10..   - content (zero-terminated, unused for folders)
-FS_START_SECTOR   equ 186     ; sector 1=bootloader, 2..185=kernel (184 sectors)
+FS_START_SECTOR   equ 266     ; sector 1=bootloader, 2..265=kernel (264 sectors)
 FS_FILE_COUNT     equ 24
 FS_NAME_LEN       equ 16
 FS_CONTENT_LEN    equ 128
@@ -318,6 +318,7 @@ test_exe_name db "TEST.BIN", 0
 calc_exe_name db "CALC.BIN", 0
 snake_exe_name db "SNAKE.BIN", 0
 snake_hs_name db "SNAKE.HS", 0
+sweeper_exe_name db "SWEEPER.BIN", 0
 programs_dir_name db "PROGRAMS", 0
 tmp_dir_name       db "TMP", 0
 
@@ -364,6 +365,11 @@ msg_snake_gameover db "Game over!", 13, 10, 0
 msg_snake_quit     db "Quit.", 13, 10, 0
 msg_snake_score    db "Score: ", 0
 msg_snake_highscore db "Best:  ", 0
+
+; src/sweeper.asm's sweeper_run (the game behind PROGRAMS/SWEEPER.BIN) -
+; kept here for the same reason as the snake_* messages above.
+msg_sweeper_intro  db "SWEEPER - left click reveal, right click flag, R restart, ESC quit.", 13, 10, 0
+msg_sweeper_quit   db "Quit.", 13, 10, 0
 
 BATCH_BUF_LEN equ 511
 batch_content_buf times (BATCH_BUF_LEN + 1) db 0
