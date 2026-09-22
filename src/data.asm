@@ -255,7 +255,7 @@ msg_head_usage       db "Usage: head <n> [lines]", 13, 10, 0
 msg_tail_usage       db "Usage: tail <n> [lines]", 13, 10, 0
 msg_uranium_usage    db "Usage: uranium <n>", 13, 10, 0
 msg_paint_usage      db "Usage: paint <n> [width] [height]", 13, 10, 0
-msg_paint_intro      db "PAINT - mouse to draw, 1-9/A-F color, W/S brush size, ESC to save & quit.", 13, 10, 0
+msg_paint_intro      db "PAINT - mouse draw, 1-9/A-F color, W/S size, K fill, N clear, ESC save & quit.", 13, 10, 0
 msg_paint_size_clamped db "Canvas size clamped to the 320x200 screen.", 13, 10, 0
 msg_paint_saved      db "Saved ", 0
 msg_view_usage       db "Usage: view <n>", 13, 10, 0

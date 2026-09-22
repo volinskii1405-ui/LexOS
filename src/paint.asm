@@ -170,6 +170,8 @@ paint_editor:
     mov byte [paint_have_last], 0
     mov byte [paint_cursor_shown], 0
     mov byte [paint_erasing], 0
+    mov byte [paint_tool], 0
+    mov byte [paint_fill_prev_button], 0
 
 .loop:
     call paint_cursor_erase             ; undo last frame's overlay before
@@ -463,10 +465,20 @@ paint_poll_keys:
     jmp .loop
 .not_w:
     cmp al, 'S'
-    jne .loop
+    jne .not_s
     cmp byte [paint_brush], PAINT_BRUSH_MIN
     jbe .loop
     dec byte [paint_brush]
+    jmp .loop
+.not_s:
+    cmp al, 'N'                           ; "New" - not 'C'/'F': both are
+    jne .not_n                            ; already hex-color keys (A-F)
+    call paint_clear_canvas
+    jmp .loop
+.not_n:
+    cmp al, 'K'                           ; "bucKet" - see the note above
+    jne .loop
+    xor byte [paint_tool], 1              ; toggle brush <-> fill/bucket
     jmp .loop
 
 .done:
@@ -502,22 +514,39 @@ paint_toggle_eraser:
     ret
 
 ; ============================================================
-; If the left button is held, draws a paint_brush-sized square of
-; paint_color centered on the current mouse position. A single poll
-; only sees the mouse's CURRENT position, not every point it passed
-; through since the last poll - a fast drag (a real mouse, or QEMU's
-; mouse_move, which applies a whole packet's delta in one jump) easily
-; moves further between polls than one brush width, which without
-; this would leave a dotted trail of separate squares instead of a
-; continuous stroke. So instead of stamping only at the new position,
-; this draws (via paint_draw_line) every brush square along the
-; straight line from the last drawn position to this one.
-; paint_have_last tracks whether there IS a "last position" yet - it's
-; cleared whenever the button is up, so releasing and re-pressing
-; starts a fresh stroke instead of connecting back across the gap.
+; Dispatches to the brush or the fill/bucket tool depending on
+; paint_tool ('F' toggles it - see paint_poll_keys). They need
+; opposite edge-behavior on the left button: the brush is meant to be
+; dragged, so it must act every poll the button is down (continuous);
+; a bucket fill is a single one-shot action per press, so it must act
+; only on the up-to-down transition, or it would refill (and re-flood
+; the whole region) on every single poll for as long as the button
+; stayed held - paint_fill_prev_button is that edge tracker.
 ; ============================================================
 paint_handle_mouse:
     pusha
+    mov al, [mouse_buttons]
+    mov ah, [paint_fill_prev_button]
+    mov [paint_fill_prev_button], al      ; tracked unconditionally, not just
+                                            ; in fill mode - otherwise switching
+                                            ; tools mid-click could see a stale
+                                            ; "was up" and misfire a fill
+    cmp byte [paint_tool], 0
+    jne .fill_tool
+
+    ; --- brush: draws continuously for as long as the button is held.
+    ; A single poll only sees the mouse's CURRENT position, not every
+    ; point it passed through since the last poll - a fast drag (a
+    ; real mouse, or QEMU's mouse_move, which applies a whole packet's
+    ; delta in one jump) easily moves further between polls than one
+    ; brush width, which without this would leave a dotted trail of
+    ; separate squares instead of a continuous stroke. So instead of
+    ; stamping only at the new position, this draws (via
+    ; paint_draw_line) every brush square along the straight line from
+    ; the last drawn position to this one. paint_have_last tracks
+    ; whether there IS a "last position" yet - it's cleared whenever
+    ; the button is up, so releasing and re-pressing starts a fresh
+    ; stroke instead of connecting back across the gap. ---
     test byte [mouse_buttons], 1
     jz .button_up
 
@@ -541,6 +570,17 @@ paint_handle_mouse:
 
 .button_up:
     mov byte [paint_have_last], 0
+    jmp .done
+
+.fill_tool:
+    test al, 1
+    jz .done
+    test ah, 1
+    jnz .done                             ; already was down - not a new press
+
+    mov ebx, [mouse_x]
+    mov edx, [mouse_y]
+    call paint_flood_fill
 
 .done:
     popa
@@ -699,6 +739,198 @@ paint_fill_brush:
     ret
 
 ; ============================================================
+; Clears the paint_canvas_w x paint_canvas_h box (top-left anchored,
+; same as paint_fill_brush's own clip - so a smaller canvas's border
+; marker, which lives entirely outside that box, is untouched) to
+; black - the 'C' key (see paint_poll_keys).
+; ============================================================
+paint_clear_canvas:
+    pusha
+    xor ebx, ebx                       ; row
+.row_loop:
+    cmp ebx, [paint_canvas_h]
+    jae .done
+    mov edi, ebx
+    imul edi, edi, 320
+    add edi, VGA_FB
+    mov ecx, [paint_canvas_w]
+    xor al, al
+    rep stosb
+    inc ebx
+    jmp .row_loop
+.done:
+    popa
+    ret
+
+; ============================================================
+; Flood-fills the region of paint_source_byte-contiguous same-colored
+; pixels starting at (ebx=x, edx=y) with paint_color - the 'F' tool
+; (see paint_handle_mouse/paint_poll_keys). 4-connected (up/down/left/
+; right, not diagonals - the standard choice, and the cheaper one),
+; clipped to the paint_canvas_w x paint_canvas_h box like every other
+; drawing operation here.
+;
+; Uses an explicit stack of pixel positions (paint_flood_stack, packed
+; one dword per pixel as y*320+x) rather than recursion, marking each
+; pixel with the NEW color at the moment it's PUSHED, not when it's
+; popped - once a pixel has its new color, it no longer matches
+; old_color, so nothing will ever try to push it again, which is what
+; keeps a single pixel from being queued twice (the same reasoning
+; src/sweeper.asm's own flood fill uses its "mark at push" for, except
+; there it needs an explicit "already handled" flag since a cell's
+; state doesn't otherwise change until it's actually processed; here
+; the paint color change itself already IS that flag).
+;
+; The stack is a fixed PAINT_FLOOD_STACK_LEN entries, not one per
+; screen pixel (64000 would be a quarter-megabyte of pure padding in
+; this kernel's flat binary image, where every declared byte is a real
+; byte on disk - see the note above KERNEL_SECTORS_2 in boot.asm).
+; That's enough for any fill this program is actually likely to see  -
+; a stroke-drawn, blob-shaped region's frontier is nowhere near its
+; total area - but a pathological shape that queues more pixels
+; simultaneously than that either way just stops expanding early
+; (best-effort, matching paint_save_bmp/recv's own behavior when the
+; disk's extra-sector pool runs out) rather than overflowing the stack
+; into whatever data follows it.
+; ============================================================
+PAINT_FLOOD_STACK_LEN equ 4096
+
+paint_flood_fill:
+    pusha
+
+    mov eax, edx
+    imul eax, eax, 320
+    add eax, ebx
+    add eax, VGA_FB
+    movzx ecx, byte [eax]
+    mov [paint_flood_old_color], ecx
+
+    movzx eax, byte [paint_color]
+    cmp eax, [paint_flood_old_color]
+    je .end                              ; clicked the color it already is
+
+    mov dword [paint_flood_sp], 0
+
+    mov eax, edx
+    imul eax, eax, 320
+    add eax, ebx                          ; eax = start position (y*320+x)
+    call paint_flood_push_and_paint
+
+.loop:
+    cmp dword [paint_flood_sp], 0
+    je .end
+
+    call paint_flood_pop                  ; eax = position
+    xor edx, edx
+    mov ecx, 320
+    div ecx                                ; eax = y, edx = x
+    mov [paint_flood_y], eax
+    mov [paint_flood_x], edx
+
+    mov eax, [paint_flood_x]
+    dec eax
+    cmp eax, 0
+    jl .skip_left
+    mov ebx, eax
+    mov edx, [paint_flood_y]
+    call paint_flood_try
+.skip_left:
+    mov eax, [paint_flood_x]
+    inc eax
+    cmp eax, [paint_canvas_w]
+    jge .skip_right
+    mov ebx, eax
+    mov edx, [paint_flood_y]
+    call paint_flood_try
+.skip_right:
+    mov eax, [paint_flood_y]
+    dec eax
+    cmp eax, 0
+    jl .skip_up
+    mov ebx, [paint_flood_x]
+    mov edx, eax
+    call paint_flood_try
+.skip_up:
+    mov eax, [paint_flood_y]
+    inc eax
+    cmp eax, [paint_canvas_h]
+    jge .skip_down
+    mov ebx, [paint_flood_x]
+    mov edx, eax
+    call paint_flood_try
+.skip_down:
+
+    jmp .loop
+
+.end:
+    popa
+    ret
+
+; --- If (ebx=x, edx=y) is still old_color, paints it and pushes it ---
+paint_flood_try:
+    push eax
+    push ebx
+    push ecx
+    push edx
+
+    mov eax, edx
+    imul eax, eax, 320
+    add eax, ebx
+    add eax, VGA_FB
+    movzx ecx, byte [eax]
+    cmp ecx, [paint_flood_old_color]
+    jne .done
+
+    mov eax, edx
+    imul eax, eax, 320
+    add eax, ebx                          ; eax = position (y*320+x)
+    call paint_flood_push_and_paint
+
+.done:
+    pop edx
+    pop ecx
+    pop ebx
+    pop eax
+    ret
+
+; --- Paints framebuffer position eax with paint_color and pushes eax
+;     onto paint_flood_stack - a full stack is simply not pushed to
+;     (see the note above paint_flood_fill), leaving that pixel
+;     painted but not expanded any further from. ---
+paint_flood_push_and_paint:
+    push eax
+    push ebx
+    push edx
+
+    mov ebx, eax
+    add ebx, VGA_FB
+    mov dl, [paint_color]
+    mov [ebx], dl
+
+    mov ebx, [paint_flood_sp]
+    cmp ebx, PAINT_FLOOD_STACK_LEN
+    jae .done
+    mov [paint_flood_stack + ebx*4], eax
+    inc ebx
+    mov [paint_flood_sp], ebx
+
+.done:
+    pop edx
+    pop ebx
+    pop eax
+    ret
+
+; --- Pops paint_flood_stack into eax ---
+paint_flood_pop:
+    push ebx
+    mov ebx, [paint_flood_sp]
+    dec ebx
+    mov eax, [paint_flood_stack + ebx*4]
+    mov [paint_flood_sp], ebx
+    pop ebx
+    ret
+
+; ============================================================
 ; Software mouse cursor: mode 13h has no hardware cursor overlay (that's
 ; a text-mode-only VGA feature), so the pointer has to be drawn into the
 ; framebuffer like anything else - and undrawn again before the next
@@ -744,8 +976,19 @@ paint_cursor_toggle_pixel:
     popa
     ret
 
-; --- Toggles every pixel of the crosshair centered at (ebx, edx) ---
+; --- Toggles the current cursor icon centered at (ebx, edx) - a
+;     crosshair for the brush, a small square outline for fill/bucket
+;     (see paint_handle_mouse), so which tool a click will use is
+;     obvious without spending any permanent screen space on a label.
+;     A tail-jump to whichever shape applies, not a further call: the
+;     one already on the stack (from erase/show calling THIS
+;     function) is what its own ret should return to. ---
 paint_cursor_toggle:
+    cmp byte [paint_tool], 0
+    je paint_cursor_toggle_crosshair
+    jmp paint_cursor_toggle_box
+
+paint_cursor_toggle_crosshair:
     pusha
     mov esi, ebx                        ; cx
     mov edi, edx                        ; cy
@@ -776,6 +1019,50 @@ paint_cursor_toggle:
     inc ecx
     jmp .v_loop
 .v_done:
+    popa
+    ret
+
+; --- Fill/bucket cursor: a 7x7 square outline centered at (ebx, edx) ---
+paint_cursor_toggle_box:
+    pusha
+    mov esi, ebx                        ; cx
+    mov edi, edx                        ; cy
+
+    mov ecx, -3                          ; top and bottom edges
+.tb_loop:
+    cmp ecx, 3
+    jg .tb_done
+    mov eax, esi
+    add eax, ecx
+    mov ebx, edi
+    sub ebx, 3
+    call paint_cursor_toggle_pixel
+    mov eax, esi
+    add eax, ecx
+    mov ebx, edi
+    add ebx, 3
+    call paint_cursor_toggle_pixel
+    inc ecx
+    jmp .tb_loop
+.tb_done:
+
+    mov ecx, -2                          ; left and right edges (corners
+.lr_loop:                                ; already toggled by the loop above)
+    cmp ecx, 2
+    jg .lr_done
+    mov eax, esi
+    sub eax, 3
+    mov ebx, edi
+    add ebx, ecx
+    call paint_cursor_toggle_pixel
+    mov eax, esi
+    add eax, 3
+    mov ebx, edi
+    add ebx, ecx
+    call paint_cursor_toggle_pixel
+    inc ecx
+    jmp .lr_loop
+.lr_done:
     popa
     ret
 
@@ -1399,3 +1686,15 @@ view_offset_y      dd 0
 
 view_res_prefix db "Resolution ", 0
 view_res_label  times 24 db 0
+
+; --- paint_handle_mouse's tool state (0=brush, 1=fill/bucket - 'F'
+; toggles it) and the fill tool's own click-edge tracker. ---
+paint_tool             db 0
+paint_fill_prev_button db 0
+
+; --- paint_flood_fill's own working state. ---
+paint_flood_old_color dd 0
+paint_flood_sp        dd 0
+paint_flood_x         dd 0
+paint_flood_y         dd 0
+paint_flood_stack     times PAINT_FLOOD_STACK_LEN dd 0
