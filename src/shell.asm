@@ -291,8 +291,9 @@ handle_command:
     add si, 6                  ; skip "color "
     call parse_hex_byte
     mov [current_color], al
-    mov si, msg_color_ok
-    call print_string
+    call repaint_screen_color   ; applies it to what's already on screen
+    mov si, msg_color_ok        ; too, not just future output - see the
+    call print_string           ; note above repaint_screen_color itself
     jmp .done
 
 .do_sector:
