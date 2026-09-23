@@ -64,8 +64,19 @@ static inline int fsize(int fd)                           { return lx_syscall(16
 #define GFX_H 200
 #define RGB6(r, g, b) (32 + (r) * 36 + (g) * 6 + (b))
 static inline void gfx_mode(int on)                       { lx_syscall(17, on, 0); }
-static inline void gfx_blit(const unsigned char *frame)   { lx_syscall(18, (int)frame, 0); }
+static inline void gfx_blit(const void *frame)            { lx_syscall(18, (int)frame, 0); }
 static inline void gfx_palette(int color, unsigned rgb)   { lx_syscall(19, color, (int)rgb); } /* 0xRRGGBB */
+
+/* Higher resolutions: gfx_mode_ex(800, 600, 32) - width x height in
+ * 8 bits per pixel (the palette above) or 32 (a pixel is 0x00RRGGBB,
+ * see RGB()). Up to 1600x1200; returns 0, or -1 if the video can't.
+ * gfx_blit() then takes a width*height*(bpp/8)-byte frame, and
+ * gfx_blit_rect() copies just one rectangle of such a frame - quicker
+ * when only part of the picture changed. */
+#define RGB(r, g, b) ((unsigned)(r) << 16 | (unsigned)(g) << 8 | (unsigned)(b))
+static inline int  gfx_mode_ex(int w, int h, int bpp)     { return lx_syscall3(21, w, h, bpp); }
+static inline void gfx_blit_rect(const void *frame, int x, int y, int w, int h)
+{ lx_syscall3(22, (int)frame, x | y << 16, w | h << 16); }
 
 /* keydown(scancode): 1 while that key is held - for games. */
 static inline int keydown(int scancode)                   { return lx_syscall(20, scancode, 0); }

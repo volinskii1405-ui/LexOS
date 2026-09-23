@@ -70,7 +70,9 @@ SYS_GFX         equ 17                ; ebx = 1 graphics / 0 text
 SYS_BLIT        equ 18                ; ebx = 320x200 frame (64000 bytes)
 SYS_PALETTE     equ 19                ; ebx = color, ecx = 0xRRGGBB
 SYS_KEYDOWN     equ 20                ; ebx = scancode -> eax = 1 if held
-SYS_COUNT       equ 21                ; (files/graphics: src/appsys.asm)
+SYS_GFX_MODE    equ 21                ; ebx = width, ecx = height, edx = bpp
+SYS_BLIT_RECT   equ 22                ; ebx = frame, ecx = x|y<<16, edx = w|h<<16
+SYS_COUNT       equ 23                ; (files/graphics: src/appsys.asm)
 
 ; ============================================================
 ; Paging, the TSS, the ring-3 entry points into the kernel (int 0x80,
@@ -283,7 +285,7 @@ syscall_table:
     dd sys_sleep, sys_clear, sys_setcursor, sys_setcolor, sys_readline
     dd sys_beep, sys_open, sys_read, sys_fwrite, sys_close
     dd sys_seek, sys_fsize, sys_gfx, sys_blit, sys_palette
-    dd sys_keydown
+    dd sys_keydown, sys_gfx_mode, sys_blit_rect
 
 sys_exit:
     mov eax, [ebp + 16]

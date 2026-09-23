@@ -39,6 +39,8 @@ SYS_GFX         equ 17      ; ebx = 1: 320x200x256 graphics, 0: text
 SYS_BLIT        equ 18      ; ebx = a 64000-byte frame -> the screen
 SYS_PALETTE     equ 19      ; ebx = color 0-255, ecx = 0xRRGGBB
 SYS_KEYDOWN     equ 20      ; ebx = scancode -> eax = 1 while held
+SYS_GFX_MODE    equ 21      ; ebx = width, ecx = height, edx = 8 or 32 bpp
+SYS_BLIT_RECT   equ 22      ; ebx = frame, ecx = x | y<<16, edx = w | h<<16
 
 %macro EXIT 1
     mov ebx, %1

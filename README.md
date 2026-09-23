@@ -321,12 +321,17 @@ alex@/PROGRAMS$
   switches to 320x200 in 256 colors: a program draws into a buffer of
   its own and `gfx_blit`s it to the screen, can set any palette color,
   and `keydown(scancode)` tells whether a key is held - what games
-  need. The screen goes back to text by itself when the program ends.
+  need. `gfx_mode_ex(800, 600, 32)` asks for more: up to 1600x1200,
+  in 256 colors or true color (0x00RRGGBB pixels), through QEMU's VBE
+  adapter (Bochs "BGA", its framebuffer found on PCI), and
+  `gfx_blit_rect` updates just part of the screen. The screen goes back
+  to text by itself when the program ends.
   Examples (`make apps`, then `hostget` them): `WC.APP` (`run wc.app
   LICENSE` - lines, words, bytes), `NOTE.APP` (`run note.app todo.txt
   buy milk` adds a line, `run note.app todo.txt` lists them),
-  `FIRE.APP` (the demo-scene fire effect) and `PONG.APP` (W/S or
-  Up/Down against LexOS).
+  `FIRE.APP` (the demo-scene fire effect), `PONG.APP` (W/S or
+  Up/Down against LexOS) and `MANDEL.APP` (the Mandelbrot set in
+  800x600 true color: arrows move, +/- zoom).
 - **Preemptive multitasking.** Kernel tasks with their own stacks,
   switched by the timer interrupt (src/sched.asm): equal-priority tasks
   take turns a timer tick (~55ms) at a time, a higher-priority one runs

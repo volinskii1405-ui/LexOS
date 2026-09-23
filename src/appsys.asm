@@ -13,11 +13,17 @@
 ; Graphics: SYS_GFX 1 switches to mode 13h (src/vga.asm) with a
 ; 256-color palette - the 16 text colors, 16 grays, a 6x6x6 color cube
 ; (32 + r*36 + g*6 + b) - and SYS_BLIT copies a 64000-byte frame from
-; the program's memory to the screen. The screen goes back to text by
-; itself when the program ends, so a crash message is always readable.
+; the program's memory to the screen. SYS_GFX_MODE asks for more: up to
+; 1600x1200 in 256 colors (the same palette) or true color (a pixel =
+; 0x00RRGGBB), through the Bochs/QEMU VBE adapter ("BGA" - ports
+; 0x1CE/0x1CF, its framebuffer at PCI BAR0, mapped in on first use).
+; SYS_BLIT_RECT copies just part of a frame. The screen goes back to
+; text by itself when the program ends, so a crash message is always
+; readable.
 ;
 ; Exports: sys_open, sys_read, sys_fwrite, sys_close, sys_seek,
 ;          sys_fsize, sys_gfx, sys_blit, sys_palette, sys_keydown,
+;          sys_gfx_mode, sys_blit_rect,
 ;          app_gfx_off, fh_close_all, app_build_cmdline
 ; ============================================================
 
@@ -370,6 +376,9 @@ sys_gfx:
     rep stosd
     popad
     mov byte [app_gfx], 1
+    mov dword [app_gfx_w], 320
+    mov dword [app_gfx_h], 200
+    mov dword [app_gfx_bpp], 1
 .done:
     xor eax, eax
     ret
@@ -383,10 +392,286 @@ app_gfx_off:
     cmp byte [app_gfx], 0
     je .done
     pushad
+    cmp byte [app_gfx], 2
+    jne .vga
+    mov ax, BGA_ENABLE                    ; VBE off: the VGA registers
+    xor dx, dx                            ; (restored next) are in charge again
+    call bga_write
+.vga:
     call vga_leave_mode13
     popad
     mov byte [app_gfx], 0
 .done:
+    ret
+
+; ============================================================
+; SYS_GFX_MODE: ebx = width, ecx = height, edx = bits per pixel (8 or
+; 32) -> eax = 0, or -1 if this machine's video can't. 320x200x8 is
+; plain mode 13h, like SYS_GFX 1.
+; ============================================================
+BGA_INDEX       equ 0x1CE
+BGA_DATA        equ 0x1CF
+BGA_ID          equ 0
+BGA_XRES        equ 1
+BGA_YRES        equ 2
+BGA_BPP         equ 3
+BGA_ENABLE      equ 4
+BGA_VIRT_WIDTH  equ 6
+BGA_X_OFFSET    equ 8
+BGA_Y_OFFSET    equ 9
+BGA_MAX_W       equ 1600
+BGA_MAX_H       equ 1200
+
+sys_gfx_mode:
+    mov eax, [ebp + 16]
+    mov ecx, [ebp + 24]
+    mov edx, [ebp + 20]
+    cmp eax, 320
+    jne .vbe
+    cmp ecx, 200
+    jne .vbe
+    cmp edx, 8
+    jne .vbe
+    call app_gfx_off
+    mov dword [ebp + 16], 1
+    call sys_gfx
+    mov dword [app_gfx_w], 320
+    mov dword [app_gfx_h], 200
+    mov dword [app_gfx_bpp], 1
+    ret
+.vbe:
+    cmp eax, 64
+    jb .fail
+    cmp eax, BGA_MAX_W
+    ja .fail
+    test eax, 7
+    jnz .fail
+    cmp ecx, 64
+    jb .fail
+    cmp ecx, BGA_MAX_H
+    ja .fail
+    cmp edx, 8
+    je .depth_ok
+    cmp edx, 32
+    jne .fail
+.depth_ok:
+    call bga_find
+    jc .fail
+    call app_gfx_off
+    mov [app_gfx_w], eax
+    mov [app_gfx_h], ecx
+    shr edx, 3
+    mov [app_gfx_bpp], edx
+    pushad
+    mov byte [vga_graphics_active], 1     ; (like vga_enter_mode13: keep the
+    call vga_save_regs                    ; text screen, font and registers
+    call vga_save_font                    ; to come back to)
+    mov ax, BGA_ENABLE
+    xor dx, dx
+    call bga_write
+    mov ax, BGA_XRES
+    mov dx, [app_gfx_w]
+    call bga_write
+    mov ax, BGA_YRES
+    mov dx, [app_gfx_h]
+    call bga_write
+    mov ax, BGA_BPP
+    mov dx, [app_gfx_bpp]
+    shl dx, 3
+    call bga_write
+    mov ax, BGA_VIRT_WIDTH
+    mov dx, [app_gfx_w]
+    call bga_write
+    mov ax, BGA_X_OFFSET
+    xor dx, dx
+    call bga_write
+    mov ax, BGA_Y_OFFSET
+    xor dx, dx
+    call bga_write
+    mov ax, BGA_ENABLE
+    mov dx, 0x41                          ; on, linear framebuffer, cleared
+    call bga_write
+    cmp dword [app_gfx_bpp], 1
+    jne .no_palette
+    call app_gfx_palette
+.no_palette:
+    popad
+    mov byte [app_gfx], 2
+    xor eax, eax
+    ret
+.fail:
+    mov eax, -1
+    ret
+
+; ax = a BGA register, dx = its new value
+bga_write:
+    push edx
+    push eax
+    mov dx, BGA_INDEX
+    out dx, ax
+    pop eax
+    pop edx
+    push eax
+    push edx
+    mov ax, dx
+    mov dx, BGA_DATA
+    out dx, ax
+    pop edx
+    pop eax
+    ret
+
+; Finds the BGA adapter (PCI 1234:1111) and maps its framebuffer
+; (identity, 16MB of 4MB kernel pages). carry=1 if there isn't one.
+; Preserves registers.
+bga_find:
+    cmp dword [bga_lfb], 0
+    jne .ok
+    pushad
+    mov dx, BGA_INDEX                     ; does it answer at all?
+    mov ax, BGA_ID
+    out dx, ax
+    mov dx, BGA_DATA
+    in ax, dx
+    cmp ax, 0xB0C0
+    jb .absent
+    cmp ax, 0xB0CF
+    ja .absent
+    xor ebx, ebx                          ; PCI bus 0, device ebx
+.scan:
+    mov eax, ebx
+    shl eax, 11
+    or eax, 0x80000000
+    mov dx, PCI_CONFIG_ADDR
+    out dx, eax
+    mov dx, PCI_CONFIG_DATA
+    in eax, dx
+    cmp eax, 0x11111234
+    je .found
+    inc ebx
+    cmp ebx, 32
+    jb .scan
+    jmp .absent
+.found:
+    mov eax, ebx
+    shl eax, 11
+    or eax, 0x80000010                    ; BAR0
+    mov dx, PCI_CONFIG_ADDR
+    out dx, eax
+    mov dx, PCI_CONFIG_DATA
+    in eax, dx
+    and eax, 0xFFFFFFF0
+    jz .absent
+    mov [bga_lfb], eax
+    shr eax, 22                           ; its page directory entries
+    mov ecx, 4
+.map:
+    mov edx, eax
+    shl edx, 22
+    or edx, 0x83                          ; present, writable, 4MB, kernel only
+    mov [PAGE_DIR + eax*4], edx
+    inc eax
+    loop .map
+    mov eax, cr3
+    mov cr3, eax
+    popad
+.ok:
+    clc
+    ret
+.absent:
+    popad
+    stc
+    ret
+
+; SYS_BLIT_RECT: ebx = a whole frame (as for SYS_BLIT), ecx = x | y << 16,
+; edx = width | height << 16: copies just that rectangle of it
+sys_blit_rect:
+    movzx eax, word [ebp + 24]            ; x
+    mov [app_rect_x], eax
+    movzx eax, word [ebp + 26]            ; y
+    mov [app_rect_y], eax
+    movzx eax, word [ebp + 20]
+    mov [app_rect_w], eax
+    movzx eax, word [ebp + 22]
+    mov [app_rect_h], eax
+    jmp app_blit
+
+; SYS_BLIT for any mode: the whole frame
+sys_blit:
+    xor eax, eax
+    mov [app_rect_x], eax
+    mov [app_rect_y], eax
+    mov eax, [app_gfx_w]
+    mov [app_rect_w], eax
+    mov eax, [app_gfx_h]
+    mov [app_rect_h], eax
+app_blit:
+    cmp byte [app_gfx], 0
+    je .done
+    mov eax, [app_gfx_w]                  ; the frame must be the program's
+    imul eax, [app_gfx_h]
+    imul eax, [app_gfx_bpp]
+    mov ecx, eax
+    mov eax, [ebp + 16]
+    call app_check_buf
+    ; clip the rectangle to the screen
+    mov eax, [app_rect_x]
+    cmp eax, [app_gfx_w]
+    jae .done
+    add eax, [app_rect_w]
+    cmp eax, [app_gfx_w]
+    jbe .w_ok
+    mov eax, [app_gfx_w]
+    sub eax, [app_rect_x]
+    mov [app_rect_w], eax
+.w_ok:
+    mov eax, [app_rect_y]
+    cmp eax, [app_gfx_h]
+    jae .done
+    add eax, [app_rect_h]
+    cmp eax, [app_gfx_h]
+    jbe .h_ok
+    mov eax, [app_gfx_h]
+    sub eax, [app_rect_y]
+    mov [app_rect_h], eax
+.h_ok:
+    mov edi, VGA_FB                       ; where the screen is
+    cmp byte [app_gfx], 2
+    jne .have_screen
+    mov edi, [bga_lfb]
+.have_screen:
+    mov ebx, [app_gfx_w]                  ; the stride, in bytes
+    imul ebx, [app_gfx_bpp]
+    mov eax, [app_rect_y]                 ; offset of the rectangle's corner
+    imul eax, ebx
+    mov edx, [app_rect_x]
+    imul edx, [app_gfx_bpp]
+    add eax, edx
+    add edi, eax
+    mov esi, [ebp + 16]
+    add esi, eax
+    mov edx, [app_rect_w]
+    imul edx, [app_gfx_bpp]               ; bytes per row
+    mov eax, [app_rect_h]
+    cld
+.row:
+    or eax, eax
+    jz .done
+    push esi
+    push edi
+    mov ecx, edx
+    shr ecx, 2
+    rep movsd
+    mov ecx, edx
+    and ecx, 3
+    rep movsb
+    pop edi
+    pop esi
+    add esi, ebx
+    add edi, ebx
+    dec eax
+    jmp .row
+.done:
+    xor eax, eax
     ret
 
 ; The programs' standard palette (see the top of this file).
@@ -452,21 +737,6 @@ app_gfx_palette:
 
 app_cube_levels db 0, 13, 25, 38, 50, 63
 
-; SYS_BLIT: ebx = 64000 bytes (320x200, a byte per pixel) -> the screen
-sys_blit:
-    mov eax, [ebp + 16]
-    mov ecx, VGA_FB_SIZE
-    call app_check_buf
-    cmp byte [app_gfx], 0
-    je .done
-    mov esi, eax
-    mov edi, VGA_FB
-    mov ecx, VGA_FB_SIZE / 4
-    cld
-    rep movsd
-.done:
-    xor eax, eax
-    ret
 
 ; SYS_PALETTE: ebx = color 0-255, ecx = 0xRRGGBB
 sys_palette:
@@ -557,4 +827,12 @@ fh_pos       times FH_COUNT dd 0
 fh_cur       dd 0
 fh_cur_slot  dw 0
 fh_src_ptr   dd 0
-app_gfx      db 0
+app_gfx      db 0                     ; 0 text, 1 mode 13h, 2 VBE
+app_gfx_w    dd 320
+app_gfx_h    dd 200
+app_gfx_bpp  dd 1                     ; bytes per pixel
+app_rect_x   dd 0
+app_rect_y   dd 0
+app_rect_w   dd 0
+app_rect_h   dd 0
+bga_lfb      dd 0
