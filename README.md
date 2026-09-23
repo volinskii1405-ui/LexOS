@@ -258,6 +258,20 @@ alex@/PROGRAMS$
   mono WAVs still play, 1-bit, on the PC speaker. `make run` gives QEMU
   both an AdLib and an SB16. ESC stops playback; `&` puts it in the
   background (below).
+- **Virtual consoles.** Alt+T opens another console with a shell of
+  its own, Alt+1..Alt+9 switch between them, `exit` closes the one
+  you're in; the prompt says which you're in (`[2] test@/$`). Each is
+  a whole separate session - its own screen, command line and
+  history, current directory, colors, BASIC program, uranium file, even
+  a ring-3 program left waiting for input - while background tasks
+  (the clock, music) carry on across all of them. Every console is a
+  task; only the one on screen runs, the rest are paused. Since the
+  kernel keeps session state in ordinary globals, a switch swaps them:
+  the kernel image except its shared parts (interrupts, drivers, the
+  scheduler, sound, network, RAM-backed TMP files), plus BASIC's
+  memory, the program's 1MB and the text screen, into a 2MB save area
+  per console - only ever at a safe point, while the console on screen
+  is waiting for a key.
 - **Protected programs (ring 3).** `run <name>.app` runs a program in
   user mode, the way real operating systems do: paging maps it its own
   1MB and nothing else, so it can't touch the kernel, the screen or
@@ -469,6 +483,7 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `nslookup <name>` | look a name up in DNS |
 | `dhcp` | get an address from the DHCP server again |
 | `run <n>.app` | run a protected (ring 3) program - see `apps/` |
+| Alt+T / Alt+1..9 / `exit` | open a new console / switch to console N / close this one |
 | `ps` | list the running tasks (pid, state, priority, CPU time) |
 | `kill <pid>` | stop a background task |
 | `clock` | toggle a clock in the top-right corner (a background task) |
@@ -548,9 +563,10 @@ outside the kernel image need a full 32-bit linear address:
 | hostput staging buffer | `0x280000` |
 | IMF song buffer (`play`) | `0x310000` |
 | WAV file / SB16 DMA buffer (`play`) | `0x320000` |
-| Task stacks (16KB each) | `0x400000` – `0x41FFFF` |
+| Task stacks (64KB each, 16 tasks) | `0x400000` – `0x4FFFFF` |
 | Page directory / user page table | `0x500000` / `0x501000` |
 | A ring-3 program's own 1MB | `0x800000` – `0x8FFFFF` |
+| Console save areas (2MB each) | `0x1000000` – `0x21FFFFF` |
 | RTL8139 receive ring / transmit buffers | `0x300000` / `0x304000` |
 | .COM program segment | `0x100000` |
 | Kernel code/data | `0x8000` – `0x37FFF` (384 sectors) |
@@ -618,6 +634,8 @@ src/
                        as snake.asm.
   usermode.asm         ring 3: paging, TSS, int 0x80 system calls,
                        exception handling, `run <n>.app`.
+  console.asm          virtual consoles: Alt+T / Alt+1..9 / exit, the
+                       per-console memory swap.
   sched.asm            the scheduler: tasks, priorities, task_wait,
                        ps/kill/clock.
   net.asm              RTL8139 driver (polled), ARP, IPv4, ICMP echo,

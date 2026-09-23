@@ -46,13 +46,14 @@
 ; own buffer and the sound hardware).
 ; ============================================================
 
-SCHED_MAX          equ 8
+SCHED_MAX          equ 16           ; (a power of two)
 SCHED_STACK_BASE   equ 0x400000
-SCHED_STACK_SIZE   equ 0x4000
+SCHED_STACK_SIZE   equ 0x10000      ; 16 x 64KB, up to 0x500000
 
 TASK_FREE          equ 0
 TASK_READY         equ 1
 TASK_WAITING       equ 2
+TASK_PAUSED        equ 3            ; a console not on screen (src/console.asm)
 
 WAIT_KEY           equ 1            ; keyboard interrupt
 WAIT_TICK          equ 2            ; timer tick (~18.2Hz)
@@ -415,6 +416,9 @@ sched_cmd_ps:
     mov esi, sched_msg_ready
     cmp byte [task_state + ecx], TASK_READY
     je .state
+    mov esi, sched_msg_paused
+    cmp byte [task_state + ecx], TASK_PAUSED
+    je .state
     mov esi, sched_msg_waiting
 .state:
     call basic_puts
@@ -628,6 +632,7 @@ sched_msg_ps_header db "PID  STATE     PRIO    CPU    NAME", 10, 0
 sched_msg_running  db "running   ", 0
 sched_msg_ready    db "ready     ", 0
 sched_msg_waiting  db "waiting   ", 0
+sched_msg_paused   db "paused    ", 0
 sched_msg_normal   db "normal  ", 0
 sched_msg_high     db "high    ", 0
 sched_msg_gap      db "   ", 0

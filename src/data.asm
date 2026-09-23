@@ -207,6 +207,7 @@ help_l56 db "  ifconfig     - show the network card and LexOS's address", 13, 10
 help_l57 db "  ping <host> [n] - n ICMP echo requests (default 4); nslookup <name>; dhcp", 13, 10, 0
 help_l58 db "  ps / kill <pid> - list tasks / stop one; <cmd> & runs play in the background", 13, 10, 0
 help_l59 db "  clock        - toggle a clock in the top-right corner (a background task)", 13, 10, 0
+help_l60 db "  Alt+T / Alt+1..9 / exit - new console / switch console / close this one", 13, 10, 0
 help_l54 db "  basic [n]    - Tiny BASIC (optionally load and run program n)", 13, 10, 0
 
 help_lines:
@@ -220,7 +221,7 @@ help_lines:
     dw help_l41, help_l42, help_l43, help_l44, help_l45
     dw help_l46, help_l47, help_l48, help_l49, help_l50, help_l51
     dw help_l52, help_l53, help_l55, help_l54, help_l56, help_l57
-    dw help_l58, help_l59
+    dw help_l58, help_l59, help_l60
 help_lines_end:
 
 HELP_LINE_COUNT equ (help_lines_end - help_lines) / 2
@@ -301,6 +302,7 @@ msg_task_table_full  db "Too many tasks running (ps / kill <pid>).", 13, 10, 0
 msg_task_killed      db "Stopped.", 13, 10, 0
 msg_task_cant_kill   db "No such task (the shell, pid 0, can't be stopped) - see ps.", 13, 10, 0
 msg_kill_usage       db "Usage: kill <pid>   (pids are listed by ps)", 13, 10, 0
+msg_console_first    db "This is the first console - it stays. (Alt+T opens more, Alt+1..9 switches.)", 13, 10, 0
 msg_clock_on         db "Clock on (type clock again to turn it off).", 13, 10, 0
 msg_clock_off        db "Clock off.", 13, 10, 0
 msg_ping_usage       db "Usage: ping <host> [count]   (a name or a.b.c.d - try ping 10.0.2.2)", 13, 10, 0
@@ -621,6 +623,10 @@ cmd_hostget_prefix db "hostget ", 0
 cmd_hostput_prefix db "hostput ", 0
 cmd_basic        db "basic", 0
 cmd_ps           db "ps", 0
+cmd_exit         db "exit", 0
+; src/usermode.asm's, per console (src/console.asm swaps this file)
+app_active         db 0
+app_abort_request  db 0
 cmd_kill_prefix  db "kill ", 0
 cmd_clock        db "clock", 0
 play_bg_arg      times (BUFFER_MAX + 1) db 0   ; src/sound.asm's play_spawn

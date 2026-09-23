@@ -345,6 +345,12 @@ handle_command:
     je .do_dhcp
 
     mov si, buffer
+    mov di, cmd_exit
+    call strcmp_eq
+    cmp ax, 1
+    je .do_exit
+
+    mov si, buffer
     mov di, cmd_ps
     call strcmp_eq
     cmp ax, 1
@@ -632,6 +638,10 @@ handle_command:
 
 .do_ps:
     call sched_cmd_ps
+    jmp .done
+
+.do_exit:
+    call console_cmd_exit      ; (doesn't come back if it closed one)
     jmp .done
 
 .do_kill:

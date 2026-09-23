@@ -646,15 +646,10 @@ fs_name_ends_with_app:
     pop ecx
     ret
 
-; (until src/console.asm provides the real one)
-console_safe_point:
-    ret
-
 ; ============================================================
 ; Data
 ; ============================================================
-app_active         db 0
-app_abort_request  db 0
+; (app_active / app_abort_request are per console - in src/data.asm)
 exc_vector         dd 0
 exc_error          dd 0
 exc_eip            dd 0

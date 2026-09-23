@@ -200,12 +200,22 @@ keyboard_isr:
     je .shift_up
     cmp al, 0xB6                 ; Right Shift (release)
     je .shift_up
+    cmp al, 0x38                  ; Alt (press)
+    je .alt_down
+    cmp al, 0xB8                  ; Alt (release)
+    je .alt_up
     cmp al, 0x1D                  ; Ctrl (press)
     je .ctrl_down
     cmp al, 0x9D                  ; Ctrl (release)
     je .ctrl_up
     jmp .check_release
 
+.alt_down:
+    mov byte [kbd_alt_held], 1
+    jmp .eoi
+.alt_up:
+    mov byte [kbd_alt_held], 0
+    jmp .eoi
 .ctrl_down:
     mov byte [kbd_ctrl_held], 1
     jmp .eoi
@@ -239,6 +249,24 @@ keyboard_isr:
     mov cl, al
     movzx ecx, cl
     mov byte [key_held + ecx], 1
+
+    ; Alt+T / Alt+1..9: open / switch consoles (src/console.asm) - just
+    ; recorded here, acted on at the next safe point
+    cmp byte [kbd_alt_held], 0
+    je .not_alt
+    cmp al, 0x14                   ; T
+    jne .not_alt_t
+    mov byte [console_request], CONSOLE_REQ_NEW
+    jmp .eoi
+.not_alt_t:
+    cmp al, 0x02                   ; 1 .. 9
+    jb .not_alt
+    cmp al, 0x0A
+    ja .not_alt
+    dec al
+    mov [console_request], al      ; 1..9
+    jmp .eoi
+.not_alt:
 
     ; Ctrl+C while a program (src/usermode.asm) runs: ask to stop it
     cmp al, 0x2E                   ; C
@@ -372,6 +400,7 @@ default_isr_err:
 read_key:
     push ebx
 .wait:
+    call console_safe_point          ; Alt+T / Alt+1..9 (src/console.asm)
     mov al, [kbd_buf_tail]
     cmp al, [kbd_buf_head]
     jne .have_key
@@ -419,6 +448,7 @@ kbd_buf_head db 0
 kbd_buf_tail db 0
 kbd_shift_held db 0
 kbd_ctrl_held db 0
+kbd_alt_held db 0
 kbd_extended_flag db 0
 
 ; Live press/release state, one byte per possible (non-extended) Set-1
