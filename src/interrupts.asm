@@ -270,6 +270,11 @@ keyboard_isr:
     mov al, 0x20
     out PIC1_CMD, al                 ; EOI to the interrupt controller (PIC)
 
+    push edx
+    mov eax, WAIT_KEY                ; wake whoever's waiting for a key
+    call sched_event                 ; (never switches from here - the
+    pop edx                          ; woken task runs at the next chance)
+
     pop ecx
     pop ebx
     pop eax
@@ -292,20 +297,27 @@ push_key_to_buffer:
     ret
 
 ; ============================================================
-; Timer handler (IRQ0 -> vector 32). Just counts ticks and sends
-; EOI - unlike the real-mode version, chaining to the BIOS is impossible
-; (there's no BIOS handler in protected mode), and besides, the tick
-; counter isn't used anywhere in the system other than by itself.
+; Timer handler (IRQ0 -> vector 32). Counts ticks, sends EOI, and
+; gives the scheduler (src/sched.asm) its chance to switch tasks -
+; unlike the real-mode version, chaining to the BIOS is impossible
+; (there's no BIOS handler in protected mode).
 ; ============================================================
 timer_isr:
-    push eax
+    pushad
 
     inc dword [timer_ticks]
 
     mov al, 0x20
     out PIC1_CMD, al
 
-    pop eax
+    ; the scheduler's turn (src/sched.asm): maybe another task's
+    mov eax, WAIT_TICK
+    call sched_event
+    cmp ecx, -1
+    je .same_task
+    call sched_switch_to                  ; (returns once we're back)
+.same_task:
+    popad
     iret
 
 ; ============================================================
@@ -334,9 +346,9 @@ default_isr_err:
     iret
 
 ; ============================================================
-; Blocking read of a key from OUR buffer. Waits via hlt (doesn't
-; burn the CPU) until the interrupt handler puts something into the
-; buffer. Returns: al=ASCII (0 for special keys), ah=scancode.
+; Blocking read of a key from OUR buffer. Waits via task_wait (doesn't
+; burn the CPU - other tasks run, or the CPU halts) until the interrupt
+; handler puts something into the buffer. Returns: al=ASCII (0 for special keys), ah=scancode.
 ; ============================================================
 read_key:
     push ebx
@@ -344,8 +356,8 @@ read_key:
     mov al, [kbd_buf_tail]
     cmp al, [kbd_buf_head]
     jne .have_key
-    sti
-    hlt
+    mov eax, WAIT_KEY                ; lets other tasks run meanwhile
+    call task_wait                   ; (src/sched.asm)
     jmp .wait
 .have_key:
     mov bl, [kbd_buf_tail]

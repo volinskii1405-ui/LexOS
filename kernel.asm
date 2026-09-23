@@ -47,6 +47,7 @@ kernel_start:
                                 ; in this file. Safe to install unconditionally: entries
                                 ; 0x08/0x10 are byte-for-byte the same as boot.asm's own.
 
+    call sched_init          ; this flow becomes task 0 (src/sched.asm)
     call devmgr_init         ; initializes all devices (screen/keyboard/disk/timer)
 
     call clear_screen
@@ -126,6 +127,7 @@ main_loop:
 %include "src/hostfs.asm"
 %include "src/basic.asm"
 %include "src/net.asm"
+%include "src/sched.asm"
 %include "src/grep.asm"
 %include "src/headtail.asm"
 %include "src/uranium.asm"

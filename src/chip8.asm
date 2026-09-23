@@ -153,6 +153,12 @@ chip8_run:
     jmp .end
 
 .found:
+    cmp byte [audio_timer_active], 0
+    je .timer_free
+    mov si, msg_play_fg_busy            ; the background player has the
+    call print_string                   ; PIT sped up already
+    jmp .end
+.timer_free:
     mov [fs_tmp_slot], ax
     call fs_load_content
 

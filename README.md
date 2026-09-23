@@ -249,6 +249,19 @@ alex@/PROGRAMS$
   program, strings and arrays live above the 1MB mark, so a program can
   be up to 64KB. Try `shared/GUESS.BAS` (guess the number) and
   `shared/CATCH.BAS` (catch falling stars with A/D or the arrows).
+- **Preemptive multitasking.** Kernel tasks with their own stacks,
+  switched by the timer interrupt (src/sched.asm): equal-priority tasks
+  take turns a timer tick (~55ms) at a time, a higher-priority one runs
+  the moment it's ready, and a task waiting for a key or a tick doesn't
+  run at all until that interrupt arrives. `play song.imf &` plays
+  music in the background - keep typing, edit in uranium, play Tetris
+  - at high priority, so a busy foreground never makes a note late
+  (checked on a recording of the AdLib output: every note on its 250ms
+  grid within 5ms while a BASIC busy loop ran). `clock` toggles a
+  clock task in the top-right corner, `ps` lists the tasks with their
+  CPU time, `kill <pid>` stops one. The rest of the kernel isn't
+  reentrant, so only the tasks written for it run in the background
+  (the player loads its whole file first, with switching held off).
 - **Networking (as far as `ping`).** An RTL8139 driver (the card
   `make run` gives QEMU), Ethernet, ARP, IPv4 and ICMP echo. `ifconfig`
   shows the card, MAC and address; `ping <a.b.c.d> [count]` works like
@@ -426,6 +439,10 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `hostput <n> [host]` | copy file n into the host's shared folder (a new 8.3 name) |
 | `ifconfig` | show the network card, MAC address and IP |
 | `ping <ip> [n]` | send n ICMP echo requests (default 4), ESC stops |
+| `ps` | list the running tasks (pid, state, priority, CPU time) |
+| `kill <pid>` | stop a background task |
+| `clock` | toggle a clock in the top-right corner (a background task) |
+| `play <n.imf> &` | play music in the background |
 | `basic [n]` | Tiny BASIC; with a name, load and run that program first |
 | `reboot` / `shutdown` | restart / power off |
 | `history` | list previously run commands, numbered oldest first |
@@ -498,6 +515,8 @@ outside the kernel image need a full 32-bit linear address:
 | ATA scratch buffer (one sector) | `0x91000` |
 | BASIC program, arrays, strings (`basic`) | `0x200000` – `0x26FFFF` |
 | hostput staging buffer | `0x280000` |
+| IMF song buffer (`play`) | `0x310000` |
+| Task stacks (16KB each) | `0x400000` – `0x41FFFF` |
 | RTL8139 receive ring / transmit buffers | `0x300000` / `0x304000` |
 | .COM program segment | `0x100000` |
 | Kernel code/data | `0x8000` – `0x37FFF` (384 sectors) |
@@ -561,6 +580,8 @@ src/
   turtle.asm           `turtle <name>`, a LOGO-style turtle graphics
                        script interpreter - same vga.asm mode switch
                        as snake.asm.
+  sched.asm            the scheduler: tasks, priorities, task_wait,
+                       ps/kill/clock.
   net.asm              `ping`/`ifconfig`: RTL8139 driver (polled), ARP,
                        IPv4, ICMP echo.
   basic.asm            `basic [name]`, a Tiny BASIC interpreter/REPL -
