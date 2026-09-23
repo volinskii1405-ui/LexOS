@@ -254,6 +254,12 @@ handle_command:
     je .do_hostget
 
     mov si, buffer
+    mov di, cmd_hostput_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_hostput
+
+    mov si, buffer
     mov di, cmd_basic
     call strcmp_eq
     cmp ax, 1
@@ -535,6 +541,12 @@ handle_command:
     mov si, buffer
     add si, 8                  ; skip "hostget "
     call host_get
+    jmp .done
+
+.do_hostput:
+    mov si, buffer
+    add si, 8                  ; skip "hostput "
+    call host_put
     jmp .done
 
 .do_basic:

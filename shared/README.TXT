@@ -3,6 +3,8 @@ This folder is shared with LexOS.
 `make run` attaches it as a second disk. Inside LexOS:
   hostls              - list what's here
   hostget <n> [new]   - copy a file into the current LexOS folder
+  hostput <n> [host]  - copy a LexOS file out into this folder
+                        (new files only, 8.3 names)
 
 Try:  hostget star.trg   then   turtle star.trg
       hostget bounce.ch8  then   chip8 bounce.ch8

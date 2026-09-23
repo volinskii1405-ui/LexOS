@@ -255,10 +255,16 @@ alex@/PROGRAMS$
   `hostget <n> [new]` copies a file from it into the current LexOS
   directory - drop a script, CHIP-8 ROM or `.WAV` into `shared/` on
   your machine, and it's one command away instead of a `recv` plus `nc`
-  on the host. Read-only (LexOS never writes to it), top-level files
-  only, 8.3 short names (a long host name shows up DOS-style, e.g.
-  `MY-LON~1.TXT`), up to 65535 bytes per file - the most a LexOS file
-  holds. Files added while QEMU is running show up after the next start.
+  on the host. The other way round, `hostput <n> [host name]` copies a
+  LexOS file out into `shared/` - a `.BMP` from paint, a BASIC program
+  you SAVEd - where it appears on your machine immediately. Top-level
+  files only, 8.3 short names (a long host name shows up DOS-style, e.g.
+  `MY-LON~1.TXT`; hostput needs an 8.3 name), up to 65535 bytes per
+  file - the most a LexOS file holds. Files added on the host while
+  QEMU is running show up after the next start. hostput only creates
+  new files and refuses a name that's already there: QEMU's vvfat
+  can't reliably rewrite an existing host file (it ignores a changed
+  size, and a shrinking file crashes QEMU outright).
   Try `hostget star.trg` then `turtle star.trg`.
 - `chip8 <name> [speed]` interprets a CHIP-8 / SUPER-CHIP ROM - not LexOS's own format
   (like `run <n>.com` below, but for a much older and simpler bytecode
@@ -407,6 +413,7 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `recv <n> <hex size>` | receive a file over COM1 (see **Programs** below for host-side setup) |
 | `hostls` | list the files in the host's shared folder (`shared/`, see below) |
 | `hostget <n> [new]` | copy a file from the host's shared folder into the current directory |
+| `hostput <n> [host]` | copy file n into the host's shared folder (a new 8.3 name) |
 | `basic [n]` | Tiny BASIC; with a name, load and run that program first |
 | `reboot` / `shutdown` | restart / power off |
 | `history` | list previously run commands, numbered oldest first |
