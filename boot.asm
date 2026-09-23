@@ -41,10 +41,7 @@ KERNEL_LOAD_OFF2 equ 0x0000
 KERNEL_SECTORS_3 equ 128        ; part 3: another full 64 KB
 KERNEL_LOAD_SEG3 equ 0x2000     ; = physical 0x20000, continuation of part 2
 KERNEL_LOAD_OFF3 equ 0x0000
-KERNEL_SECTORS_4 equ 64         ; part 4: whatever's left - bumped for
-                                  ; src/basic.asm (well under the 128-
-                                  ; sector ceiling this call can carry,
-                                  ; on purpose - room to grow)
+KERNEL_SECTORS_4 equ 128        ; part 4: another full 64 KB
 KERNEL_LOAD_SEG4 equ 0x3000     ; = physical 0x30000, continuation of part 3
 KERNEL_LOAD_OFF4 equ 0x0000
 

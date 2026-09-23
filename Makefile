@@ -18,13 +18,13 @@ $(BUILD_DIR)/kernel.bin: $(SRC_FILES) | $(BUILD_DIR)
 $(BUILD_DIR)/os-image.bin: $(BUILD_DIR)/boot.bin $(BUILD_DIR)/kernel.bin
 	cat $(BUILD_DIR)/boot.bin $(BUILD_DIR)/kernel.bin > $@
 	@actual=$$(stat -c%s $@); \
-	if [ $$actual -gt 197120 ]; then \
-		echo "ERROR: boot+kernel already larger than the filesystem area start (197120 bytes = 385 sectors)."; \
+	if [ $$actual -gt 229888 ]; then \
+		echo "ERROR: boot+kernel already larger than the filesystem area start (229888 bytes = 449 sectors)."; \
 		echo "Increase KERNEL_SECTORS_1..4 in boot.asm and FS_START_SECTOR in src/data.asm if needed."; \
 		rm -f $@; \
 		exit 1; \
 	fi
-	truncate -s 716800 $@
+	truncate -s 16M $@
 
 # Audio backend for `beep` (see README > Running the pre-built image).
 # Override if the default doesn't work for you, e.g.: make run AUDIODEV=alsa
@@ -52,7 +52,7 @@ NIC = -nic user,model=rtl8139
 
 run: $(BUILD_DIR)/os-image.bin
 	mkdir -p $(SHARED)
-	qemu-system-i386 -drive format=raw,file=$(BUILD_DIR)/os-image.bin,if=ide,index=0 \
+	qemu-system-i386 -m 128 -drive format=raw,file=$(BUILD_DIR)/os-image.bin,if=ide,index=0 \
 		$(SHARED_DRIVE) $(NIC) \
 		-audiodev $(AUDIODEV),id=snd0 -machine pcspk-audiodev=snd0 \
 		-device adlib,audiodev=snd0,iobase=0x220 -device sb16,audiodev=snd0
@@ -64,7 +64,7 @@ run: $(BUILD_DIR)/os-image.bin
 SERIALPORT ?= 4444
 run-serial: $(BUILD_DIR)/os-image.bin
 	mkdir -p $(SHARED)
-	qemu-system-i386 -drive format=raw,file=$(BUILD_DIR)/os-image.bin,if=ide,index=0 \
+	qemu-system-i386 -m 128 -drive format=raw,file=$(BUILD_DIR)/os-image.bin,if=ide,index=0 \
 		$(SHARED_DRIVE) $(NIC) \
 		-audiodev $(AUDIODEV),id=snd0 -machine pcspk-audiodev=snd0 \
 		-device adlib,audiodev=snd0,iobase=0x220 -device sb16,audiodev=snd0 \

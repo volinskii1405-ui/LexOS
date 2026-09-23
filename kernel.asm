@@ -50,6 +50,7 @@ kernel_start:
     call sched_init          ; this flow becomes task 0 (src/sched.asm)
     call devmgr_init         ; initializes all devices (screen/keyboard/disk/timer)
     call pm_init             ; paging, TSS, ring 3 (src/usermode.asm)
+    call fs_cache_init       ; slot cache + extra-sector bitmap (src/fs_extra.asm)
     call console_init        ; (src/console.asm)
 
     call clear_screen
@@ -487,7 +488,7 @@ com_saved_idt21    times 8 db 0
 com_shift_held     db 0     ; com_poll_key's own Shift-key tracking
 
 ; Pad the remaining space within the sectors the bootloader reads,
-; so the file size is a multiple of 512 bytes (see KERNEL_SECTORS_1..4 in boot.asm).
+; so the file size is a multiple of 512 bytes (see KERNEL_SECTORS_1..4 in boot.asm: 64+128+128+128 = 448).
 kernel_image_end:
 KERNEL_IMAGE_START equ 0x8000
-times (512*384)-($-$$) db 0
+times (512*448)-($-$$) db 0

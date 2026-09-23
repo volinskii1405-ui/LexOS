@@ -126,11 +126,17 @@ alex@/PROGRAMS$
   folder for scratch files (see below).
 - `ls` prints folders in bright yellow so they stand out from regular
   files, which stay whatever color you've set with `color`.
-- `df` (or `free`) shows how many of the 24 directory slots, 64 extra
-  disk sectors, and 8 `TMP` RAM slots (see below) are in use.
+- `df` (or `free`) shows how many of the 1024 directory slots, 30000
+  extra disk sectors, and 8 `TMP` RAM slots (see below) are in use.
+- `bld <n>` creates a new, empty file `n` in the current folder.
+- The filesystem holds up to 1024 files and folders (up to 255 of them
+  folders), nested as deep as you like, and a single file can be up to
+  16MB (the extra-sector pool is ~15MB in total). Directory slots and
+  the free-space map are cached in RAM, so `ls`/`cd`/`tree` don't hit
+  the disk, and big files are written one disk write per sector.
 - `TMP` is a RAM disk: create a file while `cd`'d directly into it (not
   a subfolder within it) and its up-to-127-byte primary record lives
-  entirely in memory instead of costing one of the 24 real directory
+  entirely in memory instead of costing one of the real directory
   slots - `ls`, `cat`, `rm`, wildcards and everything else treat it like
   any other file, but it vanishes on reboot along with everything else
   that was only ever in RAM. Content past 127 bytes still chains into
@@ -323,8 +329,8 @@ alex@/PROGRAMS$
   LexOS file out into `shared/` - a `.BMP` from paint, a BASIC program
   you SAVEd - where it appears on your machine immediately. Top-level
   files only, 8.3 short names (a long host name shows up DOS-style, e.g.
-  `MY-LON~1.TXT`; hostput needs an 8.3 name), up to 65535 bytes per
-  file - the most a LexOS file holds. Files added on the host while
+  `MY-LON~1.TXT`; hostput needs an 8.3 name), up to 16MB per
+  file. Files added on the host while
   QEMU is running show up after the next start. hostput only creates
   new files and refuses a name that's already there: QEMU's vvfat
   can't reliably rewrite an existing host file (it ignores a changed
@@ -501,6 +507,7 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `cd ..` | go to the parent folder |
 | `cd /a/b` | enter a folder by path (`cd`, `cd /`, `cd //` all go to root) |
 | `mkdir <name>` | create a folder |
+| `bld <name>` | create a new empty file |
 | `cat <n>` | print a file's contents |
 | `head <n> [k]` | print the first `k` lines of a file (default 10) |
 | `tail <n> [k]` | print the last `k` lines of a file (default 10) |
@@ -538,7 +545,7 @@ BIOS  →  boot.asm (16-bit real mode)
             │  loads kernel.bin via FOUR LBA reads (int 13h/ah=42h) -
             │  a real-mode segment:offset BIOS read can't cross a 64 KB
             │  segment boundary, so the kernel is split at each one:
-            │  64 sectors into 0x0000:0x8000, then 128 + 128 + 64 into
+            │  64 sectors into 0x0000:0x8000, then 128 + 128 + 128 into
             │  0x1000/0x2000/0x3000:0000 - physically contiguous
             │  enables A20, builds a flat GDT, sets CR0.PE
             ▼
@@ -551,7 +558,7 @@ BIOS  →  boot.asm (16-bit real mode)
 Everything below `0x10000` is the kernel itself — code and all working
 data — small enough that internal pointers still fit in 16 bits and most
 of the code reads like a real-mode program, even though the kernel image
-as a whole (padded to 384 sectors, split across the boot loader's four reads
+as a whole (padded to 448 sectors, split across the boot loader's four reads
 as described above) now extends past that boundary. Only things that live
 outside the kernel image need a full 32-bit linear address:
 
@@ -560,7 +567,8 @@ outside the kernel image need a full 32-bit linear address:
 | Video memory (VGA text mode) | `0xB8000` |
 | ATA scratch buffer (one sector) | `0x91000` |
 | BASIC program, arrays, strings (`basic`) | `0x200000` – `0x26FFFF` |
-| hostput staging buffer | `0x280000` |
+| Big-file buffer (hostput, program files) | `0x6400000` – `0x73FFFFF` |
+| Filesystem slot + bitmap cache | `0x3E00000` |
 | IMF song buffer (`play`) | `0x310000` |
 | WAV file / SB16 DMA buffer (`play`) | `0x320000` |
 | Task stacks (64KB each, 16 tasks) | `0x400000` – `0x4FFFFF` |
@@ -569,14 +577,16 @@ outside the kernel image need a full 32-bit linear address:
 | Console save areas (2MB each) | `0x1000000` – `0x21FFFFF` |
 | RTL8139 receive ring / transmit buffers | `0x300000` / `0x304000` |
 | .COM program segment | `0x100000` |
-| Kernel code/data | `0x8000` – `0x37FFF` (384 sectors) |
+| Kernel code/data | `0x8000` – `0x3FFFF` (448 sectors) |
 | Boot sector | `0x7C00` |
 
-On disk, sectors are laid out as: boot sector, then the kernel (384
-sectors), then 24 directory slots (one file/folder per 512-byte sector —
-name, type, parent pointer, up to 127 bytes of inline content), a 1-sector
-free-space bitmap for the extra-sector pool, then 300 extra 512-byte
-sectors that files chain into once they outgrow the inline area.
+On disk, sectors are laid out as: boot sector, then the kernel (448
+sectors), then 1024 directory slots (one file/folder per 512-byte sector —
+name, type, parent pointer, a 32-bit size, up to 127 bytes of inline
+content; folders only ever take slots 0-254, so a parent pointer still
+fits in one byte), a 59-sector free-space map (one byte per extra
+sector), then 30000 extra 512-byte sectors that files chain into once
+they outgrow the inline area (508 data bytes each).
 
 ## Project layout
 
@@ -693,7 +703,7 @@ src/
   support - no header parsing, no segment relocation.
 - One file's inline metadata + content lives in a single 512-byte sector;
   content past that grows through a chain of extra sectors, but the pool
-  is fixed at 64 sectors and file/folder names are capped at 8 characters
+  is fixed at 30000 sectors (~15MB) and file/folder names are capped at 8 characters
   before the extension.
 - `grep`, `head`, `tail`, and `uranium` all read a file through the same
   4 KB `content_buf` (see `fs_load_content` in `src/fs_extra.asm`), so

@@ -24,12 +24,20 @@ SECTOR_COUNT equ 8
 
 ; --- Filesystem ---
 ; Layout of one record (1 record = 1 disk sector):
-;   bytes 0..7   - name (ASCII, zero-padded)
-;   byte 8       - type (0=free, 1=file, 2=folder)
-;   byte 9       - parent (slot index of the parent folder, 0xFF = root)
-;   bytes 10..   - content (zero-terminated, unused for folders)
-FS_START_SECTOR   equ 386     ; sector 1=bootloader, 2..385=kernel (384 sectors)
-FS_FILE_COUNT     equ 24
+;   bytes 0..15  - name (ASCII, zero-padded)
+;   byte 16      - type (0=free, 1=file, 2=folder)
+;   byte 17      - parent (slot index of the parent folder, 0xFF = root)
+;   bytes 18..145 - inline content (the first 127 bytes)
+;   bytes 146-147 - total length, high word (see FS_TOTAL_LEN_HI_OFFSET)
+;   bytes 508-511 - total length low word, first extra sector
+;
+; 1024 slots. A parent is still one byte, because folders only ever live
+; in slots 0..FS_DIR_SLOT_LIMIT-1 (fs_find_free_dir) - files take the
+; rest first (fs_find_free), so up to 255 folders, nested as deep as you
+; like, and the other ~770 slots for files.
+FS_START_SECTOR   equ 450     ; sector 1=bootloader, 2..449=kernel (448 sectors)
+FS_FILE_COUNT     equ 1024
+FS_DIR_SLOT_LIMIT equ 255
 FS_NAME_LEN       equ 16
 FS_CONTENT_LEN    equ 128
 FS_SCRATCH_ADDR   equ SCRATCH_ADDR
@@ -68,11 +76,14 @@ FS_TYPE_PROGRAM equ 3
 
 ; --- Chains of extra sectors (for files larger than 127 bytes,
 ;     see src/fs_extra.asm and the append command) ---
-; In every directory slot (and in every extra sector) bytes
-; 146-507 aren't used for anything at all (max inline content
-; ends at 145) - that leaves room for 2 auxiliary 16-bit
-; fields right at the tail of the sector, without shifting the existing layout:
-FS_TOTAL_LEN_OFFSET equ 508    ; (FS_TYPE_FILE only) total content length
+; In every directory slot bytes 146-507 aren't used for inline content
+; (max inline content ends at 145) - that leaves room for auxiliary
+; fields without shifting the existing layout:
+FS_TOTAL_LEN_OFFSET equ 508    ; (FS_TYPE_FILE only) total length, low word
+FS_TOTAL_LEN_HI_OFFSET equ 146 ; ... and its high word (files > 64KB).
+                               ; Old 16-bit writers go through
+                               ; fs_scratch_write_size16, which zeroes it;
+                               ; fs_get_size / fs_set_size do both words
 FS_CHAIN_OFFSET     equ 510    ; index of the first extra sector, FS_NO_CHAIN=none
 FS_NO_CHAIN         equ 0xFFFF
 
@@ -83,9 +94,23 @@ FS_EXTRA_CONTENT_LEN equ 508
 FS_EXTRA_USED_OFFSET equ 508
 FS_EXTRA_NEXT_OFFSET equ 510
 
-FS_EXTRA_COUNT equ 300         ; bumped for PAINT.BIN's .BMP saves (see src/paint.asm)
+FS_EXTRA_COUNT equ 30000       ; ~15MB of file data
+FS_BITMAP_SECTORS equ (FS_EXTRA_COUNT + 511) / 512   ; one byte per extra sector
 FS_BITMAP_SECTOR equ FS_START_SECTOR + FS_FILE_COUNT
-FS_EXTRA_START_SECTOR equ FS_BITMAP_SECTOR + 1
+FS_EXTRA_START_SECTOR equ FS_BITMAP_SECTOR + FS_BITMAP_SECTORS
+FS_MAX_FILE equ FS_EXTRA_COUNT * FS_EXTRA_CONTENT_LEN   ; (a bound, not a promise)
+
+; --- High memory (above the kernel image), shared by all consoles ---
+; The filesystem's in-RAM caches (write-through: every change goes to
+; disk at once, the cache only saves re-reading): all 1024 directory
+; slots, and the whole extra-sector bitmap.
+FS_SLOT_CACHE     equ 0x3E00000             ; 1024 x 512 bytes
+FS_SLOT_VALID     equ FS_SLOT_CACHE + FS_FILE_COUNT * 512   ; 1 bit per slot
+FS_BITMAP_CACHE   equ FS_SLOT_VALID + FS_FILE_COUNT / 8
+FS_SCRATCH_SAVE   equ FS_BITMAP_CACHE + FS_BITMAP_SECTORS * 512
+; A big buffer for whole-file work (hostput, wget, a program's files)
+BIG_FILE_BUF      equ 0x6400000             ; 100MB, up to 16MB
+BIG_FILE_MAX      equ 0x1000000
 
 ; --- Programs and the hex editor ---
 ; content[0] of PROGRAM-type files stores the length (0..127), content[1..] -
@@ -165,6 +190,7 @@ help_l10 db "  rm <n>        - delete file or folder n", 13, 10, 0
 help_l11 db "  ren <n> <new> - rename file or folder n to new", 13, 10, 0
 help_l12 db "  size <n>      - show content size of file n", 13, 10, 0
 help_l14 db "  mkdir <n>     - create a folder n", 13, 10, 0
+help_l61 db "  bld <n>       - create a new empty file n", 13, 10, 0
 help_l15 db "  cd <n>        - enter folder n", 13, 10, 0
 help_l16 db "  cd ..         - go to parent folder", 13, 10, 0
 help_l17 db "  cd /a/b       - enter folder by path (cd, cd /, cd // = root)", 13, 10, 0
@@ -213,7 +239,7 @@ help_l54 db "  basic [n]    - Tiny BASIC (optionally load and run program n)", 1
 help_lines:
     dw help_l01, help_l02, help_l03, help_l04, help_l05
     dw help_l06, help_l08, help_l10, help_l11, help_l12
-    dw help_l14, help_l15, help_l16, help_l17, help_l18
+    dw help_l14, help_l61, help_l15, help_l16, help_l17, help_l18
     dw help_l19, help_l20, help_l21, help_l22, help_l23
     dw help_l24, help_l25, help_l26, help_l27, help_l28
     dw help_l29, help_l30, help_l31, help_l32, help_l33
@@ -318,7 +344,10 @@ msg_host_exists      db "The shared folder already has a file by that name - hos
 msg_host_absent      db "No host shared folder attached - start LexOS with 'make run'.", 13, 10, 0
 msg_host_not_fat     db "The host disk isn't a FAT16 volume LexOS can read.", 13, 10, 0
 msg_host_io_error    db "Host disk read error.", 13, 10, 0
-msg_host_too_big     db "Too big - a LexOS file can hold at most 65535 bytes.", 13, 10, 0
+msg_bld_usage        db "Usage: bld <name>  (creates an empty file)", 13, 10, 0
+msg_bld_done         db "File created.", 13, 10, 0
+msg_append_too_big   db "append: that file is too big to append to (max ~64KB).", 13, 10, 0
+msg_host_too_big     db "Too big - LexOS takes files up to 16MB.", 13, 10, 0
 msg_host_is_dir      db "That's a folder - only top-level files can be copied for now.", 13, 10, 0
 msg_host_copied1     db "Copied ", 0
 msg_host_copied2     db " bytes as ", 0
@@ -595,6 +624,7 @@ cmd_rm_prefix    db "rm ", 0
 cmd_ren_prefix   db "ren ", 0
 cmd_size_prefix  db "size ", 0
 cmd_mkdir_prefix db "mkdir ", 0
+cmd_bld_prefix db "bld ", 0
 cmd_reboot       db "reboot", 0
 cmd_about        db "about", 0
 cmd_date         db "date", 0

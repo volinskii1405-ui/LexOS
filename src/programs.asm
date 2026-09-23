@@ -875,7 +875,7 @@ fs_ensure_programs_dir:
     cmp ax, -1
     jne .end4                    ; already exists - ax already holds its slot
 
-    call fs_find_free
+    call fs_find_free_dir
     cmp ax, -1
     je .end4                     ; slot table full - give up (ax = -1)
     mov [fs_tmp_slot], ax
@@ -950,7 +950,7 @@ fs_ensure_tmp_dir:
     cmp ax, -1
     jne .found
 
-    call fs_find_free
+    call fs_find_free_dir
     cmp ax, -1
     je .end5                     ; slot table full - give up (ax = -1)
     mov [fs_tmp_slot], ax

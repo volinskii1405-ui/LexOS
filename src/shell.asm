@@ -141,6 +141,12 @@ handle_command:
     je .do_mkdir
 
     mov si, buffer
+    mov di, cmd_bld_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_bld
+
+    mov si, buffer
     mov di, cmd_reboot
     call strcmp_eq
     cmp ax, 1
@@ -489,6 +495,12 @@ handle_command:
     mov si, buffer
     add si, 6                  ; skip "mkdir "
     call fs_mkdir
+    jmp .done
+
+.do_bld:
+    mov si, buffer
+    add si, 4                  ; skip "bld "
+    call fs_bld
     jmp .done
 
 .do_reboot:

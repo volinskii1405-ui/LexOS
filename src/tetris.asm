@@ -795,7 +795,7 @@ tetris_save_highscore:
 
     mov ax, FS_TOTAL_LEN_OFFSET
     mov dx, [content_buf_len]
-    call fs_scratch_write_word
+    call fs_scratch_write_size16
     mov ax, FS_CHAIN_OFFSET
     mov dx, FS_NO_CHAIN
     call fs_scratch_write_word

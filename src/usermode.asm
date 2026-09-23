@@ -8,7 +8,7 @@
 ; Exports: pm_init, app_run, fs_name_ends_with_app
 ;
 ; The pieces:
-;   - Paging (pm_init): the first 64MB identity-mapped with 4MB pages,
+;   - Paging (pm_init): the first 128MB identity-mapped with 4MB pages,
 ;     all supervisor-only - except APP_BASE..APP_BASE+1MB, mapped with
 ;     4KB user pages from a page table of its own. Everything else is
 ;     invisible to ring 3: a program's every stray pointer faults.
@@ -46,7 +46,7 @@ APP_MAX_FILE    equ 0xFFFF
 
 PAGE_DIR        equ 0x500000          ; 4KB, then the user page table
 PAGE_TABLE_APP  equ 0x501000
-PAGING_4MB_PAGES equ 16               ; identity-map 64MB
+PAGING_4MB_PAGES equ 32               ; identity-map 128MB (QEMU's -m 128)
 
 SYS_EXIT        equ 0                 ; ebx = exit code
 SYS_WRITE       equ 1                 ; ebx = text, ecx = length

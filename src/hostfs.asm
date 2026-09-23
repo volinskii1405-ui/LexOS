@@ -194,7 +194,7 @@ host_get:
     call print_string
     jmp .end
 .is_file:
-    cmp dword [host_ent_size], 0xFFFF
+    cmp dword [host_ent_size], BIG_FILE_MAX
     jbe .size_ok
     mov si, msg_host_too_big
     call print_string
@@ -212,7 +212,7 @@ host_get:
 .have_target:
 
     mov eax, [host_ent_size]
-    mov [fs_stream_size], ax
+    mov [fs_stream_size], eax
     movzx eax, word [host_ent_cluster]
     mov [host_cur_cluster], eax
     mov dword [host_sec_in_cluster], 0
@@ -275,7 +275,7 @@ host_get:
 ; there yet. vvfat turns that into a real file in the host directory
 ; as the directory sector is written.
 ; ============================================================
-HOST_PUT_BUF equ 0x280000             ; the file's content, above 1MB
+HOST_PUT_BUF equ BIG_FILE_BUF          ; the file's content, up to 16MB
 
 host_put:
     pushad
@@ -357,7 +357,7 @@ host_put:
 .src_is_file:
     mov ax, [fs_tmp_slot]
     mov edi, HOST_PUT_BUF
-    mov ecx, 0xFFFF
+    mov ecx, BIG_FILE_MAX
     call fs_load_to
     mov [host_put_size], ecx
 

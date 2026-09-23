@@ -2372,7 +2372,7 @@ basic_cmd_save:
     jmp .line
 .rendered:
     sub edi, BASIC_TEXT_ADDR
-    mov [fs_stream_size], di
+    mov [fs_stream_size], edi
     mov dword [basic_save_ptr], BASIC_TEXT_ADDR
     call fs_stream_prepare
     jc .done
@@ -2381,7 +2381,7 @@ basic_cmd_save:
     jc .full
     mov esi, basic_msg_saved
     call basic_puts
-    movzx eax, word [fs_stream_size]
+    mov eax, [fs_stream_size]
     call basic_print_num
     mov esi, basic_msg_bytes
     call basic_puts

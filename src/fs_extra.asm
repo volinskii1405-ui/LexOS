@@ -60,47 +60,88 @@ fs_scratch_write_word:
     ret
 
 ; ============================================================
+; Called once at boot, before anything touches the filesystem: empties
+; the slot cache and loads the whole extra-sector bitmap (one byte per
+; sector, FS_BITMAP_SECTORS of them) into FS_BITMAP_CACHE, where
+; fs_extra_alloc/fs_extra_free work on it - writing each changed
+; bitmap sector straight back to disk.
+; ============================================================
+fs_cache_init:
+    pushad
+    mov edi, FS_SLOT_VALID
+    mov ecx, FS_FILE_COUNT / 32
+    xor eax, eax
+    cld
+    rep stosd
+    xor ebx, ebx
+.sector:
+    cmp ebx, FS_BITMAP_SECTORS
+    jae .done
+    lea eax, [ebx + FS_BITMAP_SECTOR]
+    call ata_read_sector
+    mov esi, SCRATCH_ADDR
+    mov edi, ebx
+    shl edi, 9
+    add edi, FS_BITMAP_CACHE
+    mov ecx, 128
+    rep movsd
+    inc ebx
+    jmp .sector
+.done:
+    mov dword [fs_extra_hint], 0
+    popad
+    ret
+
+; ============================================================
 ; Looks for a free sector in the pool, marks it as used.
 ; Output: ax = index (0..FS_EXTRA_COUNT-1), carry=0.
 ;        carry=1, if none are free.
+; Leaves SCRATCH_ADDR as it found it (fs_stream_write allocates while
+; a sector's worth of data sits there).
 ; ============================================================
 fs_extra_alloc:
-    push bx
-    push dx
-
-    mov ax, FS_BITMAP_SECTOR
-    call ata_read_sector
-    jc .fail
-
-    xor bx, bx
-.scan:
-    cmp bx, FS_EXTRA_COUNT
-    jae .fail
-    mov ax, bx
-    call fs_scratch_read_byte
-    cmp al, 0
+    push ecx
+    push edi
+    push eax
+    ; from the last allocation onwards, then from the start
+    mov edi, [fs_extra_hint]
+    mov ecx, FS_EXTRA_COUNT
+    sub ecx, edi
+    add edi, FS_BITMAP_CACHE
+    xor al, al
+    cld
+    repne scasb
     je .found
-    inc bx
-    jmp .scan
-
+    mov edi, FS_BITMAP_CACHE
+    mov ecx, [fs_extra_hint]
+    jecxz .full
+    repne scasb
+    jne .full
 .found:
-    mov ax, bx
-    mov dl, 1
-    call fs_scratch_write_byte
-
-    mov ax, FS_BITMAP_SECTOR
-    call ata_write_sector
-    jc .fail
-
-    mov ax, bx
-    pop dx
-    pop bx
+    dec edi                               ; (scasb went one past)
+    mov byte [edi], 1
+    sub edi, FS_BITMAP_CACHE
+    lea ecx, [edi + 1]
+    mov [fs_extra_hint], ecx
+    cmp ecx, FS_EXTRA_COUNT
+    jb .hint_ok
+    mov dword [fs_extra_hint], 0
+.hint_ok:
+    mov eax, edi
+    call fs_bitmap_writeback
+    jc .write_failed
+    pop ecx                               ; (the saved eax - discarded)
+    mov eax, edi
+    pop edi
+    pop ecx
     clc
     ret
-
-.fail:
-    pop dx
-    pop bx
+.write_failed:
+    mov byte [FS_BITMAP_CACHE + edi], 0   ; not really ours, then
+.full:
+    pop eax
+    pop edi
+    pop ecx
     stc
     ret
 
@@ -108,24 +149,76 @@ fs_extra_alloc:
 ; Frees a pool sector (index in ax).
 ; ============================================================
 fs_extra_free:
-    push ax
-    push bx
-    push dx
+    push eax
+    movzx eax, ax
+    cmp eax, FS_EXTRA_COUNT
+    jae .done
+    mov byte [FS_BITMAP_CACHE + eax], 0
+    call fs_bitmap_writeback
+.done:
+    pop eax
+    ret
 
-    mov bx, ax
-    mov ax, FS_BITMAP_SECTOR
-    call ata_read_sector
-
-    mov ax, bx
-    xor dx, dx
-    call fs_scratch_write_byte
-
-    mov ax, FS_BITMAP_SECTOR
+; Writes the bitmap sector holding extra sector eax's byte back to
+; disk, keeping SCRATCH_ADDR's contents. carry=1 on a disk error.
+fs_bitmap_writeback:
+    pushad
+    mov ebx, eax
+    shr ebx, 9                            ; which bitmap sector
+    mov esi, SCRATCH_ADDR                 ; save the scratch buffer
+    mov edi, FS_SCRATCH_SAVE
+    mov ecx, 128
+    cld
+    rep movsd
+    mov esi, ebx
+    shl esi, 9
+    add esi, FS_BITMAP_CACHE
+    mov edi, SCRATCH_ADDR
+    mov ecx, 128
+    rep movsd
+    lea eax, [ebx + FS_BITMAP_SECTOR]
     call ata_write_sector
+    setc [fs_bitmap_carry]
+    mov esi, FS_SCRATCH_SAVE              ; and put it back
+    mov edi, SCRATCH_ADDR
+    mov ecx, 128
+    rep movsd
+    popad
+    cmp byte [fs_bitmap_carry], 0
+    je .ok
+    stc
+    ret
+.ok:
+    clc
+    ret
 
-    pop dx
-    pop bx
-    pop ax
+fs_bitmap_carry db 0
+fs_extra_hint   dd 0
+
+; ============================================================
+; File sizes are 32 bits: the low word at FS_TOTAL_LEN_OFFSET, the high
+; word at FS_TOTAL_LEN_HI_OFFSET, of the slot in SCRATCH_ADDR.
+; fs_get_size -> eax; fs_set_size <- eax; fs_scratch_write_size16 is
+; for the older 16-bit writers (dx = the size): it also zeroes the high
+; word, so a slot that once held a big file can't keep a stale one.
+; ============================================================
+fs_get_size:
+    movzx eax, word [SCRATCH_ADDR + FS_TOTAL_LEN_HI_OFFSET]
+    shl eax, 16
+    mov ax, [SCRATCH_ADDR + FS_TOTAL_LEN_OFFSET]
+    ret
+
+fs_set_size:
+    mov [SCRATCH_ADDR + FS_TOTAL_LEN_OFFSET], ax
+    push eax
+    shr eax, 16
+    mov [SCRATCH_ADDR + FS_TOTAL_LEN_HI_OFFSET], ax
+    pop eax
+    ret
+
+fs_scratch_write_size16:
+    mov [SCRATCH_ADDR + FS_TOTAL_LEN_OFFSET], dx
+    mov word [SCRATCH_ADDR + FS_TOTAL_LEN_HI_OFFSET], 0
     ret
 
 ; --- Reads a pool sector (index in ax) into the scratch buffer ---
@@ -214,13 +307,13 @@ fs_load_to:
     xor edx, edx                     ; edx = bytes stored so far
 
     call fs_read_slot
-    movzx eax, word [SCRATCH_ADDR + FS_TOTAL_LEN_OFFSET]
-    mov [fs_load_remaining], ax
+    call fs_get_size
+    mov [fs_load_remaining], eax
     mov ax, [SCRATCH_ADDR + FS_CHAIN_OFFSET]
     mov [fs_load_chain], ax
 
     mov esi, SCRATCH_ADDR + FS_CONTENT_OFFSET
-    movzx ecx, word [fs_load_remaining]
+    mov ecx, [fs_load_remaining]
     cmp ecx, FS_CONTENT_LEN - 1
     jbe .copy_inline
     mov ecx, FS_CONTENT_LEN - 1
@@ -228,7 +321,7 @@ fs_load_to:
     call .copy                        ; ecx bytes from esi
 
 .chain_loop:
-    cmp word [fs_load_remaining], 0
+    cmp dword [fs_load_remaining], 0
     je .done
     cmp word [fs_load_chain], FS_NO_CHAIN
     je .done
@@ -239,7 +332,7 @@ fs_load_to:
     mov ax, [SCRATCH_ADDR + FS_EXTRA_NEXT_OFFSET]
     mov [fs_load_chain], ax
     mov esi, SCRATCH_ADDR
-    movzx ecx, word [fs_load_remaining]
+    mov ecx, [fs_load_remaining]
     cmp ecx, FS_EXTRA_CONTENT_LEN
     jbe .copy_extra
     mov ecx, FS_EXTRA_CONTENT_LEN
@@ -258,23 +351,25 @@ fs_load_to:
 ; Copies ecx bytes from esi to [edi + edx] (fewer if fs_load_max is
 ; reached), advancing edx and counting down fs_load_remaining.
 .copy:
-    sub [fs_load_remaining], cx
-.copy_loop:
-    cmp ecx, 0
-    je .copy_done
-    cmp edx, [fs_load_max]
-    jae .copy_done
-    mov al, [esi]
-    mov [edi + edx], al
-    inc esi
-    inc edx
-    dec ecx
-    jmp .copy_loop
-.copy_done:
+    sub [fs_load_remaining], ecx
+    push ecx
+    mov eax, [fs_load_max]
+    sub eax, edx                      ; room left
+    cmp ecx, eax
+    jbe .fits
+    mov ecx, eax
+.fits:
+    push edi
+    add edi, edx
+    add edx, ecx
+    cld
+    rep movsb
+    pop edi
+    pop ecx
     ret
 
 fs_load_max       dd 0
-fs_load_remaining dw 0
+fs_load_remaining dd 0
 fs_load_chain     dw 0
 
 ; ============================================================
@@ -288,8 +383,8 @@ fs_load_chain     dw 0
 ; share one implementation; the byte source is a function pointer
 ; (fs_stream_source) rather than a hardcoded serial_read_byte.
 ;
-; Callers: put the name in fs_tmp_name and the size (<= 0xFFFF - the
-; most FS_TOTAL_LEN_OFFSET, a 16-bit word, can hold) in fs_stream_size,
+; Callers: put the name in fs_tmp_name and the size (a dword: 16-bit
+; low word at FS_TOTAL_LEN_OFFSET, high word at FS_TOTAL_LEN_HI_OFFSET) in fs_stream_size,
 ; call fs_stream_prepare, and only if that succeeded set
 ; fs_stream_source and call fs_stream_write.
 ; ============================================================
@@ -378,7 +473,7 @@ fs_stream_prepare:
 
     mov ax, FS_TOTAL_LEN_OFFSET
     xor dx, dx
-    call fs_scratch_write_word
+    call fs_scratch_write_size16
     mov ax, FS_CHAIN_OFFSET
     mov dx, FS_NO_CHAIN
     call fs_scratch_write_word
@@ -410,17 +505,14 @@ fs_stream_write:
     mov ax, [fs_tmp_slot]
     call fs_free_chain                  ; release any old chain -
                                           ; fs_free_chain takes its slot
-                                          ; index in ax and preserves it,
-                                          ; so it must come right after
-                                          ; setting ax with nothing else
-                                          ; able to clobber it in between
+                                          ; index in ax and preserves it
     call fs_read_slot                    ; slot's own name/type/parent
                                           ; fields (already on disk, via
                                           ; fs_stream_prepare) into the
                                           ; scratch buffer, ready to add
                                           ; this file's inline content to
 
-    movzx ecx, word [fs_stream_size]
+    mov ecx, [fs_stream_size]
     cmp ecx, FS_CONTENT_LEN - 1
     jbe .inline_fits
     mov ecx, FS_CONTENT_LEN - 1
@@ -432,110 +524,72 @@ fs_stream_write:
     cmp ebx, ecx
     jae .inline_done
     call dword [fs_stream_source]
-    mov dl, al
-    mov eax, ebx
-    add ax, FS_CONTENT_OFFSET
-    call fs_scratch_write_byte
+    mov [SCRATCH_ADDR + FS_CONTENT_OFFSET + ebx], al
     inc ebx
     jmp .inline_loop
 .inline_done:
 
-    mov ax, FS_TOTAL_LEN_OFFSET
-    mov dx, [fs_stream_size]
-    call fs_scratch_write_word
+    mov eax, [fs_stream_size]
+    call fs_set_size
+    mov word [SCRATCH_ADDR + FS_CHAIN_OFFSET], FS_NO_CHAIN
+    mov esi, [fs_stream_inline_count]    ; bytes consumed from the source
+    cmp [fs_stream_size], esi
+    jbe .write_slot_only
 
-    movzx eax, word [fs_stream_size]
-    cmp eax, [fs_stream_inline_count]
-    ja .need_chain
-
-    mov ax, FS_CHAIN_OFFSET
-    mov dx, FS_NO_CHAIN
-    call fs_scratch_write_word
-    mov ax, [fs_tmp_slot]
-    call fs_write_slot
-    jmp .done
-
-.need_chain:
-    mov ax, [fs_tmp_slot]
-    call fs_write_slot                   ; slot itself is on disk now, so
-                                          ; the shared scratch buffer is
-                                          ; free for the chain sectors
-                                          ; below to reuse (see the note
-                                          ; above paint_save_bmp,
-                                          ; src/paint.asm, for why this
-                                          ; order matters)
-
-    mov esi, [fs_stream_inline_count]    ; bytes already consumed from
-                                          ; the source
-    mov word [fs_stream_prev], FS_NO_CHAIN
-
-.chain_loop:
-    movzx eax, word [fs_stream_size]
-    cmp esi, eax
-    jae .done
-
+    ; the first extra sector, linked from the slot
     call fs_extra_alloc
-    jc .pool_full
-    mov bx, ax
-
-    cmp word [fs_stream_prev], FS_NO_CHAIN
-    jne .link_prev
-
-    mov ax, [fs_tmp_slot]
-    call fs_read_slot
-    mov ax, FS_CHAIN_OFFSET
-    mov dx, bx
-    call fs_scratch_write_word
+    jc .pool_full_at_slot
+    mov bx, ax                           ; bx = the sector being filled
+    mov [SCRATCH_ADDR + FS_CHAIN_OFFSET], ax
+.write_slot_only:
     mov ax, [fs_tmp_slot]
     call fs_write_slot
-    jmp .have_sector
+    cmp [fs_stream_size], esi
+    jbe .done
 
-.link_prev:
-    mov ax, [fs_stream_prev]
-    call fs_extra_read
-    mov ax, FS_EXTRA_NEXT_OFFSET
-    mov dx, bx
-    call fs_scratch_write_word
-    mov ax, [fs_stream_prev]
-    call fs_extra_write
-
-.have_sector:
+    ; Fill a sector; if more data follows, allocate the next one FIRST
+    ; so this one goes out already pointing at it - one write per
+    ; sector, never a read-back to link it afterwards.
+.chain_loop:
     xor ecx, ecx
 .fill_loop:
     cmp ecx, FS_EXTRA_CONTENT_LEN
-    jae .sector_done
-    movzx eax, word [fs_stream_size]
-    cmp esi, eax
-    jae .sector_done
-
+    jae .sector_full
+    cmp esi, [fs_stream_size]
+    jae .sector_full
     call dword [fs_stream_source]
-    mov dl, al
-    mov ax, cx
-    call fs_scratch_write_byte
-
+    mov [SCRATCH_ADDR + ecx], al
     inc esi
     inc ecx
     jmp .fill_loop
-.sector_done:
-
-    push ecx
-    mov ax, FS_EXTRA_USED_OFFSET
-    mov dx, cx
-    call fs_scratch_write_word
-    pop ecx
-
+.sector_full:
+    mov [SCRATCH_ADDR + FS_EXTRA_USED_OFFSET], cx
+    mov word [SCRATCH_ADDR + FS_EXTRA_NEXT_OFFSET], FS_NO_CHAIN
+    cmp esi, [fs_stream_size]
+    jae .last_sector
+    call fs_extra_alloc                  ; (leaves the scratch buffer be)
+    jc .pool_full
+    mov [SCRATCH_ADDR + FS_EXTRA_NEXT_OFFSET], ax
+    mov dx, ax                           ; dx = the next one
     mov ax, bx
     call fs_extra_write
-
-    mov [fs_stream_prev], bx
+    mov bx, dx
     jmp .chain_loop
+.last_sector:
+    mov ax, bx
+    call fs_extra_write
+    jmp .done
 
 .pool_full:
+    ; the sector in hand is the last that fits: write it, then cut the
+    ; file's size down to what actually made it to disk
+    mov ax, bx
+    call fs_extra_write
+.pool_full_at_slot:
     mov ax, [fs_tmp_slot]
     call fs_read_slot
-    mov ax, FS_TOTAL_LEN_OFFSET
-    mov dx, si                           ; truncate to what actually made
-    call fs_scratch_write_word           ; it to disk
+    mov eax, esi
+    call fs_set_size
     mov ax, [fs_tmp_slot]
     call fs_write_slot
     popad
@@ -547,9 +601,8 @@ fs_stream_write:
     clc
     ret
 
-fs_stream_size         dw 0
+fs_stream_size         dd 0
 fs_stream_inline_count dd 0
-fs_stream_prev         dw 0
 fs_stream_source       dd 0
 
 ; ============================================================
@@ -627,9 +680,20 @@ fs_append:
     call print_string
     jmp .end
 
+.too_big:
+    mov si, msg_append_too_big
+    call print_string
+    jmp .end
+
 .is_file:
     mov ax, [fs_tmp_slot]
     call fs_read_slot
+
+    ; append works in 16-bit sizes: bigger files are written by streams only
+    cmp word [SCRATCH_ADDR + FS_TOTAL_LEN_HI_OFFSET], 0
+    jne .too_big
+    cmp word [SCRATCH_ADDR + FS_TOTAL_LEN_OFFSET], 65000
+    ja .too_big
 
     mov ax, FS_TOTAL_LEN_OFFSET
     call fs_scratch_read_word
@@ -687,7 +751,7 @@ fs_append:
 .phase_a_done:
     mov ax, FS_TOTAL_LEN_OFFSET
     mov dx, [fs_append_total]
-    call fs_scratch_write_word
+    call fs_scratch_write_size16
 
     mov ax, [fs_tmp_slot]
     call fs_write_slot
@@ -812,7 +876,7 @@ fs_append:
     call fs_read_slot
     mov ax, FS_TOTAL_LEN_OFFSET
     mov dx, [fs_append_total]
-    call fs_scratch_write_word
+    call fs_scratch_write_size16
     mov ax, [fs_tmp_slot]
     call fs_write_slot
     jc .write_failed
@@ -831,7 +895,7 @@ fs_append:
     call fs_read_slot
     mov ax, FS_TOTAL_LEN_OFFSET
     mov dx, [fs_append_total]
-    call fs_scratch_write_word
+    call fs_scratch_write_size16
     mov ax, [fs_tmp_slot]
     call fs_write_slot
     jmp .end
@@ -1316,7 +1380,7 @@ fs_ensure_license:
 
     mov ax, FS_TOTAL_LEN_OFFSET
     xor dx, dx
-    call fs_scratch_write_word
+    call fs_scratch_write_size16
     mov ax, FS_CHAIN_OFFSET
     mov dx, FS_NO_CHAIN
     call fs_scratch_write_word
