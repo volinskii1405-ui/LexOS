@@ -49,6 +49,7 @@ kernel_start:
 
     call sched_init          ; this flow becomes task 0 (src/sched.asm)
     call devmgr_init         ; initializes all devices (screen/keyboard/disk/timer)
+    call pm_init             ; paging, TSS, ring 3 (src/usermode.asm)
 
     call clear_screen
     call print_banner
@@ -128,6 +129,7 @@ main_loop:
 %include "src/basic.asm"
 %include "src/net.asm"
 %include "src/sched.asm"
+%include "src/usermode.asm"
 %include "src/grep.asm"
 %include "src/headtail.asm"
 %include "src/uranium.asm"
@@ -442,6 +444,15 @@ com_gdt_start:
     db ((COM_LOAD_ADDR) >> 16) & 0xFF, 10011010b, 0x00, ((COM_LOAD_ADDR) >> 24) & 0xFF   ; com code (0x18)
     dw 0xFFFF, (COM_LOAD_ADDR) & 0xFFFF
     db ((COM_LOAD_ADDR) >> 16) & 0xFF, 10010010b, 0x00, ((COM_LOAD_ADDR) >> 24) & 0xFF   ; com data (0x20)
+    ; src/usermode.asm's: ring-3 flat code (0x28) and data (0x30), and
+    ; the TSS (0x38 - its base is filled in by pm_init)
+    dw 0xFFFF, 0x0000
+    db 0x00, 11111010b, 11001111b, 0x00
+    dw 0xFFFF, 0x0000
+    db 0x00, 11110010b, 11001111b, 0x00
+gdt_tss:
+    dw 103, 0x0000
+    db 0x00, 10001001b, 0x00, 0x00
 com_gdt_end:
 
 com_gdt_descriptor:

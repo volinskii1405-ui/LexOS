@@ -182,6 +182,11 @@ sched_switch_to:
     mov eax, [sched_current]
     mov [task_esp + eax*4], esp
     mov [sched_current], ecx
+    mov eax, [task_kstack + ecx*4]        ; a task that's running a ring-3
+    or eax, eax                           ; program (src/usermode.asm):
+    jz .no_ring3                          ; interrupts from it land on
+    mov [tss_block + 4], eax              ; its own kernel stack
+.no_ring3:
     mov esp, [task_esp + ecx*4]
     ret
 
@@ -338,6 +343,11 @@ task_exit:
     mov byte [task_state], TASK_READY     ; wait loop just waits again
 .go:
     mov [sched_current], ecx
+    mov eax, [task_kstack + ecx*4]
+    or eax, eax
+    jz .no_ring3
+    mov [tss_block + 4], eax
+.no_ring3:
     mov esp, [task_esp + ecx*4]
     ret                                   ; into its sched_resume
 

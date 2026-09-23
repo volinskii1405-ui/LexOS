@@ -10,6 +10,8 @@ Try:  hostget star.trg   then   turtle star.trg
       hostget bounce.ch8  then   chip8 bounce.ch8
       hostget guess.bas   then   basic guess.bas
       hostget catch.bas   then   basic catch.bas
+      hostget crash.app   then   run crash.app     (memory protection)
+      hostget guess.app   then   run guess.app     (a program in C)
       hostget tune.imf    then   play tune.imf &   (music in the
                                  background - ps, kill <pid>)
 

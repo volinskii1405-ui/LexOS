@@ -240,6 +240,17 @@ keyboard_isr:
     movzx ecx, cl
     mov byte [key_held + ecx], 1
 
+    ; Ctrl+C while a program (src/usermode.asm) runs: ask to stop it
+    cmp al, 0x2E                   ; C
+    jne .not_ctrl_c
+    cmp byte [kbd_ctrl_held], 0
+    je .not_ctrl_c
+    cmp byte [app_active], 0
+    je .not_ctrl_c
+    mov byte [app_abort_request], 1
+    jmp .eoi
+.not_ctrl_c:
+
     mov bl, al                     ; bl = scancode of the pressed key
 
     cmp bh, 0
@@ -309,6 +320,14 @@ timer_isr:
 
     mov al, 0x20
     out PIC1_CMD, al
+
+    ; Ctrl+C for a program running in ring 3 (src/usermode.asm)
+    cmp byte [app_abort_request], 0
+    je .no_abort
+    test byte [esp + 32 + 4], 3           ; the interrupted code's CS
+    jz .no_abort
+    jmp app_ctrl_c                        ; (ends it; never comes back)
+.no_abort:
 
     ; the scheduler's turn (src/sched.asm): maybe another task's
     mov eax, WAIT_TICK

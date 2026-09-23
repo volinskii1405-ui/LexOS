@@ -258,6 +258,22 @@ alex@/PROGRAMS$
   mono WAVs still play, 1-bit, on the PC speaker. `make run` gives QEMU
   both an AdLib and an SB16. ESC stops playback; `&` puts it in the
   background (below).
+- **Protected programs (ring 3).** `run <name>.app` runs a program in
+  user mode, the way real operating systems do: paging maps it its own
+  1MB and nothing else, so it can't touch the kernel, the screen or
+  any I/O port - it asks the kernel for things through system calls
+  (`int 0x80`: write, getkey, readline, sleep, ticks, cursor, color,
+  beep, exit). When a program does something it mustn't - writes over
+  the kernel, divides by zero, executes `cli` - LexOS stops just that
+  program and says what it tried ("Program crashed: Page fault at
+  0x0080007A - it touched memory at 0x00008000 (not its own)"), and
+  the shell carries on; Ctrl+C stops a program that hangs. A bug in
+  LexOS itself now shows a kernel panic screen (which exception,
+  where) instead of silently hanging. Programs can be written in
+  assembly (`apps/lexos.inc`) or C (`apps/lexos.h`, built with
+  `gcc -m32`): `make apps` builds the examples into `shared/` -
+  `HELLO.APP`, `CRASH.APP` (a menu of forbidden things to try) and
+  `GUESS.APP` (in C). Try `hostget crash.app`, then `run crash.app`.
 - **Preemptive multitasking.** Kernel tasks with their own stacks,
   switched by the timer interrupt (src/sched.asm): equal-priority tasks
   take turns a timer tick (~55ms) at a time, a higher-priority one runs
@@ -452,6 +468,7 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `ping <host> [n]` | send n ICMP echo requests (default 4) to a name or address, ESC stops |
 | `nslookup <name>` | look a name up in DNS |
 | `dhcp` | get an address from the DHCP server again |
+| `run <n>.app` | run a protected (ring 3) program - see `apps/` |
 | `ps` | list the running tasks (pid, state, priority, CPU time) |
 | `kill <pid>` | stop a background task |
 | `clock` | toggle a clock in the top-right corner (a background task) |
@@ -532,6 +549,8 @@ outside the kernel image need a full 32-bit linear address:
 | IMF song buffer (`play`) | `0x310000` |
 | WAV file / SB16 DMA buffer (`play`) | `0x320000` |
 | Task stacks (16KB each) | `0x400000` – `0x41FFFF` |
+| Page directory / user page table | `0x500000` / `0x501000` |
+| A ring-3 program's own 1MB | `0x800000` – `0x8FFFFF` |
 | RTL8139 receive ring / transmit buffers | `0x300000` / `0x304000` |
 | .COM program segment | `0x100000` |
 | Kernel code/data | `0x8000` – `0x37FFF` (384 sectors) |
@@ -549,6 +568,8 @@ sectors that files chain into once they outgrow the inline area.
 boot.asm              16-bit boot sector: loads the kernel, enables A20,
                        sets up the GDT, switches to protected mode.
 kernel.asm             32-bit kernel entry point; %includes everything below.
+apps/                  example ring-3 programs (`make apps`): lexos.inc for
+                       assembly, lexos.h + crt0.asm + app.ld for C.
 src/
   data.asm             constants, messages, working variables.
   screen.asm           VGA text output, hardware cursor.
@@ -595,6 +616,8 @@ src/
   turtle.asm           `turtle <name>`, a LOGO-style turtle graphics
                        script interpreter - same vga.asm mode switch
                        as snake.asm.
+  usermode.asm         ring 3: paging, TSS, int 0x80 system calls,
+                       exception handling, `run <n>.app`.
   sched.asm            the scheduler: tasks, priorities, task_wait,
                        ps/kill/clock.
   net.asm              RTL8139 driver (polled), ARP, IPv4, ICMP echo,

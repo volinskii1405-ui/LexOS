@@ -1,0 +1,699 @@
+; usermode.asm — protected mode for programs: `run <name>.app` runs a
+; flat 32-bit binary in ring 3, with paging keeping it inside its own
+; 1MB. A program that goes wrong - touches memory that isn't its own,
+; executes a privileged instruction, divides by zero - is stopped with
+; a message saying what it did, and the shell carries on. It talks to
+; the kernel only through system calls (int 0x80, see SYS_* below).
+;
+; Exports: pm_init, app_run, fs_name_ends_with_app
+;
+; The pieces:
+;   - Paging (pm_init): the first 64MB identity-mapped with 4MB pages,
+;     all supervisor-only - except APP_BASE..APP_BASE+1MB, mapped with
+;     4KB user pages from a page table of its own. Everything else is
+;     invisible to ring 3: a program's every stray pointer faults.
+;   - Segments: ring-3 code/data descriptors (0x28/0x30) and a TSS
+;     (0x38) in the GDT (kernel.asm). The TSS only holds ss0/esp0 - the
+;     kernel stack an interrupt from ring 3 switches to - and no I/O
+;     bitmap, so with IOPL 0 every in/out from ring 3 faults too.
+;     DS/ES/FS/GS are the ring-3 data selector everywhere, kernel
+;     included (it's flat, and DPL 3 is usable at CPL 0) - so returning
+;     to ring 3 from any interrupt finds them valid; only SS stays the
+;     ring-0 0x10.
+;   - Exceptions (vectors 0-19): from ring 3, the program is ended and
+;     its crash reported; from ring 0 - a bug in LexOS itself - a
+;     "kernel panic" screen says which exception, where, rather than
+;     the silent hang an iret back into the faulting instruction was.
+;   - Ctrl+C (keyboard_isr) asks to stop the running program; the
+;     timer interrupt acts on it the next time it lands in ring 3, and
+;     the key-waiting system calls check for it themselves.
+;
+; A program is loaded at APP_BASE and entered at its first byte, with
+; its stack at the top of its 1MB (APP_STACK_TOP). It ends with
+; SYS_EXIT; app_run returns once it has, however it ended. See apps/
+; for the program side: lexos.inc (assembly), lexos.h + crt0.asm (C).
+; ============================================================
+
+USER_CODE_SEL   equ 0x28 | 3
+USER_DATA_SEL   equ 0x30 | 3
+TSS_SEL         equ 0x38
+KERNEL_SS       equ 0x10
+
+APP_BASE        equ 0x800000
+APP_SIZE        equ 0x100000          ; 1MB: 256 user pages
+APP_STACK_TOP   equ APP_BASE + APP_SIZE
+APP_MAX_FILE    equ 0xFFFF
+
+PAGE_DIR        equ 0x500000          ; 4KB, then the user page table
+PAGE_TABLE_APP  equ 0x501000
+PAGING_4MB_PAGES equ 16               ; identity-map 64MB
+
+SYS_EXIT        equ 0                 ; ebx = exit code
+SYS_WRITE       equ 1                 ; ebx = text, ecx = length
+SYS_GETKEY      equ 2                 ; -> eax = ASCII | scancode << 8
+SYS_POLLKEY     equ 3                 ; -> eax = the same, or 0 if none
+SYS_TICKS       equ 4                 ; -> eax = timer ticks (18.2/s)
+SYS_SLEEP       equ 5                 ; ebx = milliseconds
+SYS_CLEAR       equ 6
+SYS_SETCURSOR   equ 7                 ; ebx = row, ecx = column (0-based)
+SYS_SETCOLOR    equ 8                 ; ebx = text attribute
+SYS_READLINE    equ 9                 ; ebx = buffer, ecx = size -> eax = length
+SYS_BEEP        equ 10                ; ebx = Hz, ecx = milliseconds
+SYS_COUNT       equ 11
+
+; ============================================================
+; Paging, the TSS, the ring-3 entry points into the kernel (int 0x80,
+; exception handlers), and the ring-3 data selector in DS..GS.
+; ============================================================
+pm_init:
+    pushad
+
+    ; page directory: 16 x 4MB supervisor pages, PDE 2 -> the app table
+    mov edi, PAGE_DIR
+    xor eax, eax
+    mov ecx, 1024 * 2                     ; directory + app table
+    rep stosd
+    xor ecx, ecx
+.pde:
+    mov eax, ecx
+    shl eax, 22
+    or eax, 0x83                          ; present, writable, 4MB
+    mov [PAGE_DIR + ecx*4], eax
+    inc ecx
+    cmp ecx, PAGING_4MB_PAGES
+    jb .pde
+    mov dword [PAGE_DIR + (APP_BASE >> 22) * 4], PAGE_TABLE_APP | 0x07
+    xor ecx, ecx
+.pte:
+    mov eax, ecx
+    shl eax, 12
+    add eax, APP_BASE
+    or eax, 0x07                          ; present, writable, user
+    mov [PAGE_TABLE_APP + ecx*4], eax
+    inc ecx
+    cmp ecx, APP_SIZE / 4096
+    jb .pte
+
+    mov eax, cr4
+    or eax, 0x10                          ; PSE: 4MB pages
+    mov cr4, eax
+    mov eax, PAGE_DIR
+    mov cr3, eax
+    mov eax, cr0
+    or eax, 0x80000000                    ; paging on
+    mov cr0, eax
+
+    ; the TSS, and its descriptor's base (patched in here - a label's
+    ; address can't be split into descriptor bytes at assembly time)
+    mov dword [tss_block + 8], KERNEL_SS  ; ss0
+    mov word [tss_block + 102], 104       ; no I/O bitmap
+    mov eax, tss_block
+    mov [gdt_tss + 2], ax
+    shr eax, 16
+    mov [gdt_tss + 4], al
+    mov [gdt_tss + 7], ah
+    mov ax, TSS_SEL
+    ltr ax
+
+    ; int 0x80, callable from ring 3
+    mov edi, idt_table + 0x80 * 8
+    mov eax, syscall_isr
+    call set_idt_entry_at_edi
+    mov byte [idt_table + 0x80 * 8 + 5], 0xEE
+
+    ; exceptions
+    xor ecx, ecx
+.exc:
+    mov eax, [exc_stubs + ecx*4]
+    or eax, eax
+    jz .exc_next
+    lea edi, [idt_table + ecx*8]
+    call set_idt_entry_at_edi
+.exc_next:
+    inc ecx
+    cmp ecx, 20
+    jb .exc
+
+    mov ax, USER_DATA_SEL
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    popad
+    ret
+
+; ============================================================
+; `run <name>.app`: ax = its slot. Returns when the program has ended.
+; ============================================================
+app_run:
+    pushfd
+    pushad
+    push eax
+    ; a clean 1MB for it: code/data, zeroed "bss", stack
+    mov edi, APP_BASE
+    mov ecx, APP_SIZE / 4
+    xor eax, eax
+    cld
+    rep stosd
+    pop eax
+    mov edi, APP_BASE
+    mov ecx, APP_MAX_FILE
+    call fs_load_to
+    or ecx, ecx
+    jz .empty
+
+    mov byte [app_abort_request], 0
+    mov byte [app_active], 1
+    cli
+    mov ecx, [sched_current]
+    mov [task_app_esp + ecx*4], esp       ; where app_abort comes back to
+    mov [task_kstack + ecx*4], esp        ; and interrupts from ring 3
+    mov [tss_block + 4], esp              ; start from (esp0)
+
+    push dword USER_DATA_SEL              ; ss
+    push dword APP_STACK_TOP              ; esp
+    push dword 0x202                      ; eflags: interrupts on, IOPL 0
+    push dword USER_CODE_SEL              ; cs
+    push dword APP_BASE                   ; eip
+    xor eax, eax                          ; nothing of the kernel's left
+    xor ebx, ebx                          ; lying in its registers
+    xor ecx, ecx
+    xor edx, edx
+    xor esi, esi
+    xor edi, edi
+    xor ebp, ebp
+    iretd
+
+.empty:
+    popad
+    popfd
+    ret
+
+; ============================================================
+; Ends the running program and returns from app_run - from a system
+; call, an exception or Ctrl+C, whatever the stack looked like. eax =
+; its exit code (printed when it isn't 0).
+; ============================================================
+app_abort:
+    cli
+    mov ecx, [sched_current]
+    mov esp, [task_app_esp + ecx*4]
+    mov dword [task_kstack + ecx*4], 0
+    mov byte [app_active], 0
+    mov byte [app_abort_request], 0
+    push eax
+    call speaker_off
+    ; a fresh line, unless the program left the cursor at the start of one
+    cmp word [cursor_col], 0
+    je .fresh
+    call basic_newline
+.fresh:
+    pop eax
+    or eax, eax
+    jz .done
+    cmp eax, APP_EXIT_CRASHED
+    je .done
+    mov esi, app_msg_exit_code
+    call basic_puts
+    call basic_print_num
+    mov al, ')'
+    call print_char
+    call basic_newline
+.done:
+    popad
+    popfd
+    ret
+
+APP_EXIT_CRASHED equ 0x80000000
+
+; Ctrl+C, acted on by timer_isr (src/interrupts.asm) while in ring 3.
+app_ctrl_c:
+    mov esi, app_msg_ctrl_c
+    call basic_puts
+    mov eax, APP_EXIT_CRASHED
+    jmp app_abort
+
+; For the key-waiting system calls: Ctrl+C while the program was
+; waiting in the kernel.
+app_check_abort:
+    cmp byte [app_abort_request], 0
+    jne app_ctrl_c
+    ret
+
+; ============================================================
+; int 0x80. eax = the call number, arguments in ebx/ecx; the result
+; comes back in eax. Every pointer is checked to lie wholly inside the
+; program's own memory before the kernel touches it.
+; ============================================================
+syscall_isr:
+    pushad
+    sti
+    mov ebp, esp                          ; the caller's registers:
+    mov eax, [ebp + 28]                   ; eax +28, ecx +24, ebx +16
+    cmp eax, SYS_COUNT
+    jae .bad
+    call [syscall_table + eax*4]
+    mov [ebp + 28], eax
+    popad
+    iretd
+.bad:
+    mov dword [ebp + 28], -1
+    popad
+    iretd
+
+syscall_table:
+    dd sys_exit, sys_write, sys_getkey, sys_pollkey, sys_ticks
+    dd sys_sleep, sys_clear, sys_setcursor, sys_setcolor, sys_readline
+    dd sys_beep
+
+sys_exit:
+    mov eax, [ebp + 16]
+    jmp app_abort
+
+; ebx = pointer, ecx = length: must lie inside the program's memory,
+; or the program is ended for passing it.
+app_check_range:
+    push eax
+    mov eax, [ebp + 16]
+    cmp eax, APP_BASE
+    jb .bad
+    add eax, [ebp + 24]
+    jc .bad
+    cmp eax, APP_STACK_TOP
+    ja .bad
+    pop eax
+    ret
+.bad:
+    mov esi, app_msg_bad_pointer
+    call basic_puts
+    mov eax, APP_EXIT_CRASHED
+    jmp app_abort
+
+sys_write:
+    call app_check_range
+    mov esi, [ebp + 16]
+    mov ecx, [ebp + 24]
+    jecxz .done
+.char:
+    mov al, [esi]
+    cmp al, 10
+    jne .plain
+    call basic_newline
+    jmp .next
+.plain:
+    call print_char
+.next:
+    inc esi
+    loop .char
+.done:
+    mov eax, [ebp + 24]
+    ret
+
+; al = ASCII, ah = scancode of the next key (waits for one)
+sys_getkey:
+.wait:
+    call app_check_abort
+    call app_take_key
+    jnc .got
+    mov eax, WAIT_KEY
+    call task_wait
+    jmp .wait
+.got:
+    movzx eax, ax
+    ret
+
+sys_pollkey:
+    call app_check_abort
+    call app_take_key
+    jnc .got
+    xor eax, eax
+    ret
+.got:
+    movzx eax, ax
+    ret
+
+; A key from the queue -> ax (al = ASCII, ah = scancode); carry=1 if
+; there's none.
+app_take_key:
+    push ebx
+    call console_safe_point               ; (src/console.asm: Alt+1..9)
+    movzx ebx, byte [kbd_buf_tail]
+    cmp bl, [kbd_buf_head]
+    je .none
+    mov al, [kbd_buf_ascii + ebx]
+    mov ah, [kbd_buf_scancode + ebx]
+    inc bl
+    and bl, KBD_BUF_SIZE - 1
+    mov [kbd_buf_tail], bl
+    pop ebx
+    clc
+    ret
+.none:
+    pop ebx
+    stc
+    ret
+
+sys_ticks:
+    mov eax, [timer_ticks]
+    ret
+
+sys_sleep:
+    mov eax, [ebp + 16]
+    xor edx, edx
+    mov ecx, 55
+    div ecx
+    add eax, [timer_ticks]
+    mov ebx, eax
+.wait:
+    call app_check_abort
+    cmp [timer_ticks], ebx
+    jae .done
+    mov eax, WAIT_TICK
+    call task_wait
+    jmp .wait
+.done:
+    xor eax, eax
+    ret
+
+sys_clear:
+    call clear_screen
+    xor eax, eax
+    ret
+
+sys_setcursor:
+    mov eax, [ebp + 16]
+    cmp eax, SCREEN_ROWS
+    jae .bad
+    mov ecx, [ebp + 24]
+    cmp ecx, SCREEN_COLS
+    jae .bad
+    mov [cursor_row], ax
+    mov [cursor_col], cx
+    call update_hw_cursor
+    xor eax, eax
+    ret
+.bad:
+    mov eax, -1
+    ret
+
+sys_setcolor:
+    mov eax, [ebp + 16]
+    mov [current_color], al
+    xor eax, eax
+    ret
+
+; A line typed at the keyboard (Backspace edits, Enter ends it) into
+; ebx, at most ecx-1 characters plus a terminating 0. -> eax = length.
+sys_readline:
+    call app_check_range
+    mov edi, [ebp + 16]
+    mov edx, [ebp + 24]
+    or edx, edx
+    jz .none
+    dec edx                               ; room for the 0
+    xor ebx, ebx
+.key:
+    call sys_getkey
+    cmp al, 13
+    je .enter
+    cmp al, 8
+    je .backspace
+    cmp al, ' '
+    jb .key
+    cmp al, 126
+    ja .key
+    cmp ebx, edx
+    jae .key
+    mov [edi + ebx], al
+    inc ebx
+    call print_char
+    jmp .key
+.backspace:
+    or ebx, ebx
+    jz .key
+    dec ebx
+    mov al, 8
+    call print_char
+    jmp .key
+.enter:
+    mov byte [edi + ebx], 0
+    call basic_newline
+    mov eax, ebx
+    ret
+.none:
+    xor eax, eax
+    ret
+
+sys_beep:
+    mov eax, [ebp + 16]
+    cmp eax, 20
+    jb .bad
+    cmp eax, 20000
+    ja .bad
+    push ebx
+    mov ebx, eax
+    call speaker_set_freq
+    pop ebx
+    mov eax, [ebp + 24]
+    xor edx, edx
+    mov ecx, 55
+    div ecx
+    or eax, eax
+    jnz .have
+    inc eax
+.have:
+    add eax, [timer_ticks]
+    mov ebx, eax
+.wait:
+    cmp [timer_ticks], ebx
+    jae .off
+    mov eax, WAIT_TICK
+    call task_wait
+    jmp .wait
+.off:
+    call speaker_off
+    xor eax, eax
+    ret
+.bad:
+    mov eax, -1
+    ret
+
+; ============================================================
+; Exceptions. Each stub pushes a dummy error code where the CPU
+; doesn't push a real one, then the vector number.
+; ============================================================
+%macro EXC_NOERR 1
+exc_stub_%1:
+    push dword 0
+    push dword %1
+    jmp exc_common
+%endmacro
+%macro EXC_ERR 1
+exc_stub_%1:
+    push dword %1
+    jmp exc_common
+%endmacro
+
+EXC_NOERR 0
+EXC_NOERR 5
+EXC_NOERR 6
+EXC_NOERR 7
+EXC_ERR   8
+EXC_NOERR 9
+EXC_ERR   10
+EXC_ERR   11
+EXC_ERR   12
+EXC_ERR   13
+EXC_ERR   14
+EXC_NOERR 16
+EXC_ERR   17
+EXC_NOERR 18
+EXC_NOERR 19
+
+; (1 debug, 2 NMI, 3 breakpoint, 4 overflow and 15 stay as they were:
+; harmless to return from.)
+exc_stubs:
+    dd exc_stub_0, 0, 0, 0, 0, exc_stub_5, exc_stub_6, exc_stub_7
+    dd exc_stub_8, exc_stub_9, exc_stub_10, exc_stub_11, exc_stub_12
+    dd exc_stub_13, exc_stub_14, 0, exc_stub_16, exc_stub_17
+    dd exc_stub_18, exc_stub_19
+
+exc_common:
+    ; [esp] vector, +4 error code, +8 eip, +12 cs, +16 eflags
+    mov eax, [esp]
+    mov [exc_vector], eax
+    mov eax, [esp + 4]
+    mov [exc_error], eax
+    mov eax, [esp + 8]
+    mov [exc_eip], eax
+    mov eax, cr2
+    mov [exc_cr2], eax
+    test byte [esp + 12], 3
+    jz kernel_panic
+
+    ; a program's fault: say what it did, and end it
+    mov ax, USER_DATA_SEL
+    mov ds, ax
+    mov es, ax
+    sti
+    mov esi, app_msg_crashed
+    call basic_puts
+    call exc_print_name
+    mov esi, app_msg_at
+    call basic_puts
+    mov eax, [exc_eip]
+    call pm_print_hex
+    cmp dword [exc_vector], 14
+    jne .not_pf
+    mov esi, app_msg_touched
+    call basic_puts
+    mov eax, [exc_cr2]
+    call pm_print_hex
+    mov esi, app_msg_not_its_own
+    call basic_puts
+.not_pf:
+    cmp dword [exc_vector], 13
+    jne .not_gp
+    mov esi, app_msg_privileged
+    call basic_puts
+.not_gp:
+    call basic_newline
+    mov eax, APP_EXIT_CRASHED
+    jmp app_abort
+
+; A fault in LexOS itself: say which, where, and stop.
+kernel_panic:
+    cli
+    mov ax, USER_DATA_SEL
+    mov ds, ax
+    mov es, ax
+    mov byte [current_color], 0x4F        ; white on red
+    call clear_screen
+    mov esi, pm_msg_panic
+    call basic_puts
+    call exc_print_name
+    mov esi, app_msg_at
+    call basic_puts
+    mov eax, [exc_eip]
+    call pm_print_hex
+    mov esi, pm_msg_error
+    call basic_puts
+    mov eax, [exc_error]
+    call pm_print_hex
+    mov esi, pm_msg_cr2
+    call basic_puts
+    mov eax, [exc_cr2]
+    call pm_print_hex
+    mov esi, pm_msg_halted
+    call basic_puts
+.halt:
+    hlt
+    jmp .halt
+
+exc_print_name:
+    mov eax, [exc_vector]
+    mov esi, [exc_names + eax*4]
+    or esi, esi
+    jnz .have
+    mov esi, exc_name_other
+.have:
+    call basic_puts
+    ret
+
+; Prints eax as 0x + 8 hex digits
+pm_print_hex:
+    push eax
+    push ecx
+    push eax
+    mov al, '0'
+    call print_char
+    mov al, 'x'
+    call print_char
+    pop eax
+    mov ecx, 4
+.byte:
+    rol eax, 8
+    call print_hex_byte
+    loop .byte
+    pop ecx
+    pop eax
+    ret
+
+; ============================================================
+; `run` helper: ax=1 if fs_tmp_name ends in ".APP" (any case), else 0.
+; ============================================================
+fs_name_ends_with_app:
+    push ecx
+    push esi
+    xor ecx, ecx
+.len:
+    cmp byte [fs_tmp_name + ecx], 0
+    je .have_len
+    inc ecx
+    jmp .len
+.have_len:
+    xor eax, eax
+    cmp ecx, 4
+    jb .done
+    lea esi, [fs_tmp_name + ecx - 4]
+    mov eax, [esi]
+    and eax, 0xDFDFDFFF                   ; uppercase the three letters
+    cmp eax, '.APP'
+    sete al
+    movzx eax, al
+.done:
+    pop esi
+    pop ecx
+    ret
+
+; (until src/console.asm provides the real one)
+console_safe_point:
+    ret
+
+; ============================================================
+; Data
+; ============================================================
+app_active         db 0
+app_abort_request  db 0
+exc_vector         dd 0
+exc_error          dd 0
+exc_eip            dd 0
+exc_cr2            dd 0
+task_app_esp       times SCHED_MAX dd 0   ; app_run's frame, per task
+task_kstack        times SCHED_MAX dd 0   ; esp0 while in ring 3, per task
+
+tss_block          times 104 db 0
+
+exc_names:
+    dd exc_name_0, 0, 0, 0, 0, exc_name_5, exc_name_6, exc_name_7
+    dd exc_name_8, 0, exc_name_10, exc_name_11, exc_name_12
+    dd exc_name_13, exc_name_14, 0, exc_name_16, exc_name_17
+    dd exc_name_18, exc_name_19
+exc_name_0         db "Division by zero", 0
+exc_name_5         db "Bound range exceeded", 0
+exc_name_6         db "Invalid instruction", 0
+exc_name_7         db "No FPU", 0
+exc_name_8         db "Double fault", 0
+exc_name_10        db "Invalid TSS", 0
+exc_name_11        db "Segment not present", 0
+exc_name_12        db "Stack fault", 0
+exc_name_13        db "General protection fault", 0
+exc_name_14        db "Page fault", 0
+exc_name_16        db "FPU error", 0
+exc_name_17        db "Alignment check", 0
+exc_name_18        db "Machine check", 0
+exc_name_19        db "SIMD error", 0
+exc_name_other     db "CPU exception", 0
+
+app_msg_crashed    db "Program crashed: ", 0
+app_msg_at         db " at ", 0
+app_msg_touched    db " - it touched memory at ", 0
+app_msg_not_its_own db " (not its own)", 0
+app_msg_privileged db " (a privileged instruction, or memory/ports it may not touch)", 0
+app_msg_bad_pointer db "Program stopped: it passed the system a pointer outside its own memory.", 10, 0
+app_msg_ctrl_c     db "^C", 10, 0
+app_msg_exit_code  db "(exit code ", 0
+pm_msg_panic       db "LexOS KERNEL PANIC", 10, 10, 0
+pm_msg_error       db 10, "error code ", 0
+pm_msg_cr2         db "   CR2 ", 0
+pm_msg_halted      db 10, 10, "This is a bug in LexOS itself. The system has stopped - restart the machine.", 10, 0

@@ -61,6 +61,13 @@ fs_run:
 
     cmp ax, FS_TYPE_FILE
     jne .not_program
+    call fs_name_ends_with_app
+    cmp ax, 1
+    jne .not_app
+    mov ax, [fs_tmp_slot]
+    call app_run                   ; src/usermode.asm - ring 3
+    jmp .end
+.not_app:
     call fs_name_ends_with_com
     cmp ax, 1
     jne .not_program
@@ -825,7 +832,8 @@ fs_ensure_test_exe:
 .copy_prog:
     cmp bx, TEST_EXE_LENGTH
     jae .copy_prog_done
-    mov al, [cs:test_exe_template + bx]
+    movzx ebx, bx                  ; (32-bit: the template is past 0x10000)
+    mov al, [test_exe_template + ebx]
     mov dl, al
     mov ax, bx
     add ax, FS_CONTENT_OFFSET + 1
@@ -1201,7 +1209,8 @@ fs_ensure_calc_exe:
 .copy_prog2:
     cmp bx, CALC_EXE_LENGTH
     jae .copy_prog_done2
-    mov al, [cs:calc_exe_template + bx]
+    movzx ebx, bx                  ; (32-bit: the template is past 0x10000)
+    mov al, [calc_exe_template + ebx]
     mov dl, al
     mov ax, bx
     add ax, FS_CONTENT_OFFSET + 1

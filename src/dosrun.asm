@@ -230,9 +230,10 @@ com_int21_handler:
 ;     by this point, there's nothing to return "through"). ---
 com_exit_now:
     mov ax, 0x10
-    mov ds, ax
-    mov es, ax
     mov ss, ax
+    mov ax, USER_DATA_SEL          ; what DS/ES always are outside a .com
+    mov ds, ax                     ; (src/usermode.asm)
+    mov es, ax
     mov esp, dword [com_saved_esp]
 
     ; Discard any scancode com_poll_key never got around to reading

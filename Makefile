@@ -1,8 +1,8 @@
 ASM = nasm
 BUILD_DIR = build
-SRC_FILES = kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/serial.asm src/mouse.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/vga.asm src/snake.asm src/paint.asm src/sweeper.asm src/tetris.asm src/game2048.asm src/convert.asm src/assembler.asm src/rtc.asm src/speaker.asm src/sound.asm src/chip8.asm src/turtle.asm src/hostfs.asm src/basic.asm src/net.asm src/sched.asm src/grep.asm src/headtail.asm src/uranium.asm src/user.asm src/tabcomplete.asm
+SRC_FILES = kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/serial.asm src/mouse.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/vga.asm src/snake.asm src/paint.asm src/sweeper.asm src/tetris.asm src/game2048.asm src/convert.asm src/assembler.asm src/rtc.asm src/speaker.asm src/sound.asm src/chip8.asm src/turtle.asm src/hostfs.asm src/basic.asm src/net.asm src/sched.asm src/usermode.asm src/grep.asm src/headtail.asm src/uranium.asm src/user.asm src/tabcomplete.asm
 
-.PHONY: all run run-serial clean
+.PHONY: all run run-serial clean apps
 
 all: $(BUILD_DIR)/os-image.bin
 
@@ -69,6 +69,26 @@ run-serial: $(BUILD_DIR)/os-image.bin
 		-audiodev $(AUDIODEV),id=snd0 -machine pcspk-audiodev=snd0 \
 		-device adlib,audiodev=snd0,iobase=0x220 -device sb16,audiodev=snd0 \
 		-serial tcp::$(SERIALPORT),server,nowait
+
+# Example ring-3 programs (src/usermode.asm), built into shared/ so
+# LexOS can fetch them: hostget hello.app, then run hello.app. The
+# assembly ones need only nasm; the C one also a 32-bit-capable gcc
+# and ld (on Debian/Ubuntu: gcc-multilib). The built .APP files are
+# committed, so plain `make` / `make run` never needs any of this.
+APP_CFLAGS = -m32 -ffreestanding -fno-pic -fno-pie -fno-stack-protector \
+	-fno-asynchronous-unwind-tables -nostdlib -O2 -Wall
+apps: shared/HELLO.APP shared/CRASH.APP shared/GUESS.APP
+
+shared/HELLO.APP: apps/hello.asm apps/lexos.inc
+	$(ASM) -f bin -i apps/ $< -o $@
+
+shared/CRASH.APP: apps/crash.asm apps/lexos.inc
+	$(ASM) -f bin -i apps/ $< -o $@
+
+shared/GUESS.APP: apps/guess.c apps/lexos.h apps/crt0.asm apps/app.ld | $(BUILD_DIR)
+	$(ASM) -f elf32 apps/crt0.asm -o $(BUILD_DIR)/crt0.o
+	gcc $(APP_CFLAGS) -c apps/guess.c -o $(BUILD_DIR)/guess.o
+	ld -m elf_i386 -T apps/app.ld --oformat binary -o $@ $(BUILD_DIR)/crt0.o $(BUILD_DIR)/guess.o
 
 clean:
 	rm -rf $(BUILD_DIR)
