@@ -2,7 +2,7 @@
 ; a raw register-write dump for the AdLib/OPL2 FM synth chip) or a
 ; .WAV (PCM samples) file.
 ;
-; Exports: play_file
+; Exports: play_file, play_spawn
 ;
 ; All of this file's own data is reached through ordinary
 ; "[label + reg32]" memory operands or plain "mov e[sd]i, label" -
@@ -268,6 +268,8 @@ audio_timer_start:
     mov [audio_pit_divisor], eax
 
     mov dword [audio_fast_ticks], 0
+    mov dword [audio_tick_accum], 0
+    mov byte [audio_timer_active], 1
 
     cli
 
@@ -296,6 +298,7 @@ audio_timer_start:
 audio_timer_stop:
     pusha
     cli
+    mov byte [audio_timer_active], 0
 
     mov edi, idt_table + IRQ_BASE * 8
     mov esi, audio_saved_idt0
@@ -312,12 +315,35 @@ audio_timer_stop:
     popa
     ret
 
+; The fast IRQ0 handler, while audio_timer_start has the PIT sped up.
+; Besides counting audio_fast_ticks, it keeps the system's own
+; timer_ticks going at the normal ~18.2Hz underneath (every time the
+; PIT counts accumulate to what one normal tick is, 65536) - so with
+; music playing in the background, everything paced by timer_ticks
+; (delays, games, the scheduler's time slices) runs on unchanged - and
+; gives the scheduler its chance: an audio tick is exactly what the
+; background player waits for.
 audio_fast_tick_isr:
-    push eax
+    pushad
     inc dword [audio_fast_ticks]
+    mov ebx, WAIT_AUDIO
+    mov eax, [audio_pit_divisor]
+    add [audio_tick_accum], eax
+    cmp dword [audio_tick_accum], 65536
+    jb .no_tick
+    sub dword [audio_tick_accum], 65536
+    inc dword [timer_ticks]
+    or ebx, WAIT_TICK
+.no_tick:
     mov al, 0x20
     out PIC1_CMD, al
-    pop eax
+    mov eax, ebx
+    call sched_event
+    cmp ecx, -1
+    je .same_task
+    call sched_switch_to
+.same_task:
+    popad
     iret
 
 ; --- Drains the keyboard ring buffer looking for ESC, setting
@@ -326,7 +352,9 @@ audio_fast_tick_isr:
 ;     (not stopping at the first ESC) so a key pressed again after
 ;     playback already ended doesn't do anything unexpected next. ---
 sound_poll_stop_key:
-    pusha
+    cmp byte [sound_background], 0
+    jne .background                     ; the keyboard belongs to the
+    pusha                               ; foreground - `kill` stops it
 .loop:
     mov al, [kbd_buf_tail]
     cmp al, [kbd_buf_head]
@@ -344,6 +372,7 @@ sound_poll_stop_key:
     jmp .loop
 .done:
     popa
+.background:
     ret
 
 ; --- 1-bit sample playback: gates PIT channel 2's own tone generator
@@ -430,23 +459,21 @@ opl2_silence:
 ; ============================================================
 ; Plays fs_tmp_slot as Type-0 IMF (no length header - straight into
 ; 4-byte records: register, value, delay-lo, delay-hi, delay in IMF
-; ticks at IMF_TICK_HZ) until end of file or ESC. Streams through the
-; file exactly the way src/paint.asm's view_load_bmp does (inline
-; region then the extra-sector chain) rather than loading it whole,
-; since a whole song can be far bigger than convenient to hold in RAM
-; at once; imf_consume_byte (below) is this file's version of
-; view_consume_byte, accumulating 4 streamed bytes into one record at
-; a time instead of placing framebuffer pixels.
+; ticks at IMF_TICK_HZ) until end of file or ESC. The whole file (at
+; most 64KB, a LexOS file's limit) is loaded into IMF_BUF first and
+; played from there - not streamed from disk between notes - so a
+; background player (`play x.imf &`) never touches the filesystem
+; while the shell might be using it.
 ; ============================================================
 play_imf_file:
     pusha
 
     mov ax, [fs_tmp_slot]
-    call fs_read_slot
-    mov ax, FS_TOTAL_LEN_OFFSET
-    call fs_scratch_read_word
-    movzx eax, ax
-    mov [imf_total_len], eax
+    mov edi, IMF_BUF
+    mov ecx, 0xFFFF
+    call fs_load_to
+    mov [imf_total_len], ecx
+    call sound_loading_done
 
     mov byte [sound_stop_requested], 0
     mov byte [imf_record_idx], 0
@@ -454,59 +481,18 @@ play_imf_file:
     call audio_timer_start
 
     mov dword [imf_read_pos], 0
-.inline_loop:
+.play_loop:
     mov ecx, [imf_read_pos]
     cmp ecx, [imf_total_len]
-    jae .done_reading
-    cmp ecx, FS_CONTENT_LEN - 1
-    jae .chain_phase
-
-    mov ax, [fs_tmp_slot]
-    call fs_read_slot
-    mov eax, ecx
-    add ax, FS_CONTENT_OFFSET
-    call fs_scratch_read_byte
+    jae .done
+    mov al, [IMF_BUF + ecx]
     call imf_consume_byte
     cmp byte [sound_stop_requested], 1
-    je .done_reading
+    je .done
     inc dword [imf_read_pos]
-    jmp .inline_loop
+    jmp .play_loop
 
-.chain_phase:
-    mov ax, [fs_tmp_slot]
-    call fs_read_slot
-    mov ax, FS_CHAIN_OFFSET
-    call fs_scratch_read_word
-    mov [imf_read_chain], ax
-
-.chain_loop:
-    cmp word [imf_read_chain], FS_NO_CHAIN
-    je .done_reading
-    mov ax, [imf_read_chain]
-    call fs_extra_read
-
-    xor bx, bx
-.fill_loop:
-    cmp bx, 508
-    jae .fill_done
-    mov ecx, [imf_read_pos]
-    cmp ecx, [imf_total_len]
-    jae .done_reading
-    mov ax, bx
-    call fs_scratch_read_byte
-    call imf_consume_byte
-    cmp byte [sound_stop_requested], 1
-    je .done_reading
-    inc dword [imf_read_pos]
-    inc bx
-    jmp .fill_loop
-.fill_done:
-    mov ax, FS_EXTRA_NEXT_OFFSET
-    call fs_scratch_read_word
-    mov [imf_read_chain], ax
-    jmp .chain_loop
-
-.done_reading:
+.done:
     call opl2_silence
     call audio_timer_stop
     popa
@@ -566,7 +552,8 @@ imf_consume_byte:
     mov eax, [audio_fast_ticks]
     cmp eax, [imf_delay_target]
     jae .done
-    hlt
+    mov eax, WAIT_AUDIO                 ; (src/sched.asm)
+    call task_wait
     jmp .wait_loop
 
 .done:
@@ -737,6 +724,7 @@ play_wav_file:
     jmp .wav_chain_loop
 
 .wav_read_done:
+    call sound_loading_done
     mov ebx, [wav_sample_rate]
     cmp ebx, 1000
     jae .rate_min_ok
@@ -781,7 +769,8 @@ play_wav_file:
     inc esi
     jmp .play_loop
 .play_wait:
-    hlt
+    mov eax, WAIT_AUDIO                 ; (src/sched.asm)
+    call task_wait
     jmp .play_loop
 
 .play_done:
@@ -798,16 +787,129 @@ play_wav_file:
     ret
 
 ; ============================================================
+; `play <n> &` (src/shell.asm): the same play_file, in a task of its
+; own (src/sched.asm) at high priority, so a note is never late just
+; because the foreground is busy. Loading the file is the one part
+; that touches the filesystem - which the shell might be in the middle
+; of using too - so it happens with task switching held off
+; (sched_lock), released by sound_loading_done as soon as the file is
+; in memory. play_bg_arg (src/data.asm) holds the name: play_file
+; reads it through a 16-bit si.
+; ============================================================
+play_spawn:
+    pushad
+    cmp dword [play_bg_pid], 0
+    jne .busy
+    movzx esi, si
+    mov edi, play_bg_arg
+    mov ecx, BUFFER_MAX
+.copy:
+    lodsb
+    stosb
+    or al, al
+    jz .copied
+    loop .copy
+    mov byte [edi], 0
+.copied:
+    ; the task's name: "play NAME"
+    mov esi, play_bg_task_name_prefix
+    mov edi, play_bg_task_name
+    mov ecx, 5
+    rep movsb
+    mov esi, play_bg_arg
+    mov ecx, TASK_NAME_LEN - 6
+.name:
+    lodsb
+    cmp al, ' '
+    je .name_end
+    stosb
+    or al, al
+    jz .named
+    loop .name
+.name_end:
+    mov byte [edi], 0
+.named:
+    mov eax, play_bg_task
+    mov esi, play_bg_task_name
+    mov bl, SCHED_PRIO_HIGH
+    call task_create
+    cmp eax, -1
+    je .full
+    mov [play_bg_pid], eax
+    mov si, msg_play_bg_started
+    call print_string
+    call basic_print_num
+    mov si, msg_play_bg_started2
+    call print_string
+    jmp .done
+.busy:
+    mov si, msg_play_bg_busy
+    call print_string
+    jmp .done
+.full:
+    mov si, msg_task_table_full
+    call print_string
+.done:
+    popad
+    ret
+
+play_bg_task:
+    mov eax, play_bg_kill_hook
+    call task_set_kill_hook
+    mov byte [sound_background], 1
+    inc dword [sched_lock]
+    mov byte [sound_lock_held], 1
+    mov si, play_bg_arg
+    call play_file
+    call sound_loading_done               ; (if it never got that far)
+    mov byte [sound_background], 0
+    mov dword [play_bg_pid], 0
+    ret                                   ; -> task_exit
+
+; `kill` of the background player: stop the sound where it is.
+play_bg_kill_hook:
+    pushad
+    call opl2_silence
+    call speaker_direct_off
+    call speaker_off
+    cmp byte [audio_timer_active], 0
+    je .timer_off
+    call audio_timer_stop
+.timer_off:
+    mov byte [sound_background], 0
+    mov dword [play_bg_pid], 0
+    popad
+    ret
+
+; Called by the players once their file is in memory: lets other tasks
+; run again, if play_bg_task had stopped them for the loading.
+sound_loading_done:
+    cmp byte [sound_lock_held], 0
+    je .done
+    mov byte [sound_lock_held], 0
+    dec dword [sched_lock]
+.done:
+    ret
+
+; ============================================================
 ; Data
 ; ============================================================
+IMF_BUF            equ 0x310000     ; a whole .IMF, up to 64KB
+
 audio_fast_ticks   dd 0
 audio_pit_divisor  dd 0
+audio_tick_accum   dd 0
+audio_timer_active db 0
 audio_saved_idt0   times 8 db 0
 sound_stop_requested db 0
+sound_background   db 0
+sound_lock_held    db 0
+play_bg_pid        dd 0
+play_bg_task_name_prefix db "play "
+play_bg_task_name  times 20 db 0     ; TASK_NAME_LEN (src/sched.asm)
 
 imf_total_len    dd 0
 imf_read_pos     dd 0
-imf_read_chain   dw 0
 imf_record_idx   db 0
 imf_reg          db 0
 imf_val          db 0

@@ -4,8 +4,69 @@
 ; ============================================================
 ; Parses and executes a command (DS:buffer, zero-terminated)
 ; ============================================================
+; ============================================================
+; If the command line in `buffer` ends with "&" (a separate word),
+; removes it (and the spaces before it) and returns carry=1.
+; ============================================================
+shell_strip_background:
+    push eax
+    push ecx
+    xor ecx, ecx
+.len:
+    cmp byte [buffer + ecx], 0
+    je .have_len
+    inc ecx
+    jmp .len
+.have_len:
+.trail:                                ; ignore trailing spaces
+    jecxz .no
+    cmp byte [buffer + ecx - 1], ' '
+    jne .last
+    dec ecx
+    jmp .trail
+.last:
+    cmp byte [buffer + ecx - 1], '&'
+    jne .no
+    dec ecx
+.spaces:
+    jecxz .strip
+    cmp byte [buffer + ecx - 1], ' '
+    jne .strip
+    dec ecx
+    jmp .spaces
+.strip:
+    mov byte [buffer + ecx], 0
+    pop ecx
+    pop eax
+    stc
+    ret
+.no:
+    pop ecx
+    pop eax
+    clc
+    ret
+
 handle_command:
     pusha
+
+    ; "<command> &": run it in the background (src/sched.asm) - for now
+    ; only play knows how
+    call shell_strip_background
+    jnc .foreground
+    mov si, buffer
+    mov di, cmd_play_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .bg_play
+    mov si, msg_bg_only_play
+    call print_string
+    jmp .done
+.bg_play:
+    mov si, buffer
+    add si, 5                  ; skip "play "
+    call play_spawn
+    jmp .done
+.foreground:
 
     mov si, buffer
     mov di, cmd_shutdown
@@ -252,6 +313,42 @@ handle_command:
     call strcmp_prefix
     cmp ax, 1
     je .do_hostget
+
+    mov si, buffer
+    mov di, cmd_hostput_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_hostput
+
+    mov si, buffer
+    mov di, cmd_ifconfig
+    call strcmp_eq
+    cmp ax, 1
+    je .do_ifconfig
+
+    mov si, buffer
+    mov di, cmd_ping_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_ping
+
+    mov si, buffer
+    mov di, cmd_ps
+    call strcmp_eq
+    cmp ax, 1
+    je .do_ps
+
+    mov si, buffer
+    mov di, cmd_kill_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_kill
+
+    mov si, buffer
+    mov di, cmd_clock
+    call strcmp_eq
+    cmp ax, 1
+    je .do_clock
 
     mov si, buffer
     mov di, cmd_basic
@@ -510,9 +607,29 @@ handle_command:
     jmp .done
 
 .do_play:
+    cmp dword [play_bg_pid], 0
+    je .play_now
+    mov si, msg_play_fg_busy
+    call print_string
+    jmp .done
+.play_now:
     mov si, buffer
     add si, 5                  ; skip "play "
     call play_file
+    jmp .done
+
+.do_ps:
+    call sched_cmd_ps
+    jmp .done
+
+.do_kill:
+    mov si, buffer
+    add si, 5                  ; skip "kill "
+    call sched_cmd_kill
+    jmp .done
+
+.do_clock:
+    call sched_cmd_clock
     jmp .done
 
 .do_chip8:
@@ -535,6 +652,22 @@ handle_command:
     mov si, buffer
     add si, 8                  ; skip "hostget "
     call host_get
+    jmp .done
+
+.do_hostput:
+    mov si, buffer
+    add si, 8                  ; skip "hostput "
+    call host_put
+    jmp .done
+
+.do_ifconfig:
+    call net_ifconfig
+    jmp .done
+
+.do_ping:
+    mov si, buffer
+    add si, 5                  ; skip "ping "
+    call net_ping
     jmp .done
 
 .do_basic:

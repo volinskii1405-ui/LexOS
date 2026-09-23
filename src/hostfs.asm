@@ -9,12 +9,10 @@
 ; - no more `recv <name> <hex size>` plus a separate `nc` on the host
 ; just to get a script, ROM or picture onto LexOS's own disk.
 ;
-; Exports: host_ls, host_get
+; Exports: host_ls, host_get, host_put
 ;
-; Read-only for now: nothing here ever writes to the host disk. (QEMU
-; insists on the drive itself being opened "rw" - an IDE hard disk
-; can't be read-only, "Block node is read-only" - but that only matters
-; to a guest that writes.)
+;   hostput <n> [host] - copies LexOS file n into it (as <host>, an
+;                         8.3 name, if given) - see host_put
 ;
 ; Only what vvfat actually produces is handled: FAT16 (vvfat's default
 ; for a hard disk), 512-byte sectors, the volume found either at LBA 0
@@ -263,6 +261,524 @@ host_get:
     ret
 
 ; ============================================================
+; hostput <n> [host name]: copies LexOS file n (from the current
+; directory) into the shared folder's top level - as <host name> if
+; given. That has to be a DOS 8.3 name: the entry is an 8.3 one plus a
+; single long-name piece spelling the same thing (without it, vvfat
+; would name the host file in lowercase). Only NEW files - see
+; .overwrite for why an existing one is refused.
+;
+; The FAT16 write sequence: allocate and fill clusters one at a time
+; (each linked from the previous one in the FAT as it's taken), write
+; the FAT back to every copy, and only then the directory entry
+; pointing at it - so the host never sees an entry for data that isn't
+; there yet. vvfat turns that into a real file in the host directory
+; as the directory sector is written.
+; ============================================================
+HOST_PUT_BUF equ 0x280000             ; the file's content, above 1MB
+
+host_put:
+    pushad
+
+    movzx esi, si
+    mov edi, fs_tmp_name
+    xor ecx, ecx
+.src_loop:
+    mov al, [esi]
+    cmp al, 0
+    je .src_done
+    cmp al, ' '
+    je .src_done
+    call to_upper_al
+    cmp ecx, FS_NAME_LEN
+    jae .src_skip
+    mov [edi + ecx], al
+    inc ecx
+.src_skip:
+    inc esi
+    jmp .src_loop
+.src_done:
+    mov byte [edi + ecx], 0
+    cmp ecx, 0
+    jne .skip_space
+    mov si, msg_host_put_usage
+    call print_string
+    jmp .end
+
+.skip_space:
+    cmp byte [esi], ' '
+    jne .dst
+    inc esi
+    jmp .skip_space
+.dst:
+    cmp byte [esi], 0
+    jne .dst_copy
+    mov esi, fs_tmp_name                 ; no host name: the same one
+.dst_copy:
+    xor ecx, ecx
+.dst_loop:
+    mov al, [esi]
+    cmp al, 0
+    je .dst_done
+    cmp al, ' '
+    je .dst_done
+    call to_upper_al
+    cmp ecx, HOST_NAME_MAX
+    jae .bad_name                         ; longer than any 8.3 name
+    mov [host_arg_name + ecx], al
+    inc ecx
+    inc esi
+    jmp .dst_loop
+.dst_done:
+    mov byte [host_arg_name + ecx], 0
+    call host_make_83
+    jnc .name_ok
+.bad_name:
+    mov si, msg_host_bad_name
+    call print_string
+    jmp .end
+.name_ok:
+
+    mov esi, fs_tmp_name
+    call fs_find_by_name
+    cmp ax, -1
+    jne .src_found
+    mov si, msg_fs_notfound
+    call print_string
+    jmp .end
+.src_found:
+    mov [fs_tmp_slot], ax
+    call fs_get_type
+    cmp ax, FS_TYPE_FILE
+    je .src_is_file
+    mov si, msg_host_put_not_file
+    call print_string
+    jmp .end
+.src_is_file:
+    mov ax, [fs_tmp_slot]
+    mov edi, HOST_PUT_BUF
+    mov ecx, 0xFFFF
+    call fs_load_to
+    mov [host_put_size], ecx
+
+    call host_mount
+    jc .end
+
+    ; Already there?
+    call host_dir_rewind
+.find:
+    call host_dir_next
+    jc .not_there
+    mov esi, [host_ent_ptr]
+    mov edi, host_put_83
+    mov ecx, 11
+    repe cmpsb
+    jne .find
+    test byte [host_ent_attr], 0x10
+    jz .overwrite
+    mov si, msg_host_is_dir
+    call print_string
+    jmp .end
+.overwrite:
+    ; Already there: refuse rather than overwrite. vvfat (QEMU's side of
+    ; the shared folder) only reliably turns NEW files into host files -
+    ; rewriting one in place either doesn't reach the host (a changed
+    ; size is ignored), or trips an assertion that takes all of QEMU
+    ; down (a file that shrinks); deleting and recreating it does reach
+    ; the host, but leaves vvfat's own view of the directory - what
+    ; hostls/hostget read - muddled until the next start.
+    mov si, msg_host_exists
+    call print_string
+    jmp .end
+
+.not_there:
+    cmp byte [host_io_error], 0
+    jne .io_error
+    call host_find_free_entry
+    jc .end                               ; (reason printed)
+
+.have_slot:
+    mov dword [host_put_first], 0
+    mov dword [host_put_prev], 0
+    mov dword [host_put_next_free], 2
+    mov dword [host_put_src], HOST_PUT_BUF
+    mov eax, [host_put_size]
+    mov [host_put_left], eax
+.cluster_loop:
+    cmp dword [host_put_left], 0
+    je .data_done
+    call host_alloc_cluster               ; eax = a new cluster, chained
+    jc .end
+    mov ebx, eax
+    sub ebx, 2
+    imul ebx, [host_spc]
+    add ebx, [host_data_start]            ; ebx = its first sector
+    mov ecx, [host_spc]
+.sector_loop:
+    ; stage the next (up to) 512 bytes, zero-padded, in host_data_buf
+    push ecx
+    mov edi, host_data_buf
+    mov ecx, 512 / 4
+    xor eax, eax
+    rep stosd
+    mov ecx, [host_put_left]
+    cmp ecx, 512
+    jbe .have_count
+    mov ecx, 512
+.have_count:
+    sub [host_put_left], ecx
+    mov esi, [host_put_src]
+    add [host_put_src], ecx
+    mov edi, host_data_buf
+    rep movsb
+    pop ecx
+
+    mov eax, ebx
+    mov esi, host_data_buf
+    call host_write_sector
+    jc .io_error
+    inc ebx
+    cmp dword [host_put_left], 0
+    je .cluster_loop                      ; the rest of the cluster is slack
+    loop .sector_loop
+    jmp .cluster_loop
+.data_done:
+    call host_fat_flush
+    jc .io_error
+
+    ; the directory entry
+    mov eax, [host_put_dir_lba]
+    mov edi, host_sector_buf
+    call host_read_sector
+    jc .io_error
+    mov edi, [host_put_dir_off]
+    add edi, host_sector_buf
+    push edi
+    mov ecx, 64 / 4                       ; the long-name entry + the 8.3 one
+    xor eax, eax
+    rep stosd
+    pop edi
+    call host_write_lfn
+    add edi, 32
+    mov esi, host_put_83
+    mov ecx, 11
+    push edi
+    rep movsb
+    pop edi
+    mov byte [edi + 0x0B], 0x20           ; "archive" - an ordinary file
+    call host_fat_timestamp
+    mov [edi + 0x0E], ax                  ; created
+    mov [edi + 0x10], dx
+    mov [edi + 0x16], ax                  ; modified
+    mov [edi + 0x18], dx
+    mov [edi + 0x12], dx                  ; accessed
+    mov word [edi + 0x14], 0              ; cluster, high word (FAT32 only)
+    mov eax, [host_put_first]
+    mov [edi + 0x1A], ax
+    mov eax, [host_put_size]
+    mov [edi + 0x1C], eax
+    mov eax, [host_put_dir_lba]
+    mov esi, host_sector_buf
+    call host_write_sector
+    jc .io_error
+    call host_flush_cache
+
+    mov si, msg_host_copied1
+    call print_string
+    mov eax, [host_put_size]
+    call host_print_dec_dword
+    mov si, msg_host_put2
+    call print_string
+    xor ecx, ecx
+.print_name:
+    mov al, [host_arg_name + ecx]
+    cmp al, 0
+    je .printed
+    call print_char
+    inc ecx
+    jmp .print_name
+.printed:
+    mov si, msg_newline
+    call print_string
+    jmp .end
+
+.io_error:
+    mov si, msg_host_io_error
+    call print_string
+.end:
+    popad
+    ret
+
+; Fills the 32 bytes at edi (already zeroed) as a single long-name
+; entry spelling host_arg_name - so vvfat names the host file exactly
+; that, rather than lowercasing a bare 8.3 name the way it otherwise
+; does.
+host_write_lfn:
+    pushad
+    mov byte [edi], 0x41                  ; piece 1, and the last one
+    mov byte [edi + 0x0B], 0x0F
+    ; checksum of the 8.3 name it belongs to
+    xor eax, eax
+    xor ecx, ecx
+.sum:
+    ror al, 1
+    add al, [host_put_83 + ecx]
+    inc ecx
+    cmp ecx, 11
+    jb .sum
+    mov [edi + 0x0D], al
+    ; 13 UTF-16 characters: the name, a 0 terminator, then 0xFFFF padding
+    xor ecx, ecx                          ; character index
+    xor edx, edx                          ; 1 once past the terminator
+.char:
+    movzx ebx, byte [host_lfn_offsets + ecx]
+    cmp edx, 0
+    jne .pad
+    movzx eax, byte [host_arg_name + ecx]
+    mov [edi + ebx], ax
+    cmp eax, 0
+    jne .next
+    inc edx
+    jmp .next
+.pad:
+    mov word [edi + ebx], 0xFFFF
+.next:
+    inc ecx
+    cmp ecx, 13
+    jb .char
+    popad
+    ret
+
+host_lfn_offsets db 1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30
+
+; host_arg_name ("NAME.EXT", uppercase) -> host_put_83 ("NAME    EXT"),
+; carry=1 if it isn't a valid DOS 8.3 name.
+host_make_83:
+    pushad
+    mov edi, host_put_83
+    mov ecx, 11
+    mov al, ' '
+    rep stosb
+    mov esi, host_arg_name
+    xor ecx, ecx
+.base:
+    mov al, [esi]
+    cmp al, 0
+    je .end_base
+    cmp al, '.'
+    je .end_base
+    call host_83_char_ok
+    jc .bad
+    cmp ecx, 8
+    jae .bad
+    mov [host_put_83 + ecx], al
+    inc ecx
+    inc esi
+    jmp .base
+.end_base:
+    cmp ecx, 0
+    je .bad                               ; no base name at all
+    cmp al, 0
+    je .ok
+    inc esi                               ; past the '.'
+    xor ecx, ecx
+.ext:
+    mov al, [esi]
+    cmp al, 0
+    je .ok
+    call host_83_char_ok
+    jc .bad
+    cmp ecx, 3
+    jae .bad
+    mov [host_put_83 + 8 + ecx], al
+    inc ecx
+    inc esi
+    jmp .ext
+.ok:
+    popad
+    clc
+    ret
+.bad:
+    popad
+    stc
+    ret
+
+; carry=0 if al may appear in an 8.3 name (A-Z 0-9 and DOS's
+; punctuation set), carry=1 otherwise.
+host_83_char_ok:
+    cmp al, 'A'
+    jb .not_letter
+    cmp al, 'Z'
+    jbe .ok
+.not_letter:
+    cmp al, '0'
+    jb .punct
+    cmp al, '9'
+    jbe .ok
+.punct:
+    push edi
+    push ecx
+    mov edi, host_83_punct
+    mov ecx, host_83_punct_len
+    repne scasb
+    pop ecx
+    pop edi
+    je .ok
+    stc
+    ret
+.ok:
+    clc
+    ret
+
+host_83_punct     db "!#$%&'()-@^_`{}~"
+host_83_punct_len equ $ - host_83_punct
+
+; Two adjacent free root directory slots (never used, or deleted) in
+; one sector - a long-name entry plus the 8.3 one - -> host_put_dir_lba
+; / host_put_dir_off (the first of the two). carry=1 (message printed) if there's none.
+host_find_free_entry:
+    pushad
+    xor ecx, ecx
+.sector:
+    cmp ecx, [host_root_sectors]
+    jae .full
+    mov eax, [host_root_start]
+    add eax, ecx
+    mov edi, host_sector_buf
+    call host_read_sector
+    jc .io_error
+    xor ebx, ebx
+.entry:
+    mov al, [host_sector_buf + ebx]
+    cmp al, 0x00
+    je .first_free
+    cmp al, 0xE5
+    jne .taken
+.first_free:
+    mov al, [host_sector_buf + ebx + 32]  ; room for the 8.3 entry right
+    cmp al, 0x00                          ; after the long-name one
+    je .found
+    cmp al, 0xE5
+    je .found
+.taken:
+    add ebx, 32
+    cmp ebx, 512 - 32
+    jb .entry
+    inc ecx
+    jmp .sector
+.found:
+    mov eax, [host_root_start]
+    add eax, ecx
+    mov [host_put_dir_lba], eax
+    mov [host_put_dir_off], ebx
+    popad
+    clc
+    ret
+.full:
+    mov si, msg_host_dir_full
+    call print_string
+    popad
+    stc
+    ret
+.io_error:
+    mov si, msg_host_io_error
+    call print_string
+    popad
+    stc
+    ret
+
+; Takes the next free cluster, marks it end-of-chain and links it from
+; the previous one (or records it as the file's first). eax = the
+; cluster. carry=1 (message printed) if the disk is full or unreadable.
+host_alloc_cluster:
+    push ebx
+    push edx
+    mov ebx, [host_put_next_free]
+.scan:
+    mov edx, [host_clusters]
+    add edx, 2
+    cmp ebx, edx
+    jae .full
+    mov eax, ebx
+    call host_fat_next
+    jc .io_error
+    cmp ax, 0
+    je .free
+    inc ebx
+    jmp .scan
+.free:
+    lea eax, [ebx + 1]
+    mov [host_put_next_free], eax
+    mov eax, ebx
+    mov dx, 0xFFFF
+    call host_fat_set
+    jc .io_error
+    mov eax, [host_put_prev]
+    cmp eax, 0
+    jne .link
+    mov [host_put_first], ebx
+    jmp .linked
+.link:
+    mov edx, ebx
+    call host_fat_set                     ; prev -> this one
+    jc .io_error
+.linked:
+    mov [host_put_prev], ebx
+    mov eax, ebx
+    pop edx
+    pop ebx
+    clc
+    ret
+.full:
+    push esi
+    mov si, msg_host_disk_full
+    call print_string
+    pop esi
+    pop edx
+    pop ebx
+    stc
+    ret
+.io_error:
+    push esi
+    mov si, msg_host_io_error
+    call print_string
+    pop esi
+    pop edx
+    pop ebx
+    stc
+    ret
+
+; The RTC's current time/date in FAT's packed form: ax = time
+; (hours<<11 | minutes<<5 | seconds/2), dx = date ((year-1980)<<9 |
+; month<<5 | day).
+host_fat_timestamp:
+    push ebx
+    push ecx
+    call rtc_read_date                    ; bh = day, bl = month, cl = yy
+    movzx edx, cl
+    add edx, 20                           ; 20yy - 1980
+    shl edx, 9
+    movzx eax, bl
+    shl eax, 5
+    or edx, eax
+    movzx eax, bh
+    or edx, eax
+    push edx
+    call rtc_read_time                    ; bh = h, bl = m, cl = s
+    movzx eax, bh
+    shl eax, 11
+    movzx edx, bl
+    shl edx, 5
+    or eax, edx
+    movzx edx, cl
+    shr edx, 1
+    or eax, edx
+    pop edx
+    pop ecx
+    pop ebx
+    ret
+
+; ============================================================
 ; fs_stream_source for host_get: returns the file's next byte in al
 ; (eax), following its cluster chain through the FAT as it goes, and
 ; preserves every other register. A read error sets host_io_error and
@@ -341,13 +857,8 @@ host_fat_next:
     add eax, [host_fat_start]            ; eax = the FAT sector holding it
     and ebx, 511                         ; ebx = offset within that sector
 
-    cmp eax, [host_fat_cached_lba]
-    je .cached
-    mov edi, host_fat_buf
-    call host_read_sector
+    call host_fat_load                   ; eax = that sector's LBA
     jc .error
-    mov [host_fat_cached_lba], eax
-.cached:
     movzx eax, word [host_fat_buf + ebx]
     pop edi
     pop edx
@@ -359,6 +870,71 @@ host_fat_next:
     pop edi
     pop edx
     pop ebx
+    stc
+    ret
+
+; Makes FAT sector eax the one in host_fat_buf (writing back the one
+; there first, if hostput changed it). carry=1 on a disk error.
+host_fat_load:
+    cmp eax, [host_fat_cached_lba]
+    je .done
+    call host_fat_flush
+    jc .fail
+    push edi
+    mov edi, host_fat_buf
+    call host_read_sector
+    pop edi
+    jc .fail
+    mov [host_fat_cached_lba], eax
+.done:
+    clc
+    ret
+.fail:
+    mov dword [host_fat_cached_lba], 0xFFFFFFFF
+    stc
+    ret
+
+; Writes host_fat_buf back - to every copy of the FAT - if it was
+; changed. carry=1 on a disk error.
+host_fat_flush:
+    cmp byte [host_fat_dirty], 0
+    je .clean
+    pushad
+    mov eax, [host_fat_cached_lba]
+    mov esi, host_fat_buf
+    mov ecx, [host_nfats]
+.copy:
+    call host_write_sector
+    jc .fail
+    add eax, [host_fat_size]
+    loop .copy
+    mov byte [host_fat_dirty], 0
+    popad
+.clean:
+    clc
+    ret
+.fail:
+    popad
+    stc
+    ret
+
+; Sets FAT entry eax (a cluster number) to dx. carry=1 on a disk error.
+host_fat_set:
+    pushad
+    shl eax, 1
+    mov ebx, eax
+    shr eax, 9
+    add eax, [host_fat_start]
+    and ebx, 511
+    call host_fat_load
+    jc .fail
+    mov [host_fat_buf + ebx], dx
+    mov byte [host_fat_dirty], 1
+    popad
+    clc
+    ret
+.fail:
+    popad
     stc
     ret
 
@@ -375,6 +951,7 @@ host_mount:
     pushad
     mov byte [host_io_error], 0
     mov dword [host_fat_cached_lba], 0xFFFFFFFF
+    mov byte [host_fat_dirty], 0
 
     ; No slave drive at all -> its status register reads back as 0
     ; (QEMU) or 0xFF (a floating bus on real hardware).
@@ -440,6 +1017,7 @@ host_mount:
     mov [host_fat_start], eax
 
     movzx ecx, byte [host_sector_buf + 0x10]    ; number of FATs
+    mov [host_nfats], ecx
     imul ecx, [host_fat_size]
     add eax, ecx
     mov [host_root_start], eax
@@ -469,6 +1047,7 @@ host_mount:
     jb .not_fat
     cmp eax, 65525
     jae .not_fat
+    mov [host_clusters], eax
 
     popad
     clc
@@ -495,9 +1074,8 @@ host_mount:
 ; Each host_dir_next call returns carry=0 with the next real entry's
 ; fields copied into host_ent_* (the raw 32-byte entry itself is at
 ; host_ent_ptr) - deleted entries, long-name (LFN) pieces and the
-; volume label are skipped - or carry=1 once the directory ends (a
-; 0x00 first byte, or the end of the root area). On a read error,
-; carry=1 and host_io_error is set.
+; volume label are skipped - or carry=1 at the end of the root area.
+; On a read error, carry=1 and host_io_error is set.
 ; ============================================================
 host_dir_rewind:
     mov dword [host_dir_sector], 0
@@ -525,8 +1103,11 @@ host_dir_next:
     inc dword [host_dir_entry]
 
     mov al, [esi]
+    ; 0x00 (never used) normally means "the end of the directory", but
+    ; vvfat leaves such holes mid-directory once a hostput has made it
+    ; regenerate its view, so the whole root area is always scanned.
     cmp al, 0x00
-    je .end_of_dir
+    je .next
     cmp al, 0xE5                         ; deleted
     je .next
     mov al, [esi + 0x0B]                 ; attributes
@@ -681,6 +1262,93 @@ host_read_sector:
     stc
     ret
 
+; ============================================================
+; Writes one 512-byte sector from esi to LBA eax on the slave drive -
+; host_read_sector's mirror image (WRITE SECTORS, 0x30).
+; carry=1 on error or timeout.
+; ============================================================
+host_write_sector:
+    pushad
+    mov ebx, eax
+
+    call host_wait_not_busy
+    jc .error
+
+    mov dx, ATA_DRIVE_HEAD
+    mov eax, ebx
+    shr eax, 24
+    and al, 0x0F
+    or al, 0xF0
+    out dx, al
+    call host_400ns
+    call host_wait_not_busy
+    jc .error
+
+    mov dx, ATA_SECCOUNT
+    mov al, 1
+    out dx, al
+    mov dx, ATA_LBA_LO
+    mov al, bl
+    out dx, al
+    mov dx, ATA_LBA_MID
+    mov al, bh
+    out dx, al
+    mov dx, ATA_LBA_HI
+    mov eax, ebx
+    shr eax, 16
+    out dx, al
+    mov dx, ATA_COMMAND
+    mov al, 0x30                          ; WRITE SECTORS
+    out dx, al
+    call host_400ns
+
+    call host_wait_drq
+    jc .error
+
+    cld
+    mov dx, ATA_DATA
+    mov ecx, 256
+    rep outsw
+    call host_400ns
+    call host_wait_not_busy
+    jc .error
+    mov dx, ATA_STATUS
+    in al, dx
+    test al, ATA_STATUS_ERR
+    jnz .error
+
+    call host_select_master
+    popad
+    clc
+    ret
+
+.error:
+    call host_select_master
+    popad
+    stc
+    ret
+
+; FLUSH CACHE (0xE7) on the slave - so a hostput is on the host's disk
+; before its "Copied" line appears. Failure is ignored: not every
+; drive implements it, and the data was already accepted.
+host_flush_cache:
+    pushad
+    mov dx, ATA_DRIVE_HEAD
+    mov al, 0xF0
+    out dx, al
+    call host_400ns
+    call host_wait_not_busy
+    jc .done
+    mov dx, ATA_COMMAND
+    mov al, 0xE7
+    out dx, al
+    call host_400ns
+    call host_wait_not_busy
+.done:
+    call host_select_master
+    popad
+    ret
+
 ; --- Waits (bounded) for the selected drive's BSY to clear. carry=1 on timeout. ---
 host_wait_not_busy:
     push eax
@@ -796,6 +1464,18 @@ host_root_start      dd 0
 host_root_sectors    dd 0
 host_data_start      dd 0
 host_fat_cached_lba  dd 0xFFFFFFFF
+host_fat_dirty       db 0
+host_nfats           dd 2
+host_clusters        dd 0
+host_put_size        dd 0
+host_put_first       dd 0
+host_put_prev        dd 0
+host_put_next_free   dd 2
+host_put_src         dd 0
+host_put_left        dd 0
+host_put_dir_lba     dd 0
+host_put_dir_off     dd 0
+host_put_83          times 11 db ' '
 host_io_error        db 0
 
 host_dir_sector      dd 0

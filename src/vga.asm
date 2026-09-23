@@ -51,6 +51,8 @@ VGA_FONT_SIZE   equ 8192      ; generous for a 256-char 8x16 font (4096 bytes)
 ; switch back first - see vga_leave_mode13.
 ; ============================================================
 vga_enter_mode13:
+    mov byte [vga_graphics_active], 1  ; (for background tasks that draw
+                                       ; on the text screen - the clock)
     call vga_save_regs
 
     ; Mode 13h's linear (chain-4) addressing spreads every byte we draw
@@ -98,6 +100,7 @@ vga_leave_mode13:
     call vga_restore_font
     mov esi, vga_saved_regs
     call vga_apply_regs
+    mov byte [vga_graphics_active], 0
     ret
 
 ; ============================================================
@@ -623,3 +626,4 @@ vga_saved_dac times 48 db 0
 vga_saved_font times VGA_FONT_SIZE db 0
 
 vga_draw_color db 15
+vga_graphics_active db 0

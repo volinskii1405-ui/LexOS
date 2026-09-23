@@ -202,6 +202,11 @@ help_l50 db "  chip8 <n> [s] - run a CHIP-8/SUPER-CHIP ROM (keys 1234/qwer/asdf/
 help_l51 db "  turtle <n>   - run a turtle-graphics script (FORWARD/LEFT/...)", 13, 10, 0
 help_l52 db "  hostls       - list files in the host's shared folder", 13, 10, 0
 help_l53 db "  hostget <n> [new] - copy a file from the host's shared folder here", 13, 10, 0
+help_l55 db "  hostput <n> [host] - copy file n into the host's shared folder", 13, 10, 0
+help_l56 db "  ifconfig     - show the network card and LexOS's address", 13, 10, 0
+help_l57 db "  ping <ip> [n] - send n ICMP echo requests (default 4)", 13, 10, 0
+help_l58 db "  ps / kill <pid> - list tasks / stop one; <cmd> & runs play in the background", 13, 10, 0
+help_l59 db "  clock        - toggle a clock in the top-right corner (a background task)", 13, 10, 0
 help_l54 db "  basic [n]    - Tiny BASIC (optionally load and run program n)", 13, 10, 0
 
 help_lines:
@@ -214,7 +219,8 @@ help_lines:
     dw help_l34, help_l35, help_l38, help_l39, help_l40
     dw help_l41, help_l42, help_l43, help_l44, help_l45
     dw help_l46, help_l47, help_l48, help_l49, help_l50, help_l51
-    dw help_l52, help_l53, help_l54
+    dw help_l52, help_l53, help_l55, help_l54, help_l56, help_l57
+    dw help_l58, help_l59
 help_lines_end:
 
 HELP_LINE_COUNT equ (help_lines_end - help_lines) / 2
@@ -285,6 +291,26 @@ msg_chip8_quit       db "Quit.", 13, 10, 0
 ; src/hostfs.asm's host_ls/host_get - kept here for the same reason as
 ; the msg_play_* messages above.
 msg_host_get_usage   db "Usage: hostget <n> [new name]", 13, 10, 0
+msg_play_bg_started  db "Playing in the background as task ", 0
+msg_play_bg_started2 db " - ps lists tasks, kill <pid> stops it.", 13, 10, 0
+msg_play_bg_busy     db "Something is already playing in the background (ps / kill <pid>).", 13, 10, 0
+msg_play_fg_busy     db "Music is playing in the background - stop it first (ps / kill <pid>).", 13, 10, 0
+msg_bg_only_play     db "Only play can run in the background (&) for now.", 13, 10, 0
+msg_task_table_full  db "Too many tasks running (ps / kill <pid>).", 13, 10, 0
+msg_task_killed      db "Stopped.", 13, 10, 0
+msg_task_cant_kill   db "No such task (the shell, pid 0, can't be stopped) - see ps.", 13, 10, 0
+msg_kill_usage       db "Usage: kill <pid>   (pids are listed by ps)", 13, 10, 0
+msg_clock_on         db "Clock on (type clock again to turn it off).", 13, 10, 0
+msg_clock_off        db "Clock off.", 13, 10, 0
+msg_ping_usage       db "Usage: ping <a.b.c.d> [count]   (numeric addresses - try ping 10.0.2.2)", 13, 10, 0
+msg_host_put_usage   db "Usage: hostput <n> [host name]", 13, 10, 0
+msg_host_bad_name    db "The host copy needs a DOS 8.3 name (like PIC.BMP) - hostput <n> <8.3 name>", 13, 10, 0
+msg_host_put_not_file db "Only ordinary files can be copied to the host.", 13, 10, 0
+msg_host_dir_full    db "The shared folder has no free directory entries left.", 13, 10, 0
+msg_host_disk_full   db "The shared folder's disk is full.", 13, 10, 0
+msg_host_put2        db " bytes to the host as ", 0
+msg_host_exists      db "The shared folder already has a file by that name - hostput only creates new ones.", 13, 10
+                     db "Give another name (hostput <n> <8.3 name>), or delete it on the host and restart.", 13, 10, 0
 msg_host_absent      db "No host shared folder attached - start LexOS with 'make run'.", 13, 10, 0
 msg_host_not_fat     db "The host disk isn't a FAT16 volume LexOS can read.", 13, 10, 0
 msg_host_io_error    db "Host disk read error.", 13, 10, 0
@@ -590,7 +616,14 @@ cmd_chip8_prefix db "chip8 ", 0
 cmd_turtle_prefix db "turtle ", 0
 cmd_hostls       db "hostls", 0
 cmd_hostget_prefix db "hostget ", 0
+cmd_hostput_prefix db "hostput ", 0
 cmd_basic        db "basic", 0
+cmd_ps           db "ps", 0
+cmd_kill_prefix  db "kill ", 0
+cmd_clock        db "clock", 0
+play_bg_arg      times (BUFFER_MAX + 1) db 0   ; src/sound.asm's play_spawn
+cmd_ifconfig     db "ifconfig", 0
+cmd_ping_prefix  db "ping ", 0
 cmd_basic_prefix db "basic ", 0
 cmd_history      db "history", 0
 cmd_df           db "df", 0

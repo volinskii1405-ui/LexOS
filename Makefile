@@ -1,6 +1,6 @@
 ASM = nasm
 BUILD_DIR = build
-SRC_FILES = kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/serial.asm src/mouse.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/vga.asm src/snake.asm src/paint.asm src/sweeper.asm src/tetris.asm src/game2048.asm src/convert.asm src/assembler.asm src/rtc.asm src/speaker.asm src/sound.asm src/chip8.asm src/turtle.asm src/hostfs.asm src/basic.asm src/grep.asm src/headtail.asm src/uranium.asm src/user.asm src/tabcomplete.asm
+SRC_FILES = kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/serial.asm src/mouse.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/vga.asm src/snake.asm src/paint.asm src/sweeper.asm src/tetris.asm src/game2048.asm src/convert.asm src/assembler.asm src/rtc.asm src/speaker.asm src/sound.asm src/chip8.asm src/turtle.asm src/hostfs.asm src/basic.asm src/net.asm src/sched.asm src/grep.asm src/headtail.asm src/uranium.asm src/user.asm src/tabcomplete.asm
 
 .PHONY: all run run-serial clean
 
@@ -46,10 +46,14 @@ endif
 SHARED ?= shared
 SHARED_DRIVE = -drive file=fat:rw:$(SHARED),format=raw,if=ide,index=1
 
+# The network card `ping`/`ifconfig` drive (src/net.asm): an RTL8139 on
+# QEMU's user-mode network - LexOS is 10.0.2.15, the gateway 10.0.2.2.
+NIC = -nic user,model=rtl8139
+
 run: $(BUILD_DIR)/os-image.bin
 	mkdir -p $(SHARED)
 	qemu-system-i386 -drive format=raw,file=$(BUILD_DIR)/os-image.bin,if=ide,index=0 \
-		$(SHARED_DRIVE) \
+		$(SHARED_DRIVE) $(NIC) \
 		-audiodev $(AUDIODEV),id=snd0 -machine pcspk-audiodev=snd0 \
 		-device adlib,audiodev=snd0,iobase=0x220
 
@@ -61,7 +65,7 @@ SERIALPORT ?= 4444
 run-serial: $(BUILD_DIR)/os-image.bin
 	mkdir -p $(SHARED)
 	qemu-system-i386 -drive format=raw,file=$(BUILD_DIR)/os-image.bin,if=ide,index=0 \
-		$(SHARED_DRIVE) \
+		$(SHARED_DRIVE) $(NIC) \
 		-audiodev $(AUDIODEV),id=snd0 -machine pcspk-audiodev=snd0 \
 		-device adlib,audiodev=snd0,iobase=0x220 \
 		-serial tcp::$(SERIALPORT),server,nowait
