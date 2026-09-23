@@ -145,8 +145,14 @@ TCP_ACK           equ 0x10
 TCP_CLOSED        equ 0
 TCP_SYN_SENT      equ 1
 TCP_ESTABLISHED   equ 2
-TCP_PEER_CLOSED   equ 3                   ; the server sent FIN
+TCP_PEER_CLOSED   equ 3                   ; the other side sent FIN
 TCP_RESET         equ 4                   ; ... or RST
+TCP_LISTEN        equ 5                   ; waiting for a client's SYN
+TCP_SYN_RCVD      equ 6                   ; answered it, waiting for its ACK
+TCP_FIN_WAIT      equ 7                   ; we sent FIN, waiting for theirs
+TCP_DONE          equ 8                   ; both FINs exchanged
+
+TCP_TX_WINDOW     equ 8 * 1460            ; most we keep in flight
 
 TCP_WINDOW        equ 5840                ; 4 full segments: fits the ring
 TCP_MSS           equ 1460
@@ -284,16 +290,18 @@ tcp_input:
     pushad
     cmp byte [tcp_state], TCP_CLOSED
     je .done
+    mov ax, [edx + 2]
+    xchg al, ah
+    cmp ax, [tcp_local_port]
+    jne .done
+    cmp byte [tcp_state], TCP_LISTEN
+    je .listen
     mov eax, [ebx + 12]
     cmp eax, [tcp_remote_ip]
     jne .done
     mov ax, [edx]
     xchg al, ah
     cmp ax, [tcp_remote_port]
-    jne .done
-    mov ax, [edx + 2]
-    xchg al, ah
-    cmp ax, [tcp_local_port]
     jne .done
 
     movzx ecx, word [ebx + 2]             ; the data's length: the IP total
@@ -310,6 +318,10 @@ tcp_input:
     lea esi, [edx + eax]                  ; esi = the data
     mov al, [edx + 13]
     mov [tcp_in_flags], al
+    mov ax, [edx + 14]                    ; their window
+    xchg al, ah
+    movzx eax, ax
+    mov [tcp_snd_wnd], eax
     mov eax, [edx + 4]
     bswap eax
     mov [tcp_in_seq], eax
@@ -321,6 +333,20 @@ tcp_input:
     mov byte [tcp_state], TCP_RESET
     jmp .done
 .no_rst:
+    cmp byte [tcp_state], TCP_SYN_RCVD
+    jne .not_syn_rcvd
+    test byte [tcp_in_flags], TCP_SYN     ; their SYN again: our SYN-ACK
+    jz .syn_rcvd_ack                      ; went missing - resend it
+    call tcp_send_synack
+    jmp .done
+.syn_rcvd_ack:
+    test byte [tcp_in_flags], TCP_ACK
+    jz .done
+    cmp eax, [tcp_snd_nxt]
+    jne .done
+    mov byte [tcp_state], TCP_ESTABLISHED  ; (and on to any data it carries)
+    jmp .open
+.not_syn_rcvd:
     cmp byte [tcp_state], TCP_SYN_SENT
     jne .open
     mov bl, [tcp_in_flags]
@@ -333,6 +359,7 @@ tcp_input:
     mov eax, [tcp_in_seq]
     inc eax
     mov [tcp_rcv_nxt], eax
+    call tcp_parse_mss
     mov byte [tcp_state], TCP_ESTABLISHED
     call tcp_send_ack
     jmp .done
@@ -344,6 +371,10 @@ tcp_input:
     sub ebx, [tcp_snd_una]
     jle .data
     mov [tcp_snd_una], eax
+    mov ebx, eax                          ; (past what we'd rewound to resend)
+    sub ebx, [tcp_snd_nxt]
+    jle .data
+    mov [tcp_snd_nxt], eax
 .data:
     mov eax, [tcp_in_seq]
     cmp eax, [tcp_rcv_nxt]
@@ -367,7 +398,13 @@ tcp_input:
     test byte [tcp_in_flags], TCP_FIN
     jz .ack
     cmp byte [tcp_state], TCP_ESTABLISHED
+    je .peer_fin
+    cmp byte [tcp_state], TCP_FIN_WAIT
     jne .ack
+    inc dword [tcp_rcv_nxt]
+    mov byte [tcp_state], TCP_DONE        ; both sides have said goodbye
+    jmp .send_ack
+.peer_fin:
     inc dword [tcp_rcv_nxt]
     mov byte [tcp_state], TCP_PEER_CLOSED
 .ack:
@@ -385,7 +422,225 @@ tcp_input:
     or ecx, ecx                           ; data we can't take yet (or
     jz .done                              ; again): say where we are
     call tcp_send_ack
+    jmp .done
+
+.listen:                                  ; a SYN for our port: a client
+    mov al, [edx + 13]
+    and al, TCP_SYN | TCP_ACK | TCP_RST
+    cmp al, TCP_SYN
+    jne .done
+    mov eax, [ebx + 12]
+    mov [tcp_remote_ip], eax
+    call tcp_learn_route
+    mov ax, [edx]
+    xchg al, ah
+    mov [tcp_remote_port], ax
+    mov eax, [edx + 4]
+    bswap eax
+    inc eax
+    mov [tcp_rcv_nxt], eax
+    call tcp_parse_mss
+    rdtsc
+    mov [tcp_snd_una], eax
+    inc eax
+    mov [tcp_snd_nxt], eax
+    mov dword [tcp_rx_len], 0
+    mov byte [tcp_rx_overflow], 0
+    mov byte [tcp_state], TCP_SYN_RCVD
+    call tcp_send_synack
 .done:
+    popad
+    ret
+
+; A client's first frame (ebx = its IP header, after the Ethernet
+; header): the MAC it came from is where replies to it go - so the
+; route to it is known without an ARP from inside net_poll.
+tcp_learn_route:
+    pushad
+    mov eax, [ebx + 12]                   ; the next hop for it: itself,
+    mov ecx, eax                          ; or off our subnet the gateway
+    xor ecx, [net_my_ip]
+    and ecx, [net_mask]
+    jz .local
+    mov eax, [net_gw_ip]
+.local:
+    mov [net_route_ip], eax
+    lea esi, [ebx - 14 + 6]               ; the Ethernet source address
+    mov edi, net_route_mac
+    movsd
+    movsw
+    mov byte [net_route_valid], 1
+    popad
+    ret
+
+; Our SYN-ACK (in SYN_RCVD): sequence number snd_una, their SYN acked.
+tcp_send_synack:
+    pushad
+    mov al, TCP_SYN | TCP_ACK
+    mov edx, [tcp_snd_una]
+    xor ecx, ecx
+    call tcp_output
+    popad
+    ret
+
+; edx = a SYN's TCP header -> tcp_mss from its MSS option (536 if none)
+tcp_parse_mss:
+    pushad
+    mov dword [tcp_mss], 536
+    movzx ecx, byte [edx + 12]
+    shr ecx, 4
+    shl ecx, 2
+    add ecx, edx                          ; the options' end
+    lea esi, [edx + 20]
+.option:
+    cmp esi, ecx
+    jae .done
+    mov al, [esi]
+    cmp al, 0                             ; end of options
+    je .done
+    cmp al, 1                             ; no-op
+    jne .sized
+    inc esi
+    jmp .option
+.sized:
+    cmp al, 2
+    jne .skip
+    movzx eax, word [esi + 2]
+    xchg al, ah
+    cmp eax, 64
+    jb .done
+    cmp eax, TCP_MSS
+    jbe .set
+    mov eax, TCP_MSS
+.set:
+    mov [tcp_mss], eax
+    jmp .done
+.skip:
+    movzx eax, byte [esi + 1]
+    or eax, eax
+    jz .done
+    add esi, eax
+    jmp .option
+.done:
+    popad
+    ret
+
+; Sends esi/ecx (any length) and waits for all of it to be acknowledged:
+; as many segments at a time as their window takes, the unacknowledged
+; ones resent after a second without progress. carry=1 if the
+; connection broke, ESC was pressed or they stopped answering.
+tcp_send_stream:
+    pushad
+    mov [tcp_tx_data], esi
+    mov eax, [tcp_snd_nxt]
+    mov [tcp_tx_start], eax
+    add eax, ecx
+    mov [tcp_tx_end], eax
+    mov dword [tcp_tx_tries], 0
+    mov eax, [timer_ticks]
+    mov [tcp_tx_progress], eax
+    mov eax, [tcp_snd_una]
+    mov [tcp_tx_last_una], eax
+.loop:
+    call net_poll
+    cmp byte [tcp_state], TCP_ESTABLISHED
+    je .alive
+    cmp byte [tcp_state], TCP_PEER_CLOSED ; (they may close their side early)
+    jne .fail
+.alive:
+    mov eax, [tcp_snd_una]
+    cmp eax, [tcp_tx_end]
+    je .ok
+    cmp eax, [tcp_tx_last_una]            ; progress?
+    je .no_progress
+    mov [tcp_tx_last_una], eax
+    mov eax, [timer_ticks]
+    mov [tcp_tx_progress], eax
+    mov dword [tcp_tx_tries], 0
+.no_progress:
+    ; send while the window has room
+.send:
+    mov eax, [tcp_snd_nxt]
+    cmp eax, [tcp_tx_end]
+    je .sent_all
+    mov ebx, eax
+    sub ebx, [tcp_snd_una]                ; in flight
+    mov edx, [tcp_snd_wnd]
+    cmp edx, TCP_TX_WINDOW
+    jbe .wnd
+    mov edx, TCP_TX_WINDOW
+.wnd:
+    sub edx, ebx                          ; room
+    jle .sent_all
+    mov ecx, [tcp_tx_end]
+    sub ecx, eax                          ; left to send
+    cmp ecx, [tcp_mss]
+    jbe .mss_ok
+    mov ecx, [tcp_mss]
+.mss_ok:
+    cmp ecx, edx
+    jbe .size_ok
+    mov ecx, edx
+.size_ok:
+    mov esi, eax
+    sub esi, [tcp_tx_start]
+    add esi, [tcp_tx_data]
+    mov edx, eax
+    add [tcp_snd_nxt], ecx
+    mov al, TCP_ACK | TCP_PSH
+    call tcp_output
+    jc .fail
+    jmp .send
+.sent_all:
+    call net_check_esc
+    jc .fail
+    mov eax, [timer_ticks]
+    sub eax, [tcp_tx_progress]
+    cmp eax, 18
+    jb .loop
+    ; a second without progress: go back and resend from snd_una
+    inc dword [tcp_tx_tries]
+    cmp dword [tcp_tx_tries], 8
+    ja .fail
+    mov eax, [tcp_snd_una]
+    mov [tcp_snd_nxt], eax
+    mov eax, [timer_ticks]
+    mov [tcp_tx_progress], eax
+    jmp .loop
+.ok:
+    popad
+    clc
+    ret
+.fail:
+    popad
+    stc
+    ret
+
+; Closes from our side: FIN, then waits (up to 2 seconds) for theirs.
+tcp_finish:
+    pushad
+    cmp byte [tcp_state], TCP_ESTABLISHED
+    je .send_fin
+    cmp byte [tcp_state], TCP_PEER_CLOSED
+    jne .closed
+    mov al, TCP_FIN | TCP_ACK             ; they closed first: just ours
+    mov edx, [tcp_snd_nxt]
+    inc dword [tcp_snd_nxt]
+    xor ecx, ecx
+    call tcp_output
+    jmp .closed
+.send_fin:
+    mov byte [tcp_state], TCP_FIN_WAIT
+    mov al, TCP_FIN | TCP_ACK
+    mov edx, [tcp_snd_nxt]
+    inc dword [tcp_snd_nxt]
+    xor ecx, ecx
+    call tcp_output
+    mov eax, 36
+    mov bl, TCP_FIN_WAIT
+    call tcp_wait_state
+.closed:
+    mov byte [tcp_state], TCP_CLOSED
     popad
     ret
 
@@ -1041,6 +1296,14 @@ tcp_in_seq         dd 0
 tcp_out_flags      db 0
 tcp_out_seq        dd 0
 tcp_deadline       dd 0
+tcp_snd_wnd        dd TCP_MSS
+tcp_mss            dd 536
+tcp_tx_data        dd 0
+tcp_tx_start       dd 0
+tcp_tx_end         dd 0
+tcp_tx_tries       dd 0
+tcp_tx_progress    dd 0
+tcp_tx_last_una    dd 0
 
 WGET_HOST_MAX      equ 63
 WGET_PATH_MAX      equ 255

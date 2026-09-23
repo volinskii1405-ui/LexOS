@@ -378,6 +378,17 @@ handle_command:
     je .do_sleep
 
     mov si, buffer
+    mov di, cmd_httpd
+    call strcmp_eq
+    cmp ax, 1
+    je .do_httpd
+    mov si, buffer
+    mov di, cmd_httpd_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_httpd
+
+    mov si, buffer
     mov di, cmd_wget
     call strcmp_eq
     cmp ax, 1
@@ -788,6 +799,12 @@ handle_command:
     mov si, buffer
     add si, 6
     call script_cmd_sleep
+    jmp .done
+
+.do_httpd:
+    mov si, buffer
+    add si, 5                  ; skip "httpd"
+    call net_httpd
     jmp .done
 
 .do_wget:

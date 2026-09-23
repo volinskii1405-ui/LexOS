@@ -376,6 +376,15 @@ alex@/PROGRAMS$
   shown instead (with where a redirect points). There's no TLS, so
   `https://` is out. Try `python3 -m http.server` in a folder on your
   machine and `wget http://10.0.2.2:8000/somefile` in LexOS.
+  `httpd [port]` turns LexOS into a web server: `make run` forwards
+  the host's port 8080 to LexOS's port 80, so open
+  http://localhost:8080/ in your browser and every folder is a page
+  listing its files (or its `INDEX.HTM`), every file a link - served
+  with a content type from its extension, HEAD too, each request
+  logged on LexOS's screen; ESC stops it. The same TCP now also takes
+  connections (LISTEN, SYN-ACK) and sends big answers as a window of
+  segments, resending from the last acknowledged byte when an ACK
+  doesn't come (a 3MB file goes out in a few seconds).
 - **Shared folder with the host.** `make run` attaches the repo's
   `shared/` folder as a second disk (QEMU's vvfat presents a host
   directory as a whole FAT16 volume). `hostls` lists it and
@@ -545,6 +554,7 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `ping <host> [n]` | send n ICMP echo requests (default 4) to a name or address, ESC stops |
 | `nslookup <name>` | look a name up in DNS |
 | `wget <url> [name]` | download a file over HTTP into the current folder |
+| `httpd [port]` | serve this disk on the web (`make run`: http://localhost:8080/) |
 | `ntp [server]` | set the clock from a time server (default `pool.ntp.org`) |
 | `dhcp` | get an address from the DHCP server again |
 | `run <n>.app [args]` | run a protected (ring 3) program - see `apps/` |
@@ -716,6 +726,7 @@ src/
                        UDP, DHCP, DNS: ping/ifconfig/nslookup/dhcp.
   inet.asm             Internet clients on top of it: ntp, and a
                        small TCP for wget.
+  httpd.asm            httpd: the web server on that TCP.
   basic.asm            `basic [name]`, a Tiny BASIC interpreter/REPL -
                        text mode, program stored above 1MB, SAVE/LOAD
                        through fs_stream_write/fs_load_to.

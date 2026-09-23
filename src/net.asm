@@ -513,6 +513,7 @@ net_send:
 ; (net_ping_*).
 net_poll:
     pushad
+    inc byte [net_in_poll]
 .next:
     mov dx, [net_io]
     add dx, RTL_CR
@@ -554,6 +555,7 @@ net_poll:
     out dx, ax
     jmp .next
 .done:
+    dec byte [net_in_poll]
     popad
     ret
 
@@ -667,6 +669,11 @@ net_handle_frame:
 ; eax = an IP on our subnet -> its MAC in net_hop_mac. Three requests,
 ; a second each. carry=1 if nobody answered.
 net_arp_resolve:
+    cmp byte [net_in_poll], 0             ; from a frame handler: polling
+    je .can_poll                          ; again would re-enter net_poll
+    stc                                   ; and lose its place in the ring
+    ret
+.can_poll:
     pushad
     mov [net_arp_want], eax
     mov byte [net_arp_got], 0
@@ -1649,6 +1656,7 @@ net_udp_got        db 0
 net_udp_len        dd 0
 net_udp_from       dd 0
 net_udp_buf        times NET_UDP_MAX db 0
+net_in_poll        db 0                 ; inside net_poll (a frame handler)
 net_io             dw 0
 net_pci_addr       dd 0
 net_mac            times 6 db 0
