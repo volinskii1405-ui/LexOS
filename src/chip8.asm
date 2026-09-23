@@ -47,6 +47,20 @@
 ; public-domain ROMs and modern test suites expect - noted at each one
 ; rather than made configurable, since a hobby OS doesn't need two
 ; code paths for a distinction almost no ROM actually depends on.
+;
+; SUPER-CHIP 1.1 (the HP-48 extension most "CHIP-8" games past the
+; originals are really written for) is supported on top: a 128x64
+; high-resolution mode (00FF/00FE), scrolling (00CN down, 00FB right,
+; 00FC left), 16x16 sprites (DXY0), a big 8x10 font (FX30), the 8 "RPL
+; user flags" (FX75/FX85 - kept for the whole session, the way the HP-48
+; kept them across programs) and 00FD (exit). The display is always
+; stored at 128x64; in low-res mode every CHIP-8 pixel is a 2x2 block of
+; it, which is what makes switching modes and scrolling one code path.
+; Where SUPER-CHIP's own ambiguities come up (scroll distance in low-res,
+; whether DXY0 is 8 or 16 wide in low-res, VF counting collided rows),
+; this follows the "modern SUPER-CHIP" behavior Octo and the
+; chip8-test-suite settled on: scroll distances are in screen pixels
+; (so doubled in low-res), DXY0 is always 16x16, VF is 0/1.
 ; ============================================================
 
 CHIP8_MEM_SIZE               equ 4096
@@ -60,10 +74,23 @@ CHIP8_SCALE                    equ 5            ; 64*5=320, 32*5=160 - the
 CHIP8_INSTRUCTIONS_PER_TICK    equ 10           ; per 60Hz timer tick -
                                                    ; ~600 instructions/sec,
                                                    ; the usual CHIP-8 pace
+CHIP8_HIRES_IPT                equ 30           ; SUPER-CHIP games expect a
+                                                   ; faster CPU once they've
+                                                   ; switched to 128x64
+CHIP8_MAX_SPEED                equ 1000
+CHIP8_DISP_W                   equ 128          ; the display buffer is
+CHIP8_DISP_H                   equ 64           ; always stored at hi-res
+CHIP8_BIGFONT_ADDR             equ 0x0A0        ; FX30's 8x10 digits, right
+                                                   ; after the 4x5 ones
+CHIP8_HIRES_SCALE              equ 2            ; 128*2=256, 64*2=128 -
+CHIP8_HIRES_ORG_X              equ 32           ; centered horizontally,
+CHIP8_HIRES_ORG_Y              equ 16           ; clear of the HUD strip
 
 ; ============================================================
-; `chip8 <name>`: loads and runs a CHIP-8 ROM. SI points at the name
-; (the shell already skipped past "chip8 ", same as play_file).
+; `chip8 <name> [speed]`: loads and runs a CHIP-8 / SUPER-CHIP ROM. SI
+; points at the name (the shell already skipped past "chip8 ", same as
+; play_file). The optional speed is instructions per 60Hz frame; without
+; it, 10 in low-res and 30 once a ROM switches to high-res.
 ; ============================================================
 chip8_run:
     pusha
@@ -86,6 +113,29 @@ chip8_run:
     jmp .name_loop
 .name_done:
     mov byte [di], 0
+
+    mov dword [chip8_speed], 0       ; 0 = automatic (see the header)
+.speed_skip:
+    cmp byte [si], ' '
+    jne .speed_digits
+    inc si
+    jmp .speed_skip
+.speed_digits:
+    movzx eax, byte [si]
+    sub eax, '0'
+    cmp eax, 9
+    ja .speed_done
+    mov edx, [chip8_speed]
+    imul edx, edx, 10
+    add edx, eax
+    cmp edx, CHIP8_MAX_SPEED
+    jbe .speed_ok
+    mov edx, CHIP8_MAX_SPEED
+.speed_ok:
+    mov [chip8_speed], edx
+    inc si
+    jmp .speed_digits
+.speed_done:
 
     cmp byte [fs_tmp_name], 0
     jne .have_name
@@ -144,16 +194,26 @@ chip8_run:
     cmp byte [chip8_waiting], 1
     je .skip_exec
 
+    mov ecx, [chip8_speed]
+    or ecx, ecx
+    jnz .exec_loop
     mov ecx, CHIP8_INSTRUCTIONS_PER_TICK
+    cmp byte [chip8_hires], 0
+    je .exec_loop
+    mov ecx, CHIP8_HIRES_IPT
 .exec_loop:
     cmp ecx, 0
     jle .exec_done
     call chip8_step
     cmp byte [chip8_waiting], 1
     je .exec_done                    ; FX0A just fired mid-batch
+    cmp byte [chip8_quit], 1
+    je .exec_done                    ; 00FD (SUPER-CHIP "exit")
     dec ecx
     jmp .exec_loop
 .exec_done:
+    cmp byte [chip8_quit], 1
+    je .stop
 
 .skip_exec:
     cmp byte [chip8_delay], 0
@@ -214,6 +274,12 @@ chip8_reset:
     mov ecx, 16*5
     rep movsb
 
+    mov esi, chip8_bigfont_data
+    mov edi, chip8_mem
+    add edi, CHIP8_BIGFONT_ADDR
+    mov ecx, 16*10
+    rep movsb
+
     mov esi, content_buf
     mov edi, chip8_mem
     add edi, 0x200
@@ -232,6 +298,7 @@ chip8_reset:
     mov byte [chip8_sound], 0
     mov byte [chip8_waiting], 0
     mov byte [chip8_quit], 0
+    mov byte [chip8_hires], 0
 
     xor ecx, ecx
 .clear_v:
@@ -243,7 +310,7 @@ chip8_reset:
 .v_done:
 
     mov edi, chip8_display
-    mov ecx, 64*32
+    mov ecx, CHIP8_DISP_W*CHIP8_DISP_H
     xor al, al
     rep stosb
     mov byte [chip8_dirty], 1
@@ -476,11 +543,12 @@ chip8_step:
     ret
 
 ; ============================================================
-; 0x0___: only 00E0 (clear the display) and 00EE (return) are
-; meaningful to any modern interpreter - 0x0NNN ("call machine code
-; routine", a real COSMAC VIP subroutine address) has had nothing to
-; call since the 1970s, and every ROM still standing today assumes it
-; does nothing.
+; 0x0___: 00E0 (clear), 00EE (return), and SUPER-CHIP's 00CN (scroll
+; down N), 00FB/00FC (scroll right/left 4), 00FD (exit), 00FE/00FF
+; (low/high res - both also clear the screen). 0x0NNN ("call machine
+; code routine", a real COSMAC VIP subroutine address) has had nothing
+; to call since the 1970s, and every ROM still standing today assumes
+; it does nothing.
 ; ============================================================
 chip8_op_0:
     mov ax, [chip8_op]
@@ -488,10 +556,23 @@ chip8_op_0:
     je .clear
     cmp ax, 0x00EE
     je .ret
+    cmp ax, 0x00FB
+    je .scroll_right
+    cmp ax, 0x00FC
+    je .scroll_left
+    cmp ax, 0x00FD
+    je .exit
+    cmp ax, 0x00FE
+    je .lores
+    cmp ax, 0x00FF
+    je .hires
+    and ax, 0xFFF0
+    cmp ax, 0x00C0
+    je .scroll_down
     ret
 .clear:
     mov edi, chip8_display
-    mov ecx, 64*32
+    mov ecx, CHIP8_DISP_W*CHIP8_DISP_H
     xor al, al
     rep stosb
     mov byte [chip8_dirty], 1
@@ -505,6 +586,99 @@ chip8_op_0:
     mov ax, [chip8_stack + ebx*2]
     mov [chip8_pc], ax
 .ret_done:
+    ret
+.exit:
+    mov byte [chip8_quit], 1
+    ret
+.lores:
+    mov byte [chip8_hires], 0
+    jmp .clear
+.hires:
+    mov byte [chip8_hires], 1
+    jmp .clear
+
+.scroll_down:
+    ; Move rows 0..H-1-N down to N..H-1 (a backward copy, since the
+    ; ranges overlap), then blank the N rows uncovered at the top.
+    movzx ecx, byte [chip8_n]
+    call chip8_scroll_amount
+    or ecx, ecx
+    jz .scroll_done
+    mov edx, ecx
+    shl edx, 7                        ; edx = N rows in bytes (*128)
+    mov ecx, CHIP8_DISP_W*CHIP8_DISP_H
+    sub ecx, edx
+    mov esi, chip8_display + CHIP8_DISP_W*CHIP8_DISP_H - 1
+    sub esi, edx
+    mov edi, chip8_display + CHIP8_DISP_W*CHIP8_DISP_H - 1
+    std
+    rep movsb
+    cld
+    mov edi, chip8_display
+    mov ecx, edx
+    xor al, al
+    rep stosb
+    jmp .scroll_done
+
+.scroll_right:
+    mov ecx, 4
+    call chip8_scroll_amount
+    mov edx, ecx                      ; edx = pixels to shift by
+    xor ebx, ebx                      ; ebx = row
+.sr_row:
+    cmp ebx, CHIP8_DISP_H
+    jae .scroll_done
+    mov edi, ebx
+    shl edi, 7
+    add edi, chip8_display + CHIP8_DISP_W - 1
+    mov esi, edi
+    sub esi, edx
+    mov ecx, CHIP8_DISP_W
+    sub ecx, edx
+    std
+    rep movsb                         ; edi now = last cell to blank
+    cld
+    mov ecx, edx
+    sub edi, edx
+    inc edi
+    xor al, al
+    rep stosb
+    inc ebx
+    jmp .sr_row
+
+.scroll_left:
+    mov ecx, 4
+    call chip8_scroll_amount
+    mov edx, ecx
+    xor ebx, ebx
+.sl_row:
+    cmp ebx, CHIP8_DISP_H
+    jae .scroll_done
+    mov edi, ebx
+    shl edi, 7
+    add edi, chip8_display
+    mov esi, edi
+    add esi, edx
+    mov ecx, CHIP8_DISP_W
+    sub ecx, edx
+    rep movsb                         ; edi now = first cell to blank
+    mov ecx, edx
+    xor al, al
+    rep stosb
+    inc ebx
+    jmp .sl_row
+
+.scroll_done:
+    mov byte [chip8_dirty], 1
+    ret
+
+; ecx = a scroll distance in screen pixels -> in display-buffer cells
+; (doubled in low-res, where each pixel is a 2x2 block of the buffer).
+chip8_scroll_amount:
+    cmp byte [chip8_hires], 0
+    jne .done
+    shl ecx, 1
+.done:
     ret
 
 ; ============================================================
@@ -560,25 +734,21 @@ chip8_op_8:
 .add_:
     mov al, [chip8_v + ebx]
     add al, [chip8_v + ecx]
+    setc dl
     mov [chip8_v + ebx], al
-    mov byte [chip8_v + 0xF], 0
-    jnc .add_done
-    mov byte [chip8_v + 0xF], 1
-.add_done:
+    mov [chip8_v + 0xF], dl
     ret
 .sub_:
     ; VX -= VY. VF = 1 if VX >= VY before subtracting (no borrow), 0
     ; otherwise - CHIP-8's flag is "no borrow", the opposite sense of
-    ; x86's own carry-means-borrow.
+    ; x86's own carry-means-borrow. The flag is written AFTER the
+    ; result, like every other flag-setting op here, so that with X=F
+    ; the flag is what's left in VF.
     mov al, [chip8_v + ebx]
-    mov ah, [chip8_v + ecx]
-    mov byte [chip8_v + 0xF], 1
-    cmp al, ah
-    jae .sub_do
-    mov byte [chip8_v + 0xF], 0
-.sub_do:
-    sub al, ah
+    sub al, [chip8_v + ecx]
+    setnc dl
     mov [chip8_v + ebx], al
+    mov [chip8_v + 0xF], dl
     ret
 .shr_:
     mov al, [chip8_v + ebx]
@@ -590,17 +760,12 @@ chip8_op_8:
     mov [chip8_v + 0xF], al
     ret
 .subn_:
-    ; VX = VY - VX, same "no borrow" flag sense as 8XY5.
-    mov al, [chip8_v + ebx]
-    mov ah, [chip8_v + ecx]
-    mov byte [chip8_v + 0xF], 1
-    cmp ah, al
-    jae .subn_do
-    mov byte [chip8_v + 0xF], 0
-.subn_do:
-    mov al, ah
+    ; VX = VY - VX, same "no borrow" flag sense (and order) as 8XY5.
+    mov al, [chip8_v + ecx]
     sub al, [chip8_v + ebx]
+    setnc dl
     mov [chip8_v + ebx], al
+    mov [chip8_v + 0xF], dl
     ret
 .shl_:
     mov al, [chip8_v + ebx]
@@ -669,6 +834,44 @@ chip8_op_F:
     je .store_regs
     cmp al, 0x65
     je .load_regs
+    cmp al, 0x30
+    je .i_eq_bigfont
+    cmp al, 0x75
+    je .store_flags
+    cmp al, 0x85
+    je .load_flags
+    ret
+
+.i_eq_bigfont:
+    movzx eax, byte [chip8_v + ebx]
+    and eax, 0xF
+    imul eax, eax, 10
+    add eax, CHIP8_BIGFONT_ADDR
+    mov [chip8_i], ax
+    ret
+.store_flags:
+    and ebx, 7                        ; only 8 RPL flags exist
+    xor ecx, ecx
+.sflag_loop:
+    cmp ecx, ebx
+    ja .sflag_done
+    mov al, [chip8_v + ecx]
+    mov [chip8_rpl + ecx], al
+    inc ecx
+    jmp .sflag_loop
+.sflag_done:
+    ret
+.load_flags:
+    and ebx, 7
+    xor ecx, ecx
+.lflag_loop:
+    cmp ecx, ebx
+    ja .lflag_done
+    mov al, [chip8_rpl + ecx]
+    mov [chip8_v + ecx], al
+    inc ecx
+    jmp .lflag_loop
+.lflag_done:
     ret
 
 .vx_eq_delay:
@@ -745,71 +948,88 @@ chip8_op_F:
 
 ; ============================================================
 ; 0xDXYN: draws an 8-pixel-wide, N-tall sprite from chip8_mem[I] at
-; (VX, VY), XORed onto chip8_display - VF is set to 1 if that XOR
-; turned any pixel off (a collision), 0 otherwise. The start position
-; wraps (VX mod 64, VY mod 32); individual pixels that would then run
-; past the right or bottom edge are clipped, not wrapped - the
-; behavior essentially every CHIP-8 test ROM assumes.
+; (VX, VY), XORed onto the display - VF is set to 1 if that XOR turned
+; any pixel off (a collision), 0 otherwise. DXY0 (SUPER-CHIP) draws a
+; 16x16 sprite instead, 2 bytes per row. The start position wraps
+; (mod the current resolution); individual pixels that would then run
+; past the right or bottom edge are clipped, not wrapped - the behavior
+; essentially every CHIP-8 test ROM assumes.
 ; ============================================================
 chip8_op_draw:
     pusha
 
+    mov dword [chip8_lw], 64
+    mov dword [chip8_lh], 32
+    cmp byte [chip8_hires], 0
+    je .have_res
+    mov dword [chip8_lw], CHIP8_DISP_W
+    mov dword [chip8_lh], CHIP8_DISP_H
+.have_res:
+
     movzx ebx, byte [chip8_x]
     movzx ecx, byte [chip8_y]
     movzx eax, byte [chip8_v + ebx]
-    and eax, 63
+    mov edx, [chip8_lw]
+    dec edx
+    and eax, edx
     mov [chip8_draw_x], eax
     movzx eax, byte [chip8_v + ecx]
-    and eax, 31
+    mov edx, [chip8_lh]
+    dec edx
+    and eax, edx
     mov [chip8_draw_y], eax
 
     mov byte [chip8_v + 0xF], 0
 
-    movzx edi, word [chip8_i]
-    movzx esi, byte [chip8_n]
-    xor ecx, ecx
+    movzx esi, byte [chip8_n]         ; esi = rows
+    mov dword [chip8_sprite_w], 8
+    or esi, esi
+    jnz .have_size
+    mov esi, 16
+    mov dword [chip8_sprite_w], 16
+.have_size:
+
+    xor ecx, ecx                      ; ecx = sprite row
 .row_loop:
     cmp ecx, esi
     jae .done
+    mov edx, [chip8_draw_y]
+    add edx, ecx
+    cmp edx, [chip8_lh]
+    jae .done                         ; this row and every one below it
+                                        ; is past the bottom edge
 
-    mov eax, [chip8_draw_y]
-    add eax, ecx
-    cmp eax, 32
-    jae .row_next
+    ; chip8_row_bits = this row's pixels, left-aligned in 16 bits
+    movzx edi, word [chip8_i]
+    cmp dword [chip8_sprite_w], 16
+    je .row_wide
+    add edi, ecx
+    and edi, CHIP8_MEM_SIZE - 1
+    movzx eax, byte [chip8_mem + edi]
+    shl eax, 8
+    jmp .have_bits
+.row_wide:
+    lea edi, [edi + ecx*2]
+    and edi, CHIP8_MEM_SIZE - 1
+    movzx eax, byte [chip8_mem + edi]
+    shl eax, 8
+    inc edi
+    and edi, CHIP8_MEM_SIZE - 1
+    mov al, [chip8_mem + edi]
+.have_bits:
+    mov [chip8_row_bits], ax
 
-    mov al, [chip8_mem + edi + ecx]
-    mov [chip8_sprite_byte], al
-
-    xor ebx, ebx
+    xor ebx, ebx                      ; ebx = sprite column
 .col_loop:
-    cmp ebx, 8
+    cmp ebx, [chip8_sprite_w]
     jae .row_next
-
+    shl word [chip8_row_bits], 1
+    jnc .col_next
     mov eax, [chip8_draw_x]
     add eax, ebx
-    cmp eax, 64
+    cmp eax, [chip8_lw]
     jae .col_next
-
-    mov dl, [chip8_sprite_byte]
-    movzx eax, byte [chip8_bit_masks + ebx]
-    test dl, al
-    jz .col_next
-
-    mov eax, [chip8_draw_y]
-    add eax, ecx
-    imul eax, eax, 64
-    mov edx, [chip8_draw_x]
-    add edx, ebx
-    add eax, edx
-
-    cmp byte [chip8_display + eax], 0
-    je .set_pixel
-    mov byte [chip8_v + 0xF], 1
-    mov byte [chip8_display + eax], 0
-    jmp .col_next
-.set_pixel:
-    mov byte [chip8_display + eax], 1
-
+    call chip8_xor_pixel              ; eax = x, edx = y
 .col_next:
     inc ebx
     jmp .col_loop
@@ -819,6 +1039,36 @@ chip8_op_draw:
 .done:
     mov byte [chip8_dirty], 1
     popa
+    ret
+
+; ============================================================
+; XORs one pixel at (eax, edx) in the CURRENT resolution's coordinates
+; onto chip8_display - a 2x2 block of it in low-res - and sets VF if it
+; was on. Preserves every register.
+; ============================================================
+chip8_xor_pixel:
+    push eax
+    push edx
+    cmp byte [chip8_hires], 0
+    jne .hires
+    shl eax, 1
+    shl edx, 1
+.hires:
+    shl edx, 7
+    add eax, edx
+    cmp byte [chip8_display + eax], 0
+    je .no_hit
+    mov byte [chip8_v + 0xF], 1
+.no_hit:
+    xor byte [chip8_display + eax], 1
+    cmp byte [chip8_hires], 0
+    jne .done
+    xor byte [chip8_display + eax + 1], 1
+    xor byte [chip8_display + eax + CHIP8_DISP_W], 1
+    xor byte [chip8_display + eax + CHIP8_DISP_W + 1], 1
+.done:
+    pop edx
+    pop eax
     ret
 
 ; ============================================================
@@ -839,9 +1089,10 @@ chip8_rand:
     ret
 
 ; ============================================================
-; Draws one frame: each set chip8_display cell as a CHIP8_SCALE-pixel
-; block, then an exit hint in the strip below the 64x32 area (160px
-; tall scaled, leaving 40 of the screen's 200 spare).
+; Draws one frame: each lit display cell as a solid block - 64x32 at 5x
+; (the whole 320px width) in low-res, 128x64 at 2x inside a thin frame
+; in high-res - then an exit hint in the strip below (both leave rows
+; 168+ of the screen's 200 free for it).
 ; ============================================================
 chip8_draw:
     pusha
@@ -851,27 +1102,45 @@ chip8_draw:
     xor al, al
     rep stosb
 
+    cmp byte [chip8_hires], 0
+    jne .hires
+    mov dword [chip8_cells_w], 64
+    mov dword [chip8_cells_h], 32
+    mov dword [chip8_cell_step], 2
+    mov dword [chip8_scale], CHIP8_SCALE
+    mov dword [chip8_org_x], 0
+    mov dword [chip8_org_y], 0
+    jmp .cells
+.hires:
+    mov dword [chip8_cells_w], CHIP8_DISP_W
+    mov dword [chip8_cells_h], CHIP8_DISP_H
+    mov dword [chip8_cell_step], 1
+    mov dword [chip8_scale], CHIP8_HIRES_SCALE
+    mov dword [chip8_org_x], CHIP8_HIRES_ORG_X
+    mov dword [chip8_org_y], CHIP8_HIRES_ORG_Y
+    call chip8_draw_frame
+
+.cells:
     xor ecx, ecx
 .row_loop:
-    cmp ecx, 32
+    cmp ecx, [chip8_cells_h]
     jae .row_done
     xor ebx, ebx
 .col_loop:
-    cmp ebx, 64
+    cmp ebx, [chip8_cells_w]
     jae .col_done
 
     mov eax, ecx
-    imul eax, eax, 64
-    add eax, ebx
+    imul eax, [chip8_cell_step]
+    shl eax, 7
+    mov edx, ebx
+    imul edx, [chip8_cell_step]
+    add eax, edx
     cmp byte [chip8_display + eax], 0
     je .col_next
 
-    push ebx
-    push ecx
     mov al, 10                       ; light green - the "phosphor" look
     call chip8_fill_block
-    pop ecx
-    pop ebx
 
 .col_next:
     inc ebx
@@ -890,30 +1159,47 @@ chip8_draw:
     popa
     ret
 
+; A dark-gray rectangle one pixel outside the high-res display area, so
+; its edges are visible even while the ROM hasn't drawn anything there.
+chip8_draw_frame:
+    pusha
+    mov edi, VGA_FB + (CHIP8_HIRES_ORG_Y - 1) * 320 + CHIP8_HIRES_ORG_X - 1
+    mov ecx, CHIP8_DISP_W * CHIP8_HIRES_SCALE + 2
+    mov al, 8
+    rep stosb
+    mov edi, VGA_FB + (CHIP8_HIRES_ORG_Y + CHIP8_DISP_H * CHIP8_HIRES_SCALE) * 320 + CHIP8_HIRES_ORG_X - 1
+    mov ecx, CHIP8_DISP_W * CHIP8_HIRES_SCALE + 2
+    rep stosb
+    mov edi, VGA_FB + CHIP8_HIRES_ORG_Y * 320 + CHIP8_HIRES_ORG_X - 1
+    mov ecx, CHIP8_DISP_H * CHIP8_HIRES_SCALE
+.side:
+    mov byte [edi], 8
+    mov byte [edi + CHIP8_DISP_W * CHIP8_HIRES_SCALE + 1], 8
+    add edi, 320
+    loop .side
+    popa
+    ret
+
 ; ============================================================
-; Fills one CHIP8_SCALE x CHIP8_SCALE display cell with a solid color.
-; Input: ebx = cell col (0-63), ecx = cell row (0-31), al = color.
+; Fills one display cell with a solid color, at the current chip8_draw
+; geometry (chip8_scale, chip8_org_x/y).
+; Input: ebx = cell col, ecx = cell row, al = color. Preserves all.
 ; ============================================================
 chip8_fill_block:
-    push eax
-    push ebx
-    push ecx
-    push edx
-    push esi
-    push edi
+    pusha
 
     mov ah, al
-    imul ebx, ebx, CHIP8_SCALE
-    imul esi, ecx, CHIP8_SCALE       ; esi = this block's fixed y origin,
-                                       ; read out of the input ecx before
-                                       ; ecx gets reused below - rep stosb
-                                       ; needs the loop counter in ecx, so
-                                       ; the origin can't live there (see
-                                       ; the equivalent note in
-                                       ; g2048_fill_tile/tetris_fill_cell)
+    imul ebx, [chip8_scale]
+    add ebx, [chip8_org_x]
+    imul esi, ecx, 1
+    imul esi, [chip8_scale]           ; esi = this block's fixed y origin,
+    add esi, [chip8_org_y]            ; kept out of ecx - rep stosb needs
+                                        ; the loop counter there (see the
+                                        ; equivalent note in
+                                        ; g2048_fill_tile/tetris_fill_cell)
     xor ecx, ecx
 .row_loop:
-    cmp ecx, CHIP8_SCALE
+    cmp ecx, [chip8_scale]
     jae .done
 
     mov edi, esi
@@ -924,19 +1210,14 @@ chip8_fill_block:
 
     mov al, ah
     push ecx
-    mov ecx, CHIP8_SCALE
+    mov ecx, [chip8_scale]
     rep stosb
     pop ecx
 
     inc ecx
     jmp .row_loop
 .done:
-    pop edi
-    pop esi
-    pop edx
-    pop ecx
-    pop ebx
-    pop eax
+    popa
     ret
 
 ; ============================================================
@@ -950,7 +1231,10 @@ chip8_sp           db 0
 chip8_stack        times 16 dw 0
 chip8_delay        db 0
 chip8_sound        db 0
-chip8_display      times 64*32 db 0
+chip8_display      times CHIP8_DISP_W*CHIP8_DISP_H db 0
+chip8_hires        db 0
+chip8_speed        dd 0             ; instructions per tick, 0 = auto
+chip8_rpl          times 8 db 0     ; SUPER-CHIP's FX75/FX85 flags
 chip8_dirty        db 1
 chip8_rng          dd 12345
 chip8_quit         db 0
@@ -966,13 +1250,21 @@ chip8_nnn          dw 0
 
 chip8_draw_x       dd 0
 chip8_draw_y       dd 0
-chip8_sprite_byte  db 0
+chip8_row_bits     dw 0
+chip8_sprite_w     dd 8
+chip8_lw           dd 64            ; current resolution, for chip8_op_draw
+chip8_lh           dd 32
+chip8_cells_w      dd 64            ; chip8_draw/chip8_fill_block geometry
+chip8_cells_h      dd 32
+chip8_cell_step    dd 2
+chip8_scale        dd CHIP8_SCALE
+chip8_org_x        dd 0
+chip8_org_y        dd 0
 chip8_bcd_h        db 0
 chip8_bcd_t        db 0
 chip8_bcd_o        db 0
 chip8_tick_target  dd 0
 
-chip8_bit_masks    db 0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01
 
 ; The built-in hex-digit (0-F) font, 5 bytes each (only the top 4 bits
 ; of each byte are ever set) - the standard de-facto CHIP-8 font every
@@ -994,6 +1286,26 @@ chip8_font_data:
     db 0xE0, 0x90, 0x90, 0x90, 0xE0   ; D
     db 0xF0, 0x80, 0xF0, 0x80, 0xF0   ; E
     db 0xF0, 0x80, 0xF0, 0x80, 0x80   ; F
+
+; SUPER-CHIP's big 8x10 digits (FX30), 10 bytes each - 0-9 as on the
+; HP-48, plus A-F the way modern interpreters extend it.
+chip8_bigfont_data:
+    db 0x3C, 0x7E, 0xE7, 0xC3, 0xC3, 0xC3, 0xC3, 0xE7, 0x7E, 0x3C   ; 0
+    db 0x18, 0x38, 0x58, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x3C   ; 1
+    db 0x3E, 0x7F, 0xC3, 0x06, 0x0C, 0x18, 0x30, 0x60, 0xFF, 0xFF   ; 2
+    db 0x3C, 0x7E, 0xC3, 0x03, 0x0E, 0x0E, 0x03, 0xC3, 0x7E, 0x3C   ; 3
+    db 0x06, 0x0E, 0x1E, 0x36, 0x66, 0xC6, 0xFF, 0xFF, 0x06, 0x06   ; 4
+    db 0xFF, 0xFF, 0xC0, 0xC0, 0xFC, 0xFE, 0x03, 0xC3, 0x7E, 0x3C   ; 5
+    db 0x3E, 0x7C, 0xE0, 0xC0, 0xFC, 0xFE, 0xC3, 0xC3, 0x7E, 0x3C   ; 6
+    db 0xFF, 0xFF, 0x03, 0x06, 0x0C, 0x18, 0x30, 0x60, 0x60, 0x60   ; 7
+    db 0x3C, 0x7E, 0xC3, 0xC3, 0x7E, 0x7E, 0xC3, 0xC3, 0x7E, 0x3C   ; 8
+    db 0x3C, 0x7E, 0xC3, 0xC3, 0x7F, 0x3F, 0x03, 0x03, 0x3E, 0x7C   ; 9
+    db 0x7E, 0xFF, 0xC3, 0xC3, 0xC3, 0xFF, 0xFF, 0xC3, 0xC3, 0xC3   ; A
+    db 0xFC, 0xFC, 0xC3, 0xC3, 0xFC, 0xFC, 0xC3, 0xC3, 0xFC, 0xFC   ; B
+    db 0x3C, 0xFF, 0xC3, 0xC0, 0xC0, 0xC0, 0xC0, 0xC3, 0xFF, 0x3C   ; C
+    db 0xFC, 0xFE, 0xC3, 0xC3, 0xC3, 0xC3, 0xC3, 0xC3, 0xFE, 0xFC   ; D
+    db 0xFF, 0xFF, 0xC0, 0xC0, 0xFF, 0xFF, 0xC0, 0xC0, 0xFF, 0xFF   ; E
+    db 0xFF, 0xFF, 0xC0, 0xC0, 0xFF, 0xFF, 0xC0, 0xC0, 0xC0, 0xC0   ; F
 
 ; CHIP-8 key value (0-F, the table index) -> PC scancode - the standard
 ; layout every modern CHIP-8 interpreter uses:

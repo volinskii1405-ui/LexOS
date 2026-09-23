@@ -453,5 +453,5 @@ com_saved_idt21    times 8 db 0
 com_shift_held     db 0     ; com_poll_key's own Shift-key tracking
 
 ; Pad the remaining space within the sectors the bootloader reads,
-; so the file size is a multiple of 512 bytes (see KERNEL_SECTORS_1/2 in boot.asm).
-times (512*312)-($-$$) db 0
+; so the file size is a multiple of 512 bytes (see KERNEL_SECTORS_1..4 in boot.asm).
+times (512*384)-($-$$) db 0

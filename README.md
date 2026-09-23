@@ -242,7 +242,7 @@ alex@/PROGRAMS$
   `MY-LON~1.TXT`), up to 65535 bytes per file - the most a LexOS file
   holds. Files added while QEMU is running show up after the next start.
   Try `hostget star.trg` then `turtle star.trg`.
-- `chip8 <name>` interprets a CHIP-8 ROM - not LexOS's own format
+- `chip8 <name> [speed]` interprets a CHIP-8 / SUPER-CHIP ROM - not LexOS's own format
   (like `run <n>.com` below, but for a much older and simpler bytecode
   VM: the 35-opcode interpreted machine mid-70s COSMAC VIP calculators
   ran, the target of most public-domain "here's a tiny Pong/Tetris/
@@ -254,6 +254,14 @@ alex@/PROGRAMS$
   just whether it was pressed at some point - src/interrupts.asm's
   keyboard handler now tracks that too (`key_held`), alongside the
   press-only event queue everything else already used.
+  SUPER-CHIP 1.1 ROMs work too: the 128x64 high-res mode (drawn 2x,
+  framed, in the middle of the screen), scrolling, 16x16 sprites, the
+  big 8x10 font, the 8 RPL flags and `00FD` exit - checked against
+  Timendus' chip8-test-suite (flags, quirks, scrolling). An optional
+  second argument sets the speed in instructions per frame
+  (`chip8 game.ch8 20`); by default it's 10, and 30 once a ROM
+  switches to high-res. `shared/BOUNCE.CH8` is a small high-res demo:
+  `hostget bounce.ch8` then `chip8 bounce.ch8`.
 - `turtle <name>` runs a LOGO-style turtle graphics script - one
   command per line (or several per line; the parser only cares about
   tokens, whitespace and newlines are equivalent) like `FORWARD 10` /
@@ -426,11 +434,11 @@ and exits, `Esc` cancels.
 
 ```
 BIOS  →  boot.asm (16-bit real mode)
-            │  loads kernel.bin via TWO LBA reads (int 13h/ah=42h) -
+            │  loads kernel.bin via FOUR LBA reads (int 13h/ah=42h) -
             │  a real-mode segment:offset BIOS read can't cross a 64 KB
-            │  segment boundary, so the kernel is split at 0x10000:
-            │  64 sectors into 0x0000:0x8000, then the rest into
-            │  0x1000:0x0000 - physically contiguous either way
+            │  segment boundary, so the kernel is split at each one:
+            │  64 sectors into 0x0000:0x8000, then 128 + 128 + 64 into
+            │  0x1000/0x2000/0x3000:0000 - physically contiguous
             │  enables A20, builds a flat GDT, sets CR0.PE
             ▼
          kernel.asm (32-bit protected mode, ORG 0x8000)
@@ -442,7 +450,7 @@ BIOS  →  boot.asm (16-bit real mode)
 Everything below `0x10000` is the kernel itself — code and all working
 data — small enough that internal pointers still fit in 16 bits and most
 of the code reads like a real-mode program, even though the kernel image
-as a whole (padded to 96 sectors, split across the boot loader's two reads
+as a whole (padded to 384 sectors, split across the boot loader's four reads
 as described above) now extends past that boundary. Only things that live
 outside the kernel image need a full 32-bit linear address:
 
@@ -450,13 +458,15 @@ outside the kernel image need a full 32-bit linear address:
 |---|---|
 | Video memory (VGA text mode) | `0xB8000` |
 | ATA scratch buffer (one sector) | `0x91000` |
-| Kernel code/data | `0x8000` – (padded to 96 sectors) |
+| BASIC program store (`basic`) | `0x200000` |
+| .COM program segment | `0x100000` |
+| Kernel code/data | `0x8000` – `0x37FFF` (384 sectors) |
 | Boot sector | `0x7C00` |
 
-On disk, sectors are laid out as: boot sector, then the kernel (96
+On disk, sectors are laid out as: boot sector, then the kernel (384
 sectors), then 24 directory slots (one file/folder per 512-byte sector —
 name, type, parent pointer, up to 127 bytes of inline content), a 1-sector
-free-space bitmap for the extra-sector pool, then 64 extra 512-byte
+free-space bitmap for the extra-sector pool, then 300 extra 512-byte
 sectors that files chain into once they outgrow the inline area.
 
 ## Project layout
@@ -505,7 +515,7 @@ src/
   convert.asm          PROGRAMS/CONVERT.BIN, a decimal/hex/octal/binary
                        base converter - a text-mode program like calc_run
                        (programs.asm), not a vga.asm one.
-  chip8.asm            `chip8 <name>`, a CHIP-8 interpreter - same
+  chip8.asm            `chip8 <name>`, a CHIP-8/SUPER-CHIP interpreter - same
                        vga.asm mode switch as snake.asm, reuses
                        sound.asm's audio_timer_start for its 60Hz timer.
   turtle.asm           `turtle <name>`, a LOGO-style turtle graphics

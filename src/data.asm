@@ -28,7 +28,7 @@ SECTOR_COUNT equ 8
 ;   byte 8       - type (0=free, 1=file, 2=folder)
 ;   byte 9       - parent (slot index of the parent folder, 0xFF = root)
 ;   bytes 10..   - content (zero-terminated, unused for folders)
-FS_START_SECTOR   equ 314     ; sector 1=bootloader, 2..313=kernel (312 sectors)
+FS_START_SECTOR   equ 386     ; sector 1=bootloader, 2..385=kernel (384 sectors)
 FS_FILE_COUNT     equ 24
 FS_NAME_LEN       equ 16
 FS_CONTENT_LEN    equ 128
@@ -198,7 +198,7 @@ help_l46 db "  recv <n> <hex size> - receive a file over COM1 (serial)", 13, 10,
 help_l47 db "  paint <n> [w] [h] - mouse picture editor, saves to n.BMP (default 320x200)", 13, 10, 0
 help_l48 db "  view <n>      - display a picture saved by paint (.BMP)", 13, 10, 0
 help_l49 db "  play <n.imf | n.wav> - play AdLib music or 8-bit mono PCM audio", 13, 10, 0
-help_l50 db "  chip8 <n>    - run a CHIP-8 ROM (1234/qwer/asdf/zxcv keypad)", 13, 10, 0
+help_l50 db "  chip8 <n> [s] - run a CHIP-8/SUPER-CHIP ROM (keys 1234/qwer/asdf/zxcv)", 13, 10, 0
 help_l51 db "  turtle <n>   - run a turtle-graphics script (FORWARD/LEFT/...)", 13, 10, 0
 help_l52 db "  hostls       - list files in the host's shared folder", 13, 10, 0
 help_l53 db "  hostget <n> [new] - copy a file from the host's shared folder here", 13, 10, 0
@@ -270,7 +270,7 @@ msg_play_bad_wav     db "Not a supported WAV (need 8-bit unsigned PCM, mono).", 
 
 ; src/chip8.asm's chip8_run - kept here for the same reason as the
 ; msg_play_* messages above.
-msg_chip8_usage      db "Usage: chip8 <n>", 13, 10, 0
+msg_chip8_usage      db "Usage: chip8 <n> [speed]", 13, 10, 0
 msg_chip8_intro      db "CHIP-8 - 1234/qwer/asdf/zxcv keypad, ESC to quit.", 13, 10, 0
 msg_chip8_quit       db "Quit.", 13, 10, 0
 
