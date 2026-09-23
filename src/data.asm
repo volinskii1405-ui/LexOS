@@ -204,7 +204,7 @@ help_l52 db "  hostls       - list files in the host's shared folder", 13, 10, 0
 help_l53 db "  hostget <n> [new] - copy a file from the host's shared folder here", 13, 10, 0
 help_l55 db "  hostput <n> [host] - copy file n into the host's shared folder", 13, 10, 0
 help_l56 db "  ifconfig     - show the network card and LexOS's address", 13, 10, 0
-help_l57 db "  ping <ip> [n] - send n ICMP echo requests (default 4)", 13, 10, 0
+help_l57 db "  ping <host> [n] - n ICMP echo requests (default 4); nslookup <name>; dhcp", 13, 10, 0
 help_l58 db "  ps / kill <pid> - list tasks / stop one; <cmd> & runs play in the background", 13, 10, 0
 help_l59 db "  clock        - toggle a clock in the top-right corner (a background task)", 13, 10, 0
 help_l54 db "  basic [n]    - Tiny BASIC (optionally load and run program n)", 13, 10, 0
@@ -303,7 +303,8 @@ msg_task_cant_kill   db "No such task (the shell, pid 0, can't be stopped) - see
 msg_kill_usage       db "Usage: kill <pid>   (pids are listed by ps)", 13, 10, 0
 msg_clock_on         db "Clock on (type clock again to turn it off).", 13, 10, 0
 msg_clock_off        db "Clock off.", 13, 10, 0
-msg_ping_usage       db "Usage: ping <a.b.c.d> [count]   (numeric addresses - try ping 10.0.2.2)", 13, 10, 0
+msg_ping_usage       db "Usage: ping <host> [count]   (a name or a.b.c.d - try ping 10.0.2.2)", 13, 10, 0
+msg_nslookup_usage   db "Usage: nslookup <name>", 13, 10, 0
 msg_host_put_usage   db "Usage: hostput <n> [host name]", 13, 10, 0
 msg_host_bad_name    db "The host copy needs a DOS 8.3 name (like PIC.BMP) - hostput <n> <8.3 name>", 13, 10, 0
 msg_host_put_not_file db "Only ordinary files can be copied to the host.", 13, 10, 0
@@ -625,6 +626,8 @@ cmd_clock        db "clock", 0
 play_bg_arg      times (BUFFER_MAX + 1) db 0   ; src/sound.asm's play_spawn
 cmd_ifconfig     db "ifconfig", 0
 cmd_ping_prefix  db "ping ", 0
+cmd_nslookup_prefix db "nslookup ", 0
+cmd_dhcp         db "dhcp", 0
 cmd_basic_prefix db "basic ", 0
 cmd_history      db "history", 0
 cmd_df           db "df", 0

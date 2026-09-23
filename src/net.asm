@@ -1,10 +1,12 @@
-; net.asm — networking, as far as `ping`: an RTL8139 driver, Ethernet,
-; ARP, IPv4 and ICMP echo.
-;   ifconfig          - the network card, its MAC and LexOS's address
-;   ping <ip> [n]     - n (default 4) ICMP echo requests, Windows-style
-;                       output, ESC stops early
+; net.asm — networking: an RTL8139 driver, Ethernet, ARP, IPv4, ICMP
+; echo, UDP, DHCP and DNS.
+;   ifconfig          - the network card, its MAC, address, gateway, DNS
+;   ping <host> [n]   - n (default 4) ICMP echo requests, Windows-style
+;                       output, ESC stops early; host = a.b.c.d or a name
+;   nslookup <name>   - its IPv4 address, from DNS
+;   dhcp              - ask the DHCP server for an address again
 ;
-; Exports: net_ifconfig, net_ping
+; Exports: net_ifconfig, net_ping, net_nslookup, net_cmd_dhcp
 ;
 ; The card: QEMU's RTL8139 (the Makefile's run targets add
 ; `-nic user,model=rtl8139`) - about the simplest real NIC there is to
@@ -16,12 +18,12 @@
 ; the only thing that waits for packets is ping itself.
 ;
 ; The network: QEMU's "user" networking (slirp) - a private 10.0.2.0/24
-; with the gateway (QEMU itself) at 10.0.2.2, which always answers
-; pings, and the guest conventionally at 10.0.2.15, used here as a
-; fixed address (no DHCP needed). Pinging something outside
+; with a DHCP server, the gateway (QEMU itself) at 10.0.2.2, which
+; always answers pings, and a DNS forwarder at 10.0.2.3. The first
+; network command gets LexOS an address by DHCP (falling back to
+; slirp's usual 10.0.2.15 if nobody answers). Pinging something outside
 ; (8.8.8.8) goes through slirp's ICMP proxy, which works when the host
 ; lets unprivileged programs ping (most Linux distributions, macOS).
-; Numeric addresses only - there's no DNS yet.
 ;
 ; Memory: the receive ring and transmit buffers are DMA targets, so
 ; they sit at fixed physical addresses above 1MB (NET_RX_RING,
@@ -99,6 +101,17 @@ net_ifconfig:
     mov eax, [net_gw_ip]
     call net_print_ip
     call basic_newline
+    mov esi, net_msg_dns
+    call basic_puts
+    mov eax, [net_dns_ip]
+    call net_print_ip
+    mov esi, net_msg_via_dhcp
+    cmp byte [net_dhcp_ok], 0
+    jne .source
+    mov esi, net_msg_static
+.source:
+    call basic_puts
+    call basic_newline
 .done:
     popad
     ret
@@ -110,11 +123,34 @@ net_ping:
     pushad
     movzx esi, si
     call basic_skip
-    call net_parse_ip
-    jnc .have_ip
+    cmp byte [esi], 0
+    jne .have_arg
     mov si, msg_ping_usage
     call print_string
     jmp .end
+.have_arg:
+    mov [net_ping_name], esi
+    call net_parse_ip
+    jnc .have_ip
+    ; not a.b.c.d - a name, then: resolve it (DNS)
+    call net_init
+    jc .end
+    mov esi, [net_ping_name]
+    call net_dns_resolve
+    jnc .resolved_name
+    mov esi, [net_ping_name]
+    call net_print_dns_error
+    jmp .end
+.resolved_name:
+    mov esi, [net_ping_name]
+.skip_name:
+    mov bl, [esi]
+    cmp bl, 0
+    je .have_ip
+    cmp bl, ' '
+    je .have_ip
+    inc esi
+    jmp .skip_name
 .have_ip:
     mov [net_ping_ip], eax
     mov dword [net_ping_count], 4
@@ -135,13 +171,7 @@ net_ping:
     ; the next hop: the address itself if it's on our subnet, else the
     ; gateway - then its MAC, via ARP
     mov eax, [net_ping_ip]
-    xor eax, [net_my_ip]
-    and eax, [net_mask]
-    mov eax, [net_ping_ip]
-    jz .local
-    mov eax, [net_gw_ip]
-.local:
-    call net_arp_resolve                  ; -> net_hop_mac
+    call net_route                        ; -> net_hop_mac
     jnc .resolved
     mov esi, net_msg_unreachable
     call basic_puts
@@ -150,8 +180,24 @@ net_ping:
 
     mov esi, net_msg_pinging
     call basic_puts
+    mov esi, [net_ping_name]              ; "Pinging name [a.b.c.d]" for
+    mov al, [esi]                         ; a name
+    call basic_is_digit
+    jc .numeric
+    call net_puts_word
+    mov al, ' '
+    call print_char
+    mov al, '['
+    call print_char
     mov eax, [net_ping_ip]
     call net_print_ip
+    mov al, ']'
+    call print_char
+    jmp .with
+.numeric:
+    mov eax, [net_ping_ip]
+    call net_print_ip
+.with:
     mov esi, net_msg_with
     call basic_puts
 
@@ -399,6 +445,7 @@ net_init:
     mov dword [net_tx_slot], 0
     mov byte [net_ready], 1
     popad
+    call net_dhcp                         ; an address (or the defaults)
 .ok:
     clc
     ret
@@ -547,15 +594,22 @@ net_handle_frame:
 
 .ip:
     lea ebx, [esi + 14]
-    cmp byte [ebx + 9], 1                 ; ICMP
+    mov eax, [ebx + 16]                   ; destination: us, broadcast,
+    cmp eax, [net_my_ip]                  ; or - with no address yet,
+    je .for_us                            ; mid-DHCP - anything
+    cmp eax, 0xFFFFFFFF
+    je .for_us
+    cmp dword [net_my_ip], 0
     jne .done
-    mov eax, [ebx + 16]                   ; destination
-    cmp eax, [net_my_ip]
-    jne .done
+.for_us:
     movzx edx, byte [ebx]
     and edx, 0x0F
     shl edx, 2                            ; header length
-    add edx, ebx                          ; edx = the ICMP message
+    add edx, ebx                          ; edx = the IP payload
+    cmp byte [ebx + 9], 17                ; UDP
+    je .udp
+    cmp byte [ebx + 9], 1                 ; ICMP
+    jne .done
     cmp byte [edx], 0                     ; echo reply
     jne .done
     cmp word [edx + 4], PING_ID
@@ -572,6 +626,31 @@ net_handle_frame:
     call net_elapsed_ms
     mov [net_ping_ms], eax
     mov byte [net_ping_got], 1
+    jmp .done
+
+.udp:
+    ; one datagram at a time, for whoever's listening (net_udp_listen)
+    cmp byte [net_udp_got], 0
+    jne .done
+    mov ax, [edx + 2]                     ; destination port (as stored)
+    cmp ax, [net_udp_port]
+    jne .done
+    movzx ecx, word [edx + 4]
+    xchg cl, ch
+    sub ecx, 8
+    jb .done
+    cmp ecx, NET_UDP_MAX
+    jbe .udp_len_ok
+    mov ecx, NET_UDP_MAX
+.udp_len_ok:
+    mov [net_udp_len], ecx
+    mov eax, [ebx + 12]
+    mov [net_udp_from], eax
+    lea esi, [edx + 8]
+    mov edi, net_udp_buf
+    cld
+    rep movsb
+    mov byte [net_udp_got], 1
 .done:
     popad
     ret
@@ -769,6 +848,644 @@ net_checksum:
     ret
 
 ; ============================================================
+; UDP
+; ============================================================
+
+; Sends a UDP datagram: eax = destination IP, bx = source port, dx =
+; destination port (both in host order), esi = data, ecx = its length.
+; To 255.255.255.255 it goes to the Ethernet broadcast address;
+; anything else via the next hop's MAC (ARP, cached). carry=1 if the
+; next hop can't be resolved.
+net_send_udp:
+    pushad
+    mov [net_tx_dst_ip], eax
+    cmp eax, 0xFFFFFFFF
+    jne .unicast
+    push esi
+    mov esi, net_broadcast
+    mov edi, net_hop_mac
+    movsd
+    movsw
+    pop esi
+    jmp .have_mac
+.unicast:
+    call net_route                        ; -> net_hop_mac
+    jc .fail
+.have_mac:
+    mov edi, net_frame
+    push esi
+    mov esi, net_hop_mac
+    movsd
+    movsw
+    mov esi, net_mac
+    movsd
+    movsw
+    pop esi
+    mov word [net_frame + 12], ETH_TYPE_IP
+
+    lea edi, [net_frame + 14]             ; IPv4 header
+    mov byte [edi], 0x45
+    mov byte [edi + 1], 0
+    lea eax, [ecx + 28]
+    xchg al, ah
+    mov [edi + 2], ax
+    mov ax, [net_ip_id]
+    inc word [net_ip_id]
+    xchg al, ah
+    mov [edi + 4], ax
+    mov word [edi + 6], 0
+    mov byte [edi + 8], 64
+    mov byte [edi + 9], 17                ; UDP
+    mov word [edi + 10], 0
+    mov eax, [net_my_ip]                  ; (0.0.0.0 while DHCP runs)
+    mov [edi + 12], eax
+    mov eax, [net_tx_dst_ip]
+    mov [edi + 16], eax
+    push esi
+    push ecx
+    mov esi, edi
+    mov ecx, 20
+    call net_checksum
+    pop ecx
+    pop esi
+    mov [edi + 10], ax
+
+    lea edi, [net_frame + 34]             ; UDP header
+    xchg bl, bh
+    mov [edi], bx
+    xchg dl, dh
+    mov [edi + 2], dx
+    lea eax, [ecx + 8]
+    xchg al, ah
+    mov [edi + 4], ax
+    mov word [edi + 6], 0                 ; no checksum (optional in IPv4)
+    add edi, 8
+    push ecx
+    cld
+    rep movsb
+    pop ecx
+
+    mov esi, net_frame
+    add ecx, 14 + 20 + 8
+    call net_send
+    popad
+    clc
+    ret
+.fail:
+    popad
+    stc
+    ret
+
+; eax = a destination IP -> the MAC to send it to (the gateway's, for
+; anything off our subnet) in net_hop_mac, remembered for next time.
+; carry=1 if nobody answers ARP.
+net_route:
+    push eax
+    push ebx
+    mov ebx, eax
+    xor ebx, [net_my_ip]
+    and ebx, [net_mask]
+    jz .local
+    mov eax, [net_gw_ip]
+.local:
+    cmp byte [net_route_valid], 0
+    je .resolve
+    cmp eax, [net_route_ip]
+    jne .resolve
+    push esi
+    push edi
+    mov esi, net_route_mac
+    mov edi, net_hop_mac
+    movsd
+    movsw
+    pop edi
+    pop esi
+    jmp .ok
+.resolve:
+    call net_arp_resolve
+    jc .fail
+    mov [net_route_ip], eax
+    push esi
+    push edi
+    mov esi, net_hop_mac
+    mov edi, net_route_mac
+    movsd
+    movsw
+    pop edi
+    pop esi
+    mov byte [net_route_valid], 1
+.ok:
+    pop ebx
+    pop eax
+    clc
+    ret
+.fail:
+    pop ebx
+    pop eax
+    stc
+    ret
+
+; Starts listening for one datagram on port ax (host order).
+net_udp_listen:
+    xchg al, ah
+    mov [net_udp_port], ax
+    mov byte [net_udp_got], 0
+    ret
+
+; Waits up to eax timer ticks for the datagram net_udp_listen asked
+; for. carry=1 on timeout (or ESC).
+net_udp_wait:
+    push eax
+    push ebx
+    mov ebx, [timer_ticks]
+    add ebx, eax
+.loop:
+    call net_poll
+    cmp byte [net_udp_got], 0
+    jne .got
+    call net_check_esc
+    jc .timeout
+    cmp [timer_ticks], ebx
+    jae .timeout
+    mov eax, WAIT_TICK                    ; (polled at least once a tick)
+    call task_wait
+    jmp .loop
+.got:
+    pop ebx
+    pop eax
+    clc
+    ret
+.timeout:
+    pop ebx
+    pop eax
+    stc
+    ret
+
+; ============================================================
+; DHCP: DISCOVER -> OFFER -> REQUEST -> ACK, from 0.0.0.0 to the
+; broadcast address (client port 68, server port 67). Sets net_my_ip,
+; net_mask, net_gw_ip and net_dns_ip from the ACK; on no answer, the
+; slirp defaults it used to have fixed (10.0.2.15 / .2 / .3).
+; ============================================================
+DHCP_CLIENT_PORT   equ 68
+DHCP_SERVER_PORT   equ 67
+
+net_dhcp:
+    pushad
+    mov esi, net_msg_dhcp
+    call basic_puts
+    mov dword [net_my_ip], 0
+    mov byte [net_route_valid], 0
+    rdtsc
+    mov [net_dhcp_xid], eax
+
+    mov byte [net_dhcp_type], 1           ; DISCOVER
+    mov dword [net_dhcp_req_ip], 0
+    mov ecx, 3
+.discover:
+    call net_dhcp_send
+    mov bl, 2                             ; wait for an OFFER
+    call net_dhcp_receive
+    jnc .offered
+    loop .discover
+    jmp .fallback
+.offered:
+    mov eax, [net_udp_buf + 16]           ; yiaddr - the address offered
+    mov [net_dhcp_req_ip], eax
+    mov bl, 54                            ; the server's identifier
+    call net_dhcp_option
+    jc .fallback
+    mov eax, [esi]
+    mov [net_dhcp_server], eax
+
+    mov byte [net_dhcp_type], 3           ; REQUEST it
+    mov ecx, 3
+.request:
+    call net_dhcp_send
+    mov bl, 5                             ; ACK
+    call net_dhcp_receive
+    jnc .acked
+    loop .request
+    jmp .fallback
+
+.acked:
+    mov eax, [net_udp_buf + 16]
+    mov [net_my_ip], eax
+    mov bl, 1                             ; subnet mask
+    call net_dhcp_option
+    jc .no_mask
+    mov eax, [esi]
+    mov [net_mask], eax
+.no_mask:
+    mov bl, 3                             ; router
+    call net_dhcp_option
+    jc .no_router
+    mov eax, [esi]
+    mov [net_gw_ip], eax
+.no_router:
+    mov bl, 6                             ; DNS server
+    call net_dhcp_option
+    jc .no_dns
+    mov eax, [esi]
+    mov [net_dns_ip], eax
+.no_dns:
+    mov byte [net_dhcp_ok], 1
+    mov eax, [net_my_ip]
+    call net_print_ip
+    call basic_newline
+    popad
+    ret
+
+.fallback:
+    mov dword [net_my_ip], 0x0F02000A     ; 10.0.2.15
+    mov dword [net_mask], 0x00FFFFFF
+    mov dword [net_gw_ip], 0x0202000A
+    mov dword [net_dns_ip], 0x0302000A
+    mov byte [net_dhcp_ok], 0
+    mov esi, net_msg_dhcp_failed
+    call basic_puts
+    popad
+    ret
+
+; Builds and broadcasts a DHCP message of type net_dhcp_type (1 =
+; DISCOVER, 3 = REQUEST - which also names net_dhcp_req_ip and
+; net_dhcp_server).
+net_dhcp_send:
+    pushad
+    mov edi, net_dhcp_msg
+    push edi
+    mov ecx, 300 / 4
+    xor eax, eax
+    cld
+    rep stosd
+    pop edi
+    mov dword [edi], 0x00060101           ; BOOTREQUEST, Ethernet, 6-byte MAC
+    mov eax, [net_dhcp_xid]
+    mov [edi + 4], eax
+    mov word [edi + 10], 0x0080           ; "reply by broadcast" (we have
+                                          ; no address to be sent to yet)
+    mov esi, net_mac
+    lea edi, [net_dhcp_msg + 28]          ; chaddr
+    movsd
+    movsw
+    mov edi, net_dhcp_msg + 236
+    mov dword [edi], 0x63538263           ; the DHCP magic cookie
+    add edi, 4
+    mov byte [edi], 53                    ; message type
+    mov byte [edi + 1], 1
+    mov al, [net_dhcp_type]
+    mov [edi + 2], al
+    add edi, 3
+    cmp byte [net_dhcp_type], 3
+    jne .params
+    mov byte [edi], 50                    ; requested IP
+    mov byte [edi + 1], 4
+    mov eax, [net_dhcp_req_ip]
+    mov [edi + 2], eax
+    mov byte [edi + 6], 54                ; server identifier
+    mov byte [edi + 7], 4
+    mov eax, [net_dhcp_server]
+    mov [edi + 8], eax
+    add edi, 12
+.params:
+    mov dword [edi], 0x03010337           ; 55: want mask(1) router(3)
+    mov byte [edi + 4], 6                 ;     and DNS(6)
+    mov byte [edi + 5], 255               ; end
+    add edi, 6
+    mov ecx, edi
+    sub ecx, net_dhcp_msg
+    mov ax, DHCP_CLIENT_PORT
+    call net_udp_listen
+    mov eax, 0xFFFFFFFF
+    mov bx, DHCP_CLIENT_PORT
+    mov dx, DHCP_SERVER_PORT
+    mov esi, net_dhcp_msg
+    call net_send_udp
+    popad
+    ret
+
+; Waits (~2s) for a DHCP reply of message type bl to our xid
+; (skipping any other datagram that turns up on port 68).
+; carry=1 if none came.
+net_dhcp_receive:
+    push eax
+    push edx
+    push esi
+    mov edx, [timer_ticks]
+    add edx, 36
+.wait:
+    mov eax, edx
+    sub eax, [timer_ticks]
+    jbe .no
+    call net_udp_wait
+    jc .no
+    cmp byte [net_udp_buf], 2             ; BOOTREPLY
+    jne .again
+    mov eax, [net_udp_buf + 4]
+    cmp eax, [net_dhcp_xid]
+    jne .again
+    push ebx
+    mov bl, 53
+    call net_dhcp_option
+    pop ebx
+    jc .again
+    cmp [esi], bl
+    jne .again
+    pop esi
+    pop edx
+    pop eax
+    clc
+    ret
+.again:
+    mov ax, DHCP_CLIENT_PORT
+    call net_udp_listen
+    jmp .wait
+.no:
+    pop esi
+    pop edx
+    pop eax
+    stc
+    ret
+
+; Finds option bl in the DHCP reply in net_udp_buf: esi = its value.
+; carry=1 if it isn't there.
+net_dhcp_option:
+    push eax
+    push ecx
+    mov esi, net_udp_buf + 240
+    mov ecx, [net_udp_len]
+    add ecx, net_udp_buf                  ; ecx = the end
+.loop:
+    cmp esi, ecx
+    jae .none
+    mov al, [esi]
+    cmp al, 255                           ; end
+    je .none
+    cmp al, 0                             ; pad
+    jne .real
+    inc esi
+    jmp .loop
+.real:
+    cmp al, bl
+    je .found
+    movzx eax, byte [esi + 1]
+    lea esi, [esi + eax + 2]
+    jmp .loop
+.found:
+    add esi, 2
+    pop ecx
+    pop eax
+    clc
+    ret
+.none:
+    pop ecx
+    pop eax
+    stc
+    ret
+
+; ============================================================
+; DNS: a single A-record query to net_dns_ip, answered from whichever
+; A record comes first (skipping CNAMEs and the like).
+; ============================================================
+
+; esi = a host name (ends at a 0 or a space) -> eax = its IPv4 address.
+; carry=1 if it can't be resolved (net_dns_error says why: 1 = no
+; answer, 2 = no such name).
+net_dns_resolve:
+    push ebx
+    push ecx
+    push edx
+    push esi
+    push edi
+    ; the query: header, then the name as length-prefixed labels
+    mov edi, net_dns_msg
+    rdtsc
+    mov [net_dns_id], ax
+    mov [edi], ax
+    mov dword [edi + 2], 0x01000001       ; recursion desired, 1 question
+    mov dword [edi + 6], 0
+    mov word [edi + 10], 0
+    add edi, 12
+.label:
+    mov ebx, edi                          ; where this label's length goes
+    inc edi
+    xor ecx, ecx
+.char:
+    mov al, [esi]
+    cmp al, 0
+    je .label_end
+    cmp al, ' '
+    je .label_end
+    inc esi
+    cmp al, '.'
+    je .label_end
+    cmp ecx, 63
+    jae .char
+    mov [edi], al
+    inc edi
+    inc ecx
+    jmp .char
+.label_end:
+    mov [ebx], cl
+    or ecx, ecx
+    jz .name_done                         ; (an empty label ends it)
+    cmp byte [esi - 1], '.'
+    je .label
+.name_done:
+    cmp byte [ebx], 0
+    je .terminated
+    mov byte [edi], 0
+    inc edi
+.terminated:
+    mov dword [edi], 0x01000100           ; type A, class IN
+    add edi, 4
+    mov ecx, edi
+    sub ecx, net_dns_msg
+
+    mov byte [net_dns_error], 1
+    mov edx, 3                            ; tries
+.try:
+    movzx eax, word [net_dns_id]
+    and eax, 0x0FFF
+    add eax, 0xC000                       ; our port
+    mov [net_dns_port], ax
+    call net_udp_listen
+    push edx
+    mov eax, [net_dns_ip]
+    mov bx, [net_dns_port]
+    mov dx, 53
+    mov esi, net_dns_msg
+    call net_send_udp
+    pop edx
+    jc .fail
+    mov eax, 36
+    call net_udp_wait
+    jnc .answered
+    dec edx
+    jnz .try
+    jmp .fail
+
+.answered:
+    mov ax, [net_udp_buf]
+    cmp ax, [net_dns_id]
+    jne .fail
+    mov al, [net_udp_buf + 3]
+    and al, 0x0F                          ; rcode
+    jz .rcode_ok
+    mov byte [net_dns_error], 2
+    jmp .fail
+.rcode_ok:
+    movzx ecx, word [net_udp_buf + 6]     ; answers
+    xchg cl, ch
+    mov esi, net_udp_buf + 12
+    mov edx, net_udp_buf
+    add edx, [net_udp_len]                ; edx = the end
+    movzx ebx, word [net_udp_buf + 4]     ; questions, to skip
+    xchg bl, bh
+.skip_question:
+    or ebx, ebx
+    jz .answers
+    call net_dns_skip_name
+    add esi, 4
+    dec ebx
+    jmp .skip_question
+.answers:
+    mov byte [net_dns_error], 2
+    jecxz .fail
+.answer:
+    call net_dns_skip_name
+    lea eax, [esi + 10]
+    cmp eax, edx
+    ja .fail
+    movzx ebx, word [esi + 8]             ; rdata length
+    xchg bl, bh
+    cmp word [esi], 0x0100                ; type A
+    jne .next_answer
+    cmp ebx, 4
+    jne .next_answer
+    mov eax, [esi + 10]
+    pop edi
+    pop esi
+    pop edx
+    pop ecx
+    pop ebx
+    clc
+    ret
+.next_answer:
+    lea esi, [esi + 10 + ebx]
+    loop .answer
+.fail:
+    pop edi
+    pop esi
+    pop edx
+    pop ecx
+    pop ebx
+    stc
+    ret
+
+; esi = a (possibly compressed) DNS name -> esi just past it
+net_dns_skip_name:
+    push eax
+.loop:
+    movzx eax, byte [esi]
+    or eax, eax
+    jz .end
+    test al, 0xC0
+    jnz .pointer
+    lea esi, [esi + eax + 1]
+    jmp .loop
+.pointer:
+    add esi, 2
+    pop eax
+    ret
+.end:
+    inc esi
+    pop eax
+    ret
+
+; ============================================================
+; nslookup <name>
+; ============================================================
+net_nslookup:
+    pushad
+    movzx esi, si
+    call basic_skip
+    cmp byte [esi], 0
+    jne .have
+    mov si, msg_nslookup_usage
+    call print_string
+    jmp .done
+.have:
+    call net_init
+    jc .done
+    push esi
+    call net_dns_resolve
+    pop esi
+    jc .failed
+    push eax
+    mov edi, esi
+    mov esi, net_msg_name
+    call basic_puts
+    mov esi, edi
+    call net_puts_word
+    call basic_newline
+    mov esi, net_msg_address
+    call basic_puts
+    pop eax
+    call net_print_ip
+    call basic_newline
+    jmp .done
+.failed:
+    call net_print_dns_error
+.done:
+    popad
+    ret
+
+; "can't find <name>" with net_dns_error's reason; esi = the name
+net_print_dns_error:
+    push esi
+    mov esi, net_msg_cant_find
+    call basic_puts
+    pop esi
+    call net_puts_word
+    mov esi, net_msg_no_answer
+    cmp byte [net_dns_error], 2
+    jne .reason
+    mov esi, net_msg_nxdomain
+.reason:
+    call basic_puts
+    ret
+
+; Prints esi up to a 0 or a space
+net_puts_word:
+    push eax
+    push esi
+.loop:
+    mov al, [esi]
+    cmp al, 0
+    je .done
+    cmp al, ' '
+    je .done
+    call print_char
+    inc esi
+    jmp .loop
+.done:
+    pop esi
+    pop eax
+    ret
+
+; dhcp - ask for an address again (the first network command already
+; asks once, as part of net_init)
+net_cmd_dhcp:
+    cmp byte [net_ready], 0
+    jne .again
+    call net_init
+    ret
+.again:
+    call net_dhcp
+    ret
+
+; ============================================================
 ; Timing: the TSC, calibrated once against the PIT, for millisecond
 ; round-trip times (timer ticks alone are 55ms).
 ; ============================================================
@@ -904,7 +1621,29 @@ net_print_hex_word:
 ; ============================================================
 ; Data
 ; ============================================================
+NET_UDP_MAX        equ 1472
+
 net_ready          db 0
+net_dns_ip         db 10, 0, 2, 3
+net_dhcp_ok        db 0
+net_dhcp_xid       dd 0
+net_dhcp_type      db 0
+net_dhcp_req_ip    dd 0
+net_dhcp_server    dd 0
+net_dhcp_msg       times 300 db 0
+net_dns_id         dw 0
+net_dns_port       dw 0
+net_dns_error      db 0
+net_dns_msg        times 300 db 0
+net_tx_dst_ip      dd 0
+net_route_valid    db 0
+net_route_ip       dd 0
+net_route_mac      times 6 db 0
+net_udp_port       dw 0
+net_udp_got        db 0
+net_udp_len        dd 0
+net_udp_from       dd 0
+net_udp_buf        times NET_UDP_MAX db 0
 net_io             dw 0
 net_pci_addr       dd 0
 net_mac            times 6 db 0
@@ -921,6 +1660,7 @@ net_arp_got        db 0
 net_hop_mac        times 6 db 0
 
 net_ping_ip        dd 0
+net_ping_name      dd 0
 net_ping_count     dd 4
 net_ping_seq       dw 0
 net_ping_sent      dd 0
@@ -959,3 +1699,13 @@ net_msg_rtt1       db "Round trip: min = ", 0
 net_msg_rtt2       db "ms, max = ", 0
 net_msg_rtt3       db "ms, average = ", 0
 net_msg_ms         db "ms", 10, 0
+net_msg_dhcp       db "DHCP... ", 0
+net_msg_dhcp_failed db "no answer - using 10.0.2.15 (QEMU's usual).", 10, 0
+net_msg_dns        db "DNS server   ", 0
+net_msg_via_dhcp   db "   (from DHCP)", 0
+net_msg_static     db "   (static - DHCP didn't answer)", 0
+net_msg_name       db "Name:    ", 0
+net_msg_address    db "Address: ", 0
+net_msg_cant_find  db "Can't find ", 0
+net_msg_no_answer  db ": no answer from the DNS server.", 10, 0
+net_msg_nxdomain   db ": no such name.", 10, 0

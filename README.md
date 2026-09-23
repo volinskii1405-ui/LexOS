@@ -271,16 +271,18 @@ alex@/PROGRAMS$
   CPU time, `kill <pid>` stops one. The rest of the kernel isn't
   reentrant, so only the tasks written for it run in the background
   (the player loads its whole file first, with switching held off).
-- **Networking (as far as `ping`).** An RTL8139 driver (the card
-  `make run` gives QEMU), Ethernet, ARP, IPv4 and ICMP echo. `ifconfig`
-  shows the card, MAC and address; `ping <a.b.c.d> [count]` works like
-  everyone else's ping - one a second, round-trip times in ms (from
-  the TSC, calibrated against the PIT), a summary at the end, ESC stops
-  it. LexOS sits on QEMU's user-mode network as 10.0.2.15; `ping
-  10.0.2.2` (QEMU's gateway) always answers, and outside addresses
-  like `ping 8.8.8.8` go through QEMU's ICMP proxy, which works when
-  the host allows unprivileged ping (most Linux distributions, macOS).
-  Numeric addresses only - no DNS yet.
+- **Networking.** An RTL8139 driver (the card `make run` gives QEMU),
+  Ethernet, ARP, IPv4, ICMP echo, UDP, DHCP and DNS. The first network
+  command gets LexOS an address by DHCP (`dhcp` asks again); `ifconfig`
+  shows the card, MAC, address, gateway and DNS server; `nslookup
+  <name>` resolves a name through that DNS server - real internet
+  names, via QEMU's forwarder; `ping <host> [count]` takes a name or
+  an address and works like everyone else's ping - one a second,
+  round-trip times in ms (from the TSC, calibrated against the PIT), a
+  summary at the end, ESC stops it. `ping 10.0.2.2` (QEMU's gateway)
+  always answers; outside addresses go through QEMU's ICMP proxy, which
+  works when the host allows unprivileged ping (most Linux
+  distributions, macOS).
 - **Shared folder with the host.** `make run` attaches the repo's
   `shared/` folder as a second disk (QEMU's vvfat presents a host
   directory as a whole FAT16 volume). `hostls` lists it and
@@ -447,7 +449,9 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `hostget <n> [new]` | copy a file from the host's shared folder into the current directory |
 | `hostput <n> [host]` | copy file n into the host's shared folder (a new 8.3 name) |
 | `ifconfig` | show the network card, MAC address and IP |
-| `ping <ip> [n]` | send n ICMP echo requests (default 4), ESC stops |
+| `ping <host> [n]` | send n ICMP echo requests (default 4) to a name or address, ESC stops |
+| `nslookup <name>` | look a name up in DNS |
+| `dhcp` | get an address from the DHCP server again |
 | `ps` | list the running tasks (pid, state, priority, CPU time) |
 | `kill <pid>` | stop a background task |
 | `clock` | toggle a clock in the top-right corner (a background task) |
@@ -593,8 +597,8 @@ src/
                        as snake.asm.
   sched.asm            the scheduler: tasks, priorities, task_wait,
                        ps/kill/clock.
-  net.asm              `ping`/`ifconfig`: RTL8139 driver (polled), ARP,
-                       IPv4, ICMP echo.
+  net.asm              RTL8139 driver (polled), ARP, IPv4, ICMP echo,
+                       UDP, DHCP, DNS: ping/ifconfig/nslookup/dhcp.
   basic.asm            `basic [name]`, a Tiny BASIC interpreter/REPL -
                        text mode, program stored above 1MB, SAVE/LOAD
                        through fs_stream_write/fs_load_to.
