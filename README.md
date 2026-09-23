@@ -231,6 +231,24 @@ alex@/PROGRAMS$
   prints it back out as decimal, hex, octal, and binary, all on one
   screen. One-shot like CALC.BIN, not a loop: run it again to convert
   another value.
+- **Tiny BASIC.** `basic` drops into a BASIC prompt the way 80s home
+  computers booted into one: type numbered lines to build a program,
+  `RUN`, `LIST`, `NEW`, `SAVE name` / `LOAD name` (plain text files, so
+  a `.BAS` can just as well be written in `uranium` or on the host and
+  fetched with `hostget`), `BYE` to go back to the shell - the program
+  stays in memory until the next reboot. `basic name` loads and runs a
+  program straight away. The language: 32-bit integer variables A-Z,
+  strings A$-Z$, arrays (`DIM`); `PRINT`, `INPUT`, `IF..THEN..ELSE`,
+  `GOTO`, `GOSUB`/`RETURN`, `FOR..STEP`/`NEXT`, `DATA`/`READ`/`RESTORE`,
+  `CLS`, `COLOR`, `LOCATE`, `BEEP`, `PAUSE`; functions `RND`, `ABS`,
+  `SGN`, `LEN`, `ASC`, `VAL`, `INKEY` (non-blocking key read - enough
+  for real-time games), `CHR$`, `STR$`, `LEFT$`, `RIGHT$`, `MID$`.
+  `HELP` inside BASIC prints the cheat sheet, ESC stops a running
+  program, and errors come out the classic way (`?SYNTAX ERROR IN 30`).
+  Lines are interpreted straight from their text, Tiny BASIC style; the
+  program, strings and arrays live above the 1MB mark, so a program can
+  be up to 64KB. Try `shared/GUESS.BAS` (guess the number) and
+  `shared/CATCH.BAS` (catch falling stars with A/D or the arrows).
 - **Shared folder with the host.** `make run` attaches the repo's
   `shared/` folder as a second disk (QEMU's vvfat presents a host
   directory as a whole FAT16 volume). `hostls` lists it and
@@ -389,6 +407,7 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `recv <n> <hex size>` | receive a file over COM1 (see **Programs** below for host-side setup) |
 | `hostls` | list the files in the host's shared folder (`shared/`, see below) |
 | `hostget <n> [new]` | copy a file from the host's shared folder into the current directory |
+| `basic [n]` | Tiny BASIC; with a name, load and run that program first |
 | `reboot` / `shutdown` | restart / power off |
 | `history` | list previously run commands, numbered oldest first |
 | `df` / `free` | show directory slot / extra sector usage |
@@ -458,7 +477,7 @@ outside the kernel image need a full 32-bit linear address:
 |---|---|
 | Video memory (VGA text mode) | `0xB8000` |
 | ATA scratch buffer (one sector) | `0x91000` |
-| BASIC program store (`basic`) | `0x200000` |
+| BASIC program, arrays, strings (`basic`) | `0x200000` – `0x26FFFF` |
 | .COM program segment | `0x100000` |
 | Kernel code/data | `0x8000` – `0x37FFF` (384 sectors) |
 | Boot sector | `0x7C00` |
@@ -521,6 +540,9 @@ src/
   turtle.asm           `turtle <name>`, a LOGO-style turtle graphics
                        script interpreter - same vga.asm mode switch
                        as snake.asm.
+  basic.asm            `basic [name]`, a Tiny BASIC interpreter/REPL -
+                       text mode, program stored above 1MB, SAVE/LOAD
+                       through fs_stream_write/fs_load_to.
   dosrun.asm           runs a *.com MS-DOS program directly under this
                        32-bit kernel (no BIOS, no real-mode switch, no
                        v86 mode) through a 16-bit code segment and a

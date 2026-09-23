@@ -254,6 +254,18 @@ handle_command:
     je .do_hostget
 
     mov si, buffer
+    mov di, cmd_basic
+    call strcmp_eq
+    cmp ax, 1
+    je .do_basic
+
+    mov si, buffer
+    mov di, cmd_basic_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_basic_file
+
+    mov si, buffer
     mov di, cmd_history
     call strcmp_eq
     cmp ax, 1
@@ -523,6 +535,18 @@ handle_command:
     mov si, buffer
     add si, 8                  ; skip "hostget "
     call host_get
+    jmp .done
+
+.do_basic:
+    mov si, buffer
+    add si, 5                  ; the terminating 0 right after "basic"
+    call basic_main
+    jmp .done
+
+.do_basic_file:
+    mov si, buffer
+    add si, 6                  ; skip "basic "
+    call basic_main
     jmp .done
 
 .do_history:

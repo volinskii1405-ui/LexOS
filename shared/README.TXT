@@ -6,6 +6,8 @@ This folder is shared with LexOS.
 
 Try:  hostget star.trg   then   turtle star.trg
       hostget bounce.ch8  then   chip8 bounce.ch8
+      hostget guess.bas   then   basic guess.bas
+      hostget catch.bas   then   basic catch.bas
 
 Names show up as DOS-style 8.3 short names (long names get
 shortened, e.g. MY-LON~1.TXT). Only files in this top-level

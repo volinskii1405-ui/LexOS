@@ -202,6 +202,7 @@ help_l50 db "  chip8 <n> [s] - run a CHIP-8/SUPER-CHIP ROM (keys 1234/qwer/asdf/
 help_l51 db "  turtle <n>   - run a turtle-graphics script (FORWARD/LEFT/...)", 13, 10, 0
 help_l52 db "  hostls       - list files in the host's shared folder", 13, 10, 0
 help_l53 db "  hostget <n> [new] - copy a file from the host's shared folder here", 13, 10, 0
+help_l54 db "  basic [n]    - Tiny BASIC (optionally load and run program n)", 13, 10, 0
 
 help_lines:
     dw help_l01, help_l02, help_l03, help_l04, help_l05
@@ -213,7 +214,7 @@ help_lines:
     dw help_l34, help_l35, help_l38, help_l39, help_l40
     dw help_l41, help_l42, help_l43, help_l44, help_l45
     dw help_l46, help_l47, help_l48, help_l49, help_l50, help_l51
-    dw help_l52, help_l53
+    dw help_l52, help_l53, help_l54
 help_lines_end:
 
 HELP_LINE_COUNT equ (help_lines_end - help_lines) / 2
@@ -589,6 +590,8 @@ cmd_chip8_prefix db "chip8 ", 0
 cmd_turtle_prefix db "turtle ", 0
 cmd_hostls       db "hostls", 0
 cmd_hostget_prefix db "hostget ", 0
+cmd_basic        db "basic", 0
+cmd_basic_prefix db "basic ", 0
 cmd_history      db "history", 0
 cmd_df           db "df", 0
 cmd_free         db "free", 0

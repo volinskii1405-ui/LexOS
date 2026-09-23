@@ -11,7 +11,7 @@
 ; Exports: fs_extra_alloc, fs_extra_free, fs_extra_read,
 ;               fs_extra_write, fs_scratch_read_word,
 ;               fs_scratch_write_word, fs_free_chain, fs_append,
-;               fs_load_content, fs_stream_prepare, fs_stream_write,
+;               fs_load_content, fs_load_to, fs_stream_prepare, fs_stream_write,
 ;               print_dec_word, print_dec_signed
 
 ; ============================================================
@@ -187,92 +187,93 @@ fs_free_chain:
 ; buffer, which is later written back via fs_save_content).
 ; ============================================================
 fs_load_content:
-    push ax
-    push bx
-    push cx
-    push di
+    push ecx
+    push edi
+    mov edi, content_buf
+    mov ecx, CONTENT_BUF_LEN
+    call fs_load_to
+    mov [content_buf_len], cx
+    pop edi
+    pop ecx
+    ret
+
+; ============================================================
+; fs_load_content's general form: reads a file's content (slot in ax)
+; to any 32-bit address, up to a caller-given maximum - src/basic.asm's
+; LOAD, whose programs can be far bigger than content_buf.
+; Input: ax = slot, edi = destination, ecx = max bytes.
+; Returns: ecx = bytes actually read. Preserves everything else.
+; ============================================================
+fs_load_to:
+    push eax
+    push ebx
+    push edx
+    push esi
+
+    mov [fs_load_max], ecx
+    xor edx, edx                     ; edx = bytes stored so far
 
     call fs_read_slot
-
-    mov ax, FS_TOTAL_LEN_OFFSET
-    call fs_scratch_read_word
+    movzx eax, word [SCRATCH_ADDR + FS_TOTAL_LEN_OFFSET]
     mov [fs_load_remaining], ax
-
-    mov ax, FS_CHAIN_OFFSET
-    call fs_scratch_read_word
+    mov ax, [SCRATCH_ADDR + FS_CHAIN_OFFSET]
     mov [fs_load_chain], ax
 
-    xor di, di
-
-    mov bx, FS_CONTENT_OFFSET
-    mov cx, FS_CONTENT_LEN - 1
-    cmp cx, [fs_load_remaining]
-    jbe .inline_loop
-    mov cx, [fs_load_remaining]
-
-.inline_loop:
-    cmp cx, 0
-    je .inline_done
-    cmp di, CONTENT_BUF_LEN
-    jae .load_done
-    mov ax, bx
-    call fs_scratch_read_byte
-    mov [content_buf + di], al
-    inc bx
-    inc di
-    dec cx
-    dec word [fs_load_remaining]
-    jmp .inline_loop
-.inline_done:
-
-    cmp word [fs_load_remaining], 0
-    jle .load_done
+    mov esi, SCRATCH_ADDR + FS_CONTENT_OFFSET
+    movzx ecx, word [fs_load_remaining]
+    cmp ecx, FS_CONTENT_LEN - 1
+    jbe .copy_inline
+    mov ecx, FS_CONTENT_LEN - 1
+.copy_inline:
+    call .copy                        ; ecx bytes from esi
 
 .chain_loop:
     cmp word [fs_load_remaining], 0
-    jle .load_done
+    je .done
     cmp word [fs_load_chain], FS_NO_CHAIN
-    je .load_done
-    cmp di, CONTENT_BUF_LEN
-    jae .load_done
-
+    je .done
+    cmp edx, [fs_load_max]
+    jae .done
     mov ax, [fs_load_chain]
     call fs_extra_read
-
-    mov cx, FS_EXTRA_CONTENT_LEN
-    cmp cx, [fs_load_remaining]
-    jbe .have_count
-    mov cx, [fs_load_remaining]
-.have_count:
-    xor bx, bx
-.extra_loop:
-    cmp cx, 0
-    je .extra_done
-    cmp di, CONTENT_BUF_LEN
-    jae .load_done
-    mov ax, bx
-    call fs_scratch_read_byte
-    mov [content_buf + di], al
-    inc bx
-    inc di
-    dec cx
-    dec word [fs_load_remaining]
-    jmp .extra_loop
-.extra_done:
-    mov ax, FS_EXTRA_NEXT_OFFSET
-    call fs_scratch_read_word
+    mov ax, [SCRATCH_ADDR + FS_EXTRA_NEXT_OFFSET]
     mov [fs_load_chain], ax
+    mov esi, SCRATCH_ADDR
+    movzx ecx, word [fs_load_remaining]
+    cmp ecx, FS_EXTRA_CONTENT_LEN
+    jbe .copy_extra
+    mov ecx, FS_EXTRA_CONTENT_LEN
+.copy_extra:
+    call .copy
     jmp .chain_loop
 
-.load_done:
-    mov [content_buf_len], di
-
-    pop di
-    pop cx
-    pop bx
-    pop ax
+.done:
+    mov ecx, edx
+    pop esi
+    pop edx
+    pop ebx
+    pop eax
     ret
 
+; Copies ecx bytes from esi to [edi + edx] (fewer if fs_load_max is
+; reached), advancing edx and counting down fs_load_remaining.
+.copy:
+    sub [fs_load_remaining], cx
+.copy_loop:
+    cmp ecx, 0
+    je .copy_done
+    cmp edx, [fs_load_max]
+    jae .copy_done
+    mov al, [esi]
+    mov [edi + edx], al
+    inc esi
+    inc edx
+    dec ecx
+    jmp .copy_loop
+.copy_done:
+    ret
+
+fs_load_max       dd 0
 fs_load_remaining dw 0
 fs_load_chain     dw 0
 
