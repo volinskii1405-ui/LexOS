@@ -385,6 +385,14 @@ alex@/PROGRAMS$
   connections (LISTEN, SYN-ACK) and sends big answers as a window of
   segments, resending from the last acknowledged byte when an ACK
   doesn't come (a 3MB file goes out in a few seconds).
+  `chat [nick]` is a chat room for every LexOS on the same network:
+  messages are UDP broadcasts to port 5555, so there's no server. The
+  screen splits into the conversation and a line to type into; `/nick`,
+  `/me`, `/who`, Esc leaves. `make lan1` and `make lan2` (in two
+  terminals) start two LexOS machines joined by a virtual Ethernet
+  cable (QEMU's socket network), each with its own disk and MAC - with
+  no DHCP server on that cable each takes an address from its MAC, or
+  `ifconfig <a.b.c.d>` sets one.
 - **Shared folder with the host.** `make run` attaches the repo's
   `shared/` folder as a second disk (QEMU's vvfat presents a host
   directory as a whole FAT16 volume). `hostls` lists it and
@@ -554,6 +562,7 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `ping <host> [n]` | send n ICMP echo requests (default 4) to a name or address, ESC stops |
 | `nslookup <name>` | look a name up in DNS |
 | `wget <url> [name]` | download a file over HTTP into the current folder |
+| `chat [nick]` | chat with every LexOS on the network (`make lan1` + `make lan2`) |
 | `httpd [port]` | serve this disk on the web (`make run`: http://localhost:8080/) |
 | `ntp [server]` | set the clock from a time server (default `pool.ntp.org`) |
 | `dhcp` | get an address from the DHCP server again |
@@ -727,6 +736,7 @@ src/
   inet.asm             Internet clients on top of it: ntp, and a
                        small TCP for wget.
   httpd.asm            httpd: the web server on that TCP.
+  chat.asm             chat: a serverless chat room over UDP broadcast.
   basic.asm            `basic [name]`, a Tiny BASIC interpreter/REPL -
                        text mode, program stored above 1MB, SAVE/LOAD
                        through fs_stream_write/fs_load_to.

@@ -333,6 +333,21 @@ handle_command:
     call strcmp_eq
     cmp ax, 1
     je .do_ifconfig
+    mov si, buffer
+    mov di, cmd_ifconfig_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_ifconfig
+    mov si, buffer
+    mov di, cmd_chat
+    call strcmp_eq
+    cmp ax, 1
+    je .do_chat
+    mov si, buffer
+    mov di, cmd_chat_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_chat
 
     mov si, buffer
     mov di, cmd_ping_prefix
@@ -762,7 +777,15 @@ handle_command:
     jmp .done
 
 .do_ifconfig:
+    mov si, buffer
+    add si, 8                  ; skip "ifconfig" (a new address may follow)
     call net_ifconfig
+    jmp .done
+
+.do_chat:
+    mov si, buffer
+    add si, 4                  ; skip "chat"
+    call net_chat
     jmp .done
 
 .do_ping:

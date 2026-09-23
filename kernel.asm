@@ -144,6 +144,7 @@ shared_net_start:
 %include "src/net.asm"
 %include "src/inet.asm"
 %include "src/httpd.asm"
+%include "src/chat.asm"
 shared_net_end:
 ; the scheduler, ring 3 and the consoles themselves: shared across
 ; consoles (see src/console.asm)
