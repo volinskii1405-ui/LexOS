@@ -249,6 +249,45 @@ alex@/PROGRAMS$
   program, strings and arrays live above the 1MB mark, so a program can
   be up to 64KB. Try `shared/GUESS.BAS` (guess the number) and
   `shared/CATCH.BAS` (catch falling stars with A/D or the arrows).
+- **Sound.** `play <n.imf>` plays AdLib music (OPL2, Type-0 IMF at
+  560Hz); `play <n.wav>` plays uncompressed PCM - 8- or 16-bit, mono or
+  stereo, any rate - through a **Sound Blaster 16**: the DSP is found
+  and reset at 0x220, and the samples go to it by ISA DMA (channel 1
+  for 8-bit, 5 for 16-bit) straight from memory, so it's real digital
+  sound and costs the CPU nothing while it plays. Without an SB16, 8-bit
+  mono WAVs still play, 1-bit, on the PC speaker. `make run` gives QEMU
+  both an AdLib and an SB16. ESC stops playback; `&` puts it in the
+  background (below).
+- **Virtual consoles.** Alt+T opens another console with a shell of
+  its own, Alt+1..Alt+9 switch between them, `exit` closes the one
+  you're in; the prompt says which you're in (`[2] test@/$`). Each is
+  a whole separate session - its own screen, command line and
+  history, current directory, colors, BASIC program, uranium file, even
+  a ring-3 program left waiting for input - while background tasks
+  (the clock, music) carry on across all of them. Every console is a
+  task; only the one on screen runs, the rest are paused. Since the
+  kernel keeps session state in ordinary globals, a switch swaps them:
+  the kernel image except its shared parts (interrupts, drivers, the
+  scheduler, sound, network, RAM-backed TMP files), plus BASIC's
+  memory, the program's 1MB and the text screen, into a 2MB save area
+  per console - only ever at a safe point, while the console on screen
+  is waiting for a key.
+- **Protected programs (ring 3).** `run <name>.app` runs a program in
+  user mode, the way real operating systems do: paging maps it its own
+  1MB and nothing else, so it can't touch the kernel, the screen or
+  any I/O port - it asks the kernel for things through system calls
+  (`int 0x80`: write, getkey, readline, sleep, ticks, cursor, color,
+  beep, exit). When a program does something it mustn't - writes over
+  the kernel, divides by zero, executes `cli` - LexOS stops just that
+  program and says what it tried ("Program crashed: Page fault at
+  0x0080007A - it touched memory at 0x00008000 (not its own)"), and
+  the shell carries on; Ctrl+C stops a program that hangs. A bug in
+  LexOS itself now shows a kernel panic screen (which exception,
+  where) instead of silently hanging. Programs can be written in
+  assembly (`apps/lexos.inc`) or C (`apps/lexos.h`, built with
+  `gcc -m32`): `make apps` builds the examples into `shared/` -
+  `HELLO.APP`, `CRASH.APP` (a menu of forbidden things to try) and
+  `GUESS.APP` (in C). Try `hostget crash.app`, then `run crash.app`.
 - **Preemptive multitasking.** Kernel tasks with their own stacks,
   switched by the timer interrupt (src/sched.asm): equal-priority tasks
   take turns a timer tick (~55ms) at a time, a higher-priority one runs
@@ -262,16 +301,18 @@ alex@/PROGRAMS$
   CPU time, `kill <pid>` stops one. The rest of the kernel isn't
   reentrant, so only the tasks written for it run in the background
   (the player loads its whole file first, with switching held off).
-- **Networking (as far as `ping`).** An RTL8139 driver (the card
-  `make run` gives QEMU), Ethernet, ARP, IPv4 and ICMP echo. `ifconfig`
-  shows the card, MAC and address; `ping <a.b.c.d> [count]` works like
-  everyone else's ping - one a second, round-trip times in ms (from
-  the TSC, calibrated against the PIT), a summary at the end, ESC stops
-  it. LexOS sits on QEMU's user-mode network as 10.0.2.15; `ping
-  10.0.2.2` (QEMU's gateway) always answers, and outside addresses
-  like `ping 8.8.8.8` go through QEMU's ICMP proxy, which works when
-  the host allows unprivileged ping (most Linux distributions, macOS).
-  Numeric addresses only - no DNS yet.
+- **Networking.** An RTL8139 driver (the card `make run` gives QEMU),
+  Ethernet, ARP, IPv4, ICMP echo, UDP, DHCP and DNS. The first network
+  command gets LexOS an address by DHCP (`dhcp` asks again); `ifconfig`
+  shows the card, MAC, address, gateway and DNS server; `nslookup
+  <name>` resolves a name through that DNS server - real internet
+  names, via QEMU's forwarder; `ping <host> [count]` takes a name or
+  an address and works like everyone else's ping - one a second,
+  round-trip times in ms (from the TSC, calibrated against the PIT), a
+  summary at the end, ESC stops it. `ping 10.0.2.2` (QEMU's gateway)
+  always answers; outside addresses go through QEMU's ICMP proxy, which
+  works when the host allows unprivileged ping (most Linux
+  distributions, macOS).
 - **Shared folder with the host.** `make run` attaches the repo's
   `shared/` folder as a second disk (QEMU's vvfat presents a host
   directory as a whole FAT16 volume). `hostls` lists it and
@@ -438,11 +479,16 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `hostget <n> [new]` | copy a file from the host's shared folder into the current directory |
 | `hostput <n> [host]` | copy file n into the host's shared folder (a new 8.3 name) |
 | `ifconfig` | show the network card, MAC address and IP |
-| `ping <ip> [n]` | send n ICMP echo requests (default 4), ESC stops |
+| `ping <host> [n]` | send n ICMP echo requests (default 4) to a name or address, ESC stops |
+| `nslookup <name>` | look a name up in DNS |
+| `dhcp` | get an address from the DHCP server again |
+| `run <n>.app` | run a protected (ring 3) program - see `apps/` |
+| Alt+T / Alt+1..9 / `exit` | open a new console / switch to console N / close this one |
 | `ps` | list the running tasks (pid, state, priority, CPU time) |
 | `kill <pid>` | stop a background task |
 | `clock` | toggle a clock in the top-right corner (a background task) |
-| `play <n.imf> &` | play music in the background |
+| `play <n.imf \| n.wav>` | play AdLib music or a WAV (Sound Blaster 16, or PC speaker) |
+| `play <n> &` | play it in the background |
 | `basic [n]` | Tiny BASIC; with a name, load and run that program first |
 | `reboot` / `shutdown` | restart / power off |
 | `history` | list previously run commands, numbered oldest first |
@@ -516,7 +562,11 @@ outside the kernel image need a full 32-bit linear address:
 | BASIC program, arrays, strings (`basic`) | `0x200000` – `0x26FFFF` |
 | hostput staging buffer | `0x280000` |
 | IMF song buffer (`play`) | `0x310000` |
-| Task stacks (16KB each) | `0x400000` – `0x41FFFF` |
+| WAV file / SB16 DMA buffer (`play`) | `0x320000` |
+| Task stacks (64KB each, 16 tasks) | `0x400000` – `0x4FFFFF` |
+| Page directory / user page table | `0x500000` / `0x501000` |
+| A ring-3 program's own 1MB | `0x800000` – `0x8FFFFF` |
+| Console save areas (2MB each) | `0x1000000` – `0x21FFFFF` |
 | RTL8139 receive ring / transmit buffers | `0x300000` / `0x304000` |
 | .COM program segment | `0x100000` |
 | Kernel code/data | `0x8000` – `0x37FFF` (384 sectors) |
@@ -534,6 +584,8 @@ sectors that files chain into once they outgrow the inline area.
 boot.asm              16-bit boot sector: loads the kernel, enables A20,
                        sets up the GDT, switches to protected mode.
 kernel.asm             32-bit kernel entry point; %includes everything below.
+apps/                  example ring-3 programs (`make apps`): lexos.inc for
+                       assembly, lexos.h + crt0.asm + app.ld for C.
 src/
   data.asm             constants, messages, working variables.
   screen.asm           VGA text output, hardware cursor.
@@ -580,10 +632,14 @@ src/
   turtle.asm           `turtle <name>`, a LOGO-style turtle graphics
                        script interpreter - same vga.asm mode switch
                        as snake.asm.
+  usermode.asm         ring 3: paging, TSS, int 0x80 system calls,
+                       exception handling, `run <n>.app`.
+  console.asm          virtual consoles: Alt+T / Alt+1..9 / exit, the
+                       per-console memory swap.
   sched.asm            the scheduler: tasks, priorities, task_wait,
                        ps/kill/clock.
-  net.asm              `ping`/`ifconfig`: RTL8139 driver (polled), ARP,
-                       IPv4, ICMP echo.
+  net.asm              RTL8139 driver (polled), ARP, IPv4, ICMP echo,
+                       UDP, DHCP, DNS: ping/ifconfig/nslookup/dhcp.
   basic.asm            `basic [name]`, a Tiny BASIC interpreter/REPL -
                        text mode, program stored above 1MB, SAVE/LOAD
                        through fs_stream_write/fs_load_to.

@@ -204,9 +204,10 @@ help_l52 db "  hostls       - list files in the host's shared folder", 13, 10, 0
 help_l53 db "  hostget <n> [new] - copy a file from the host's shared folder here", 13, 10, 0
 help_l55 db "  hostput <n> [host] - copy file n into the host's shared folder", 13, 10, 0
 help_l56 db "  ifconfig     - show the network card and LexOS's address", 13, 10, 0
-help_l57 db "  ping <ip> [n] - send n ICMP echo requests (default 4)", 13, 10, 0
+help_l57 db "  ping <host> [n] - n ICMP echo requests (default 4); nslookup <name>; dhcp", 13, 10, 0
 help_l58 db "  ps / kill <pid> - list tasks / stop one; <cmd> & runs play in the background", 13, 10, 0
 help_l59 db "  clock        - toggle a clock in the top-right corner (a background task)", 13, 10, 0
+help_l60 db "  Alt+T / Alt+1..9 / exit - new console / switch console / close this one", 13, 10, 0
 help_l54 db "  basic [n]    - Tiny BASIC (optionally load and run program n)", 13, 10, 0
 
 help_lines:
@@ -220,7 +221,7 @@ help_lines:
     dw help_l41, help_l42, help_l43, help_l44, help_l45
     dw help_l46, help_l47, help_l48, help_l49, help_l50, help_l51
     dw help_l52, help_l53, help_l55, help_l54, help_l56, help_l57
-    dw help_l58, help_l59
+    dw help_l58, help_l59, help_l60
 help_lines_end:
 
 HELP_LINE_COUNT equ (help_lines_end - help_lines) / 2
@@ -273,7 +274,8 @@ msg_paint_size_clamped db "Canvas size clamped to the 320x200 screen.", 13, 10, 
 msg_paint_saved      db "Saved ", 0
 msg_view_usage       db "Usage: view <n>", 13, 10, 0
 msg_play_usage       db "Usage: play <n.imf | n.wav>", 13, 10, 0
-msg_play_bad_wav     db "Not a supported WAV (need 8-bit unsigned PCM, mono).", 13, 10, 0
+msg_play_bad_wav     db "Not a supported WAV (need uncompressed PCM, 8 or 16-bit, mono or stereo).", 13, 10, 0
+msg_play_needs_sb    db "Without a Sound Blaster 16 only 8-bit mono WAVs play (on the PC speaker).", 13, 10, 0
 
 ; src/chip8.asm's chip8_run - kept here for the same reason as the
 ; msg_play_* messages above.
@@ -300,9 +302,11 @@ msg_task_table_full  db "Too many tasks running (ps / kill <pid>).", 13, 10, 0
 msg_task_killed      db "Stopped.", 13, 10, 0
 msg_task_cant_kill   db "No such task (the shell, pid 0, can't be stopped) - see ps.", 13, 10, 0
 msg_kill_usage       db "Usage: kill <pid>   (pids are listed by ps)", 13, 10, 0
+msg_console_first    db "This is the first console - it stays. (Alt+T opens more, Alt+1..9 switches.)", 13, 10, 0
 msg_clock_on         db "Clock on (type clock again to turn it off).", 13, 10, 0
 msg_clock_off        db "Clock off.", 13, 10, 0
-msg_ping_usage       db "Usage: ping <a.b.c.d> [count]   (numeric addresses - try ping 10.0.2.2)", 13, 10, 0
+msg_ping_usage       db "Usage: ping <host> [count]   (a name or a.b.c.d - try ping 10.0.2.2)", 13, 10, 0
+msg_nslookup_usage   db "Usage: nslookup <name>", 13, 10, 0
 msg_host_put_usage   db "Usage: hostput <n> [host name]", 13, 10, 0
 msg_host_bad_name    db "The host copy needs a DOS 8.3 name (like PIC.BMP) - hostput <n> <8.3 name>", 13, 10, 0
 msg_host_put_not_file db "Only ordinary files can be copied to the host.", 13, 10, 0
@@ -353,7 +357,7 @@ msg_uranium_footer   db "Ctrl+B=Save&Exit  Ctrl+H=Save  Ctrl+F=Find  ESC=Exit", 
 msg_uranium_saved_flash db "Saved.", 0
 msg_uranium_notfound_flash db "Not found.", 0
 msg_uranium_search_prompt db "Find: ", 0
-msg_uranium_confirm  db "Are you sure?", 13, 10, 13, 10, "Y - YES.         N - NO.", 0
+msg_uranium_confirm  db "Are you sure?", 13, 10, 13, 10, "Y / Enter - YES.         N / Esc - NO, back to editing.", 0
 
 msg_user_setup_title  db "LexOS - First Boot Setup", 0
 msg_user_nick_label   db "Nickname:", 0
@@ -619,11 +623,17 @@ cmd_hostget_prefix db "hostget ", 0
 cmd_hostput_prefix db "hostput ", 0
 cmd_basic        db "basic", 0
 cmd_ps           db "ps", 0
+cmd_exit         db "exit", 0
+; src/usermode.asm's, per console (src/console.asm swaps this file)
+app_active         db 0
+app_abort_request  db 0
 cmd_kill_prefix  db "kill ", 0
 cmd_clock        db "clock", 0
 play_bg_arg      times (BUFFER_MAX + 1) db 0   ; src/sound.asm's play_spawn
 cmd_ifconfig     db "ifconfig", 0
 cmd_ping_prefix  db "ping ", 0
+cmd_nslookup_prefix db "nslookup ", 0
+cmd_dhcp         db "dhcp", 0
 cmd_basic_prefix db "basic ", 0
 cmd_history      db "history", 0
 cmd_df           db "df", 0

@@ -1916,6 +1916,8 @@ fs_print_prompt:
     push ax
     push si
 
+    call console_prompt_prefix    ; "[2] " in consoles 2-9 (src/console.asm)
+
     mov si, user_nickname
     call print_string
     mov al, '@'

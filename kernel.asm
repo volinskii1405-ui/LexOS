@@ -49,6 +49,8 @@ kernel_start:
 
     call sched_init          ; this flow becomes task 0 (src/sched.asm)
     call devmgr_init         ; initializes all devices (screen/keyboard/disk/timer)
+    call pm_init             ; paging, TSS, ring 3 (src/usermode.asm)
+    call console_init        ; (src/console.asm)
 
     call clear_screen
     call print_banner
@@ -91,9 +93,13 @@ main_loop:
 %include "src/screen.asm"
 %include "src/input.asm"
 %include "src/shell.asm"
+shared_interrupts_start:
 %include "src/interrupts.asm"
+shared_interrupts_end:
+shared_devices_start:
 %include "src/devices.asm"
 %include "src/ata.asm"
+shared_devices_end:
 
 ; serial.asm comes right here, straight after the other device drivers,
 ; rather than further down with the rest of the shell's features - see
@@ -105,13 +111,17 @@ main_loop:
 ; error - when the calculator below pushed everything after it further
 ; in): keeping every device driver grouped this early guarantees the
 ; margin regardless of how large the later files grow.
+shared_mouse_start:
 %include "src/serial.asm"
 %include "src/mouse.asm"
+shared_mouse_end:
 
 %include "src/filesystem.asm"
 %include "src/fs_extra.asm"
 %include "src/programs.asm"
+shared_vga_start:
 %include "src/vga.asm"
+shared_vga_end:
 %include "src/snake.asm"
 %include "src/paint.asm"
 %include "src/sweeper.asm"
@@ -121,13 +131,23 @@ main_loop:
 %include "src/assembler.asm"
 %include "src/rtc.asm"
 %include "src/speaker.asm"
+shared_sound_start:
 %include "src/sound.asm"
+shared_sound_end:
 %include "src/chip8.asm"
 %include "src/turtle.asm"
 %include "src/hostfs.asm"
 %include "src/basic.asm"
+shared_net_start:
 %include "src/net.asm"
+shared_net_end:
+; the scheduler, ring 3 and the consoles themselves: shared across
+; consoles (see src/console.asm)
+shared_system_start:
 %include "src/sched.asm"
+%include "src/usermode.asm"
+%include "src/console.asm"
+shared_system_end:
 %include "src/grep.asm"
 %include "src/headtail.asm"
 %include "src/uranium.asm"
@@ -141,6 +161,7 @@ main_loop:
 ; already thin (see src/devices.asm) - so it goes where appending it
 ; can't push anything else past that mark, same reasoning as the
 ; *.hg save area and the ATA DMA state right below it.
+shared_tail_start:                ; (src/console.asm: from here to the end)
 %include "src/atadma.asm"
 
 ; src/dosrun.asm (.com program support) is included here for the same
@@ -442,6 +463,15 @@ com_gdt_start:
     db ((COM_LOAD_ADDR) >> 16) & 0xFF, 10011010b, 0x00, ((COM_LOAD_ADDR) >> 24) & 0xFF   ; com code (0x18)
     dw 0xFFFF, (COM_LOAD_ADDR) & 0xFFFF
     db ((COM_LOAD_ADDR) >> 16) & 0xFF, 10010010b, 0x00, ((COM_LOAD_ADDR) >> 24) & 0xFF   ; com data (0x20)
+    ; src/usermode.asm's: ring-3 flat code (0x28) and data (0x30), and
+    ; the TSS (0x38 - its base is filled in by pm_init)
+    dw 0xFFFF, 0x0000
+    db 0x00, 11111010b, 11001111b, 0x00
+    dw 0xFFFF, 0x0000
+    db 0x00, 11110010b, 11001111b, 0x00
+gdt_tss:
+    dw 103, 0x0000
+    db 0x00, 10001001b, 0x00, 0x00
 com_gdt_end:
 
 com_gdt_descriptor:
@@ -458,4 +488,6 @@ com_shift_held     db 0     ; com_poll_key's own Shift-key tracking
 
 ; Pad the remaining space within the sectors the bootloader reads,
 ; so the file size is a multiple of 512 bytes (see KERNEL_SECTORS_1..4 in boot.asm).
+kernel_image_end:
+KERNEL_IMAGE_START equ 0x8000
 times (512*384)-($-$$) db 0

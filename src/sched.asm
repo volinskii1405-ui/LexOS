@@ -46,13 +46,14 @@
 ; own buffer and the sound hardware).
 ; ============================================================
 
-SCHED_MAX          equ 8
+SCHED_MAX          equ 16           ; (a power of two)
 SCHED_STACK_BASE   equ 0x400000
-SCHED_STACK_SIZE   equ 0x4000
+SCHED_STACK_SIZE   equ 0x10000      ; 16 x 64KB, up to 0x500000
 
 TASK_FREE          equ 0
 TASK_READY         equ 1
 TASK_WAITING       equ 2
+TASK_PAUSED        equ 3            ; a console not on screen (src/console.asm)
 
 WAIT_KEY           equ 1            ; keyboard interrupt
 WAIT_TICK          equ 2            ; timer tick (~18.2Hz)
@@ -182,6 +183,11 @@ sched_switch_to:
     mov eax, [sched_current]
     mov [task_esp + eax*4], esp
     mov [sched_current], ecx
+    mov eax, [task_kstack + ecx*4]        ; a task that's running a ring-3
+    or eax, eax                           ; program (src/usermode.asm):
+    jz .no_ring3                          ; interrupts from it land on
+    mov [tss_block + 4], eax              ; its own kernel stack
+.no_ring3:
     mov esp, [task_esp + ecx*4]
     ret
 
@@ -338,6 +344,11 @@ task_exit:
     mov byte [task_state], TASK_READY     ; wait loop just waits again
 .go:
     mov [sched_current], ecx
+    mov eax, [task_kstack + ecx*4]
+    or eax, eax
+    jz .no_ring3
+    mov [tss_block + 4], eax
+.no_ring3:
     mov esp, [task_esp + ecx*4]
     ret                                   ; into its sched_resume
 
@@ -404,6 +415,9 @@ sched_cmd_ps:
     je .state
     mov esi, sched_msg_ready
     cmp byte [task_state + ecx], TASK_READY
+    je .state
+    mov esi, sched_msg_paused
+    cmp byte [task_state + ecx], TASK_PAUSED
     je .state
     mov esi, sched_msg_waiting
 .state:
@@ -618,6 +632,7 @@ sched_msg_ps_header db "PID  STATE     PRIO    CPU    NAME", 10, 0
 sched_msg_running  db "running   ", 0
 sched_msg_ready    db "ready     ", 0
 sched_msg_waiting  db "waiting   ", 0
+sched_msg_paused   db "paused    ", 0
 sched_msg_normal   db "normal  ", 0
 sched_msg_high     db "high    ", 0
 sched_msg_gap      db "   ", 0
