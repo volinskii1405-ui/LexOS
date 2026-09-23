@@ -249,6 +249,16 @@ alex@/PROGRAMS$
   program, strings and arrays live above the 1MB mark, so a program can
   be up to 64KB. Try `shared/GUESS.BAS` (guess the number) and
   `shared/CATCH.BAS` (catch falling stars with A/D or the arrows).
+- **Networking (as far as `ping`).** An RTL8139 driver (the card
+  `make run` gives QEMU), Ethernet, ARP, IPv4 and ICMP echo. `ifconfig`
+  shows the card, MAC and address; `ping <a.b.c.d> [count]` works like
+  everyone else's ping - one a second, round-trip times in ms (from
+  the TSC, calibrated against the PIT), a summary at the end, ESC stops
+  it. LexOS sits on QEMU's user-mode network as 10.0.2.15; `ping
+  10.0.2.2` (QEMU's gateway) always answers, and outside addresses
+  like `ping 8.8.8.8` go through QEMU's ICMP proxy, which works when
+  the host allows unprivileged ping (most Linux distributions, macOS).
+  Numeric addresses only - no DNS yet.
 - **Shared folder with the host.** `make run` attaches the repo's
   `shared/` folder as a second disk (QEMU's vvfat presents a host
   directory as a whole FAT16 volume). `hostls` lists it and
@@ -414,6 +424,8 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `hostls` | list the files in the host's shared folder (`shared/`, see below) |
 | `hostget <n> [new]` | copy a file from the host's shared folder into the current directory |
 | `hostput <n> [host]` | copy file n into the host's shared folder (a new 8.3 name) |
+| `ifconfig` | show the network card, MAC address and IP |
+| `ping <ip> [n]` | send n ICMP echo requests (default 4), ESC stops |
 | `basic [n]` | Tiny BASIC; with a name, load and run that program first |
 | `reboot` / `shutdown` | restart / power off |
 | `history` | list previously run commands, numbered oldest first |
@@ -485,6 +497,8 @@ outside the kernel image need a full 32-bit linear address:
 | Video memory (VGA text mode) | `0xB8000` |
 | ATA scratch buffer (one sector) | `0x91000` |
 | BASIC program, arrays, strings (`basic`) | `0x200000` – `0x26FFFF` |
+| hostput staging buffer | `0x280000` |
+| RTL8139 receive ring / transmit buffers | `0x300000` / `0x304000` |
 | .COM program segment | `0x100000` |
 | Kernel code/data | `0x8000` – `0x37FFF` (384 sectors) |
 | Boot sector | `0x7C00` |
@@ -547,6 +561,8 @@ src/
   turtle.asm           `turtle <name>`, a LOGO-style turtle graphics
                        script interpreter - same vga.asm mode switch
                        as snake.asm.
+  net.asm              `ping`/`ifconfig`: RTL8139 driver (polled), ARP,
+                       IPv4, ICMP echo.
   basic.asm            `basic [name]`, a Tiny BASIC interpreter/REPL -
                        text mode, program stored above 1MB, SAVE/LOAD
                        through fs_stream_write/fs_load_to.

@@ -125,6 +125,7 @@ main_loop:
 %include "src/turtle.asm"
 %include "src/hostfs.asm"
 %include "src/basic.asm"
+%include "src/net.asm"
 %include "src/grep.asm"
 %include "src/headtail.asm"
 %include "src/uranium.asm"

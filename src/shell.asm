@@ -260,6 +260,18 @@ handle_command:
     je .do_hostput
 
     mov si, buffer
+    mov di, cmd_ifconfig
+    call strcmp_eq
+    cmp ax, 1
+    je .do_ifconfig
+
+    mov si, buffer
+    mov di, cmd_ping_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_ping
+
+    mov si, buffer
     mov di, cmd_basic
     call strcmp_eq
     cmp ax, 1
@@ -547,6 +559,16 @@ handle_command:
     mov si, buffer
     add si, 8                  ; skip "hostput "
     call host_put
+    jmp .done
+
+.do_ifconfig:
+    call net_ifconfig
+    jmp .done
+
+.do_ping:
+    mov si, buffer
+    add si, 5                  ; skip "ping "
+    call net_ping
     jmp .done
 
 .do_basic:
