@@ -231,6 +231,17 @@ alex@/PROGRAMS$
   prints it back out as decimal, hex, octal, and binary, all on one
   screen. One-shot like CALC.BIN, not a loop: run it again to convert
   another value.
+- **Shared folder with the host.** `make run` attaches the repo's
+  `shared/` folder as a second disk (QEMU's vvfat presents a host
+  directory as a whole FAT16 volume). `hostls` lists it and
+  `hostget <n> [new]` copies a file from it into the current LexOS
+  directory - drop a script, CHIP-8 ROM or `.WAV` into `shared/` on
+  your machine, and it's one command away instead of a `recv` plus `nc`
+  on the host. Read-only (LexOS never writes to it), top-level files
+  only, 8.3 short names (a long host name shows up DOS-style, e.g.
+  `MY-LON~1.TXT`), up to 65535 bytes per file - the most a LexOS file
+  holds. Files added while QEMU is running show up after the next start.
+  Try `hostget star.trg` then `turtle star.trg`.
 - `chip8 <name>` interprets a CHIP-8 ROM - not LexOS's own format
   (like `run <n>.com` below, but for a much older and simpler bytecode
   VM: the 35-opcode interpreted machine mid-70s COSMAC VIP calculators
@@ -368,6 +379,8 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `beep [hz]` | play a short tone (frequency in hex, default 880 Hz) |
 | `serial <text>` | send text out over the COM1 UART |
 | `recv <n> <hex size>` | receive a file over COM1 (see **Programs** below for host-side setup) |
+| `hostls` | list the files in the host's shared folder (`shared/`, see below) |
+| `hostget <n> [new]` | copy a file from the host's shared folder into the current directory |
 | `reboot` / `shutdown` | restart / power off |
 | `history` | list previously run commands, numbered oldest first |
 | `df` / `free` | show directory slot / extra sector usage |
