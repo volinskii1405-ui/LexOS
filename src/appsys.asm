@@ -23,7 +23,8 @@
 ;
 ; Exports: sys_open, sys_read, sys_fwrite, sys_close, sys_seek,
 ;          sys_fsize, sys_gfx, sys_blit, sys_palette, sys_keydown,
-;          sys_gfx_mode, sys_blit_rect,
+;          sys_gfx_mode, sys_blit_rect, sys_audio_open, sys_audio_write,
+;          sys_audio_close, app_audio_off,
 ;          app_gfx_off, fh_close_all, app_build_cmdline
 ; ============================================================
 
@@ -775,6 +776,115 @@ sys_keydown:
     ret
 
 ; ============================================================
+; Sound: a stream of 16-bit signed samples through the SB16 (see the
+; end of src/sound.asm). SYS_AUDIO_OPEN: ebx = rate (4000-48000), ecx =
+; channels (1/2) -> 0, or -1 (no SB16, or another program has it).
+; SYS_AUDIO_WRITE: ebx = samples, ecx = bytes - waits for room, so a
+; program writing as fast as it can is paced by the card. SYS_AUDIO_
+; CLOSE lets what's queued finish, then stops.
+; ============================================================
+sys_audio_open:
+    cmp byte [app_audio_owner], 0
+    jne .fail
+    mov eax, [ebp + 16]
+    cmp eax, 4000
+    jb .fail
+    cmp eax, 48000
+    ja .fail
+    mov ecx, [ebp + 24]
+    cmp ecx, 1
+    jb .fail
+    cmp ecx, 2
+    ja .fail
+    call sb_stream_open
+    jc .fail
+    mov eax, [sched_current]
+    inc eax
+    mov [app_audio_owner], al
+    xor eax, eax
+    ret
+.fail:
+    mov eax, -1
+    ret
+
+; carry=1 unless the current task owns the stream
+app_audio_mine:
+    push eax
+    mov eax, [sched_current]
+    inc eax
+    cmp [app_audio_owner], al
+    pop eax
+    je .yes
+    stc
+    ret
+.yes:
+    clc
+    ret
+
+sys_audio_write:
+    call app_audio_mine
+    jc .fail
+    mov eax, [ebp + 16]
+    mov ecx, [ebp + 24]
+    call app_check_buf
+    mov esi, eax
+.more:
+    call sb_stream_put                    ; -> eax queued now
+    add esi, eax
+    sub ecx, eax
+    cmp ecx, 1
+    jbe .done
+    call app_check_abort                  ; (Ctrl+C while waiting)
+    mov eax, WAIT_TICK
+    call task_wait
+    jmp .more
+.done:
+    mov eax, [ebp + 24]
+    ret
+.fail:
+    mov eax, -1
+    ret
+
+sys_audio_close:
+    call app_audio_mine
+    jc .fail
+.drain:                                   ; let the queue play out
+    call sb_stream_queued
+    or eax, eax
+    jz .drained
+    call app_check_abort
+    mov eax, WAIT_TICK
+    call task_wait
+    jmp .drain
+.drained:
+    mov eax, 3                            ; and the last halves
+    add eax, [timer_ticks]
+    mov [app_audio_until], eax
+.tail:
+    mov eax, [timer_ticks]
+    cmp eax, [app_audio_until]
+    jae .stop
+    mov eax, WAIT_TICK
+    call task_wait
+    jmp .tail
+.stop:
+    call app_audio_off
+    xor eax, eax
+    ret
+.fail:
+    mov eax, -1
+    ret
+
+; Stops the stream at once if the current task has it (app_abort).
+app_audio_off:
+    call app_audio_mine
+    jc .done
+    call sb_stream_close
+    mov byte [app_audio_owner], 0
+.done:
+    ret
+
+; ============================================================
 ; For app_run: the program's command line - its name, then whatever
 ; followed it on the `run` line (app_args_src) - at APP_ARGS.
 ; ============================================================
@@ -836,3 +946,5 @@ app_rect_y   dd 0
 app_rect_w   dd 0
 app_rect_h   dd 0
 bga_lfb      dd 0
+app_audio_owner db 0                  ; task id + 1 of the stream's program
+app_audio_until dd 0

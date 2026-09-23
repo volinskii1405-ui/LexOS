@@ -77,7 +77,7 @@ run-serial: $(BUILD_DIR)/os-image.bin
 # committed, so plain `make` / `make run` never needs any of this.
 APP_CFLAGS = -m32 -ffreestanding -fno-pic -fno-pie -fno-stack-protector \
 	-fno-asynchronous-unwind-tables -nostdlib -O2 -Wall
-C_APPS = guess wc note fire pong mandel
+C_APPS = guess wc note fire pong mandel modplay
 upper = $(shell echo $(1) | tr a-z A-Z)
 apps: shared/HELLO.APP shared/CRASH.APP $(foreach a,$(C_APPS),shared/$(call upper,$(a)).APP)
 

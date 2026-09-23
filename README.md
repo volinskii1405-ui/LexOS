@@ -325,13 +325,22 @@ alex@/PROGRAMS$
   in 256 colors or true color (0x00RRGGBB pixels), through QEMU's VBE
   adapter (Bochs "BGA", its framebuffer found on PCI), and
   `gfx_blit_rect` updates just part of the screen. The screen goes back
-  to text by itself when the program ends.
+  to text by itself when the program ends. Sound: `audio_open(22050, 2)`
+  and `audio_write(samples, bytes)` stream 16-bit PCM to the Sound
+  Blaster - the card plays a double buffer over and over (auto-init
+  DMA), and its IRQ5 refills each half from a 64KB queue the program
+  writes into, so `audio_write` also paces a program that just keeps
+  writing.
   Examples (`make apps`, then `hostget` them): `WC.APP` (`run wc.app
   LICENSE` - lines, words, bytes), `NOTE.APP` (`run note.app todo.txt
   buy milk` adds a line, `run note.app todo.txt` lists them),
   `FIRE.APP` (the demo-scene fire effect), `PONG.APP` (W/S or
-  Up/Down against LexOS) and `MANDEL.APP` (the Mandelbrot set in
-  800x600 true color: arrows move, +/- zoom).
+  Up/Down against LexOS), `MANDEL.APP` (the Mandelbrot set in
+  800x600 true color: arrows move, +/- zoom) and `MODPLAY.APP`, a
+  ProTracker `.MOD` player mixing 4 channels in software (`hostget
+  demo.mod`, then `run modplay.app demo.mod` - DEMO.MOD is built by
+  `tools/makemod.py` from synthesized samples; any 4-channel .MOD
+  works).
 - **Preemptive multitasking.** Kernel tasks with their own stacks,
   switched by the timer interrupt (src/sched.asm): equal-priority tasks
   take turns a timer tick (~55ms) at a time, a higher-priority one runs

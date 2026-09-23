@@ -41,6 +41,9 @@ SYS_PALETTE     equ 19      ; ebx = color 0-255, ecx = 0xRRGGBB
 SYS_KEYDOWN     equ 20      ; ebx = scancode -> eax = 1 while held
 SYS_GFX_MODE    equ 21      ; ebx = width, ecx = height, edx = 8 or 32 bpp
 SYS_BLIT_RECT   equ 22      ; ebx = frame, ecx = x | y<<16, edx = w | h<<16
+SYS_AUDIO_OPEN  equ 23      ; ebx = rate, ecx = channels -> 0 / -1
+SYS_AUDIO_WRITE equ 24      ; ebx = 16-bit signed samples, ecx = bytes (waits)
+SYS_AUDIO_CLOSE equ 25      ; finishes what's queued, then stops
 
 %macro EXIT 1
     mov ebx, %1

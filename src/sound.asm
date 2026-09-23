@@ -843,6 +843,7 @@ sb_read:
 ; (background, via play_bg_kill_hook's sb_stop).
 sb_play_wav:
     pushad
+    call sb_stream_close                  ; (a program's stream, if any)
     call sb_reset                         ; a clean state every time
     mov al, 0xD1                          ; speaker on
     call sb_write
@@ -1176,3 +1177,195 @@ sb_version       db 0, 0
 sb_playing       db 0
 sb_dma_count     dd 0
 sb_deadline      dd 0
+
+; ============================================================
+; A stream for ring-3 programs (src/appsys.asm's SYS_AUDIO_*): 16-bit
+; signed PCM, mono or stereo, at any rate the card takes. The card
+; plays SB_STREAM_DMA over and over (auto-init DMA on channel 5), two
+; halves of SB_STREAM_HALF bytes; at the end of each half it raises
+; IRQ5, and sb_stream_isr refills the half just played from the FIFO
+; the program writes into (or with silence, if the program fell
+; behind). One program at a time; `play` stops it.
+; ============================================================
+SB_STREAM_DMA    equ 0x330000             ; 2 halves - word aligned, inside
+SB_STREAM_HALF   equ 4096                 ; one 128KB DMA page
+SB_FIFO          equ 0x340000
+SB_FIFO_SIZE     equ 0x10000              ; a power of 2
+
+; eax = the rate, ecx = channels (1/2) -> carry=1 if there's no SB16
+sb_stream_open:
+    pushad
+    mov [sb_stream_rate], eax
+    mov [sb_stream_channels], ecx
+    call sb_detect
+    jc .fail
+    call sb_reset
+    jc .fail
+    mov al, 0xD1                          ; speaker on
+    call sb_write
+    xor eax, eax
+    mov [sb_fifo_head], eax
+    mov [sb_fifo_tail], eax
+    mov [sb_stream_half_next], eax
+    mov edi, SB_STREAM_DMA                ; both halves: silence to start
+    mov ecx, SB_STREAM_HALF * 2 / 4
+    cld
+    rep stosd
+
+    ; IRQ5 -> sb_stream_isr
+    mov edi, idt_table + (IRQ_BASE + 5) * 8
+    mov eax, sb_stream_isr
+    call set_idt_entry_at_edi
+    in al, PIC1_DATA
+    and al, ~0x20
+    out PIC1_DATA, al
+
+    ; DMA channel 5: auto-init, memory -> card, the whole buffer
+    mov al, 0x05                          ; mask
+    out 0xD4, al
+    xor al, al
+    out 0xD8, al                          ; clear the flip-flop
+    mov al, 0x59                          ; single, auto-init, read, ch 5
+    out 0xD6, al
+    mov eax, SB_STREAM_DMA
+    shr eax, 1                            ; a word address
+    out 0xC4, al
+    mov al, ah
+    out 0xC4, al
+    mov eax, SB_STREAM_DMA
+    shr eax, 16
+    out 0x8B, al                          ; page
+    mov eax, SB_STREAM_HALF * 2 / 2 - 1   ; words - 1
+    out 0xC6, al
+    mov al, ah
+    out 0xC6, al
+    mov al, 0x01                          ; unmask
+    out 0xD4, al
+
+    mov eax, [sb_stream_rate]
+    mov [wav_sample_rate], eax
+    call sb_set_rate
+    mov al, 0xB6                          ; 16-bit output, auto-init, FIFO
+    call sb_write
+    mov al, 0x10                          ; signed mono
+    cmp dword [sb_stream_channels], 2
+    jne .mode
+    mov al, 0x30                          ; signed stereo
+.mode:
+    call sb_write
+    mov eax, SB_STREAM_HALF / 2 - 1       ; a half's samples (in auto-init
+                                          ; mode QEMU counts samples, not
+                                          ; stereo frames - unlike sb_play_wav)
+    call sb_write
+    mov al, ah
+    call sb_write
+    mov byte [sb_streaming], 1
+    popad
+    clc
+    ret
+.fail:
+    popad
+    stc
+    ret
+
+; Queues ecx bytes from esi -> eax = how many fitted (the rest: later)
+sb_stream_put:
+    push ebx
+    push ecx
+    push edx
+    push esi
+    push edi
+    mov eax, [sb_fifo_tail]               ; room: size - 1 - queued
+    sub eax, [sb_fifo_head]
+    dec eax
+    and eax, SB_FIFO_SIZE - 1
+    cmp ecx, eax
+    jbe .count
+    mov ecx, eax
+.count:
+    and ecx, ~1                           ; whole samples
+    mov eax, ecx
+    mov edx, [sb_fifo_head]
+    cld
+.byte:
+    jecxz .done
+    mov bl, [esi]
+    mov [SB_FIFO + edx], bl
+    inc esi
+    inc edx
+    and edx, SB_FIFO_SIZE - 1
+    dec ecx
+    jmp .byte
+.done:
+    mov [sb_fifo_head], edx
+    pop edi
+    pop esi
+    pop edx
+    pop ecx
+    pop ebx
+    ret
+
+; -> eax = bytes still queued
+sb_stream_queued:
+    mov eax, [sb_fifo_head]
+    sub eax, [sb_fifo_tail]
+    and eax, SB_FIFO_SIZE - 1
+    ret
+
+sb_stream_close:
+    cmp byte [sb_streaming], 0
+    je .done
+    pushad
+    mov byte [sb_streaming], 0
+    in al, PIC1_DATA
+    or al, 0x20                           ; IRQ5 off again
+    out PIC1_DATA, al
+    mov al, 0xD9                          ; leave 16-bit auto-init
+    call sb_write
+    call sb_reset
+    mov al, 0x05
+    out 0xD4, al
+    popad
+.done:
+    ret
+
+; IRQ5: a half has been played - refill it
+sb_stream_isr:
+    pushad
+    cld
+    mov dx, SB_ACK16                      ; acknowledge the card
+    in al, dx
+    cmp byte [sb_streaming], 0
+    je .eoi
+    mov edi, [sb_stream_half_next]
+    imul edi, SB_STREAM_HALF
+    add edi, SB_STREAM_DMA
+    xor byte [sb_stream_half_next], 1
+    mov ecx, SB_STREAM_HALF
+    mov edx, [sb_fifo_tail]
+.copy:
+    cmp edx, [sb_fifo_head]
+    je .silence
+    mov al, [SB_FIFO + edx]
+    stosb
+    inc edx
+    and edx, SB_FIFO_SIZE - 1
+    loop .copy
+    jmp .copied
+.silence:
+    xor al, al
+    rep stosb
+.copied:
+    mov [sb_fifo_tail], edx
+.eoi:
+    mov al, 0x20
+    out PIC1_CMD, al
+    popad
+    iret
+
+sb_streaming         db 0
+sb_stream_rate       dd 0
+sb_stream_channels   dd 0
+sb_stream_half_next  dd 0
+sb_fifo_head         dd 0
+sb_fifo_tail         dd 0

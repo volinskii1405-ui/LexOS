@@ -72,7 +72,10 @@ SYS_PALETTE     equ 19                ; ebx = color, ecx = 0xRRGGBB
 SYS_KEYDOWN     equ 20                ; ebx = scancode -> eax = 1 if held
 SYS_GFX_MODE    equ 21                ; ebx = width, ecx = height, edx = bpp
 SYS_BLIT_RECT   equ 22                ; ebx = frame, ecx = x|y<<16, edx = w|h<<16
-SYS_COUNT       equ 23                ; (files/graphics: src/appsys.asm)
+SYS_AUDIO_OPEN  equ 23                ; ebx = rate, ecx = channels
+SYS_AUDIO_WRITE equ 24                ; ebx = 16-bit samples, ecx = bytes
+SYS_AUDIO_CLOSE equ 25
+SYS_COUNT       equ 26                ; (files/graphics: src/appsys.asm)
 
 ; ============================================================
 ; Paging, the TSS, the ring-3 entry points into the kernel (int 0x80,
@@ -219,6 +222,7 @@ app_abort:
     sti
     push eax
     call app_gfx_off                      ; src/appsys.asm
+    call app_audio_off                    ; silence, if it was playing
     call fh_close_all                     ; saves what it wrote
     call speaker_off
     ; a fresh line, unless the program left the cursor at the start of one
@@ -285,7 +289,8 @@ syscall_table:
     dd sys_sleep, sys_clear, sys_setcursor, sys_setcolor, sys_readline
     dd sys_beep, sys_open, sys_read, sys_fwrite, sys_close
     dd sys_seek, sys_fsize, sys_gfx, sys_blit, sys_palette
-    dd sys_keydown, sys_gfx_mode, sys_blit_rect
+    dd sys_keydown, sys_gfx_mode, sys_blit_rect, sys_audio_open
+    dd sys_audio_write, sys_audio_close
 
 sys_exit:
     mov eax, [ebp + 16]

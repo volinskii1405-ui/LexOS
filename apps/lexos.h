@@ -78,6 +78,17 @@ static inline int  gfx_mode_ex(int w, int h, int bpp)     { return lx_syscall3(2
 static inline void gfx_blit_rect(const void *frame, int x, int y, int w, int h)
 { lx_syscall3(22, (int)frame, x | y << 16, w | h << 16); }
 
+/* --- sound: a stream of 16-bit signed samples through the Sound Blaster ---
+ * audio_open(22050, 2) - rate and channels (1 mono, 2 stereo, samples
+ * interleaved left, right); 0, or -1 if there's no card or another
+ * program has it. audio_write() waits until the card has room, so it
+ * also paces a program that just keeps writing. audio_close() lets what
+ * was written finish playing (the stream also stops when the program
+ * ends). */
+static inline int audio_open(int rate, int channels)     { return lx_syscall(23, rate, channels); }
+static inline int audio_write(const short *s, int bytes) { return lx_syscall(24, (int)s, bytes); }
+static inline int audio_close(void)                       { return lx_syscall(25, 0, 0); }
+
 /* keydown(scancode): 1 while that key is held - for games. */
 static inline int keydown(int scancode)                   { return lx_syscall(20, scancode, 0); }
 #define KEY_ESC   0x01
