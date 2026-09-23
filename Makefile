@@ -55,7 +55,7 @@ run: $(BUILD_DIR)/os-image.bin
 	qemu-system-i386 -drive format=raw,file=$(BUILD_DIR)/os-image.bin,if=ide,index=0 \
 		$(SHARED_DRIVE) $(NIC) \
 		-audiodev $(AUDIODEV),id=snd0 -machine pcspk-audiodev=snd0 \
-		-device adlib,audiodev=snd0,iobase=0x220
+		-device adlib,audiodev=snd0,iobase=0x220 -device sb16,audiodev=snd0
 
 # Same as `run`, but also exposes COM1 as a TCP socket on localhost, so
 # `recv <name> <hex size>` (see README) has something to actually receive
@@ -67,7 +67,7 @@ run-serial: $(BUILD_DIR)/os-image.bin
 	qemu-system-i386 -drive format=raw,file=$(BUILD_DIR)/os-image.bin,if=ide,index=0 \
 		$(SHARED_DRIVE) $(NIC) \
 		-audiodev $(AUDIODEV),id=snd0 -machine pcspk-audiodev=snd0 \
-		-device adlib,audiodev=snd0,iobase=0x220 \
+		-device adlib,audiodev=snd0,iobase=0x220 -device sb16,audiodev=snd0 \
 		-serial tcp::$(SERIALPORT),server,nowait
 
 clean:

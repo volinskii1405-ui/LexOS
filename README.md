@@ -249,6 +249,15 @@ alex@/PROGRAMS$
   program, strings and arrays live above the 1MB mark, so a program can
   be up to 64KB. Try `shared/GUESS.BAS` (guess the number) and
   `shared/CATCH.BAS` (catch falling stars with A/D or the arrows).
+- **Sound.** `play <n.imf>` plays AdLib music (OPL2, Type-0 IMF at
+  560Hz); `play <n.wav>` plays uncompressed PCM - 8- or 16-bit, mono or
+  stereo, any rate - through a **Sound Blaster 16**: the DSP is found
+  and reset at 0x220, and the samples go to it by ISA DMA (channel 1
+  for 8-bit, 5 for 16-bit) straight from memory, so it's real digital
+  sound and costs the CPU nothing while it plays. Without an SB16, 8-bit
+  mono WAVs still play, 1-bit, on the PC speaker. `make run` gives QEMU
+  both an AdLib and an SB16. ESC stops playback; `&` puts it in the
+  background (below).
 - **Preemptive multitasking.** Kernel tasks with their own stacks,
   switched by the timer interrupt (src/sched.asm): equal-priority tasks
   take turns a timer tick (~55ms) at a time, a higher-priority one runs
@@ -442,7 +451,8 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `ps` | list the running tasks (pid, state, priority, CPU time) |
 | `kill <pid>` | stop a background task |
 | `clock` | toggle a clock in the top-right corner (a background task) |
-| `play <n.imf> &` | play music in the background |
+| `play <n.imf \| n.wav>` | play AdLib music or a WAV (Sound Blaster 16, or PC speaker) |
+| `play <n> &` | play it in the background |
 | `basic [n]` | Tiny BASIC; with a name, load and run that program first |
 | `reboot` / `shutdown` | restart / power off |
 | `history` | list previously run commands, numbered oldest first |
@@ -516,6 +526,7 @@ outside the kernel image need a full 32-bit linear address:
 | BASIC program, arrays, strings (`basic`) | `0x200000` – `0x26FFFF` |
 | hostput staging buffer | `0x280000` |
 | IMF song buffer (`play`) | `0x310000` |
+| WAV file / SB16 DMA buffer (`play`) | `0x320000` |
 | Task stacks (16KB each) | `0x400000` – `0x41FFFF` |
 | RTL8139 receive ring / transmit buffers | `0x300000` / `0x304000` |
 | .COM program segment | `0x100000` |

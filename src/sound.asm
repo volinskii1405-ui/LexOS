@@ -60,15 +60,6 @@ OPL2_DATA_PORT  equ 0x221
 IMF_TICK_HZ equ 560            ; conventional default - Type-0 IMF (the
                                  ; only variant this reads) doesn't encode
                                  ; its own tick rate at all
-WAV_BUFFER_LEN equ 32768       ; preloaded, not streamed sample-by-sample
-                                 ; during playback (see play_wav_file) -
-                                 ; a fixed cap rather than one byte per
-                                 ; possible sample, for the same reason
-                                 ; PAINT_FLOOD_STACK_LEN is bounded
-                                 ; (src/paint.asm): every declared byte
-                                 ; here is a real byte on disk in this
-                                 ; kernel's flat binary image (see the
-                                 ; note above KERNEL_SECTORS_2, boot.asm)
 
 ; ============================================================
 ; play <name> : DS:SI points to "<name>" (a full name with its real
@@ -562,169 +553,120 @@ imf_consume_byte:
     ret
 
 ; ============================================================
-; Plays fs_tmp_slot as an 8-bit unsigned PCM mono .WAV: parses the
-; RIFF/WAVE chunk structure to find the "fmt " chunk (validates plain
-; PCM, mono, 8-bit - anything else is rejected with an error rather
-; than played back wrong) and the "data" chunk (its sample bytes),
-; preloads up to WAV_BUFFER_LEN of those samples, then plays them back
-; by thresholding each at 128 and driving the speaker directly (see
-; speaker_direct_on/off) at the file's own sample rate via
-; audio_timer_start, one sample per audio_fast_ticks tick.
-;
-; The header is parsed from a local copy of just the inline region
-; (FS_CONTENT_LEN-1 = 127 bytes) rather than the general streamed
-; walk play_imf_file uses: a RIFF+fmt+data chunk header layout is
-; comfortably under 127 bytes for basically any real WAV file, so this
-; can read it in one pass with ordinary indexed memory operands
-; instead of needing random access into a file that's otherwise only
-; ever read sequentially forward.
+; Plays fs_tmp_slot as a PCM .WAV. The whole file (at most 64KB, a
+; LexOS file's limit) is loaded into WAV_FILE_BUF first; the RIFF
+; chunks are walked in memory for "fmt " (plain PCM, mono or stereo,
+; 8- or 16-bit) and "data". Then:
+;   - with a Sound Blaster 16 (sb_detect - QEMU's `-device sb16`, which
+;     `make run` adds): the samples go to it by ISA DMA, straight from
+;     the buffer, at the file's own rate and format - real digital
+;     sound. The CPU only waits for the "done" interrupt status, so
+;     this needs no timer tricks at all.
+;   - without one: the old PC-speaker fallback, 8-bit mono only -
+;     each sample thresholded at 128 and the speaker gated on/off at
+;     the sample rate via audio_timer_start ("1-bit" playback).
 ; ============================================================
 play_wav_file:
-    pusha
+    pushad
 
     mov ax, [fs_tmp_slot]
-    call fs_read_slot
+    mov edi, WAV_FILE_BUF
+    mov ecx, 0xFFFF
+    call fs_load_to
+    mov [wav_file_len], ecx
+    call sound_loading_done
 
-    xor ebx, ebx
-.copy_header_loop:
-    cmp ebx, FS_CONTENT_LEN - 1
-    jae .header_copied
-    mov eax, ebx
-    add ax, FS_CONTENT_OFFSET
-    call fs_scratch_read_byte
-    mov [wav_header_buf + ebx], al
-    inc ebx
-    jmp .copy_header_loop
-.header_copied:
-
-    cmp dword [wav_header_buf], 0x46464952        ; "RIFF"
+    cmp dword [WAV_FILE_BUF], 0x46464952          ; "RIFF"
     jne .bad_format
-    cmp dword [wav_header_buf + 8], 0x45564157      ; "WAVE"
+    cmp dword [WAV_FILE_BUF + 8], 0x45564157      ; "WAVE"
     jne .bad_format
 
     mov ebx, 12
     mov byte [wav_have_fmt], 0
     mov dword [wav_data_offset], 0
-    mov dword [wav_data_size], 0
-
 .chunk_loop:
-    cmp ebx, FS_CONTENT_LEN - 1 - 8
-    jae .chunk_done
-
-    mov eax, [wav_header_buf + ebx]
-    mov ecx, [wav_header_buf + ebx + 4]
-
-    cmp eax, 0x20746D66                              ; "fmt "
+    lea eax, [ebx + 8]
+    cmp eax, [wav_file_len]
+    ja .chunk_done
+    mov eax, [WAV_FILE_BUF + ebx]
+    mov ecx, [WAV_FILE_BUF + ebx + 4]
+    cmp eax, 0x20746D66                           ; "fmt "
     jne .not_fmt
-    mov byte [wav_have_fmt], 1
-    movzx edx, word [wav_header_buf + ebx + 8]
-    cmp edx, 1                                          ; audio format: PCM
+    cmp word [WAV_FILE_BUF + ebx + 8], 1           ; PCM
     jne .bad_format
-    movzx edx, word [wav_header_buf + ebx + 10]
-    cmp edx, 1                                           ; channels: mono
-    jne .bad_format
-    mov edx, [wav_header_buf + ebx + 12]
+    movzx edx, word [WAV_FILE_BUF + ebx + 10]      ; channels
+    cmp edx, 1
+    jb .bad_format
+    cmp edx, 2
+    ja .bad_format
+    mov [wav_channels], edx
+    mov edx, [WAV_FILE_BUF + ebx + 12]
     mov [wav_sample_rate], edx
-    movzx edx, word [wav_header_buf + ebx + 22]
-    cmp edx, 8                                            ; bits/sample: 8
+    movzx edx, word [WAV_FILE_BUF + ebx + 22]      ; bits per sample
+    cmp edx, 8
+    je .bits_ok
+    cmp edx, 16
     jne .bad_format
+.bits_ok:
+    mov [wav_bits], edx
+    mov byte [wav_have_fmt], 1
     jmp .next_chunk
-
 .not_fmt:
-    cmp eax, 0x61746164                               ; "data"
+    cmp eax, 0x61746164                            ; "data"
     jne .next_chunk
-    mov [wav_data_size], ecx
-    mov eax, ebx
-    add eax, 8
+    lea eax, [ebx + 8]
     mov [wav_data_offset], eax
+    ; the size, clipped to what's actually in the file
+    mov edx, [wav_file_len]
+    sub edx, eax
+    cmp ecx, edx
+    jbe .size_ok
+    mov ecx, edx
+.size_ok:
+    mov [wav_data_size], ecx
     jmp .chunk_done
-
 .next_chunk:
     add ebx, 8
     add ebx, ecx
+    inc ebx                                        ; chunks are word-aligned
+    and ebx, ~1
     jmp .chunk_loop
-
 .chunk_done:
     cmp byte [wav_have_fmt], 0
     je .bad_format
     cmp dword [wav_data_offset], 0
     je .bad_format
+    cmp dword [wav_data_size], 0
+    je .end
 
-    mov eax, [wav_data_size]
-    cmp eax, WAV_BUFFER_LEN
-    jbe .size_ok
-    mov eax, WAV_BUFFER_LEN
-.size_ok:
-    mov [wav_play_len], eax
+    call sb_detect
+    jc .speaker
+    call sb_play_wav
+    jmp .end
 
-    mov dword [wav_read_pos], 0
-    mov dword [wav_fill_count], 0
+.speaker:
+    cmp dword [wav_bits], 8
+    jne .needs_sb
+    cmp dword [wav_channels], 1
+    jne .needs_sb
+    call speaker_play_wav
+    jmp .end
 
-.wav_inline_loop:
-    mov ecx, [wav_read_pos]
-    cmp ecx, FS_CONTENT_LEN - 1
-    jae .wav_chain_phase
-    mov eax, [wav_fill_count]
-    cmp eax, [wav_play_len]
-    jae .wav_read_done
+.needs_sb:
+    mov si, msg_play_needs_sb
+    call print_string
+    jmp .end
+.bad_format:
+    mov si, msg_play_bad_wav
+    call print_string
+.end:
+    popad
+    ret
 
-    mov ax, [fs_tmp_slot]
-    call fs_read_slot
-    mov eax, ecx
-    add ax, FS_CONTENT_OFFSET
-    call fs_scratch_read_byte
-
-    cmp ecx, [wav_data_offset]
-    jl .wav_inline_skip
-    mov ebx, [wav_fill_count]
-    mov [wav_buffer + ebx], al
-    inc dword [wav_fill_count]
-.wav_inline_skip:
-    inc dword [wav_read_pos]
-    jmp .wav_inline_loop
-
-.wav_chain_phase:
-    mov ax, [fs_tmp_slot]
-    call fs_read_slot
-    mov ax, FS_CHAIN_OFFSET
-    call fs_scratch_read_word
-    mov [wav_read_chain], ax
-
-.wav_chain_loop:
-    cmp word [wav_read_chain], FS_NO_CHAIN
-    je .wav_read_done
-    mov ax, [wav_read_chain]
-    call fs_extra_read
-
-    xor bx, bx
-.wav_fill_loop:
-    cmp bx, 508
-    jae .wav_fill_sector_done
-    mov eax, [wav_fill_count]
-    cmp eax, [wav_play_len]
-    jae .wav_read_done
-
-    mov ax, bx
-    call fs_scratch_read_byte
-
-    mov ecx, [wav_read_pos]
-    cmp ecx, [wav_data_offset]
-    jl .wav_chain_skip
-    mov edx, [wav_fill_count]
-    mov [wav_buffer + edx], al
-    inc dword [wav_fill_count]
-.wav_chain_skip:
-    inc dword [wav_read_pos]
-    inc bx
-    jmp .wav_fill_loop
-.wav_fill_sector_done:
-    mov ax, FS_EXTRA_NEXT_OFFSET
-    call fs_scratch_read_word
-    mov [wav_read_chain], ax
-    jmp .wav_chain_loop
-
-.wav_read_done:
-    call sound_loading_done
+; --- The PC-speaker fallback: 8-bit mono wav_data_size samples at
+;     WAV_FILE_BUF + wav_data_offset, 1-bit, at wav_sample_rate. ---
+speaker_play_wav:
+    pushad
     mov ebx, [wav_sample_rate]
     cmp ebx, 1000
     jae .rate_min_ok
@@ -734,20 +676,23 @@ play_wav_file:
     jbe .rate_max_ok
     mov ebx, 44100
 .rate_max_ok:
-
     ; speaker_direct_on/off only gate bit0 (PIT channel 2's connection to
     ; the speaker) - they don't drive a tone themselves, so channel 2 needs
     ; a carrier frequency programmed first, same as `beep` does, or gating
     ; it on/off has nothing to gate.
+    push ebx
     mov bx, 1500
     call speaker_set_freq
+    pop ebx
 
     mov byte [sound_stop_requested], 0
     call audio_timer_start
 
+    mov edi, WAV_FILE_BUF
+    add edi, [wav_data_offset]
     xor esi, esi
 .play_loop:
-    cmp esi, [wav_fill_count]
+    cmp esi, [wav_data_size]
     jae .play_done
 
     call sound_poll_stop_key
@@ -758,7 +703,7 @@ play_wav_file:
     cmp eax, esi
     jb .play_wait
 
-    movzx eax, byte [wav_buffer + esi]
+    movzx eax, byte [edi + esi]
     cmp eax, 128
     jb .speaker_low
     call speaker_direct_on
@@ -776,14 +721,311 @@ play_wav_file:
 .play_done:
     call speaker_direct_off
     call audio_timer_stop
-    jmp .end
+    popad
+    ret
 
-.bad_format:
-    mov si, msg_play_bad_wav
-    call print_string
+; ============================================================
+; Sound Blaster 16 - the DSP at SB_BASE (0x220, where QEMU and most
+; real cards put it), ISA DMA channel 1 for 8-bit samples and 5 for
+; 16-bit. Found once by resetting the DSP (it answers 0xAA) and asking
+; its version: the 0x41/0xB0/0xC0 commands used here are DSP 4.x - an
+; SB16 - ones.
+; ============================================================
+SB_BASE          equ 0x220
+SB_MIXER_INDEX   equ SB_BASE + 0x4
+SB_MIXER_DATA    equ SB_BASE + 0x5
+SB_RESET         equ SB_BASE + 0x6
+SB_READ          equ SB_BASE + 0xA
+SB_WRITE         equ SB_BASE + 0xC
+SB_READ_STATUS   equ SB_BASE + 0xE
+SB_ACK16         equ SB_BASE + 0xF
+SB_TIMEOUT       equ 0x10000
 
-.end:
-    popa
+; carry=1 if there's no SB16. Checked once, remembered.
+sb_detect:
+    cmp byte [sb_state], 0
+    jne .known
+    pushad
+    mov byte [sb_state], 2                ; "absent" unless proven otherwise
+    call sb_reset
+    jc .done
+    mov al, 0xE1                          ; DSP version
+    call sb_write
+    call sb_read
+    jc .done
+    mov [sb_version], al
+    call sb_read
+    jc .done
+    mov [sb_version + 1], al
+    cmp byte [sb_version], 4
+    jb .done
+    mov byte [sb_state], 1
+.done:
+    popad
+.known:
+    cmp byte [sb_state], 1
+    je .yes
+    stc
+    ret
+.yes:
+    clc
+    ret
+
+; Resets the DSP (which also stops any playback). carry=1 if nothing
+; answers.
+sb_reset:
+    pushad
+    mov dx, SB_RESET
+    mov al, 1
+    out dx, al
+    mov ecx, 64                           ; >3us
+.hold:
+    in al, dx
+    loop .hold
+    xor al, al
+    out dx, al
+    call sb_read
+    jc .fail
+    cmp al, 0xAA
+    jne .fail
+    popad
+    clc
+    ret
+.fail:
+    popad
+    stc
+    ret
+
+; al -> the DSP (waiting, bounded, until it can take a byte)
+sb_write:
+    push ecx
+    push edx
+    push eax
+    mov dx, SB_WRITE
+    mov ecx, SB_TIMEOUT
+.wait:
+    in al, dx
+    test al, 0x80
+    jz .ready
+    loop .wait
+.ready:
+    pop eax
+    out dx, al
+    pop edx
+    pop ecx
+    ret
+
+; al <- the DSP; carry=1 on timeout
+sb_read:
+    push ecx
+    push edx
+    mov dx, SB_READ_STATUS
+    mov ecx, SB_TIMEOUT
+.wait:
+    in al, dx
+    test al, 0x80
+    jnz .ready
+    loop .wait
+    pop edx
+    pop ecx
+    stc
+    ret
+.ready:
+    mov dx, SB_READ
+    in al, dx
+    pop edx
+    pop ecx
+    clc
+    ret
+
+; Plays the loaded WAV (wav_* describe it) through the SB16 by DMA,
+; waiting until it's done - or ESC (foreground only), or a kill
+; (background, via play_bg_kill_hook's sb_stop).
+sb_play_wav:
+    pushad
+    call sb_reset                         ; a clean state every time
+    mov al, 0xD1                          ; speaker on
+    call sb_write
+    mov byte [sb_playing], 1
+    mov byte [sound_stop_requested], 0
+
+    mov esi, WAV_FILE_BUF
+    add esi, [wav_data_offset]            ; esi = the samples
+    mov ecx, [wav_data_size]
+    cmp dword [wav_bits], 16
+    jne .dma8
+
+    ; 16-bit: channel 5 counts in words, from a word address
+    test esi, 1
+    jz .aligned
+    push ecx                              ; (a DMA'd word must start
+    mov edi, esi                          ; on an even address: slide
+    dec edi                               ; the samples down one byte)
+    cld
+    rep movsb
+    pop ecx
+    mov esi, WAV_FILE_BUF
+    add esi, [wav_data_offset]
+    dec esi
+.aligned:
+    shr ecx, 1                            ; ecx = 16-bit samples
+    jz .done
+    dec ecx
+    mov [sb_dma_count], ecx
+    mov al, 0x05                          ; mask channel 5
+    out 0xD4, al
+    xor al, al
+    out 0xD8, al                          ; clear the byte flip-flop
+    mov al, 0x49                          ; single, increment, mem->card, ch 5
+    out 0xD6, al
+    mov eax, esi
+    shr eax, 1                            ; word address
+    out 0xC4, al
+    mov al, ah
+    out 0xC4, al
+    mov eax, esi
+    shr eax, 16
+    out 0x8B, al                          ; page
+    mov eax, ecx
+    out 0xC6, al
+    mov al, ah
+    out 0xC6, al
+    mov al, 0x01                          ; unmask channel 5
+    out 0xD4, al
+    call sb_set_rate
+    mov al, 0xB0                          ; 16-bit output, single-cycle
+    call sb_write
+    mov al, 0x10                          ; signed, mono
+    cmp dword [wav_channels], 2
+    jne .mode16
+    mov al, 0x30                          ; signed, stereo
+.mode16:
+    call sb_write
+    jmp .length
+
+.dma8:
+    dec ecx
+    mov [sb_dma_count], ecx
+    mov al, 0x05                          ; mask channel 1
+    out 0x0A, al
+    xor al, al
+    out 0x0C, al
+    mov al, 0x49                          ; single, increment, mem->card, ch 1
+    out 0x0B, al
+    mov eax, esi
+    out 0x02, al
+    mov al, ah
+    out 0x02, al
+    mov eax, esi
+    shr eax, 16
+    out 0x83, al                          ; page
+    mov eax, ecx
+    out 0x03, al
+    mov al, ah
+    out 0x03, al
+    mov al, 0x01                          ; unmask channel 1
+    out 0x0A, al
+    call sb_set_rate
+    mov al, 0xC0                          ; 8-bit output, single-cycle
+    call sb_write
+    mov al, 0x00                          ; unsigned, mono
+    cmp dword [wav_channels], 2
+    jne .mode8
+    mov al, 0x20                          ; unsigned, stereo
+.mode8:
+    call sb_write
+
+.length:
+    ; The DSP's length is in FRAMES for stereo (one left + right pair),
+    ; not samples - what QEMU's SB16 implements (a stereo file played
+    ; for twice its length with the total-samples count) - while the
+    ; DMA controller above still counts every byte/word it moves.
+    mov eax, [sb_dma_count]
+    cmp dword [wav_channels], 2
+    jne .length_ok
+    shr eax, 1                            ; (count-1)/2 = frames-1
+.length_ok:
+    call sb_write                         ; length - 1, low byte
+    mov al, ah
+    call sb_write                         ; high byte
+
+    ; Wait for the card's "done" interrupt status (mixer register 0x82:
+    ; bit 0 = the 8-bit transfer's, bit 1 = the 16-bit one's) - with a
+    ; generous deadline too, the expected length plus 2 seconds.
+    mov eax, [wav_data_size]
+    xor edx, edx
+    mov ecx, [wav_sample_rate]
+    imul ecx, [wav_channels]
+    cmp dword [wav_bits], 16
+    jne .bytes_per_second
+    shl ecx, 1
+.bytes_per_second:
+    or ecx, ecx
+    jz .no_deadline_math
+    div ecx                               ; seconds, rounded down
+.no_deadline_math:
+    add eax, 2
+    imul eax, eax, 19                     ; ~ticks
+    add eax, [timer_ticks]
+    mov [sb_deadline], eax
+.wait:
+    call sound_poll_stop_key
+    cmp byte [sound_stop_requested], 0
+    jne .stopped
+    cmp byte [sb_playing], 0              ; (a kill hook stopped it)
+    je .done
+    mov dx, SB_MIXER_INDEX
+    mov al, 0x82
+    out dx, al
+    inc dx
+    in al, dx
+    test al, 0x03
+    jnz .finished
+    mov eax, [timer_ticks]
+    cmp eax, [sb_deadline]
+    jae .stopped
+    mov eax, WAIT_TICK
+    call task_wait
+    jmp .wait
+.finished:
+    mov dx, SB_READ_STATUS                ; acknowledge the interrupt
+    in al, dx
+    mov dx, SB_ACK16
+    in al, dx
+    jmp .done
+.stopped:
+    call sb_stop
+.done:
+    mov byte [sb_playing], 0
+    popad
+    ret
+
+; The sample rate, for output (DSP 4.x command 0x41, rate big-endian).
+sb_set_rate:
+    push eax
+    mov al, 0x41
+    call sb_write
+    mov eax, [wav_sample_rate]
+    xchg al, ah
+    call sb_write                         ; high byte
+    xchg al, ah
+    call sb_write                         ; low byte
+    pop eax
+    ret
+
+; Stops whatever the SB16 is playing (a DSP reset halts the transfer)
+; and masks both DMA channels.
+sb_stop:
+    push eax
+    cmp byte [sb_state], 1
+    jne .done
+    call sb_reset
+    mov al, 0x05
+    out 0x0A, al
+    out 0xD4, al
+    mov byte [sb_playing], 0
+.done:
+    pop eax
     ret
 
 ; ============================================================
@@ -869,6 +1111,7 @@ play_bg_task:
 ; `kill` of the background player: stop the sound where it is.
 play_bg_kill_hook:
     pushad
+    call sb_stop
     call opl2_silence
     call speaker_direct_off
     call speaker_off
@@ -917,13 +1160,19 @@ imf_delay_lo     db 0
 imf_delay_hi     db 0
 imf_delay_target dd 0
 
-wav_header_buf   times (FS_CONTENT_LEN - 1) db 0
+WAV_FILE_BUF     equ 0x320000         ; a whole .WAV, up to 64KB - 64KB-
+                                        ; aligned and below 16MB, as ISA
+                                        ; DMA needs (neither channel can
+                                        ; cross a 64KB/128KB boundary)
+wav_file_len     dd 0
 wav_have_fmt     db 0
 wav_sample_rate  dd 0
+wav_channels     dd 1
+wav_bits         dd 8
 wav_data_offset  dd 0
 wav_data_size    dd 0
-wav_play_len     dd 0
-wav_read_pos     dd 0
-wav_read_chain   dw 0
-wav_fill_count   dd 0
-wav_buffer       times WAV_BUFFER_LEN db 0
+sb_state         db 0                 ; 0 unknown, 1 present, 2 absent
+sb_version       db 0, 0
+sb_playing       db 0
+sb_dma_count     dd 0
+sb_deadline      dd 0

@@ -273,7 +273,8 @@ msg_paint_size_clamped db "Canvas size clamped to the 320x200 screen.", 13, 10, 
 msg_paint_saved      db "Saved ", 0
 msg_view_usage       db "Usage: view <n>", 13, 10, 0
 msg_play_usage       db "Usage: play <n.imf | n.wav>", 13, 10, 0
-msg_play_bad_wav     db "Not a supported WAV (need 8-bit unsigned PCM, mono).", 13, 10, 0
+msg_play_bad_wav     db "Not a supported WAV (need uncompressed PCM, 8 or 16-bit, mono or stereo).", 13, 10, 0
+msg_play_needs_sb    db "Without a Sound Blaster 16 only 8-bit mono WAVs play (on the PC speaker).", 13, 10, 0
 
 ; src/chip8.asm's chip8_run - kept here for the same reason as the
 ; msg_play_* messages above.
