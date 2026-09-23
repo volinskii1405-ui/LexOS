@@ -1,0 +1,560 @@
+; appsys.asm — the system calls that give ring-3 programs (src/usermode.asm)
+; files, their command line and a 320x200 graphics screen.
+;
+; Files: SYS_OPEN hands out one of FH_COUNT handles, each with a 4MB
+; buffer of its own at FH_BUF_BASE (above everything else in the memory
+; map, and outside the program's reach - only these calls touch it).
+; Opening loads the whole file into the buffer; read/write/seek work
+; on the buffer; closing a handle that was written to saves the buffer
+; back through fs_stream_prepare/fs_stream_write, the same path hostget
+; takes. A program that ends - however it ends - has its handles closed
+; (and saved) for it. Names are looked up in the shell's current folder.
+;
+; Graphics: SYS_GFX 1 switches to mode 13h (src/vga.asm) with a
+; 256-color palette - the 16 text colors, 16 grays, a 6x6x6 color cube
+; (32 + r*36 + g*6 + b) - and SYS_BLIT copies a 64000-byte frame from
+; the program's memory to the screen. The screen goes back to text by
+; itself when the program ends, so a crash message is always readable.
+;
+; Exports: sys_open, sys_read, sys_fwrite, sys_close, sys_seek,
+;          sys_fsize, sys_gfx, sys_blit, sys_palette, sys_keydown,
+;          app_gfx_off, fh_close_all, app_build_cmdline
+; ============================================================
+
+FH_COUNT        equ 8
+FH_BUF_BASE     equ 0x4000000            ; 64MB: 8 x 4MB, up to 0x6000000
+FH_BUF_SIZE     equ 0x400000
+
+FH_MODE_READ    equ 0                    ; an existing file, from the start
+FH_MODE_WRITE   equ 1                    ; created, or emptied
+FH_MODE_APPEND  equ 2                    ; created if missing, at its end
+FH_MODE_UPDATE  equ 3                    ; an existing file, read + write
+
+APP_ARGS        equ APP_STACK_TOP - 256  ; the command line, at entry in ebx
+
+; ============================================================
+; Copies the program's 0-terminated name at eax into fs_tmp_name.
+; carry=1 if it's empty, too long or not in the program's memory.
+; ============================================================
+app_copy_name:
+    push eax
+    push ecx
+    push esi
+    mov esi, eax
+    xor ecx, ecx
+.char:
+    cmp esi, APP_BASE
+    jb .bad
+    cmp esi, APP_STACK_TOP
+    jae .bad
+    mov al, [esi]
+    or al, al
+    jz .end
+    cmp ecx, FS_NAME_LEN
+    jae .bad
+    mov [fs_tmp_name + ecx], al
+    inc ecx
+    inc esi
+    jmp .char
+.end:
+    mov byte [fs_tmp_name + ecx], 0
+    or ecx, ecx
+    jz .bad
+    pop esi
+    pop ecx
+    pop eax
+    clc
+    ret
+.bad:
+    pop esi
+    pop ecx
+    pop eax
+    stc
+    ret
+
+; eax = a pointer, ecx = a length: ends the program if that range isn't
+; wholly its own (like app_check_range, for any register).
+app_check_buf:
+    push eax
+    cmp eax, APP_BASE
+    jb .bad
+    add eax, ecx
+    jc .bad
+    cmp eax, APP_STACK_TOP
+    ja .bad
+    pop eax
+    ret
+.bad:
+    mov esi, app_msg_bad_pointer
+    call basic_puts
+    mov eax, APP_EXIT_CRASHED
+    jmp app_abort
+
+; The caller's handle (ebx) -> edi = its index, esi = its buffer.
+; carry=1 if it isn't an open handle of this program's.
+fh_lookup:
+    mov edi, [ebp + 16]
+    cmp edi, FH_COUNT
+    jae .bad
+    mov eax, [sched_current]
+    inc eax
+    cmp [fh_owner + edi], al
+    jne .bad
+    mov esi, edi
+    imul esi, FH_BUF_SIZE
+    add esi, FH_BUF_BASE
+    clc
+    ret
+.bad:
+    stc
+    ret
+
+; ============================================================
+; SYS_OPEN: ebx = name, ecx = mode (FH_MODE_*) -> eax = handle, or -1
+; ============================================================
+sys_open:
+    mov eax, [ebp + 16]
+    call app_copy_name
+    jc .fail
+    cmp dword [ebp + 24], FH_MODE_UPDATE
+    ja .fail
+    xor edi, edi                          ; a free handle
+.find:
+    cmp byte [fh_owner + edi], 0
+    je .got
+    inc edi
+    cmp edi, FH_COUNT
+    jb .find
+    jmp .fail
+.got:
+    mov [fh_cur], edi
+
+    mov si, fs_tmp_name
+    call fs_find_by_name
+    cmp ax, -1
+    je .missing
+    mov [fh_cur_slot], ax
+    call fs_reject_if_user_cfg            ; (says why itself)
+    cmp ax, 1
+    je .fail
+    cmp dword [ebp + 24], FH_MODE_WRITE
+    je .create                            ; empties it
+    mov ax, [fh_cur_slot]
+    call fs_get_type
+    cmp ax, FS_TYPE_FILE
+    jne .fail
+    mov ax, [fh_cur_slot]
+    call fs_read_slot
+    call fs_get_size
+    cmp eax, FH_BUF_SIZE
+    ja .fail                              ; too big to hold
+    mov edi, [fh_cur]
+    imul edi, FH_BUF_SIZE
+    add edi, FH_BUF_BASE
+    mov ecx, FH_BUF_SIZE
+    mov ax, [fh_cur_slot]
+    call fs_load_to                       ; -> ecx = its size
+    xor edx, edx                          ; position: the start...
+    cmp dword [ebp + 24], FH_MODE_APPEND
+    jne .opened
+    mov edx, ecx                          ; ...or the end
+    jmp .opened
+
+.missing:
+    cmp dword [ebp + 24], FH_MODE_WRITE
+    je .create
+    cmp dword [ebp + 24], FH_MODE_APPEND
+    jne .fail
+.create:
+    call fs_stream_prepare                ; a new empty file, or an old one
+    jc .fail                              ; to overwrite (says why not)
+    mov ax, [fs_tmp_slot]
+    mov [fh_cur_slot], ax
+    xor ecx, ecx
+    xor edx, edx
+    mov edi, [fh_cur]
+    mov byte [fh_dirty + edi], 1          ; saved (as empty) even if never written
+    jmp .have
+
+.opened:
+    mov edi, [fh_cur]
+    mov byte [fh_dirty + edi], 0
+.have:
+    mov [fh_size + edi*4], ecx
+    mov [fh_pos + edi*4], edx
+    mov ax, [fh_cur_slot]
+    mov [fh_slot + edi*2], ax
+    mov eax, [sched_current]
+    inc eax
+    mov [fh_owner + edi], al
+    mov eax, edi
+    ret
+.fail:
+    mov eax, -1
+    ret
+
+; ============================================================
+; SYS_READ: ebx = handle, ecx = buffer, edx = count -> eax = bytes read
+; (0 at the end of the file), or -1
+; ============================================================
+sys_read:
+    call fh_lookup
+    jc .fail
+    mov eax, [ebp + 24]
+    mov ecx, [ebp + 20]
+    call app_check_buf
+    mov eax, [fh_size + edi*4]
+    sub eax, [fh_pos + edi*4]
+    cmp ecx, eax
+    jbe .count
+    mov ecx, eax
+.count:
+    add esi, [fh_pos + edi*4]
+    add [fh_pos + edi*4], ecx
+    mov eax, ecx
+    push edi
+    mov edi, [ebp + 24]
+    cld
+    rep movsb
+    pop edi
+    ret
+.fail:
+    mov eax, -1
+    ret
+
+; ============================================================
+; SYS_FWRITE: ebx = handle, ecx = data, edx = count -> eax = bytes
+; written (fewer once the file reaches 4MB), or -1
+; ============================================================
+sys_fwrite:
+    call fh_lookup
+    jc .fail
+    mov eax, [ebp + 24]
+    mov ecx, [ebp + 20]
+    call app_check_buf
+    mov eax, FH_BUF_SIZE
+    sub eax, [fh_pos + edi*4]
+    cmp ecx, eax
+    jbe .count
+    mov ecx, eax
+.count:
+    mov byte [fh_dirty + edi], 1
+    push edi
+    mov eax, ecx
+    add esi, [fh_pos + edi*4]
+    xchg esi, edi                         ; edi = into the buffer
+    mov esi, [ebp + 24]
+    cld
+    rep movsb
+    pop edi
+    add [fh_pos + edi*4], eax
+    mov ecx, [fh_pos + edi*4]
+    cmp ecx, [fh_size + edi*4]
+    jbe .done
+    mov [fh_size + edi*4], ecx
+.done:
+    ret
+.fail:
+    mov eax, -1
+    ret
+
+; SYS_SEEK: ebx = handle, ecx = position (past the end - e.g. -1 -
+; means the end) -> eax = the new position, or -1
+sys_seek:
+    call fh_lookup
+    jc .fail
+    mov eax, [ebp + 24]
+    cmp eax, [fh_size + edi*4]
+    jbe .set
+    mov eax, [fh_size + edi*4]
+.set:
+    mov [fh_pos + edi*4], eax
+    ret
+.fail:
+    mov eax, -1
+    ret
+
+; SYS_FSIZE: ebx = handle -> eax = the file's size, or -1
+sys_fsize:
+    call fh_lookup
+    jc .fail
+    mov eax, [fh_size + edi*4]
+    ret
+.fail:
+    mov eax, -1
+    ret
+
+; SYS_CLOSE: ebx = handle -> eax = 0, or -1 (not open, or the disk was
+; too full to save all of it)
+sys_close:
+    call fh_lookup
+    jc .fail
+    call fh_close
+    jc .fail
+    xor eax, eax
+    ret
+.fail:
+    mov eax, -1
+    ret
+
+; Closes handle edi, saving its buffer first if it was written to.
+; carry=1 if the save didn't fit on disk.
+fh_close:
+    pushad
+    mov byte [fh_owner + edi], 0
+    cmp byte [fh_dirty + edi], 0
+    je .ok
+    mov byte [fh_dirty + edi], 0
+    mov ax, [fh_slot + edi*2]
+    mov [fs_tmp_slot], ax
+    mov eax, [fh_size + edi*4]
+    mov [fs_stream_size], eax
+    imul edi, FH_BUF_SIZE
+    add edi, FH_BUF_BASE
+    mov [fh_src_ptr], edi
+    mov dword [fs_stream_source], fh_stream_byte
+    call fs_stream_write
+    jc .full
+.ok:
+    popad
+    clc
+    ret
+.full:
+    popad
+    stc
+    ret
+
+; fs_stream_write's byte source for fh_close: al = the next byte.
+fh_stream_byte:
+    push esi
+    mov esi, [fh_src_ptr]
+    mov al, [esi]
+    inc esi
+    mov [fh_src_ptr], esi
+    pop esi
+    ret
+
+; Closes (and saves) every handle the current task still has open -
+; for app_abort, however the program ended.
+fh_close_all:
+    pushad
+    mov eax, [sched_current]
+    inc eax
+    xor edi, edi
+.next:
+    cmp [fh_owner + edi], al
+    jne .skip
+    call fh_close
+.skip:
+    inc edi
+    cmp edi, FH_COUNT
+    jb .next
+    popad
+    ret
+
+; ============================================================
+; SYS_GFX: ebx = 1 -> 320x200x256 graphics, 0 -> back to text
+; ============================================================
+sys_gfx:
+    cmp dword [ebp + 16], 0
+    je .off
+    cmp byte [app_gfx], 0
+    jne .done
+    pushad
+    call vga_enter_mode13
+    call app_gfx_palette
+    mov edi, VGA_FB
+    mov ecx, VGA_FB_SIZE / 4
+    xor eax, eax
+    cld
+    rep stosd
+    popad
+    mov byte [app_gfx], 1
+.done:
+    xor eax, eax
+    ret
+.off:
+    call app_gfx_off
+    xor eax, eax
+    ret
+
+; Back to text mode, if a program switched to graphics.
+app_gfx_off:
+    cmp byte [app_gfx], 0
+    je .done
+    pushad
+    call vga_leave_mode13
+    popad
+    mov byte [app_gfx], 0
+.done:
+    ret
+
+; The programs' standard palette (see the top of this file).
+app_gfx_palette:
+    pushad
+    mov dx, VGA_DAC_WRITE_INDEX
+    xor al, al
+    out dx, al
+    mov dx, VGA_DAC_DATA
+    mov esi, vga_default_palette          ; 0-15: the text colors
+    mov ecx, 48
+.text:
+    lodsb
+    out dx, al
+    loop .text
+    xor ecx, ecx                          ; 16-31: grays
+.gray:
+    mov eax, ecx
+    imul eax, 63
+    push edx
+    xor edx, edx
+    mov ebx, 15
+    div ebx
+    pop edx
+    out dx, al
+    out dx, al
+    out dx, al
+    inc ecx
+    cmp ecx, 16
+    jb .gray
+    xor ebx, ebx                          ; 32-247: the color cube
+.cube:
+    mov eax, ebx
+    push edx
+    xor edx, edx
+    mov ecx, 36
+    div ecx                               ; al = r, edx = g*6 + b
+    mov ecx, edx
+    pop edx
+    mov al, [app_cube_levels + eax]
+    out dx, al
+    mov eax, ecx
+    push edx
+    xor edx, edx
+    mov ecx, 6
+    div ecx                               ; al = g, dl = b
+    mov ecx, edx
+    pop edx
+    mov al, [app_cube_levels + eax]
+    out dx, al
+    mov al, [app_cube_levels + ecx]
+    out dx, al
+    inc ebx
+    cmp ebx, 216
+    jb .cube
+    mov ecx, 8 * 3                        ; 248-255: black
+    xor al, al
+.rest:
+    out dx, al
+    loop .rest
+    popad
+    ret
+
+app_cube_levels db 0, 13, 25, 38, 50, 63
+
+; SYS_BLIT: ebx = 64000 bytes (320x200, a byte per pixel) -> the screen
+sys_blit:
+    mov eax, [ebp + 16]
+    mov ecx, VGA_FB_SIZE
+    call app_check_buf
+    cmp byte [app_gfx], 0
+    je .done
+    mov esi, eax
+    mov edi, VGA_FB
+    mov ecx, VGA_FB_SIZE / 4
+    cld
+    rep movsd
+.done:
+    xor eax, eax
+    ret
+
+; SYS_PALETTE: ebx = color 0-255, ecx = 0xRRGGBB
+sys_palette:
+    mov eax, [ebp + 16]
+    cmp eax, 255
+    ja .bad
+    mov dx, VGA_DAC_WRITE_INDEX
+    out dx, al
+    mov dx, VGA_DAC_DATA
+    mov ecx, [ebp + 24]
+    mov eax, ecx
+    shr eax, 18                           ; 8-bit red -> the DAC's 6 bits
+    out dx, al
+    mov eax, ecx
+    shr eax, 10
+    and al, 63
+    out dx, al
+    mov eax, ecx
+    shr eax, 2
+    and al, 63
+    out dx, al
+    xor eax, eax
+    ret
+.bad:
+    mov eax, -1
+    ret
+
+; SYS_KEYDOWN: ebx = a scancode -> eax = 1 while that key is held down
+sys_keydown:
+    mov ecx, [ebp + 16]
+    xor eax, eax
+    cmp ecx, 0x80
+    jae .done
+    mov al, [key_held + ecx]
+.done:
+    ret
+
+; ============================================================
+; For app_run: the program's command line - its name, then whatever
+; followed it on the `run` line (app_args_src) - at APP_ARGS.
+; ============================================================
+app_build_cmdline:
+    pushad
+    mov edi, APP_ARGS
+    mov esi, fs_tmp_name
+.name:
+    lodsb
+    or al, al
+    jz .name_done
+    stosb
+    jmp .name
+.name_done:
+    movzx esi, word [app_args_src]
+    or esi, esi
+    jz .end
+.skip:
+    cmp byte [esi], ' '
+    jne .args
+    inc esi
+    jmp .skip
+.args:
+    cmp byte [esi], 0
+    je .end
+    mov al, ' '
+    stosb
+.arg_char:
+    lodsb
+    or al, al
+    jz .end
+    cmp edi, APP_STACK_TOP - 1
+    jae .end
+    stosb
+    jmp .arg_char
+.end:
+    mov byte [edi], 0
+    popad
+    ret
+
+; ============================================================
+; Data (shared by every console: src/console.asm - the buffers these
+; describe are outside any console's saved memory)
+; ============================================================
+fh_owner     times FH_COUNT db 0      ; task id + 1, 0 = free
+fh_dirty     times FH_COUNT db 0
+fh_slot      times FH_COUNT dw 0
+fh_size      times FH_COUNT dd 0
+fh_pos       times FH_COUNT dd 0
+fh_cur       dd 0
+fh_cur_slot  dw 0
+fh_src_ptr   dd 0
+app_gfx      db 0

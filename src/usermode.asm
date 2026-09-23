@@ -1,6 +1,6 @@
 ; usermode.asm — protected mode for programs: `run <name>.app` runs a
 ; flat 32-bit binary in ring 3, with paging keeping it inside its own
-; 1MB. A program that goes wrong - touches memory that isn't its own,
+; 4MB. A program that goes wrong - touches memory that isn't its own,
 ; executes a privileged instruction, divides by zero - is stopped with
 ; a message saying what it did, and the shell carries on. It talks to
 ; the kernel only through system calls (int 0x80, see SYS_* below).
@@ -9,7 +9,7 @@
 ;
 ; The pieces:
 ;   - Paging (pm_init): the first 128MB identity-mapped with 4MB pages,
-;     all supervisor-only - except APP_BASE..APP_BASE+1MB, mapped with
+;     all supervisor-only - except APP_BASE..APP_BASE+4MB, mapped with
 ;     4KB user pages from a page table of its own. Everything else is
 ;     invisible to ring 3: a program's every stray pointer faults.
 ;   - Segments: ring-3 code/data descriptors (0x28/0x30) and a TSS
@@ -29,7 +29,8 @@
 ;     the key-waiting system calls check for it themselves.
 ;
 ; A program is loaded at APP_BASE and entered at its first byte, with
-; its stack at the top of its 1MB (APP_STACK_TOP). It ends with
+; its command line ("NAME.APP arg1 arg2", 0-terminated) at APP_ARGS
+; near the top of its 4MB, ebx pointing to it, and its stack just below. It ends with
 ; SYS_EXIT; app_run returns once it has, however it ended. See apps/
 ; for the program side: lexos.inc (assembly), lexos.h + crt0.asm (C).
 ; ============================================================
@@ -40,9 +41,9 @@ TSS_SEL         equ 0x38
 KERNEL_SS       equ 0x10
 
 APP_BASE        equ 0x800000
-APP_SIZE        equ 0x100000          ; 1MB: 256 user pages
+APP_SIZE        equ 0x400000          ; 4MB: 1024 user pages (one page table)
 APP_STACK_TOP   equ APP_BASE + APP_SIZE
-APP_MAX_FILE    equ 0xFFFF
+APP_MAX_FILE    equ APP_SIZE - 0x10000 ; leaves room for the stack
 
 PAGE_DIR        equ 0x500000          ; 4KB, then the user page table
 PAGE_TABLE_APP  equ 0x501000
@@ -59,7 +60,17 @@ SYS_SETCURSOR   equ 7                 ; ebx = row, ecx = column (0-based)
 SYS_SETCOLOR    equ 8                 ; ebx = text attribute
 SYS_READLINE    equ 9                 ; ebx = buffer, ecx = size -> eax = length
 SYS_BEEP        equ 10                ; ebx = Hz, ecx = milliseconds
-SYS_COUNT       equ 11
+SYS_OPEN        equ 11                ; ebx = name, ecx = mode -> eax = handle / -1
+SYS_READ        equ 12                ; ebx = handle, ecx = buffer, edx = count
+SYS_FWRITE      equ 13                ; ebx = handle, ecx = data, edx = count
+SYS_CLOSE       equ 14                ; ebx = handle
+SYS_SEEK        equ 15                ; ebx = handle, ecx = position
+SYS_FSIZE       equ 16                ; ebx = handle -> eax = size
+SYS_GFX         equ 17                ; ebx = 1 graphics / 0 text
+SYS_BLIT        equ 18                ; ebx = 320x200 frame (64000 bytes)
+SYS_PALETTE     equ 19                ; ebx = color, ecx = 0xRRGGBB
+SYS_KEYDOWN     equ 20                ; ebx = scancode -> eax = 1 if held
+SYS_COUNT       equ 21                ; (files/graphics: src/appsys.asm)
 
 ; ============================================================
 ; Paging, the TSS, the ring-3 entry points into the kernel (int 0x80,
@@ -149,12 +160,13 @@ app_run:
     pushfd
     pushad
     push eax
-    ; a clean 1MB for it: code/data, zeroed "bss", stack
+    ; a clean 4MB for it: code/data, zeroed "bss", stack
     mov edi, APP_BASE
     mov ecx, APP_SIZE / 4
     xor eax, eax
     cld
     rep stosd
+    call app_build_cmdline                ; src/appsys.asm
     pop eax
     mov edi, APP_BASE
     mov ecx, APP_MAX_FILE
@@ -171,7 +183,7 @@ app_run:
     mov [tss_block + 4], esp              ; start from (esp0)
 
     push dword USER_DATA_SEL              ; ss
-    push dword APP_STACK_TOP              ; esp
+    push dword APP_ARGS - 16              ; esp: below the command line
     push dword 0x202                      ; eflags: interrupts on, IOPL 0
     push dword USER_CODE_SEL              ; cs
     push dword APP_BASE                   ; eip
@@ -182,6 +194,7 @@ app_run:
     xor esi, esi
     xor edi, edi
     xor ebp, ebp
+    mov ebx, APP_ARGS                     ; the command line (crt0.asm)
     iretd
 
 .empty:
@@ -201,7 +214,10 @@ app_abort:
     mov dword [task_kstack + ecx*4], 0
     mov byte [app_active], 0
     mov byte [app_abort_request], 0
+    sti
     push eax
+    call app_gfx_off                      ; src/appsys.asm
+    call fh_close_all                     ; saves what it wrote
     call speaker_off
     ; a fresh line, unless the program left the cursor at the start of one
     cmp word [cursor_col], 0
@@ -228,6 +244,7 @@ APP_EXIT_CRASHED equ 0x80000000
 
 ; Ctrl+C, acted on by timer_isr (src/interrupts.asm) while in ring 3.
 app_ctrl_c:
+    call app_gfx_off
     mov esi, app_msg_ctrl_c
     call basic_puts
     mov eax, APP_EXIT_CRASHED
@@ -264,7 +281,9 @@ syscall_isr:
 syscall_table:
     dd sys_exit, sys_write, sys_getkey, sys_pollkey, sys_ticks
     dd sys_sleep, sys_clear, sys_setcursor, sys_setcolor, sys_readline
-    dd sys_beep
+    dd sys_beep, sys_open, sys_read, sys_fwrite, sys_close
+    dd sys_seek, sys_fsize, sys_gfx, sys_blit, sys_palette
+    dd sys_keydown
 
 sys_exit:
     mov eax, [ebp + 16]
@@ -359,7 +378,8 @@ sys_ticks:
 
 sys_sleep:
     mov eax, [ebp + 16]
-    xor edx, edx
+    add eax, 54                           ; rounded up to whole ~55ms ticks,
+    xor edx, edx                          ; so sleep_ms(1) waits for the next
     mov ecx, 55
     div ecx
     add eax, [timer_ticks]
@@ -536,6 +556,7 @@ exc_common:
     mov ds, ax
     mov es, ax
     sti
+    call app_gfx_off                      ; so the message can be read
     mov esi, app_msg_crashed
     call basic_puts
     call exc_print_name
@@ -651,6 +672,7 @@ fs_name_ends_with_app:
 ; ============================================================
 ; (app_active / app_abort_request are per console - in src/data.asm)
 exc_vector         dd 0
+app_args_src       dw 0                   ; fs_run: what followed the name
 exc_error          dd 0
 exc_eip            dd 0
 exc_cr2            dd 0

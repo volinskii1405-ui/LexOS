@@ -36,6 +36,7 @@ fs_run:
     jmp .name_loop
 .name_done:
     mov byte [di], 0
+    mov [app_args_src], si         ; the rest of the line: a .app's arguments
 
     cmp byte [fs_tmp_name], 0
     jne .have_name

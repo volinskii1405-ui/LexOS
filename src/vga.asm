@@ -86,7 +86,10 @@ vga_leave_mode13:
     call vga_apply_regs
 
     mov esi, vga_saved_dac
-    call vga_write_dac
+    push ecx
+    mov ecx, 768
+    call vga_write_dac_n
+    pop ecx
 
     mov esi, vga_saved_text
     mov edi, VGA_TEXT_FB
@@ -446,13 +449,15 @@ vga_save_regs:
     mov ecx, VGA_TEXT_SIZE
     rep movsb
 
-    ; save the current DAC palette entries 0..15 (48 bytes: R,G,B each)
+    ; save the whole DAC palette (256 x R,G,B) - a program's own
+    ; palette (src/usermode.asm's SYS_PALETTE) can change any entry,
+    ; and text mode's colors 6 and 8-15 live at DAC 20 and 56-63
     mov dx, VGA_DAC_READ_INDEX
     xor al, al
     out dx, al
     mov dx, VGA_DAC_DATA
     mov edi, vga_saved_dac
-    mov ecx, 48
+    mov ecx, 768
 .dac_loop:
     in al, dx
     stosb
@@ -466,6 +471,14 @@ vga_save_regs:
 ; entries 0..15.
 ; ============================================================
 vga_write_dac:
+    push ecx
+    mov ecx, 48
+    call vga_write_dac_n
+    pop ecx
+    ret
+
+; The same for ecx bytes (entries 0.. onward).
+vga_write_dac_n:
     push eax
     push ecx
     push edx
@@ -474,7 +487,6 @@ vga_write_dac:
     xor al, al
     out dx, al
     mov dx, VGA_DAC_DATA
-    mov ecx, 48
 .loop:
     lodsb
     out dx, al
@@ -622,7 +634,7 @@ vga_default_palette:
     db 63, 63, 21        ; 14 yellow
     db 63, 63, 63        ; 15 white
 
-vga_saved_dac times 48 db 0
+vga_saved_dac times 768 db 0
 vga_saved_font times VGA_FONT_SIZE db 0
 
 vga_draw_color db 15

@@ -275,12 +275,12 @@ alex@/PROGRAMS$
   kernel keeps session state in ordinary globals, a switch swaps them:
   the kernel image except its shared parts (interrupts, drivers, the
   scheduler, sound, network, RAM-backed TMP files), plus BASIC's
-  memory, the program's 1MB and the text screen, into a 2MB save area
+  memory, the program's 4MB and the text screen, into a 5MB save area
   per console - only ever at a safe point, while the console on screen
   is waiting for a key.
 - **Protected programs (ring 3).** `run <name>.app` runs a program in
   user mode, the way real operating systems do: paging maps it its own
-  1MB and nothing else, so it can't touch the kernel, the screen or
+  4MB and nothing else, so it can't touch the kernel, the screen or
   any I/O port - it asks the kernel for things through system calls
   (`int 0x80`: write, getkey, readline, sleep, ticks, cursor, color,
   beep, exit). When a program does something it mustn't - writes over
@@ -294,6 +294,23 @@ alex@/PROGRAMS$
   `gcc -m32`): `make apps` builds the examples into `shared/` -
   `HELLO.APP`, `CRASH.APP` (a menu of forbidden things to try) and
   `GUESS.APP` (in C). Try `hostget crash.app`, then `run crash.app`.
+- **Files, arguments, memory and graphics for programs**
+  (src/appsys.asm). `run <name>.app arg1 arg2` passes the rest of the
+  line to the program - `main(argc, argv)` in C, `ebx` points to it
+  in assembly. Programs open files in the current folder with
+  `open`/`read`/`fwrite`/`seek`/`fsize`/`close` (read, write, append
+  or update; up to 4MB each, 8 open at once - whatever was written is
+  saved on close, or when the program ends, even by a crash); C
+  programs get `malloc`/`free`/`realloc` over their 4MB. `gfx_mode(1)`
+  switches to 320x200 in 256 colors: a program draws into a buffer of
+  its own and `gfx_blit`s it to the screen, can set any palette color,
+  and `keydown(scancode)` tells whether a key is held - what games
+  need. The screen goes back to text by itself when the program ends.
+  Examples (`make apps`, then `hostget` them): `WC.APP` (`run wc.app
+  LICENSE` - lines, words, bytes), `NOTE.APP` (`run note.app todo.txt
+  buy milk` adds a line, `run note.app todo.txt` lists them),
+  `FIRE.APP` (the demo-scene fire effect) and `PONG.APP` (W/S or
+  Up/Down against LexOS).
 - **Preemptive multitasking.** Kernel tasks with their own stacks,
   switched by the timer interrupt (src/sched.asm): equal-priority tasks
   take turns a timer tick (~55ms) at a time, a higher-priority one runs
@@ -488,7 +505,7 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `ping <host> [n]` | send n ICMP echo requests (default 4) to a name or address, ESC stops |
 | `nslookup <name>` | look a name up in DNS |
 | `dhcp` | get an address from the DHCP server again |
-| `run <n>.app` | run a protected (ring 3) program - see `apps/` |
+| `run <n>.app [args]` | run a protected (ring 3) program - see `apps/` |
 | Alt+T / Alt+1..9 / `exit` | open a new console / switch to console N / close this one |
 | `ps` | list the running tasks (pid, state, priority, CPU time) |
 | `kill <pid>` | stop a background task |
@@ -573,8 +590,9 @@ outside the kernel image need a full 32-bit linear address:
 | WAV file / SB16 DMA buffer (`play`) | `0x320000` |
 | Task stacks (64KB each, 16 tasks) | `0x400000` – `0x4FFFFF` |
 | Page directory / user page table | `0x500000` / `0x501000` |
-| A ring-3 program's own 1MB | `0x800000` – `0x8FFFFF` |
-| Console save areas (2MB each) | `0x1000000` – `0x21FFFFF` |
+| A ring-3 program's own 4MB | `0x800000` – `0xBFFFFF` |
+| Console save areas (5MB each) | `0x1000000` – `0x3CFFFFF` |
+| Programs' open-file buffers (8 x 4MB) | `0x4000000` – `0x5FFFFFF` |
 | RTL8139 receive ring / transmit buffers | `0x300000` / `0x304000` |
 | .COM program segment | `0x100000` |
 | Kernel code/data | `0x8000` – `0x3FFFF` (448 sectors) |
@@ -644,6 +662,8 @@ src/
                        as snake.asm.
   usermode.asm         ring 3: paging, TSS, int 0x80 system calls,
                        exception handling, `run <n>.app`.
+  appsys.asm           programs' files, command line and graphics
+                       system calls.
   console.asm          virtual consoles: Alt+T / Alt+1..9 / exit, the
                        per-console memory swap.
   sched.asm            the scheduler: tasks, priorities, task_wait,

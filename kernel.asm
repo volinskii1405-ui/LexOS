@@ -147,6 +147,7 @@ shared_net_end:
 shared_system_start:
 %include "src/sched.asm"
 %include "src/usermode.asm"
+%include "src/appsys.asm"
 %include "src/console.asm"
 shared_system_end:
 %include "src/grep.asm"

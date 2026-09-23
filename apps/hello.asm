@@ -23,5 +23,5 @@ start:
 msg_title db "Hello from ring 3!", 10, 0
 msg_ask   db "What's your name? ", 0
 msg_hi    db "Nice to meet you, ", 0
-msg_bye   db "! This program runs in its own protected 1MB.", 10, 0
+msg_bye   db "! This program runs in its own protected 4MB.", 10, 0
 name      times 40 db 0

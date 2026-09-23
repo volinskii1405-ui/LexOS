@@ -1,6 +1,6 @@
 ASM = nasm
 BUILD_DIR = build
-SRC_FILES = kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/serial.asm src/mouse.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/vga.asm src/snake.asm src/paint.asm src/sweeper.asm src/tetris.asm src/game2048.asm src/convert.asm src/assembler.asm src/rtc.asm src/speaker.asm src/sound.asm src/chip8.asm src/turtle.asm src/hostfs.asm src/basic.asm src/net.asm src/sched.asm src/usermode.asm src/console.asm src/grep.asm src/headtail.asm src/uranium.asm src/user.asm src/tabcomplete.asm
+SRC_FILES = kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/serial.asm src/mouse.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/vga.asm src/snake.asm src/paint.asm src/sweeper.asm src/tetris.asm src/game2048.asm src/convert.asm src/assembler.asm src/rtc.asm src/speaker.asm src/sound.asm src/chip8.asm src/turtle.asm src/hostfs.asm src/basic.asm src/net.asm src/sched.asm src/usermode.asm src/appsys.asm src/console.asm src/grep.asm src/headtail.asm src/uranium.asm src/user.asm src/tabcomplete.asm
 
 .PHONY: all run run-serial clean apps
 
@@ -77,7 +77,9 @@ run-serial: $(BUILD_DIR)/os-image.bin
 # committed, so plain `make` / `make run` never needs any of this.
 APP_CFLAGS = -m32 -ffreestanding -fno-pic -fno-pie -fno-stack-protector \
 	-fno-asynchronous-unwind-tables -nostdlib -O2 -Wall
-apps: shared/HELLO.APP shared/CRASH.APP shared/GUESS.APP
+C_APPS = guess wc note fire pong
+upper = $(shell echo $(1) | tr a-z A-Z)
+apps: shared/HELLO.APP shared/CRASH.APP $(foreach a,$(C_APPS),shared/$(call upper,$(a)).APP)
 
 shared/HELLO.APP: apps/hello.asm apps/lexos.inc
 	$(ASM) -f bin -i apps/ $< -o $@
@@ -85,10 +87,16 @@ shared/HELLO.APP: apps/hello.asm apps/lexos.inc
 shared/CRASH.APP: apps/crash.asm apps/lexos.inc
 	$(ASM) -f bin -i apps/ $< -o $@
 
-shared/GUESS.APP: apps/guess.c apps/lexos.h apps/crt0.asm apps/app.ld | $(BUILD_DIR)
-	$(ASM) -f elf32 apps/crt0.asm -o $(BUILD_DIR)/crt0.o
-	gcc $(APP_CFLAGS) -c apps/guess.c -o $(BUILD_DIR)/guess.o
-	ld -m elf_i386 -T apps/app.ld --oformat binary -o $@ $(BUILD_DIR)/crt0.o $(BUILD_DIR)/guess.o
+$(BUILD_DIR)/crt0.o: apps/crt0.asm | $(BUILD_DIR)
+	$(ASM) -f elf32 $< -o $@
+
+# one C program per file: apps/guess.c -> shared/GUESS.APP, and so on
+define C_APP_RULE
+shared/$(call upper,$(1)).APP: apps/$(1).c apps/lexos.h apps/app.ld $(BUILD_DIR)/crt0.o
+	gcc $$(APP_CFLAGS) -c apps/$(1).c -o $(BUILD_DIR)/$(1).o
+	ld -m elf_i386 -T apps/app.ld --oformat binary -o $$@ $(BUILD_DIR)/crt0.o $(BUILD_DIR)/$(1).o
+endef
+$(foreach a,$(C_APPS),$(eval $(call C_APP_RULE,$(a))))
 
 clean:
 	rm -rf $(BUILD_DIR)

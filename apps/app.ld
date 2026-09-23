@@ -8,5 +8,6 @@ SECTIONS
     .rodata : { *(.rodata .rodata.*) }
     .data   : { *(.data .data.*) }
     .bss    : { *(.bss .bss.*) *(COMMON) }
+    _end = .;                   /* where malloc's heap starts */
     /DISCARD/ : { *(.eh_frame*) *(.note*) *(.comment) }
 }

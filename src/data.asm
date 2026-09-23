@@ -220,6 +220,7 @@ help_l42 db "  uranium <n>   - open file n in the full-screen text editor", 13, 
 help_l43 db "  history       - list previously run commands", 13, 10, 0
 help_l44 db "  df / free     - show directory slot / extra sector usage", 13, 10, 0
 help_l45 db "  run <n>.com   - run a small MS-DOS .com program", 13, 10, 0
+help_l62 db "  run <n>.app [args] - run a protected program (files, graphics: apps/)", 13, 10, 0
 help_l46 db "  recv <n> <hex size> - receive a file over COM1 (serial)", 13, 10, 0
 help_l47 db "  paint <n> [w] [h] - mouse picture editor, saves to n.BMP (default 320x200)", 13, 10, 0
 help_l48 db "  view <n>      - display a picture saved by paint (.BMP)", 13, 10, 0
@@ -244,7 +245,7 @@ help_lines:
     dw help_l24, help_l25, help_l26, help_l27, help_l28
     dw help_l29, help_l30, help_l31, help_l32, help_l33
     dw help_l34, help_l35, help_l38, help_l39, help_l40
-    dw help_l41, help_l42, help_l43, help_l44, help_l45
+    dw help_l41, help_l42, help_l43, help_l44, help_l45, help_l62
     dw help_l46, help_l47, help_l48, help_l49, help_l50, help_l51
     dw help_l52, help_l53, help_l55, help_l54, help_l56, help_l57
     dw help_l58, help_l59, help_l60

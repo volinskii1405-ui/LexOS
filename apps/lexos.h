@@ -1,29 +1,36 @@
-/* lexos.h - for LexOS programs written in C (`run <name>.app`).
+/* lexos.h - for LexOS programs written in C (`run <name>.app [args]`).
  *
  * A program is a flat 32-bit binary, loaded at 0x800000, running in
- * ring 3 with 1MB of memory of its own. crt0.asm calls main() and
- * passes its return value to exit(). There's no C library - just
- * these, all thin wrappers around the system calls (int 0x80, see
- * src/usermode.asm), plus a few string helpers.
+ * ring 3 with 4MB of memory of its own. crt0.asm splits the command
+ * line into argc/argv, calls main(argc, argv) and passes its return
+ * value to exit(). There's no C library - just these: thin wrappers
+ * around the system calls (int 0x80, see src/usermode.asm and
+ * src/appsys.asm), string/memory helpers, and malloc/free working in
+ * the memory between the program's end and its stack.
  *
  * Build: see the Makefile's `apps` target (gcc -m32 -ffreestanding,
  * linked with app.ld). */
 #ifndef LEXOS_H
 #define LEXOS_H
 
-static inline int lx_syscall(int n, int a, int b)
+typedef unsigned int size_t;
+#define NULL ((void *)0)
+
+static inline int lx_syscall3(int n, int a, int b, int c)
 {
     int r;
-    __asm__ volatile("int $0x80" : "=a"(r) : "a"(n), "b"(a), "c"(b) : "memory");
+    __asm__ volatile("int $0x80" : "=a"(r) : "a"(n), "b"(a), "c"(b), "d"(c) : "memory");
     return r;
 }
+static inline int lx_syscall(int n, int a, int b) { return lx_syscall3(n, a, b, 0); }
 
+/* --- the screen and keyboard --- */
 static inline void exit(int code)             { lx_syscall(0, code, 0); for (;;); }
 static inline int  write(const char *s, int n) { return lx_syscall(1, (int)s, n); }
 static inline int  getkey(void)               { return lx_syscall(2, 0, 0) & 0xFF; }
-static inline int  getkey_full(void)          { return lx_syscall(2, 0, 0); }
-static inline int  pollkey(void)              { return lx_syscall(3, 0, 0); }
-static inline unsigned ticks(void)            { return (unsigned)lx_syscall(4, 0, 0); }
+static inline int  getkey_full(void)          { return lx_syscall(2, 0, 0); }  /* ASCII | scancode << 8 */
+static inline int  pollkey(void)              { return lx_syscall(3, 0, 0); }  /* the same, or 0 */
+static inline unsigned ticks(void)            { return (unsigned)lx_syscall(4, 0, 0); } /* 18.2/s */
 static inline void sleep_ms(int ms)           { lx_syscall(5, ms, 0); }
 static inline void clear(void)                { lx_syscall(6, 0, 0); }
 static inline void setcursor(int row, int col){ lx_syscall(7, row, col); }
@@ -31,9 +38,78 @@ static inline void setcolor(int attr)         { lx_syscall(8, attr, 0); }
 static inline int  readline(char *buf, int n) { return lx_syscall(9, (int)buf, n); }
 static inline void beep(int hz, int ms)       { lx_syscall(10, hz, ms); }
 
-static inline int strlen(const char *s)       { int n = 0; while (s[n]) n++; return n; }
+/* --- files (in the shell's current folder; up to 4MB each, 8 open at once) ---
+ * open() returns a handle, or -1. O_WRITE creates the file or empties
+ * it; O_APPEND creates it if needed and starts at its end; O_UPDATE
+ * reads and writes an existing one. What's written is saved when the
+ * file is closed - or when the program ends, however it ends. */
+#define O_READ   0
+#define O_WRITE  1
+#define O_APPEND 2
+#define O_UPDATE 3
+static inline int open(const char *name, int mode)       { return lx_syscall(11, (int)name, mode); }
+static inline int read(int fd, void *buf, int n)          { return lx_syscall3(12, fd, (int)buf, n); }
+static inline int fwrite(int fd, const void *buf, int n)  { return lx_syscall3(13, fd, (int)buf, n); }
+static inline int close(int fd)                           { return lx_syscall(14, fd, 0); }
+static inline int seek(int fd, int pos)                   { return lx_syscall(15, fd, pos); } /* -1 = the end */
+static inline int fsize(int fd)                           { return lx_syscall(16, fd, 0); }
+
+/* --- graphics: 320x200, a byte per pixel ---
+ * gfx_mode(1) switches the screen to graphics, gfx_mode(0) back to text
+ * (it also goes back by itself when the program ends). Draw into a
+ * 64000-byte buffer of your own and gfx_blit() it to the screen.
+ * Colors: 0-15 the text colors, 16-31 grays, 32-247 a 6x6x6 cube -
+ * RGB6(r, g, b) with each 0-5 - or set any color with gfx_palette(). */
+#define GFX_W 320
+#define GFX_H 200
+#define RGB6(r, g, b) (32 + (r) * 36 + (g) * 6 + (b))
+static inline void gfx_mode(int on)                       { lx_syscall(17, on, 0); }
+static inline void gfx_blit(const unsigned char *frame)   { lx_syscall(18, (int)frame, 0); }
+static inline void gfx_palette(int color, unsigned rgb)   { lx_syscall(19, color, (int)rgb); } /* 0xRRGGBB */
+
+/* keydown(scancode): 1 while that key is held - for games. */
+static inline int keydown(int scancode)                   { return lx_syscall(20, scancode, 0); }
+#define KEY_ESC   0x01
+#define KEY_ENTER 0x1C
+#define KEY_SPACE 0x39
+#define KEY_UP    0x48
+#define KEY_DOWN  0x50
+#define KEY_LEFT  0x4B
+#define KEY_RIGHT 0x4D
+#define KEY_W     0x11
+#define KEY_A     0x1E
+#define KEY_S     0x1F
+#define KEY_D     0x20
+
+/* --- strings and memory ---
+ * (weak, not static: the compiler may call memcpy/memset on its own) */
+#define LX_LIB __attribute__((weak, used, optimize("no-tree-loop-distribute-patterns")))
+
+LX_LIB void *memset(void *d, int c, size_t n)
+{ unsigned char *p = d; while (n--) *p++ = (unsigned char)c; return d; }
+LX_LIB void *memcpy(void *d, const void *s, size_t n)
+{ unsigned char *p = d; const unsigned char *q = s; while (n--) *p++ = *q++; return d; }
+LX_LIB void *memmove(void *d, const void *s, size_t n)
+{
+    unsigned char *p = d; const unsigned char *q = s;
+    if (p < q) while (n--) *p++ = *q++;
+    else { p += n; q += n; while (n--) *--p = *--q; }
+    return d;
+}
+LX_LIB int memcmp(const void *a, const void *b, size_t n)
+{
+    const unsigned char *p = a, *q = b;
+    for (; n; n--, p++, q++) if (*p != *q) return *p - *q;
+    return 0;
+}
+LX_LIB size_t strlen(const char *s)            { size_t n = 0; while (s[n]) n++; return n; }
+LX_LIB int strcmp(const char *a, const char *b)
+{ while (*a && *a == *b) a++, b++; return (unsigned char)*a - (unsigned char)*b; }
+LX_LIB char *strcpy(char *d, const char *s)    { char *r = d; while ((*d++ = *s++)); return r; }
+
 static inline void puts(const char *s)        { write(s, strlen(s)); }
 static inline void putchar(char c)            { write(&c, 1); }
+static inline int  fputs(int fd, const char *s) { return fwrite(fd, s, strlen(s)); }
 
 static inline void print_int(int v)
 {
@@ -53,6 +129,73 @@ static inline int atoi(const char *s)
     if (*s == '-') { neg = 1; s++; }
     while (*s >= '0' && *s <= '9') v = v * 10 + (*s++ - '0');
     return neg ? -v : v;
+}
+
+/* --- malloc/free: first fit over the memory from the program's end
+ * (app.ld's _end) up to 256KB below the top, where the stack lives. --- */
+#define LX_HEAP_END 0xBC0000
+extern char _end[];
+struct lx_block { size_t size; int free; struct lx_block *next; int pad; };
+struct lx_block *__lx_heap __attribute__((weak));
+
+LX_LIB void *malloc(size_t n)
+{
+    struct lx_block *b, *last = NULL;
+    n = (n + 15) & ~15u;
+    for (b = __lx_heap; b; last = b, b = b->next)
+        if (b->free && b->size >= n) {
+            if (b->size >= n + sizeof *b + 16) {     /* split off the rest */
+                struct lx_block *r = (struct lx_block *)((char *)(b + 1) + n);
+                r->size = b->size - n - sizeof *b; r->free = 1; r->next = b->next;
+                b->size = n; b->next = r;
+            }
+            b->free = 0;
+            return b + 1;
+        }
+    b = last ? (struct lx_block *)((char *)(last + 1) + last->size)
+             : (struct lx_block *)(((unsigned)_end + 15) & ~15u);
+    if ((unsigned)(b + 1) + n > LX_HEAP_END) return NULL;
+    b->size = n; b->free = 0; b->next = NULL;
+    if (last) last->next = b; else __lx_heap = b;
+    return b + 1;
+}
+LX_LIB void free(void *p)
+{
+    struct lx_block *b;
+    if (!p) return;
+    ((struct lx_block *)p - 1)->free = 1;
+    for (b = __lx_heap; b; b = b->next)             /* merge free neighbors */
+        while (b->free && b->next && b->next->free) {
+            b->size += sizeof *b + b->next->size;
+            b->next = b->next->next;
+        }
+}
+LX_LIB void *calloc(size_t n, size_t m)
+{ void *p = malloc(n * m); if (p) memset(p, 0, n * m); return p; }
+LX_LIB void *realloc(void *p, size_t n)
+{
+    void *q;
+    if (!p) return malloc(n);
+    if (((struct lx_block *)p - 1)->size >= n) return p;
+    q = malloc(n);
+    if (q) { memcpy(q, p, ((struct lx_block *)p - 1)->size); free(p); }
+    return q;
+}
+
+/* crt0.asm's helper: splits the command line ("NAME.APP arg1 arg2")
+ * into argv, in place. Returns argc. */
+LX_LIB int __lx_args(char *cmd, char **argv)
+{
+    int argc = 0;
+    while (*cmd && argc < 31) {
+        while (*cmd == ' ') cmd++;
+        if (!*cmd) break;
+        argv[argc++] = cmd;
+        while (*cmd && *cmd != ' ') cmd++;
+        if (*cmd) *cmd++ = 0;
+    }
+    argv[argc] = NULL;
+    return argc;
 }
 
 #endif
