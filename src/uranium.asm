@@ -336,8 +336,14 @@ uranium_flash_active db 0                   ; show a one-shot message in the
 uranium_flash_text   dw msg_uranium_saved_flash  ; which message (see above)
 
 ; ============================================================
-; Shows the "Are you sure?" prompt full-screen and waits for Y/N.
-; Output: ax = 1 if confirmed (Y), 0 if cancelled (N).
+; Shows the "Are you sure?" prompt full-screen and waits for an answer:
+; Y or Enter = yes, N or ESC = no (back to editing). Matched by
+; SCANCODE, i.e. by physical key, not by the ASCII it maps to - so it
+; answers the same whatever keyboard layout or Caps Lock state the key
+; press arrives with. (Only 'y'/'n' as ASCII used to count, so an ESC
+; or Enter - the keys a dialog invites - did nothing at all, and it
+; looked stuck.)
+; Output: ax = 1 if confirmed, 0 if cancelled.
 ; ============================================================
 uranium_confirm_prompt:
     call clear_screen
@@ -345,13 +351,13 @@ uranium_confirm_prompt:
     call print_string
 .wait:
     call read_key
-    cmp al, 'y'
+    cmp ah, 0x15                    ; Y
     je .yes
-    cmp al, 'Y'
+    cmp ah, 0x1C                    ; Enter
     je .yes
-    cmp al, 'n'
+    cmp ah, 0x31                    ; N
     je .no
-    cmp al, 'N'
+    cmp ah, 0x01                    ; ESC
     je .no
     jmp .wait
 .yes:

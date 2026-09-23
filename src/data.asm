@@ -353,7 +353,7 @@ msg_uranium_footer   db "Ctrl+B=Save&Exit  Ctrl+H=Save  Ctrl+F=Find  ESC=Exit", 
 msg_uranium_saved_flash db "Saved.", 0
 msg_uranium_notfound_flash db "Not found.", 0
 msg_uranium_search_prompt db "Find: ", 0
-msg_uranium_confirm  db "Are you sure?", 13, 10, 13, 10, "Y - YES.         N - NO.", 0
+msg_uranium_confirm  db "Are you sure?", 13, 10, 13, 10, "Y / Enter - YES.         N / Esc - NO, back to editing.", 0
 
 msg_user_setup_title  db "LexOS - First Boot Setup", 0
 msg_user_nick_label   db "Nickname:", 0
