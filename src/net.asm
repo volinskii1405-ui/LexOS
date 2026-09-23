@@ -608,6 +608,11 @@ net_handle_frame:
     add edx, ebx                          ; edx = the IP payload
     cmp byte [ebx + 9], 17                ; UDP
     je .udp
+    cmp byte [ebx + 9], 6                 ; TCP (src/inet.asm)
+    jne .not_tcp
+    call tcp_input
+    jmp .done
+.not_tcp:
     cmp byte [ebx + 9], 1                 ; ICMP
     jne .done
     cmp byte [edx], 0                     ; echo reply

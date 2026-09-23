@@ -325,7 +325,7 @@ alex@/PROGRAMS$
   reentrant, so only the tasks written for it run in the background
   (the player loads its whole file first, with switching held off).
 - **Networking.** An RTL8139 driver (the card `make run` gives QEMU),
-  Ethernet, ARP, IPv4, ICMP echo, UDP, DHCP and DNS. The first network
+  Ethernet, ARP, IPv4, ICMP echo, UDP, TCP, DHCP, DNS, NTP and HTTP. The first network
   command gets LexOS an address by DHCP (`dhcp` asks again); `ifconfig`
   shows the card, MAC, address, gateway and DNS server; `nslookup
   <name>` resolves a name through that DNS server - real internet
@@ -338,6 +338,14 @@ alex@/PROGRAMS$
   distributions, macOS). `ntp [server]` sets the clock from a time
   server over NTP (UDP port 123, `pool.ntp.org` by default): the RTC
   keeps UTC, and `time`/`date` add your time zone as always.
+  `wget http://host[:port]/path [name]` downloads a file over HTTP -
+  a small TCP of LexOS's own (src/inet.asm: connect, in-order receive
+  with acknowledgements, resends, FIN/RST) under an HTTP/1.0 GET - and
+  saves the body into the current folder (named after the path's last
+  part, or `INDEX.HTM`), up to 16MB; ESC stops it. A non-200 answer is
+  shown instead (with where a redirect points). There's no TLS, so
+  `https://` is out. Try `python3 -m http.server` in a folder on your
+  machine and `wget http://10.0.2.2:8000/somefile` in LexOS.
 - **Shared folder with the host.** `make run` attaches the repo's
   `shared/` folder as a second disk (QEMU's vvfat presents a host
   directory as a whole FAT16 volume). `hostls` lists it and
@@ -506,6 +514,7 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `ifconfig` | show the network card, MAC address and IP |
 | `ping <host> [n]` | send n ICMP echo requests (default 4) to a name or address, ESC stops |
 | `nslookup <name>` | look a name up in DNS |
+| `wget <url> [name]` | download a file over HTTP into the current folder |
 | `ntp [server]` | set the clock from a time server (default `pool.ntp.org`) |
 | `dhcp` | get an address from the DHCP server again |
 | `run <n>.app [args]` | run a protected (ring 3) program - see `apps/` |
@@ -673,7 +682,8 @@ src/
                        ps/kill/clock.
   net.asm              RTL8139 driver (polled), ARP, IPv4, ICMP echo,
                        UDP, DHCP, DNS: ping/ifconfig/nslookup/dhcp.
-  inet.asm             Internet clients on top of it: ntp.
+  inet.asm             Internet clients on top of it: ntp, and a
+                       small TCP for wget.
   basic.asm            `basic [name]`, a Tiny BASIC interpreter/REPL -
                        text mode, program stored above 1MB, SAVE/LOAD
                        through fs_stream_write/fs_load_to.
