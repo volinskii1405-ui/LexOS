@@ -345,6 +345,18 @@ handle_command:
     je .do_nslookup
 
     mov si, buffer
+    mov di, cmd_ntp
+    call strcmp_eq
+    cmp ax, 1
+    je .do_ntp
+
+    mov si, buffer
+    mov di, cmd_ntp_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_ntp
+
+    mov si, buffer
     mov di, cmd_dhcp
     call strcmp_eq
     cmp ax, 1
@@ -708,6 +720,12 @@ handle_command:
     mov si, buffer
     add si, 9                  ; skip "nslookup "
     call net_nslookup
+    jmp .done
+
+.do_ntp:
+    mov si, buffer
+    add si, 3                  ; skip "ntp" (net_ntp skips the spaces)
+    call net_ntp
     jmp .done
 
 .do_dhcp:

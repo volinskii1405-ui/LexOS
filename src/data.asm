@@ -232,6 +232,7 @@ help_l53 db "  hostget <n> [new] - copy a file from the host's shared folder her
 help_l55 db "  hostput <n> [host] - copy file n into the host's shared folder", 13, 10, 0
 help_l56 db "  ifconfig     - show the network card and LexOS's address", 13, 10, 0
 help_l57 db "  ping <host> [n] - n ICMP echo requests (default 4); nslookup <name>; dhcp", 13, 10, 0
+help_l63 db "  ntp [server] - set the clock from a time server (default pool.ntp.org)", 13, 10, 0
 help_l58 db "  ps / kill <pid> - list tasks / stop one; <cmd> & runs play in the background", 13, 10, 0
 help_l59 db "  clock        - toggle a clock in the top-right corner (a background task)", 13, 10, 0
 help_l60 db "  Alt+T / Alt+1..9 / exit - new console / switch console / close this one", 13, 10, 0
@@ -247,7 +248,7 @@ help_lines:
     dw help_l34, help_l35, help_l38, help_l39, help_l40
     dw help_l41, help_l42, help_l43, help_l44, help_l45, help_l62
     dw help_l46, help_l47, help_l48, help_l49, help_l50, help_l51
-    dw help_l52, help_l53, help_l55, help_l54, help_l56, help_l57
+    dw help_l52, help_l53, help_l55, help_l54, help_l56, help_l57, help_l63
     dw help_l58, help_l59, help_l60
 help_lines_end:
 
@@ -665,6 +666,8 @@ cmd_ifconfig     db "ifconfig", 0
 cmd_ping_prefix  db "ping ", 0
 cmd_nslookup_prefix db "nslookup ", 0
 cmd_dhcp         db "dhcp", 0
+cmd_ntp          db "ntp", 0
+cmd_ntp_prefix   db "ntp ", 0
 cmd_basic_prefix db "basic ", 0
 cmd_history      db "history", 0
 cmd_df           db "df", 0
