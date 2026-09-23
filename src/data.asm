@@ -200,6 +200,8 @@ help_l48 db "  view <n>      - display a picture saved by paint (.BMP)", 13, 10,
 help_l49 db "  play <n.imf | n.wav> - play AdLib music or 8-bit mono PCM audio", 13, 10, 0
 help_l50 db "  chip8 <n>    - run a CHIP-8 ROM (1234/qwer/asdf/zxcv keypad)", 13, 10, 0
 help_l51 db "  turtle <n>   - run a turtle-graphics script (FORWARD/LEFT/...)", 13, 10, 0
+help_l52 db "  hostls       - list files in the host's shared folder", 13, 10, 0
+help_l53 db "  hostget <n> [new] - copy a file from the host's shared folder here", 13, 10, 0
 
 help_lines:
     dw help_l01, help_l02, help_l03, help_l04, help_l05
@@ -211,6 +213,7 @@ help_lines:
     dw help_l34, help_l35, help_l38, help_l39, help_l40
     dw help_l41, help_l42, help_l43, help_l44, help_l45
     dw help_l46, help_l47, help_l48, help_l49, help_l50, help_l51
+    dw help_l52, help_l53
 help_lines_end:
 
 HELP_LINE_COUNT equ (help_lines_end - help_lines) / 2
@@ -278,6 +281,18 @@ msg_chip8_quit       db "Quit.", 13, 10, 0
 ; against each other with strcmp_eq/strcmp_prefix (src/input.asm),
 ; which take their two pointers in the 16-bit si/di - both sides of
 ; every comparison need to stay below 0x10000, not just one.
+; src/hostfs.asm's host_ls/host_get - kept here for the same reason as
+; the msg_play_* messages above.
+msg_host_get_usage   db "Usage: hostget <n> [new name]", 13, 10, 0
+msg_host_absent      db "No host shared folder attached - start LexOS with 'make run'.", 13, 10, 0
+msg_host_not_fat     db "The host disk isn't a FAT16 volume LexOS can read.", 13, 10, 0
+msg_host_io_error    db "Host disk read error.", 13, 10, 0
+msg_host_too_big     db "Too big - a LexOS file can hold at most 65535 bytes.", 13, 10, 0
+msg_host_is_dir      db "That's a folder - only top-level files can be copied for now.", 13, 10, 0
+msg_host_copied1     db "Copied ", 0
+msg_host_copied2     db " bytes as ", 0
+msg_host_dir_tag     db "<DIR>", 0
+
 msg_turtle_usage     db "Usage: turtle <n>", 13, 10, 0
 msg_turtle_intro     db "TURTLE - running script, any key to exit when done.", 13, 10, 0
 msg_hud_turtle_exit  db "Any key - exit", 0
@@ -572,6 +587,8 @@ cmd_view_prefix  db "view ", 0
 cmd_play_prefix  db "play ", 0
 cmd_chip8_prefix db "chip8 ", 0
 cmd_turtle_prefix db "turtle ", 0
+cmd_hostls       db "hostls", 0
+cmd_hostget_prefix db "hostget ", 0
 cmd_history      db "history", 0
 cmd_df           db "df", 0
 cmd_free         db "free", 0

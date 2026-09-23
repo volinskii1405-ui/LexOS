@@ -242,6 +242,18 @@ handle_command:
     je .do_turtle
 
     mov si, buffer
+    mov di, cmd_hostls
+    call strcmp_eq
+    cmp ax, 1
+    je .do_hostls
+
+    mov si, buffer
+    mov di, cmd_hostget_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_hostget
+
+    mov si, buffer
     mov di, cmd_history
     call strcmp_eq
     cmp ax, 1
@@ -501,6 +513,16 @@ handle_command:
     mov si, buffer
     add si, 7                  ; skip "turtle "
     call turtle_run
+    jmp .done
+
+.do_hostls:
+    call host_ls
+    jmp .done
+
+.do_hostget:
+    mov si, buffer
+    add si, 8                  ; skip "hostget "
+    call host_get
     jmp .done
 
 .do_history:

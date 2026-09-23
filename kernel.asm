@@ -123,6 +123,7 @@ main_loop:
 %include "src/sound.asm"
 %include "src/chip8.asm"
 %include "src/turtle.asm"
+%include "src/hostfs.asm"
 %include "src/grep.asm"
 %include "src/headtail.asm"
 %include "src/uranium.asm"
