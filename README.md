@@ -558,7 +558,7 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `hostls` | list the files in the host's shared folder (`shared/`, see below) |
 | `hostget <n> [new]` | copy a file from the host's shared folder into the current directory |
 | `hostput <n> [host]` | copy file n into the host's shared folder (a new 8.3 name) |
-| `ifconfig` | show the network card, MAC address and IP |
+| `ifconfig [ip]` | show the network card, MAC address and IP (or set the IP) |
 | `ping <host> [n]` | send n ICMP echo requests (default 4) to a name or address, ESC stops |
 | `nslookup <name>` | look a name up in DNS |
 | `wget <url> [name]` | download a file over HTTP into the current folder |
