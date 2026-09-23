@@ -1,6 +1,6 @@
 ASM = nasm
 BUILD_DIR = build
-SRC_FILES = kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/serial.asm src/mouse.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/vga.asm src/snake.asm src/paint.asm src/sweeper.asm src/tetris.asm src/game2048.asm src/convert.asm src/assembler.asm src/rtc.asm src/speaker.asm src/sound.asm src/chip8.asm src/grep.asm src/headtail.asm src/uranium.asm src/user.asm src/tabcomplete.asm
+SRC_FILES = kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/serial.asm src/mouse.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/vga.asm src/snake.asm src/paint.asm src/sweeper.asm src/tetris.asm src/game2048.asm src/convert.asm src/assembler.asm src/rtc.asm src/speaker.asm src/sound.asm src/chip8.asm src/turtle.asm src/hostfs.asm src/basic.asm src/grep.asm src/headtail.asm src/uranium.asm src/user.asm src/tabcomplete.asm
 
 .PHONY: all run run-serial clean
 
@@ -18,9 +18,9 @@ $(BUILD_DIR)/kernel.bin: $(SRC_FILES) | $(BUILD_DIR)
 $(BUILD_DIR)/os-image.bin: $(BUILD_DIR)/boot.bin $(BUILD_DIR)/kernel.bin
 	cat $(BUILD_DIR)/boot.bin $(BUILD_DIR)/kernel.bin > $@
 	@actual=$$(stat -c%s $@); \
-	if [ $$actual -gt 160768 ]; then \
-		echo "ERROR: boot+kernel already larger than the filesystem area start (160768 bytes = 314 sectors)."; \
-		echo "Increase KERNEL_SECTORS_1/2/3 in boot.asm and FS_START_SECTOR in src/data.asm if needed."; \
+	if [ $$actual -gt 197120 ]; then \
+		echo "ERROR: boot+kernel already larger than the filesystem area start (197120 bytes = 385 sectors)."; \
+		echo "Increase KERNEL_SECTORS_1..4 in boot.asm and FS_START_SECTOR in src/data.asm if needed."; \
 		rm -f $@; \
 		exit 1; \
 	fi
@@ -37,8 +37,19 @@ else
 	AUDIODEV ?= pa
 endif
 
+# The host folder LexOS's `hostls`/`hostget` see (src/hostfs.asm): QEMU
+# presents it to the guest as a whole FAT16 disk - the primary IDE
+# channel's slave drive - built from whatever's in it at startup. Files
+# added on the host while QEMU is running won't show up until the next
+# start. QEMU refuses a read-only IDE hard disk, hence "rw" - LexOS itself
+# never writes to it. Override with SHARED=some/other/dir.
+SHARED ?= shared
+SHARED_DRIVE = -drive file=fat:rw:$(SHARED),format=raw,if=ide,index=1
+
 run: $(BUILD_DIR)/os-image.bin
-	qemu-system-i386 -drive format=raw,file=$(BUILD_DIR)/os-image.bin \
+	mkdir -p $(SHARED)
+	qemu-system-i386 -drive format=raw,file=$(BUILD_DIR)/os-image.bin,if=ide,index=0 \
+		$(SHARED_DRIVE) \
 		-audiodev $(AUDIODEV),id=snd0 -machine pcspk-audiodev=snd0 \
 		-device adlib,audiodev=snd0,iobase=0x220
 
@@ -48,7 +59,9 @@ run: $(BUILD_DIR)/os-image.bin
 # typing `recv` in LexOS. Override the port with SERIALPORT=xxxx.
 SERIALPORT ?= 4444
 run-serial: $(BUILD_DIR)/os-image.bin
-	qemu-system-i386 -drive format=raw,file=$(BUILD_DIR)/os-image.bin \
+	mkdir -p $(SHARED)
+	qemu-system-i386 -drive format=raw,file=$(BUILD_DIR)/os-image.bin,if=ide,index=0 \
+		$(SHARED_DRIVE) \
 		-audiodev $(AUDIODEV),id=snd0 -machine pcspk-audiodev=snd0 \
 		-device adlib,audiodev=snd0,iobase=0x220 \
 		-serial tcp::$(SERIALPORT),server,nowait

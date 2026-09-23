@@ -11,7 +11,8 @@
 ; Exports: fs_extra_alloc, fs_extra_free, fs_extra_read,
 ;               fs_extra_write, fs_scratch_read_word,
 ;               fs_scratch_write_word, fs_free_chain, fs_append,
-;               fs_load_content, print_dec_word, print_dec_signed
+;               fs_load_content, fs_load_to, fs_stream_prepare, fs_stream_write,
+;               print_dec_word, print_dec_signed
 
 ; ============================================================
 ; Reads a 16-bit field scratch[offset] (offset in ax) -> ax.
@@ -186,94 +187,370 @@ fs_free_chain:
 ; buffer, which is later written back via fs_save_content).
 ; ============================================================
 fs_load_content:
-    push ax
-    push bx
-    push cx
-    push di
+    push ecx
+    push edi
+    mov edi, content_buf
+    mov ecx, CONTENT_BUF_LEN
+    call fs_load_to
+    mov [content_buf_len], cx
+    pop edi
+    pop ecx
+    ret
+
+; ============================================================
+; fs_load_content's general form: reads a file's content (slot in ax)
+; to any 32-bit address, up to a caller-given maximum - src/basic.asm's
+; LOAD, whose programs can be far bigger than content_buf.
+; Input: ax = slot, edi = destination, ecx = max bytes.
+; Returns: ecx = bytes actually read. Preserves everything else.
+; ============================================================
+fs_load_to:
+    push eax
+    push ebx
+    push edx
+    push esi
+
+    mov [fs_load_max], ecx
+    xor edx, edx                     ; edx = bytes stored so far
 
     call fs_read_slot
-
-    mov ax, FS_TOTAL_LEN_OFFSET
-    call fs_scratch_read_word
+    movzx eax, word [SCRATCH_ADDR + FS_TOTAL_LEN_OFFSET]
     mov [fs_load_remaining], ax
-
-    mov ax, FS_CHAIN_OFFSET
-    call fs_scratch_read_word
+    mov ax, [SCRATCH_ADDR + FS_CHAIN_OFFSET]
     mov [fs_load_chain], ax
 
-    xor di, di
-
-    mov bx, FS_CONTENT_OFFSET
-    mov cx, FS_CONTENT_LEN - 1
-    cmp cx, [fs_load_remaining]
-    jbe .inline_loop
-    mov cx, [fs_load_remaining]
-
-.inline_loop:
-    cmp cx, 0
-    je .inline_done
-    cmp di, CONTENT_BUF_LEN
-    jae .load_done
-    mov ax, bx
-    call fs_scratch_read_byte
-    mov [content_buf + di], al
-    inc bx
-    inc di
-    dec cx
-    dec word [fs_load_remaining]
-    jmp .inline_loop
-.inline_done:
-
-    cmp word [fs_load_remaining], 0
-    jle .load_done
+    mov esi, SCRATCH_ADDR + FS_CONTENT_OFFSET
+    movzx ecx, word [fs_load_remaining]
+    cmp ecx, FS_CONTENT_LEN - 1
+    jbe .copy_inline
+    mov ecx, FS_CONTENT_LEN - 1
+.copy_inline:
+    call .copy                        ; ecx bytes from esi
 
 .chain_loop:
     cmp word [fs_load_remaining], 0
-    jle .load_done
+    je .done
     cmp word [fs_load_chain], FS_NO_CHAIN
-    je .load_done
-    cmp di, CONTENT_BUF_LEN
-    jae .load_done
-
+    je .done
+    cmp edx, [fs_load_max]
+    jae .done
     mov ax, [fs_load_chain]
     call fs_extra_read
-
-    mov cx, FS_EXTRA_CONTENT_LEN
-    cmp cx, [fs_load_remaining]
-    jbe .have_count
-    mov cx, [fs_load_remaining]
-.have_count:
-    xor bx, bx
-.extra_loop:
-    cmp cx, 0
-    je .extra_done
-    cmp di, CONTENT_BUF_LEN
-    jae .load_done
-    mov ax, bx
-    call fs_scratch_read_byte
-    mov [content_buf + di], al
-    inc bx
-    inc di
-    dec cx
-    dec word [fs_load_remaining]
-    jmp .extra_loop
-.extra_done:
-    mov ax, FS_EXTRA_NEXT_OFFSET
-    call fs_scratch_read_word
+    mov ax, [SCRATCH_ADDR + FS_EXTRA_NEXT_OFFSET]
     mov [fs_load_chain], ax
+    mov esi, SCRATCH_ADDR
+    movzx ecx, word [fs_load_remaining]
+    cmp ecx, FS_EXTRA_CONTENT_LEN
+    jbe .copy_extra
+    mov ecx, FS_EXTRA_CONTENT_LEN
+.copy_extra:
+    call .copy
     jmp .chain_loop
 
-.load_done:
-    mov [content_buf_len], di
-
-    pop di
-    pop cx
-    pop bx
-    pop ax
+.done:
+    mov ecx, edx
+    pop esi
+    pop edx
+    pop ebx
+    pop eax
     ret
 
+; Copies ecx bytes from esi to [edi + edx] (fewer if fs_load_max is
+; reached), advancing edx and counting down fs_load_remaining.
+.copy:
+    sub [fs_load_remaining], cx
+.copy_loop:
+    cmp ecx, 0
+    je .copy_done
+    cmp edx, [fs_load_max]
+    jae .copy_done
+    mov al, [esi]
+    mov [edi + edx], al
+    inc esi
+    inc edx
+    dec ecx
+    jmp .copy_loop
+.copy_done:
+    ret
+
+fs_load_max       dd 0
 fs_load_remaining dw 0
 fs_load_chain     dw 0
+
+; ============================================================
+; fs_stream_prepare / fs_stream_write: write a file whose bytes arrive
+; one at a time from somewhere else - COM1 for `recv` (src/serial.asm),
+; the host's shared folder for `hostget` (src/hostfs.asm) - straight
+; into a slot's inline content and extra-sector chain as they come, one
+; sector's worth staged in FS_SCRATCH_ADDR at a time (the same streaming
+; shape src/paint.asm's paint_save_bmp uses), so content_buf's own 4KB
+; size never caps the file. Split out of cmd_recv so both commands
+; share one implementation; the byte source is a function pointer
+; (fs_stream_source) rather than a hardcoded serial_read_byte.
+;
+; Callers: put the name in fs_tmp_name and the size (<= 0xFFFF - the
+; most FS_TOTAL_LEN_OFFSET, a 16-bit word, can hold) in fs_stream_size,
+; call fs_stream_prepare, and only if that succeeded set
+; fs_stream_source and call fs_stream_write.
+; ============================================================
+
+; ============================================================
+; Resolves fs_tmp_name to a writable plain-file slot in the current
+; directory - an existing FS_TYPE_FILE (to be overwritten) or a freshly
+; created empty one - leaving its index in fs_tmp_slot. carry=1 (with
+; the reason already printed) if it can't: USER.CFG, a directory, one
+; of LexOS's own PROGRAM-type files, or no free slot left.
+; ============================================================
+fs_stream_prepare:
+    pushad
+
+    mov si, fs_tmp_name
+    call fs_find_by_name
+    cmp ax, -1
+    je .fresh_file
+
+    push ax
+    call fs_reject_if_user_cfg
+    cmp ax, 1
+    pop ax
+    je .fail                    ; protected - the message is already printed
+
+    mov [fs_tmp_slot], ax
+    call fs_get_type
+    cmp ax, FS_TYPE_DIR
+    jne .check_program
+    mov si, msg_fs_is_dir
+    call print_string
+    jmp .fail
+.check_program:
+    cmp ax, FS_TYPE_FILE
+    je .ok
+    mov si, msg_uranium_not_text
+    call print_string
+    jmp .fail
+
+.fresh_file:
+    call fs_find_free
+    cmp ax, -1
+    jne .have_slot
+    mov si, msg_fs_full
+    call print_string
+    jmp .fail
+.have_slot:
+    mov [fs_tmp_slot], ax
+
+    xor bx, bx
+.clear_loop:
+    cmp bx, FS_CONTENT_OFFSET + FS_CONTENT_LEN
+    jae .clear_done
+    push bx
+    mov ax, bx
+    xor dx, dx
+    call fs_scratch_write_byte
+    pop bx
+    inc bx
+    jmp .clear_loop
+.clear_done:
+
+    mov si, fs_tmp_name
+    xor bx, bx
+.copy_name:
+    mov al, [si]
+    cmp al, 0
+    je .name_copied
+    call to_upper_al
+    mov dl, al
+    mov ax, bx
+    call fs_scratch_write_byte
+    inc si
+    inc bx
+    jmp .copy_name
+.name_copied:
+
+    mov ax, FS_TYPE_OFFSET
+    mov dl, FS_TYPE_FILE
+    call fs_scratch_write_byte
+
+    call fs_get_current_parent_byte
+    mov dl, al
+    mov ax, FS_PARENT_OFFSET
+    call fs_scratch_write_byte
+
+    mov ax, FS_TOTAL_LEN_OFFSET
+    xor dx, dx
+    call fs_scratch_write_word
+    mov ax, FS_CHAIN_OFFSET
+    mov dx, FS_NO_CHAIN
+    call fs_scratch_write_word
+
+    mov ax, [fs_tmp_slot]
+    call fs_write_slot
+
+.ok:
+    popad
+    clc
+    ret
+.fail:
+    popad
+    stc
+    ret
+
+; ============================================================
+; Streams fs_stream_size bytes from fs_stream_source (a function that
+; returns the next byte in al and preserves every register other than
+; eax - serial_read_byte already did, and host_read_next_byte is written
+; to) into the slot fs_stream_prepare left in fs_tmp_slot, replacing
+; whatever content it held. carry=1 if the extra-sector pool ran out
+; partway: the file is then truncated to what fit, the same fallback
+; fs_save_content uses.
+; ============================================================
+fs_stream_write:
+    pushad
+
+    mov ax, [fs_tmp_slot]
+    call fs_free_chain                  ; release any old chain -
+                                          ; fs_free_chain takes its slot
+                                          ; index in ax and preserves it,
+                                          ; so it must come right after
+                                          ; setting ax with nothing else
+                                          ; able to clobber it in between
+    call fs_read_slot                    ; slot's own name/type/parent
+                                          ; fields (already on disk, via
+                                          ; fs_stream_prepare) into the
+                                          ; scratch buffer, ready to add
+                                          ; this file's inline content to
+
+    movzx ecx, word [fs_stream_size]
+    cmp ecx, FS_CONTENT_LEN - 1
+    jbe .inline_fits
+    mov ecx, FS_CONTENT_LEN - 1
+.inline_fits:
+    mov [fs_stream_inline_count], ecx
+
+    xor ebx, ebx
+.inline_loop:
+    cmp ebx, ecx
+    jae .inline_done
+    call dword [fs_stream_source]
+    mov dl, al
+    mov eax, ebx
+    add ax, FS_CONTENT_OFFSET
+    call fs_scratch_write_byte
+    inc ebx
+    jmp .inline_loop
+.inline_done:
+
+    mov ax, FS_TOTAL_LEN_OFFSET
+    mov dx, [fs_stream_size]
+    call fs_scratch_write_word
+
+    movzx eax, word [fs_stream_size]
+    cmp eax, [fs_stream_inline_count]
+    ja .need_chain
+
+    mov ax, FS_CHAIN_OFFSET
+    mov dx, FS_NO_CHAIN
+    call fs_scratch_write_word
+    mov ax, [fs_tmp_slot]
+    call fs_write_slot
+    jmp .done
+
+.need_chain:
+    mov ax, [fs_tmp_slot]
+    call fs_write_slot                   ; slot itself is on disk now, so
+                                          ; the shared scratch buffer is
+                                          ; free for the chain sectors
+                                          ; below to reuse (see the note
+                                          ; above paint_save_bmp,
+                                          ; src/paint.asm, for why this
+                                          ; order matters)
+
+    mov esi, [fs_stream_inline_count]    ; bytes already consumed from
+                                          ; the source
+    mov word [fs_stream_prev], FS_NO_CHAIN
+
+.chain_loop:
+    movzx eax, word [fs_stream_size]
+    cmp esi, eax
+    jae .done
+
+    call fs_extra_alloc
+    jc .pool_full
+    mov bx, ax
+
+    cmp word [fs_stream_prev], FS_NO_CHAIN
+    jne .link_prev
+
+    mov ax, [fs_tmp_slot]
+    call fs_read_slot
+    mov ax, FS_CHAIN_OFFSET
+    mov dx, bx
+    call fs_scratch_write_word
+    mov ax, [fs_tmp_slot]
+    call fs_write_slot
+    jmp .have_sector
+
+.link_prev:
+    mov ax, [fs_stream_prev]
+    call fs_extra_read
+    mov ax, FS_EXTRA_NEXT_OFFSET
+    mov dx, bx
+    call fs_scratch_write_word
+    mov ax, [fs_stream_prev]
+    call fs_extra_write
+
+.have_sector:
+    xor ecx, ecx
+.fill_loop:
+    cmp ecx, FS_EXTRA_CONTENT_LEN
+    jae .sector_done
+    movzx eax, word [fs_stream_size]
+    cmp esi, eax
+    jae .sector_done
+
+    call dword [fs_stream_source]
+    mov dl, al
+    mov ax, cx
+    call fs_scratch_write_byte
+
+    inc esi
+    inc ecx
+    jmp .fill_loop
+.sector_done:
+
+    push ecx
+    mov ax, FS_EXTRA_USED_OFFSET
+    mov dx, cx
+    call fs_scratch_write_word
+    pop ecx
+
+    mov ax, bx
+    call fs_extra_write
+
+    mov [fs_stream_prev], bx
+    jmp .chain_loop
+
+.pool_full:
+    mov ax, [fs_tmp_slot]
+    call fs_read_slot
+    mov ax, FS_TOTAL_LEN_OFFSET
+    mov dx, si                           ; truncate to what actually made
+    call fs_scratch_write_word           ; it to disk
+    mov ax, [fs_tmp_slot]
+    call fs_write_slot
+    popad
+    stc
+    ret
+
+.done:
+    popad
+    clc
+    ret
+
+fs_stream_size         dw 0
+fs_stream_inline_count dd 0
+fs_stream_prev         dw 0
+fs_stream_source       dd 0
 
 ; ============================================================
 ; append <name> <text> : appends text to the end of a file's content,

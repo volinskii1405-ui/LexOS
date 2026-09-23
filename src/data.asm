@@ -28,7 +28,7 @@ SECTOR_COUNT equ 8
 ;   byte 8       - type (0=free, 1=file, 2=folder)
 ;   byte 9       - parent (slot index of the parent folder, 0xFF = root)
 ;   bytes 10..   - content (zero-terminated, unused for folders)
-FS_START_SECTOR   equ 314     ; sector 1=bootloader, 2..313=kernel (312 sectors)
+FS_START_SECTOR   equ 386     ; sector 1=bootloader, 2..385=kernel (384 sectors)
 FS_FILE_COUNT     equ 24
 FS_NAME_LEN       equ 16
 FS_CONTENT_LEN    equ 128
@@ -198,7 +198,11 @@ help_l46 db "  recv <n> <hex size> - receive a file over COM1 (serial)", 13, 10,
 help_l47 db "  paint <n> [w] [h] - mouse picture editor, saves to n.BMP (default 320x200)", 13, 10, 0
 help_l48 db "  view <n>      - display a picture saved by paint (.BMP)", 13, 10, 0
 help_l49 db "  play <n.imf | n.wav> - play AdLib music or 8-bit mono PCM audio", 13, 10, 0
-help_l50 db "  chip8 <n>    - run a CHIP-8 ROM (1234/qwer/asdf/zxcv keypad)", 13, 10, 0
+help_l50 db "  chip8 <n> [s] - run a CHIP-8/SUPER-CHIP ROM (keys 1234/qwer/asdf/zxcv)", 13, 10, 0
+help_l51 db "  turtle <n>   - run a turtle-graphics script (FORWARD/LEFT/...)", 13, 10, 0
+help_l52 db "  hostls       - list files in the host's shared folder", 13, 10, 0
+help_l53 db "  hostget <n> [new] - copy a file from the host's shared folder here", 13, 10, 0
+help_l54 db "  basic [n]    - Tiny BASIC (optionally load and run program n)", 13, 10, 0
 
 help_lines:
     dw help_l01, help_l02, help_l03, help_l04, help_l05
@@ -209,7 +213,8 @@ help_lines:
     dw help_l29, help_l30, help_l31, help_l32, help_l33
     dw help_l34, help_l35, help_l38, help_l39, help_l40
     dw help_l41, help_l42, help_l43, help_l44, help_l45
-    dw help_l46, help_l47, help_l48, help_l49, help_l50
+    dw help_l46, help_l47, help_l48, help_l49, help_l50, help_l51
+    dw help_l52, help_l53, help_l54
 help_lines_end:
 
 HELP_LINE_COUNT equ (help_lines_end - help_lines) / 2
@@ -266,9 +271,54 @@ msg_play_bad_wav     db "Not a supported WAV (need 8-bit unsigned PCM, mono).", 
 
 ; src/chip8.asm's chip8_run - kept here for the same reason as the
 ; msg_play_* messages above.
-msg_chip8_usage      db "Usage: chip8 <n>", 13, 10, 0
+msg_chip8_usage      db "Usage: chip8 <n> [speed]", 13, 10, 0
 msg_chip8_intro      db "CHIP-8 - 1234/qwer/asdf/zxcv keypad, ESC to quit.", 13, 10, 0
 msg_chip8_quit       db "Quit.", 13, 10, 0
+
+; src/turtle.asm's turtle_run - kept here for the same reason as the
+; msg_play_* messages above. turtle_token_buf and the turtle_cmd_*
+; command-name strings live here too (rather than in turtle.asm
+; itself, like everything above) because turtle_dispatch compares them
+; against each other with strcmp_eq/strcmp_prefix (src/input.asm),
+; which take their two pointers in the 16-bit si/di - both sides of
+; every comparison need to stay below 0x10000, not just one.
+; src/hostfs.asm's host_ls/host_get - kept here for the same reason as
+; the msg_play_* messages above.
+msg_host_get_usage   db "Usage: hostget <n> [new name]", 13, 10, 0
+msg_host_absent      db "No host shared folder attached - start LexOS with 'make run'.", 13, 10, 0
+msg_host_not_fat     db "The host disk isn't a FAT16 volume LexOS can read.", 13, 10, 0
+msg_host_io_error    db "Host disk read error.", 13, 10, 0
+msg_host_too_big     db "Too big - a LexOS file can hold at most 65535 bytes.", 13, 10, 0
+msg_host_is_dir      db "That's a folder - only top-level files can be copied for now.", 13, 10, 0
+msg_host_copied1     db "Copied ", 0
+msg_host_copied2     db " bytes as ", 0
+msg_host_dir_tag     db "<DIR>", 0
+
+msg_turtle_usage     db "Usage: turtle <n>", 13, 10, 0
+msg_turtle_intro     db "TURTLE - running script, any key to exit when done.", 13, 10, 0
+msg_hud_turtle_exit  db "Any key - exit", 0
+
+TURTLE_TOKEN_MAX equ 16
+turtle_token_buf times TURTLE_TOKEN_MAX db 0
+
+turtle_cmd_forward     db "FORWARD", 0
+turtle_cmd_fd          db "FD", 0
+turtle_cmd_backward    db "BACKWARD", 0
+turtle_cmd_back        db "BACK", 0
+turtle_cmd_bk           db "BK", 0
+turtle_cmd_left        db "LEFT", 0
+turtle_cmd_lt          db "LT", 0
+turtle_cmd_right       db "RIGHT", 0
+turtle_cmd_rt          db "RT", 0
+turtle_cmd_penup       db "PENUP", 0
+turtle_cmd_pu          db "PU", 0
+turtle_cmd_pendown     db "PENDOWN", 0
+turtle_cmd_pd          db "PD", 0
+turtle_cmd_home        db "HOME", 0
+turtle_cmd_clearscreen db "CLEARSCREEN", 0
+turtle_cmd_cs          db "CS", 0
+turtle_cmd_color       db "COLOR", 0
+turtle_cmd_repeat      db "REPEAT", 0
 msg_uranium_not_text db "That is a program file. Use hex to edit it.", 13, 10, 0
 msg_uranium_header1  db "LexOS Editor - ", 0
 msg_uranium_header2  db "  (", 0
@@ -537,6 +587,11 @@ cmd_paint_prefix db "paint ", 0
 cmd_view_prefix  db "view ", 0
 cmd_play_prefix  db "play ", 0
 cmd_chip8_prefix db "chip8 ", 0
+cmd_turtle_prefix db "turtle ", 0
+cmd_hostls       db "hostls", 0
+cmd_hostget_prefix db "hostget ", 0
+cmd_basic        db "basic", 0
+cmd_basic_prefix db "basic ", 0
 cmd_history      db "history", 0
 cmd_df           db "df", 0
 cmd_free         db "free", 0
