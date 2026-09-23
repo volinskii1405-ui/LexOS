@@ -93,15 +93,31 @@ alex@/PROGRAMS$
   inline bytes into a chain of extra disk sectors, tracked by a small
   on-disk bitmap. `cat`, `size`, `head`, `tail`, `grep`, `cp`, and `rm` all
   understand the chain.
-- Typing a `*.hg` file's own bare name (no arguments) runs it as a
-  script: every line is fed to the shell as a command, same as `run`
-  already does for machine-code programs. Lines are echoed before they
-  run, like a real DOS batch file, unless the script contains a line
-  that's exactly `@echo off` (silences the echo - and doesn't run as a
-  command itself - for the rest of that script; every run starts back
-  with echo on). A script's own line can name another `*.hg` file - each
-  nested script gets its own echo state and resumes the outer one
-  correctly when it finishes, up to `HG_MAX_NESTED` (3) levels deep.
+- **Scripts.** Typing a `*.hg` file's name (with arguments if you like:
+  `quiz.hg 10`) runs it: each line goes to the shell as a command, with
+  a small language on top (src/script.asm):
+  ```
+  @echo off                      # don't echo each line
+  set n = ($1 + 1) * 2           # an arithmetic expression: its value
+  set who = big world            # anything else: text
+  input name Your name?          # a line typed at the keyboard
+  if $n > 10                     # == != < > <= >=, exist <file>, not ...
+    echo big: $n
+  else
+    echo small
+  end
+  if exist NOTES.TXT then cat NOTES.TXT
+  for i = 1 to 10 step 2         # ... end
+  while $n > 0                   # ... end
+  goto done / :done / exit / shift / sleep 500
+  ```
+  `$name`, `${name}`, `$1`..`$9`, `$0`, `$#`, `$*`, `$RANDOM`, `$$`.
+  Comparisons are numeric when both sides are numbers, text otherwise.
+  Scripts can run other scripts (4 levels deep); ESC stops a runaway
+  loop. `set`, `unset`, `vars`, `input` and `sleep` also work at the
+  prompt, which expands `$variables` too (unknown ones stay as typed).
+  `AUTOEXEC.HG` in the root folder runs at every boot. Try
+  `hostget quiz.hg`, then `quiz.hg` - a times-table quiz.
 - `cp`/`mv` also support wildcards: `cp *.txt <folder>` copies every match
   into `<folder>` under its own name, and `mv *.txt <folder>` moves them
   the same way; both skip `USER.CFG` and any name already taken in the
@@ -545,7 +561,9 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `ren <n> <new>` | rename a file or folder |
 | `cp <n> <new>` | copy a file (independent content, not aliased); `cp *.ext <folder>` copies every match into `<folder>` |
 | `mv <n> <path>` | move a file into a folder at `path`; `mv *.ext <folder>` moves every match into `<folder>` |
-| `<n>.hg` | type a script's own name to run every line as a shell command (`@echo off` silences the echo) |
+| `<n>.hg [args]` | run a script (variables, if/while/for - see Scripts) |
+| `set <v> = <x>` / `vars` / `unset <v>` | script variables, at the prompt too |
+| `input <v> [prompt]` / `sleep <ms>` | read a line into a variable / wait |
 | `grep <n> <text>` | search file `n` for `text`; prints `Line <n>, Symbol <col> <line>` for each match, with the match highlighted in red |
 | **Editors** | |
 | `uranium <n>` | full-screen text editor (creates the file if it doesn't exist) |
@@ -709,6 +727,8 @@ src/
   tabcomplete.asm      Tab completion: matches the word being typed against
                        filenames in the current directory and shows the
                        rest as blue "ghost text" until Tab accepts it.
+  script.asm           *.hg scripts: variables, expressions, if/while/
+                       for/goto, set/vars/input/sleep, AUTOEXEC.HG.
 ```
 
 ## Known limitations
@@ -750,9 +770,9 @@ src/
   is silently skipped rather than reported individually. `uranium`'s
   `Ctrl+F` search is case-sensitive, like `grep`, and its search text is
   also capped at 32 characters.
-- `*.hg` scripts can call other `*.hg` scripts, but only `HG_MAX_NESTED`
-  (3) levels deep - a 4th nested call is refused with a message rather
-  than running.
+- Script variables are 64 at most, their values up to 63 characters,
+  numbers 32-bit integers; a script line handed to the shell is cut at
+  63 characters (the shell's own line length).
 - The mini-assembler resolves labels in one pass, so jumps can only target
   a label that already appears earlier in the same program. It also has
   no memory operands (no `[bx]`, no `[label]`) and no 16-bit-register

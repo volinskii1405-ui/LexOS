@@ -212,7 +212,8 @@ help_l32 db "  date          - show current date", 13, 10, 0
 help_l33 db "  time          - show current time", 13, 10, 0
 help_l34 db "  beep [hz]     - play a short tone (frequency in hex)", 13, 10, 0
 help_l35 db "  serial <text> - send text out over COM1", 13, 10, 0
-help_l38 db "  <n>.hg        - type its name to run every line as a command", 13, 10, 0
+help_l38 db "  <n>.hg [args] - run a script: set, input, if/while/for, goto (README)", 13, 10, 0
+help_l65 db "  set <v> = <x> / vars / unset <v> / input <v> / sleep <ms>", 13, 10, 0
 help_l39 db "  grep <n> <t>  - search file n for text t, highlight matches", 13, 10, 0
 help_l40 db "  head <n> [k]  - print first k lines of file n (default 10)", 13, 10, 0
 help_l41 db "  tail <n> [k]  - print last k lines of file n (default 10)", 13, 10, 0
@@ -246,7 +247,7 @@ help_lines:
     dw help_l19, help_l20, help_l21, help_l22, help_l23
     dw help_l24, help_l25, help_l26, help_l27, help_l28
     dw help_l29, help_l30, help_l31, help_l32, help_l33
-    dw help_l34, help_l35, help_l38, help_l39, help_l40
+    dw help_l34, help_l35, help_l38, help_l65, help_l39, help_l40
     dw help_l41, help_l42, help_l43, help_l44, help_l45, help_l62
     dw help_l46, help_l47, help_l48, help_l49, help_l50, help_l51
     dw help_l52, help_l53, help_l55, help_l54, help_l56, help_l57, help_l63, help_l64
@@ -286,8 +287,6 @@ msg_fs_renamed     db "Renamed.", 13, 10, 0
 msg_fs_usage_append db "Usage: append <n> <text>", 13, 10, 0
 msg_fs_appended     db "Appended.", 13, 10, 0
 msg_fs_disk_full    db "No free space for more content - saved what fit.", 13, 10, 0
-msg_hg_echo_off_line db "@echo off", 0
-msg_hg_too_deep      db "Scripts nested too deeply.", 13, 10, 0
 msg_grep_usage       db "Usage: grep <n> <text>", 13, 10, 0
 msg_grep_header_mid  db " matches found with ", 34, 0
 msg_grep_quote_nl    db 34, 13, 10, 0
@@ -523,9 +522,6 @@ msg_g2048_quit     db "Quit.", 13, 10, 0
 msg_g2048_score    db "Score: ", 0
 msg_g2048_highscore db "Best:  ", 0
 
-BATCH_BUF_LEN equ 511
-batch_content_buf times (BATCH_BUF_LEN + 1) db 0
-
 ; --- content_buf: the buffer that grep/head/tail/uranium read the whole
 ; file content into (not streamed, like cat/batch) via fs_load_content
 ; (src/fs_extra.asm) - grep counts matches in two passes, head/tail
@@ -668,6 +664,12 @@ cmd_ping_prefix  db "ping ", 0
 cmd_nslookup_prefix db "nslookup ", 0
 cmd_dhcp         db "dhcp", 0
 cmd_ntp          db "ntp", 0
+cmd_set          db "set", 0
+cmd_set_prefix   db "set ", 0
+cmd_vars         db "vars", 0
+cmd_unset_prefix db "unset ", 0
+cmd_input_prefix db "input ", 0
+cmd_sleep_prefix db "sleep ", 0
 cmd_wget         db "wget", 0
 cmd_wget_prefix  db "wget ", 0
 cmd_ntp_prefix   db "ntp ", 0
@@ -759,8 +761,6 @@ fs_tmp_slot2 dw 0
 fs_cp_dest_byte db 0
 fs_cp_new_chain dw 0
 fs_mv_dest_byte db 0
-fs_hg_echo db 1                     ; src/fs_extra.asm's fs_run_hg_script: is
-                                     ; the current script echoing its lines?
 fs_tmp_text_ptr dw 0
 fs_tmp_dest_byte db 0
 fs_resolve_found dw 0

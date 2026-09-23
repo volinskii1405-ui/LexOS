@@ -111,6 +111,9 @@ console_init:
     mov dword [console_regions + edx*8], BASIC_PROG_ADDR
     mov dword [console_regions + edx*8 + 4], BASIC_TEXT_ADDR - BASIC_PROG_ADDR
     inc edx
+    mov dword [console_regions + edx*8], SCRIPT_MEM
+    mov dword [console_regions + edx*8 + 4], SCRIPT_MEM_SIZE
+    inc edx
     mov dword [console_regions + edx*8], APP_BASE
     mov dword [console_regions + edx*8 + 4], APP_SIZE
     inc edx
