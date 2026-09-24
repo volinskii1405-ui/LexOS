@@ -310,7 +310,7 @@ dk_draw_clock:
     mov edx, CLOCK_R
     call dk_clock_point                   ; -> eax, ebx
     push ecx
-    mov esi, 0x9AA3B5
+    mov esi, COL_MUTED
     push eax
     push edx
     mov eax, ecx
@@ -328,7 +328,7 @@ dk_draw_clock:
     mov edx, 5
     sub eax, 2
     sub ebx, 2
-    mov esi, 0x2A3140
+    mov esi, COL_TEXT
 .small:
     call dk_fill
     pop ecx
@@ -348,11 +348,11 @@ dk_draw_clock:
     pop ecx
     add eax, ecx
     mov edx, 45
-    mov esi, 0x1C2331
+    mov esi, COL_TEXT
     call dk_clock_hand
     movzx eax, byte [dk_m_now]            ; ...minutes, seconds
     mov edx, 68
-    mov esi, 0x1C2331
+    mov esi, COL_TEXT
     call dk_clock_hand
     movzx eax, byte [dk_s_now]
     mov edx, 74
@@ -893,8 +893,9 @@ dk_draw_system:
     mov esi, dk_sys_buf
     call dk_sys_line
     mov esi, dk_sys_hint
-    mov edx, 0x6E7B8B
+    mov edx, COL_MUTED
     call dk_sys_line
+    call dk_sys_extras                    ; (src/dkstyle.asm: themes, sounds)
     jmp dk_contents_done
 
 ; esi (color edx) at the next line
@@ -976,7 +977,7 @@ dk_draw_tasks:
     mov ebx, [dk_cy]
     add ebx, 100
     mov esi, dk_task_header
-    mov edx, 0x6E7B8B
+    mov edx, COL_MUTED
     call dk_text
     xor ebp, ebp                          ; the task
     mov dword [dk_task_row], 0
@@ -1184,7 +1185,7 @@ dk_draw_mixer:
     mov ebx, [dk_cy]
     add ebx, 60
     mov esi, dk_mix_silent
-    mov edx, 0x6E7B8B
+    mov edx, COL_MUTED
     call dk_text
     jmp dk_contents_done
 
@@ -1198,7 +1199,7 @@ dk_slider:
     add ebx, 4
     mov ecx, MIX_SLIDER_W
     mov edx, 8
-    mov esi, 0xC5CAD3
+    mov esi, COL_BUTTON
     call dk_fill
     mov ecx, [dk_sl_value]
     imul ecx, MIX_SLIDER_W
@@ -1271,7 +1272,7 @@ dk_draw_files:
     add ebx, 4
     mov ecx, 40
     mov edx, 22
-    mov esi, 0xC5CAD3
+    mov esi, COL_BUTTON
     call dk_fill
     add eax, 8
     add ebx, 3
@@ -1292,7 +1293,7 @@ dk_draw_files:
     add ebx, 4
     mov ecx, 26
     mov edx, 22
-    mov esi, 0xC5CAD3
+    mov esi, COL_BUTTON
     call dk_fill
     add eax, 30
     call dk_fill
@@ -1412,7 +1413,7 @@ dk_draw_files:
     mov eax, [dk_cx]
     add eax, 8
     mov esi, dk_sys_buf
-    mov edx, 0x6E7B8B
+    mov edx, COL_MUTED
 .say:
     call dk_text
     jmp dk_contents_done
@@ -2146,14 +2147,14 @@ dk_draw_programs:
     mov ebx, DESK_H - DK_TASKBAR_H
     sub ebx, edx
     mov ecx, DK_PROG_W
-    mov esi, 0xDCE1EA
+    mov esi, COL_SUBMENU
     call dk_fill
     cmp dword [dk_prog_count], 0
     jne .items
     add eax, 14
     add ebx, 4
     mov esi, dk_prog_none
-    mov edx, 0x6E7B8B
+    mov edx, COL_MUTED
     call dk_text
     jmp .done
 .items:
@@ -2175,7 +2176,7 @@ dk_draw_programs:
     mov esi, ecx
     shl esi, 5
     add esi, dk_prog_paths
-    mov edx, 0x6E7B8B
+    mov edx, COL_MUTED
     push edi
     mov edi, 12
     call dk_text_n
@@ -2375,7 +2376,7 @@ dk_draw_tray:
     lea ebx, [ebp + 5]
     mov ecx, 4
     mov edx, 6
-    mov esi, COL_WHITE
+    mov esi, COL_BARTEXT
     call dk_fill
     mov eax, DK_TRAY_VOL_X + 4            ; the cone
     lea ebx, [ebp + 3]
@@ -2405,7 +2406,7 @@ dk_draw_tray:
     lea ebx, [ebp + 5]
     mov ecx, 2
     mov edx, 6
-    mov esi, COL_WHITE
+    mov esi, COL_BARTEXT
     call dk_fill
     cmp dword [mix_master], 50
     jb .net
@@ -2522,7 +2523,7 @@ dk_draw_calendar:
     inc ebx
     sub ecx, 2
     sub edx, 2
-    mov esi, 0xF3F4F8
+    mov esi, COL_POPUP
     call dk_fill
     ; today, in the user's time zone
     call rtc_read_date                    ; bh:bl:cl = day:month:year
@@ -2581,7 +2582,7 @@ dk_draw_calendar:
     mov eax, DK_CAL_X + 12
     mov ebx, DK_CAL_Y + 32
     mov esi, dk_cal_weekdays
-    mov edx, 0x6E7B8B
+    mov edx, COL_MUTED
     call dk_text
     ; the 1st's weekday (Sakamoto's): 0 = Sunday -> its column, Monday first
     mov eax, [dk_cal_year]
@@ -3838,6 +3839,11 @@ dk_win_click:
     call dk_tasks_click
     jmp .done
 .not_tasks:
+    cmp edx, K_SYSTEM
+    jne .not_system
+    call dk_system_click                  ; (src/dkstyle.asm)
+    jmp .done
+.not_system:
     cmp edx, K_MIXER
     jne .done
     call dk_mixer_click

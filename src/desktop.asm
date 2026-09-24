@@ -73,17 +73,47 @@ K_MIXER           equ 6
 K_APP             equ 7                   ; (param: the app window slot)
 K_NONE            equ 0xFF
 
-COL_TITLE_ON      equ 0x1E5AA8
-COL_TITLE_OFF     equ 0x6E7B8B
-COL_FRAME         equ 0xC8CCD4
-COL_TASKBAR       equ 0x1C2331
-COL_TASKBTN       equ 0x33405A
-COL_TASKBTN_ON    equ 0x4A6A9E
-COL_MENU          equ 0xE8EAF0
+; The interface's colors: the current theme's (src/dkstyle.asm)
+TH_TITLE_ON       equ 0
+TH_TITLE_OFF      equ 4
+TH_FRAME          equ 8
+TH_TASKBAR        equ 12
+TH_TASKBTN        equ 16
+TH_TASKBTN_ON     equ 20
+TH_TASKMIN        equ 24
+TH_MENU           equ 28
+TH_SUBMENU        equ 32
+TH_TEXT           equ 36
+TH_MUTED          equ 40
+TH_PANEL          equ 44
+TH_BUTTON         equ 48
+TH_POPUP          equ 52
+TH_TBTN           equ 56
+TH_BG_TOP         equ 60
+TH_BG_BOTTOM      equ 64
+TH_WATERMARK      equ 68
+TH_BARTEXT        equ 72
+TH_NAME           equ 76
+TH_SIZE           equ 80
+%define COL_TITLE_ON   dword [dk_th + TH_TITLE_ON]
+%define COL_TITLE_OFF  dword [dk_th + TH_TITLE_OFF]
+%define COL_FRAME      dword [dk_th + TH_FRAME]
+%define COL_TASKBAR    dword [dk_th + TH_TASKBAR]
+%define COL_TASKBTN    dword [dk_th + TH_TASKBTN]
+%define COL_TASKBTN_ON dword [dk_th + TH_TASKBTN_ON]
+%define COL_TASKMIN    dword [dk_th + TH_TASKMIN]
+%define COL_MENU       dword [dk_th + TH_MENU]
+%define COL_SUBMENU    dword [dk_th + TH_SUBMENU]
+%define COL_TEXT       dword [dk_th + TH_TEXT]
+%define COL_MUTED      dword [dk_th + TH_MUTED]
+%define COL_PANEL      dword [dk_th + TH_PANEL]
+%define COL_BUTTON     dword [dk_th + TH_BUTTON]
+%define COL_POPUP      dword [dk_th + TH_POPUP]
+%define COL_TBTN       dword [dk_th + TH_TBTN]
+%define COL_WATERMARK  dword [dk_th + TH_WATERMARK]
+%define COL_BARTEXT    dword [dk_th + TH_BARTEXT]
 COL_WHITE         equ 0xFFFFFF
 COL_BLACK         equ 0x000000
-COL_TEXT          equ 0x10141C
-COL_PANEL         equ 0xF4F5F8
 
 ; ============================================================
 ; `desktop`: on (or off again, if it's already on)
@@ -108,6 +138,7 @@ desktop_command:
 .have_video:
     cmp byte [vga_graphics_active], 0     ; (not from inside a graphics program)
     jne .done
+    call dk_settings_load                 ; (src/dkstyle.asm: DESKTOP.CFG)
     ; no windows yet: Clock, and a Terminal per console (made below)
     xor eax, eax
 .clear:
@@ -371,6 +402,7 @@ desktop_task:
 .drawn:
     dec dword [sched_lock]
     call dk_shot_save                     ; (src/dkwins.asm: outside a frame)
+    call dk_settings_work                 ; (src/dkstyle.asm: DESKTOP.CFG)
     jmp .sleep
 .suspended:
     mov eax, [timer_ms]
@@ -1739,16 +1771,7 @@ dk_render:
     jae .bg_done
     cmp ebx, DESK_H - DK_TASKBAR_H
     jae .bg_done
-    mov eax, ebx                          ; 0..92 down the screen
-    shr eax, 4
-    mov edx, eax                          ; blue: 0x50 -> 0x9E
-    add edx, 0x50
-    mov ecx, eax                          ; green: 0x30 -> 0x7E
-    add ecx, 0x30
-    shl ecx, 8
-    or edx, ecx
-    or edx, 0x0C0000                      ; a little red
-    mov eax, edx
+    mov eax, [dk_bg_rows + ebx*4]         ; (the theme's gradient)
     mov edi, ebx
     imul edi, DESK_STRIDE
     mov ecx, [dk_clip_x0]
@@ -1763,7 +1786,7 @@ dk_render:
     mov eax, DESK_W - 200                 ; the name, faintly, in the corner
     mov ebx, DESK_H - DK_TASKBAR_H - 40
     mov esi, dk_msg_watermark
-    mov edx, 0x6FA8C8
+    mov edx, COL_WATERMARK
     call dk_text
 
     ; the windows, back to front
@@ -1934,7 +1957,7 @@ dk_draw_window:
     add ebx, 3
     mov ecx, 16
     mov edx, 16
-    mov esi, 0x5A6B85
+    mov esi, COL_TBTN
     call dk_fill                          ; [_]
     push eax
     push ebx
@@ -1954,7 +1977,7 @@ dk_draw_window:
     add eax, 20                           ; the maximize box
     mov ecx, 16
     mov edx, 16
-    mov esi, 0x5A6B85
+    mov esi, COL_TBTN
     call dk_fill
     add eax, 4
     add ebx, 4
@@ -1966,7 +1989,7 @@ dk_draw_window:
     add ebx, 2
     mov ecx, 6
     mov edx, 5
-    mov esi, 0x5A6B85
+    mov esi, COL_TBTN
     call dk_fill
 .buttons_done:
     pop ebx
@@ -2086,7 +2109,7 @@ dk_draw_taskbar:
 .plain:
     cmp byte [dkw_hidden + ecx], 0
     je .shown
-    mov esi, 0x252C3A                     ; minimized: darker
+    mov esi, COL_TASKMIN                  ; minimized: darker
 .shown:
     push ecx
     mov ecx, [dk_btn_step]
@@ -2099,7 +2122,7 @@ dk_draw_taskbar:
     mov edi, [dk_btn_step]
     sub edi, 12
     shr edi, 3
-    mov edx, COL_WHITE
+    mov edx, COL_BARTEXT
     call dk_text_n
     pop ecx
     pop eax
@@ -2122,7 +2145,7 @@ dk_draw_taskbar:
     mov eax, DESK_W - 60
     mov ebx, DESK_H - DK_TASKBAR_H + 7
     mov esi, dk_clock_text
-    mov edx, COL_WHITE
+    mov edx, COL_BARTEXT
     call dk_text
     call dk_draw_tray                     ; (src/dkwins.asm)
     popad
@@ -2847,10 +2870,10 @@ dk_zcount         dd 0
 
 ; each kind's place and size when it opens, and name
 ;                   term  clock pics  sys   files tasks mixer app
-dk_def_x          dd 30,   800,  240,  700,  60,   320,  420,  200
+dk_def_x          dd 30,   800,  240,  560,  60,   320,  420,  200
 dk_def_y          dd 24,   30,   120,  320,  90,   150,  260,  60
-dk_def_w          dd 640,  200,  320,  290,  560,  420,  400,  320
-dk_def_h          dd 400,  214,  200,  150,  380,  330,  210,  200
+dk_def_w          dd 640,  200,  320,  420,  560,  420,  400,  320
+dk_def_h          dd 400,  214,  200,  210,  380,  330,  210,  200
 dk_kind_names     dd dk_title_terminal, dk_title_clock, dk_title_pictures, dk_title_system
                   dd dk_title_files, dk_title_tasks, dk_title_mixer, dk_title_program
 dk_menu_labels    dd dk_menu_programs
