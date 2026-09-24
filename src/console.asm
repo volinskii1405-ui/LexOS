@@ -234,13 +234,81 @@ console_open:
     call console_save
     mov [console_fg], dl
     call console_after_switch
+    cmp byte [console_open_desk], 0
+    jne .for_desktop
     call console_hand_over
+    popad
+    ret
+.for_desktop:                               ; (console_desktop_switch)
+    pushfd
+    cli
+    mov eax, [console_task + ebx*4]         ; the one that was on screen
+    mov byte [task_state + eax], TASK_PAUSED ; waits; the new one runs
+    mov byte [task_state + ecx], TASK_READY
+    dec dword [sched_lock]
+    popfd
     popad
     ret
 .no_task:
     dec dword [sched_lock]
     mov si, msg_task_table_full
     call print_string
+    popad
+    ret
+
+; ============================================================
+; From the desktop's task, each frame (sched_lock held): a switch asked
+; for (a click on another console's window) while the console on screen
+; is running a program's own code in ring 3 - which never gets to
+; console_safe_point if it doesn't read keys. That's as safe a moment
+; as a key wait: nothing of the kernel's is half done. Its task is
+; paused where it is, like the others.
+; ============================================================
+console_desktop_switch:
+    pushad
+    movzx eax, byte [console_request]
+    or eax, eax
+    jz .done
+    movzx ebx, byte [console_fg]
+    mov ecx, [console_task + ebx*4]
+    cmp byte [app_active], 0                ; a program, in its own code
+    je .done
+    cmp byte [task_insys + ecx], 0
+    jne .done
+    cmp byte [task_keywait + ecx], 0        ; (else it does it itself)
+    jne .done
+    cmp byte [task_state + ecx], TASK_READY
+    jne .done
+    mov byte [console_request], 0
+    cmp eax, CONSOLE_REQ_NEW
+    je .new
+    dec eax
+    cmp eax, CONSOLE_MAX
+    jae .done
+    cmp al, bl
+    je .done
+    cmp byte [console_used + eax], 0
+    je .done
+    mov [console_prev], bl
+    push eax
+    mov eax, ebx
+    call console_save
+    pop eax
+    call console_restore
+    mov [console_fg], al
+    call console_after_switch
+    mov edx, [console_task + eax*4]
+    pushfd
+    cli
+    mov byte [task_state + ecx], TASK_PAUSED
+    mov byte [task_state + edx], TASK_READY
+    popfd
+    jmp .done
+.new:
+    mov byte [console_open_desk], 1
+    call console_open
+    mov byte [console_open_desk], 0
+.done:
     popad
     ret
 
@@ -455,6 +523,7 @@ console_prompt_prefix:
 console_fg         db 0
 text_vram          dd VIDEO_MEM       ; src/screen.asm writes the text here
 console_prev       db 0
+console_open_desk  db 0               ; console_open from the desktop
 console_request    db 0               ; set by keyboard_isr: 1-9 or NEW
 console_used       times CONSOLE_MAX db 0
 console_task       times CONSOLE_MAX dd 0

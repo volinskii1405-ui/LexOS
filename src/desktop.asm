@@ -150,7 +150,8 @@ desktop_command:
 
     mov eax, desktop_task
     mov esi, dk_task_name
-    mov bl, SCHED_PRIO_NORMAL
+    mov bl, SCHED_PRIO_HIGH               ; (the pointer mustn't wait for
+                                          ; a busy program's time slice)
     call task_create
     cmp eax, -1
     je .no_task
@@ -291,8 +292,12 @@ desktop_task:
     cmp byte [dk_quit], 0
     jne .quit
     cmp byte [dk_suspended], 0
-    jne .sleep
+    jne .suspended
     inc dword [sched_lock]                ; one whole frame at a time
+    mov eax, [timer_ms]
+    mov [dk_frame_ms], eax                ; (one time for the whole frame)
+    inc dword [dk_frames]
+    call console_desktop_switch           ; (src/console.asm)
     call dk_sync_consoles
     call dk_mouse_events
     call dk_check_changes
@@ -301,48 +306,68 @@ desktop_task:
     mov al, [dk_redraw_all]
     mov byte [dk_redraw_all], 0
     or al, al
-    jz .partial
-    mov byte [dk_dirty], 0
+    jz .take
+    mov dword [dk_frame_n], 1             ; everything
+    mov dword [dk_frame_rects], 0
+    mov dword [dk_frame_rects + 4], 0
+    mov dword [dk_frame_rects + 8], DESK_W
+    mov dword [dk_frame_rects + 12], DESK_H
+    jmp .taken
+.take:
+    mov ecx, [dk_nrects]                  ; the dirty rectangles
+    mov [dk_frame_n], ecx
+    shl ecx, 2
+    mov esi, dk_rects
+    mov edi, dk_frame_rects
+    cld
+    rep movsd
+.taken:
+    mov dword [dk_nrects], 0
     popfd
-    xor eax, eax
-    xor ebx, ebx
-    mov ecx, DESK_W
-    mov edx, DESK_H
-    jmp .draw
-.partial:
-    cmp byte [dk_dirty], 0
-    jne .dirty
-    popfd
-    call dk_move_pointer
-    jmp .drawn
-.dirty:
-    mov byte [dk_dirty], 0
-    mov eax, [dk_dirty_x0]
-    mov ebx, [dk_dirty_y0]
-    mov ecx, [dk_dirty_x1]
-    sub ecx, eax
-    mov edx, [dk_dirty_y1]
-    sub edx, ebx
-    popfd
-.draw:
-    mov [dk_clip_x0], eax                 ; draw just there
+    xor ebp, ebp                          ; each: drawn, then to the screen
+.rect:
+    cmp ebp, [dk_frame_n]
+    jae .rects_done
+    mov esi, ebp
+    shl esi, 4
+    mov eax, [dk_frame_rects + esi]
+    mov [dk_clip_x0], eax
+    mov ebx, [dk_frame_rects + esi + 4]
     mov [dk_clip_y0], ebx
-    lea esi, [eax + ecx]
-    mov [dk_clip_x1], esi
-    lea esi, [ebx + edx]
-    mov [dk_clip_y1], esi
+    mov ecx, [dk_frame_rects + esi + 8]
+    mov [dk_clip_x1], ecx
+    mov edx, [dk_frame_rects + esi + 12]
+    mov [dk_clip_y1], edx
     call dk_render
+    sub ecx, eax
+    sub edx, ebx
     call dk_blit
-    call dk_draw_pointer
+    inc ebp
+    jmp .rect
+.rects_done:
+    call dk_move_pointer                  ; (erased and redrawn if needed)
 .drawn:
     dec dword [sched_lock]
-.sleep:
-    add dword [dk_next_frame], 16         ; ~60 frames a second at most
+    jmp .sleep
+.suspended:
     mov eax, [timer_ms]
-    sub eax, [dk_next_frame]
-    cmp eax, 100
-    jl .wait
-    mov eax, [timer_ms]                   ; far behind: don't rush
+    mov [dk_frame_ms], eax
+.sleep:
+    add dword [dk_next_frame], 16         ; ~60 frames a second at most,
+    mov eax, [timer_ms]                   ; and always a rest in between -
+    sub eax, [dk_frame_ms]                ; half as long as the frame took,
+    shr eax, 1                            ; 4ms at least - so the programs
+    cmp eax, 4                            ; get their turn
+    jae .rest
+    mov eax, 4
+.rest:
+    cmp eax, 50
+    jbe .rest_ok
+    mov eax, 50
+.rest_ok:
+    add eax, [timer_ms]
+    cmp eax, [dk_next_frame]
+    js .wait
     mov [dk_next_frame], eax
 .wait:
     mov eax, [timer_ms]
@@ -676,8 +701,11 @@ dk_check_changes:
     cmp cl, [dkw_blink + ebp]
     je .next_win
 .cursor_dirty:
-    mov eax, ebp
-    call dk_mark_window_client
+    push eax                              ; where it was, and where it is
+    mov eax, [dkw_cursor + ebp*4]
+    call dk_mark_cell
+    pop eax
+    call dk_mark_cell
 .next_win:
     inc ebp
     cmp ebp, DK_MAX_WIN
@@ -741,6 +769,30 @@ dk_client_origin:
     add eax, DK_BORDER
     ret
 
+; ebp = a Terminal, eax = row << 16 | column: that cell dirty
+dk_mark_cell:
+    pushad
+    movzx ecx, ax                         ; the column
+    shr eax, 16                           ; the row
+    cmp ecx, SCREEN_COLS
+    jae .done
+    cmp eax, SCREEN_ROWS
+    jae .done
+    shl ecx, 3
+    shl eax, 4
+    mov esi, ecx
+    mov edi, eax
+    mov eax, ebp
+    call dk_client_origin                 ; -> eax, ebx
+    add eax, esi
+    add ebx, edi
+    mov ecx, 8
+    mov edx, 16
+    call dk_mark
+.done:
+    popad
+    ret
+
 ; eax = a window: its whole rectangle dirty (if shown)
 dk_mark_window:
     pushad
@@ -792,7 +844,9 @@ dk_mark_kind:
     popad
     ret
 
-; eax, ebx, ecx, edx = x, y, w, h: add it to the dirty rectangle.
+; eax, ebx, ecx, edx = x, y, w, h: to be redrawn. Kept as a few
+; rectangles (one that touches another grows it), so a ticking clock
+; and a blinking cursor far apart don't redraw everything between.
 ; (Also called by programs' blits in other tasks - interrupts off.)
 dk_mark:
     pushad
@@ -802,30 +856,54 @@ dk_mark:
     add edx, ebx
     call dk_clip_screen
     jc .done
-    cmp byte [dk_dirty], 0
-    jne .grow
-    mov [dk_dirty_x0], eax
-    mov [dk_dirty_y0], ebx
-    mov [dk_dirty_x1], ecx
-    mov [dk_dirty_y1], edx
-    mov byte [dk_dirty], 1
+    xor esi, esi
+.find:
+    cmp esi, [dk_nrects]
+    jae .append
+    mov edi, esi
+    shl edi, 4
+    add edi, dk_rects
+    cmp eax, [edi + 8]
+    jg .next
+    cmp ecx, [edi]
+    jl .next
+    cmp ebx, [edi + 12]
+    jg .next
+    cmp edx, [edi + 4]
+    jl .next
+    jmp .grow
+.next:
+    inc esi
+    jmp .find
+.append:
+    cmp esi, DK_DIRTY_MAX
+    jb .new
+    mov edi, dk_rects + (DK_DIRTY_MAX - 1) * 16   ; full: the last one grows
+    jmp .grow
+.new:
+    shl esi, 4
+    mov [dk_rects + esi], eax
+    mov [dk_rects + esi + 4], ebx
+    mov [dk_rects + esi + 8], ecx
+    mov [dk_rects + esi + 12], edx
+    inc dword [dk_nrects]
     jmp .done
 .grow:
-    cmp eax, [dk_dirty_x0]
+    cmp eax, [edi]
     jge .x0
-    mov [dk_dirty_x0], eax
+    mov [edi], eax
 .x0:
-    cmp ebx, [dk_dirty_y0]
+    cmp ebx, [edi + 4]
     jge .y0
-    mov [dk_dirty_y0], ebx
+    mov [edi + 4], ebx
 .y0:
-    cmp ecx, [dk_dirty_x1]
+    cmp ecx, [edi + 8]
     jle .x1
-    mov [dk_dirty_x1], ecx
+    mov [edi + 8], ecx
 .x1:
-    cmp edx, [dk_dirty_y1]
+    cmp edx, [edi + 12]
     jle .done
-    mov [dk_dirty_y1], edx
+    mov [edi + 12], edx
 .done:
     popfd
     popad
@@ -898,16 +976,24 @@ dk_mouse_events:
     cmp al, [mouse_btn_head]
     je .live
     mov cl, [mouse_btn_queue + eax]
+    mov [dk_btn_now], cl
+    mov ecx, [mouse_btn_x + eax*4]
+    mov [dk_ev_x], ecx
+    mov ecx, [mouse_btn_y + eax*4]
+    mov [dk_ev_y], ecx
     inc al
     and al, MOUSE_BTN_QUEUE - 1
     mov [mouse_btn_tail], al
-    mov [dk_btn_now], cl
     call dk_mouse_event
     jmp .queued
 .live:
     mov cl, [mouse_buttons]               ; then the moves
     and cl, 1
     mov [dk_btn_now], cl
+    mov ecx, [mouse_x]
+    mov [dk_ev_x], ecx
+    mov ecx, [mouse_y]
+    mov [dk_ev_y], ecx
     call dk_mouse_event
     popad
     ret
@@ -915,8 +1001,8 @@ dk_mouse_events:
 ; One look at the mouse: the pointer, and the button as dk_btn_now
 dk_mouse_event:
     pushad
-    mov eax, [mouse_x]
-    mov ebx, [mouse_y]
+    mov eax, [dk_ev_x]
+    mov ebx, [dk_ev_y]
     mov cl, [dk_btn_now]
     mov [dk_mx], eax
     mov [dk_my], ebx
@@ -925,8 +1011,10 @@ dk_mouse_event:
 
     cmp byte [dk_dragging], 0
     je .not_dragging
-    or cl, cl
-    jz .drop
+    or cl, cl                             ; let go: this is where it stays
+    jnz .follow
+    mov byte [dk_dragging], 0
+.follow:
     ; dragging a window: it follows
     mov esi, [dk_drag_win]
     mov edx, eax
@@ -961,9 +1049,6 @@ dk_mouse_event:
     mov [dkw_x + esi*4], edx
     mov [dkw_y + esi*4], edi
     call dk_mark_window                   ; ...and where it is
-    jmp .done
-.drop:
-    mov byte [dk_dragging], 0
     jmp .done
 
 .not_dragging:
@@ -1171,6 +1256,30 @@ dk_mark_menu:
 ; ============================================================
 dk_render:
     pushad
+    ; a window covering all of the clip hides everything below it
+    mov ecx, [dk_zcount]
+.cover:
+    dec ecx
+    js .uncovered
+    movzx eax, byte [dk_zorder + ecx]
+    cmp byte [dkw_hidden + eax], 0
+    jne .cover
+    mov edx, [dkw_x + eax*4]
+    cmp edx, [dk_clip_x0]
+    jg .cover
+    add edx, [dkw_w + eax*4]
+    add edx, DK_BORDER * 2
+    cmp edx, [dk_clip_x1]
+    jl .cover
+    mov edx, [dkw_y + eax*4]
+    cmp edx, [dk_clip_y0]
+    jg .cover
+    add edx, [dkw_h + eax*4]
+    add edx, DK_TITLE_H + DK_BORDER * 2
+    cmp edx, [dk_clip_y1]
+    jl .cover
+    jmp .win                              ; ecx = the first to draw
+.uncovered:
     ; the background: a vertical gradient, dark blue into teal
     mov ebx, [dk_clip_y0]
 .bg_row:
@@ -1248,8 +1357,7 @@ dk_draw_window:
     add ecx, DK_BORDER * 2
     mov edx, [dkw_h + ebp*4]
     add edx, DK_TITLE_H + DK_BORDER * 2
-    mov esi, COL_FRAME
-    call dk_fill
+    call dk_draw_border                   ; (the rest is drawn over anyway)
     push eax                              ; a shadow right and below
     push ebx
     push ecx
@@ -1340,14 +1448,39 @@ dk_draw_window:
     mov ecx, [dkw_w + ebp*4]
     mov edx, [dkw_h + ebp*4]
     mov esi, COL_PANEL
-    cmp byte [dkw_kind + ebp], K_TERM
-    jne .fill_client
-    mov esi, COL_BLACK
-.fill_client:
+    cmp byte [dkw_kind + ebp], K_TERM     ; (Terminals and programs cover
+    je .contents                          ; all of theirs themselves)
+    cmp byte [dkw_kind + ebp], K_APP
+    je .contents
     call dk_fill
+.contents:
     mov eax, ebp
     call dk_draw_contents                 ; (src/dkwins.asm)
 .done:
+    popad
+    ret
+
+; A window's border: eax, ebx, ecx, edx = its outer rectangle
+dk_draw_border:
+    pushad
+    mov esi, COL_FRAME
+    mov [dk_bd_h], edx
+    mov edx, DK_BORDER                    ; top
+    call dk_fill
+    add ebx, [dk_bd_h]                    ; bottom
+    sub ebx, DK_BORDER
+    call dk_fill
+    sub ebx, [dk_bd_h]
+    add ebx, DK_BORDER * 2
+    mov edx, [dk_bd_h]
+    sub edx, DK_BORDER * 2
+    push ecx
+    mov ecx, DK_BORDER                    ; left
+    call dk_fill
+    add eax, [esp]                        ; right
+    sub eax, DK_BORDER
+    call dk_fill
+    pop ecx
     popad
     ret
 
@@ -1795,33 +1928,62 @@ dk_blit:
     popad
     ret
 
-; The pointer moved? Repaint where it was, draw it where it is.
+; After a frame: if the pointer moved, or something was just copied
+; over where it is, repaint where it was and draw it where it is.
 dk_move_pointer:
     pushad
     mov eax, [dk_mx]
     cmp eax, [dk_ptr_x]
-    jne .moved
+    jne .redraw
     mov eax, [dk_my]
     cmp eax, [dk_ptr_y]
-    jne .moved
+    jne .redraw
     cmp byte [dk_fm_state], 3             ; (a dragged icon follows too)
-    jne .done
-.moved:
-    mov eax, [dk_ptr_x]
-    mov ebx, [dk_ptr_y]
-    mov ecx, 12
-    mov edx, 19
-    cmp byte [dk_fm_state], 3
-    jb .small
-    sub eax, 20                           ; (the dragged icon's rectangle)
-    sub ebx, 20
-    mov ecx, 100
-    mov edx, 60
-.small:
+    je .redraw
+    cmp byte [dk_ptr_ghost], 0            ; (just dropped: the icon goes)
+    jne .redraw
+    call dk_ptr_rect                      ; drawn over?
+    xor esi, esi
+.over:
+    cmp esi, [dk_frame_n]
+    jae .done
+    mov edi, esi
+    shl edi, 4
+    cmp eax, [dk_frame_rects + edi + 8]
+    jge .next
+    cmp ecx, [dk_frame_rects + edi]
+    jle .next
+    cmp ebx, [dk_frame_rects + edi + 12]
+    jge .next
+    cmp edx, [dk_frame_rects + edi + 4]
+    jg .redraw
+.next:
+    inc esi
+    jmp .over
+.redraw:
+    call dk_ptr_rect                      ; where it was: from the back buffer
+    sub ecx, eax
+    sub edx, ebx
     call dk_blit
     call dk_draw_pointer
 .done:
     popad
+    ret
+
+; -> eax, ebx, ecx, edx = x0, y0, x1, y1 of the pointer as last drawn
+dk_ptr_rect:
+    mov eax, [dk_ptr_x]
+    mov ebx, [dk_ptr_y]
+    cmp byte [dk_ptr_ghost], 0
+    jne .ghost
+    lea ecx, [eax + 12]
+    lea edx, [ebx + 19]
+    ret
+.ghost:
+    sub eax, 20                           ; (the dragged icon's rectangle)
+    sub ebx, 20
+    lea ecx, [eax + 100]
+    lea edx, [ebx + 60]
     ret
 
 ; The arrow at dk_mx, dk_my, straight onto the screen (with a dragged
@@ -1832,8 +1994,10 @@ dk_draw_pointer:
     mov [dk_ptr_x], eax
     mov ebx, [dk_my]
     mov [dk_ptr_y], ebx
+    mov byte [dk_ptr_ghost], 0
     cmp byte [dk_fm_state], 3
     jb .arrow
+    mov byte [dk_ptr_ghost], 1
     call dk_files_draw_drag               ; (src/dkwins.asm)
 .arrow:
     mov eax, [dk_ptr_x]
@@ -1911,11 +2075,15 @@ dk_quit           db 0
 dk_suspended      db 0
 dk_in_transition  db 0
 dk_redraw_all     db 0
-dk_dirty          db 0
-dk_dirty_x0       dd 0
-dk_dirty_y0       dd 0
-dk_dirty_x1       dd 0
-dk_dirty_y1       dd 0
+DK_DIRTY_MAX      equ 8
+dk_nrects         dd 0
+dk_rects          times DK_DIRTY_MAX * 4 dd 0  ; x0, y0, x1, y1 each
+dk_frame_n        dd 0                         ; this frame's copy
+dk_frame_rects    times DK_DIRTY_MAX * 4 dd 0
+dk_frame_ms       dd 0
+dk_bd_h           dd 0
+dk_frames         dd 0                         ; (counted, for testing)
+dk_ptr_ghost      db 0                         ; the drawn pointer had an icon
 dk_clip_x0        dd 0
 dk_clip_y0        dd 0
 dk_clip_x1        dd DESK_W
@@ -1925,6 +2093,8 @@ dk_next_frame     dd 0
 dk_last_fast      dd 0
 dk_mix_sum        dd 0
 dk_btn_now        db 0
+dk_ev_x           dd 0                         ; the event's pointer
+dk_ev_y           dd 0
 dk_last_fg        db 0xFF
 dk_mx             dd 0
 dk_my             dd 0

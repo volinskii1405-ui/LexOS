@@ -369,7 +369,9 @@ alex@/PROGRAMS$
     VGA's own font, so the shell, uranium, BASIC, chat and ring-3
     programs all work in it. Terminal in the menu opens another
     console; clicking a window gives the keyboard to its console (the
-    focused ones have a yellow "kbd" in the title), Alt+1..9 too.
+    focused ones have a yellow "kbd" in the title), Alt+1..9 too - even
+    while a program there is busy computing: one running its own code
+    in ring 3 is paused right where it is.
   - **Programs in windows.** A ring-3 program that asks for graphics
     (`run fire.app`, `run cube.app`, `run pong.app`, `run
     mandel.app`...) gets a window instead of the whole screen - small
@@ -381,7 +383,8 @@ alex@/PROGRAMS$
   - **Files** shows the current folder as icons (folders, programs,
     pictures, sounds, text...), Up and page buttons. Double-click a
     folder to go in, a .BMP opens in Pictures, anything else is typed
-    into the focused Terminal: `run` for .APP/.COM/.BIN, `play` for
+    into the focused Terminal (or a new one, if that's busy with a
+    program or half a command): `run` for .APP/.COM/.BIN, `play` for
     .WAV/.IMF, `run modplay.app` for .MOD, `basic` for .BAS, `turtle`,
     `chip8`, a .HG script by its name, anything else in `uranium`.
     Drag an icon onto a folder (or "..") to move it there.
@@ -396,10 +399,15 @@ alex@/PROGRAMS$
     network address.
 
   It's a task of its own (src/desktop.asm, the windows' contents in
-  src/dkwins.asm): a back buffer redrawn only inside the changed
-  rectangle, just that rectangle copied to the screen, the mouse
-  pointer drawn on top; the mouse driver queues button changes so a
-  quick double click isn't missed between frames. Type `desktop` again
+  src/dkwins.asm), at high priority so the pointer never waits for a
+  busy program's time slice - but resting between frames half as long
+  as the last one took. What changed is kept as a few dirty rectangles;
+  only those are redrawn in the back buffer (starting from the topmost
+  window that covers one whole, nothing hidden under it) and copied to
+  the screen, the mouse pointer drawn on top and repainted wherever a
+  frame drew over it. The mouse driver queues button changes with
+  where they happened, so a quick double click or a fast drag isn't
+  lost between frames. Type `desktop` again
   (or use the menu) to leave - every console gets its text back.
 - **Preemptive multitasking.** Kernel tasks with their own stacks,
   switched by the timer interrupt (src/sched.asm): equal-priority tasks

@@ -337,6 +337,7 @@ app_abort:
     mov ecx, [sched_current]
     mov esp, [task_app_esp + ecx*4]
     mov dword [task_kstack + ecx*4], 0
+    mov byte [task_insys + ecx], 0
     mov byte [app_active], 0
     mov byte [app_abort_request], 0
     sti
@@ -391,6 +392,8 @@ app_check_abort:
 ; ============================================================
 syscall_isr:
     pushad
+    mov eax, [sched_current]              ; (inside the kernel: see
+    inc byte [task_insys + eax]           ; dk_shell_idle, src/dkwins.asm)
     sti
     mov ebp, esp                          ; the caller's registers:
     mov eax, [ebp + 28]                   ; eax +28, ecx +24, ebx +16
@@ -398,10 +401,16 @@ syscall_isr:
     jae .bad
     call [syscall_table + eax*4]
     mov [ebp + 28], eax
+    cli
+    mov eax, [sched_current]
+    dec byte [task_insys + eax]
     popad
     iretd
 .bad:
     mov dword [ebp + 28], -1
+    cli
+    mov eax, [sched_current]
+    dec byte [task_insys + eax]
     popad
     iretd
 

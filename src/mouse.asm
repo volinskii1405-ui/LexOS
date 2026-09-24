@@ -194,24 +194,10 @@ mouse_isr:
     mov byte [mouse_packet_idx], 0
 
     mov al, [mouse_packet + 0]
-    mov ah, al                       ; the left button went down or up:
-    xor ah, [mouse_buttons]          ; queued, so a quick double click
-    test ah, 1                       ; isn't lost between two looks
-    jz .same_button
-    movzx ebx, byte [mouse_btn_head]
-    inc bl
-    and bl, MOUSE_BTN_QUEUE - 1
-    cmp bl, [mouse_btn_tail]
-    je .same_button                  ; (full)
-    movzx ebx, byte [mouse_btn_head]
-    mov ah, al
-    and ah, 1
-    mov [mouse_btn_queue + ebx], ah
-    inc bl
-    and bl, MOUSE_BTN_QUEUE - 1
-    mov [mouse_btn_head], bl
-.same_button:
+    mov ah, [mouse_buttons]
     mov [mouse_buttons], al
+    xor ah, al
+    mov [mouse_btn_changed], ah
 
     movsx eax, byte [mouse_packet + 1]
     imul eax, [mouse_speed]
@@ -240,6 +226,25 @@ mouse_isr:
 .y_high_ok:
     inc dword [mouse_events]         ; (for whoever's watching it move)
 
+    test byte [mouse_btn_changed], 1 ; the left button went down or up:
+    jz .eoi                          ; queued with where it happened, so
+    movzx ebx, byte [mouse_btn_head] ; a quick double click isn't lost
+    inc bl                           ; between two looks
+    and bl, MOUSE_BTN_QUEUE - 1
+    cmp bl, [mouse_btn_tail]
+    je .eoi                          ; (full)
+    movzx ebx, byte [mouse_btn_head]
+    mov al, [mouse_buttons]
+    and al, 1
+    mov [mouse_btn_queue + ebx], al
+    mov eax, [mouse_x]
+    mov [mouse_btn_x + ebx*4], eax
+    mov eax, [mouse_y]
+    mov [mouse_btn_y + ebx*4], eax
+    inc bl
+    and bl, MOUSE_BTN_QUEUE - 1
+    mov [mouse_btn_head], bl
+
 .eoi:
     mov al, 0x20
     out 0xA0, al                     ; EOI to the slave...
@@ -263,5 +268,8 @@ mouse_speed dd 1
 mouse_events dd 0
 MOUSE_BTN_QUEUE equ 16
 mouse_btn_queue times MOUSE_BTN_QUEUE db 0 ; the left button's changes (0/1)
+mouse_btn_x times MOUSE_BTN_QUEUE dd 0     ; and where the pointer was
+mouse_btn_y times MOUSE_BTN_QUEUE dd 0
+mouse_btn_changed db 0
 mouse_btn_head db 0
 mouse_btn_tail db 0

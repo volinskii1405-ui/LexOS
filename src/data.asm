@@ -660,6 +660,7 @@ cmd_ps           db "ps", 0
 cmd_exit         db "exit", 0
 ; src/usermode.asm's, per console (src/console.asm swaps this file)
 app_active         db 0
+shell_at_prompt    db 0               ; reading a command line (main_loop)
 app_abort_request  db 0
 cmd_kill_prefix  db "kill ", 0
 cmd_clock        db "clock", 0

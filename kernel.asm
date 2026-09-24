@@ -87,7 +87,9 @@ kernel_start:
     call fs_print_prompt
 
 main_loop:
+    mov byte [shell_at_prompt], 1   ; (the desktop's Files types in here)
     call read_command_line   ; blocks until the user presses Enter
+    mov byte [shell_at_prompt], 0
     call handle_command
     call fs_print_prompt
     jmp main_loop

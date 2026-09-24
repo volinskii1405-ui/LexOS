@@ -134,7 +134,7 @@ dk_term_cursor:
     jne .done
     movzx eax, word [cursor_row]
     movzx ebx, word [cursor_col]
-    mov ecx, [timer_ms]
+    mov ecx, [dk_frame_ms]
     shr ecx, 9                            ; blinks every 512ms
     and ecx, 1
 .done:
@@ -320,20 +320,41 @@ dk_draw_pictures:
 dk_copy_pixels:
     pushad
     mov [dk_cp_w], eax
-    mov [dk_cp_h], ebx
     mov [dk_cp_scale], ecx
     mov [dk_cp_src], esi
-    xor edx, edx                          ; the screen row, from the top
-.row:
-    mov eax, [dk_cp_h]
-    imul eax, [dk_cp_scale]
-    cmp edx, eax
-    jae .done
-    mov ebx, [dk_cy]
-    add ebx, edx
-    cmp ebx, [dk_clip_y0]
-    jl .next_row
-    cmp ebx, [dk_clip_y1]
+    imul ebx, ecx                         ; rows and columns on the screen,
+    imul eax, ecx                         ; cut to the clip
+    mov ecx, [dk_clip_x0]
+    sub ecx, [dk_cx]
+    jns .c0
+    xor ecx, ecx
+.c0:
+    mov [dk_cp_c0], ecx
+    mov ecx, [dk_clip_x1]
+    sub ecx, [dk_cx]
+    cmp ecx, eax
+    jle .c1
+    mov ecx, eax
+.c1:
+    mov [dk_cp_c1], ecx
+    cmp ecx, [dk_cp_c0]
+    jle .done
+    mov edx, [dk_clip_y0]
+    sub edx, [dk_cy]
+    jns .r0
+    xor edx, edx
+.r0:
+    mov [dk_cp_r0], edx
+    mov ecx, [dk_clip_y1]
+    sub ecx, [dk_cy]
+    cmp ecx, ebx
+    jle .r1
+    mov ecx, ebx
+.r1:
+    mov [dk_cp_r1], ecx
+    cld
+.row:                                     ; edx = the screen row, from the top
+    cmp edx, [dk_cp_r1]
     jge .done
     mov eax, edx                          ; the source row
     cmp dword [dk_cp_scale], 2
@@ -344,33 +365,35 @@ dk_copy_pixels:
     shl eax, 2
     add eax, [dk_cp_src]
     mov esi, eax
-    mov edi, ebx
+    mov edi, [dk_cy]
+    add edi, edx
     imul edi, DESK_STRIDE
-    add edi, DESK_BACK
-    ; the columns inside the clip
-    mov ecx, [dk_cp_w]
-    imul ecx, [dk_cp_scale]
-    xor ebx, ebx                          ; the screen column, from the left
-.col:
-    cmp ebx, ecx
-    jae .next_row
     mov eax, [dk_cx]
-    add eax, ebx
-    cmp eax, [dk_clip_x0]
-    jl .next_col
-    cmp eax, [dk_clip_x1]
-    jge .next_row
-    push ebx
+    add eax, [dk_cp_c0]
+    lea edi, [edi + eax*4 + DESK_BACK]
+    mov ebx, [dk_cp_c0]
+    mov ecx, [dk_cp_c1]
+    sub ecx, ebx
     cmp dword [dk_cp_scale], 2
-    jne .col1
-    shr ebx, 1
-.col1:
-    mov ebx, [esi + ebx*4]
-    mov [edi + eax*4], ebx
-    pop ebx
-.next_col:
+    jne .straight
+    test edx, 1                           ; doubled: an odd row is the one
+    jz .doubled                           ; above it again, if that's drawn
+    cmp edx, [dk_cp_r0]
+    je .doubled
+    lea esi, [edi - DESK_STRIDE]
+    rep movsd
+    jmp .next_row
+.straight:
+    lea esi, [esi + ebx*4]                ; 1:1 - a straight copy
+    rep movsd
+    jmp .next_row
+.doubled:
+    mov eax, ebx
+    shr eax, 1
+    mov eax, [esi + eax*4]
+    stosd
     inc ebx
-    jmp .col
+    loop .doubled
 .next_row:
     inc edx
     jmp .row
@@ -597,18 +620,25 @@ dk_decode_bmp:
     stc
     ret
 
-; carry=0 if the shell with the keyboard is waiting for a key - a
+; carry=0 if the console with the keyboard is waiting for a key, or its
+; program is running its own code (not in a system call) - a
 ; moment the desktop may use the filesystem (its buffers are shared)
 dk_shell_idle:
     push eax
     movzx eax, byte [console_fg]
     mov eax, [console_task + eax*4]
-    cmp byte [task_keywait + eax], 0
+    cmp byte [task_keywait + eax], 0      ; waiting for a key,
+    jne .idle
+    cmp byte [app_active], 0              ; or a program running in ring 3
+    je .busy                              ; - not inside a system call
+    cmp byte [task_insys + eax], 0
+    jne .busy
+.idle:
     pop eax
-    je .busy
     clc
     ret
 .busy:
+    pop eax
     stc
     ret
 
@@ -1187,6 +1217,9 @@ dk_draw_files:
     mov edx, 0xB03A2E
     or esi, esi
     jnz .say
+    mov esi, dk_fm_waiting                ; (not listed yet: the terminal's
+    cmp byte [dk_fm_refresh], 0           ; busy with something)
+    jne .say
     mov edi, dk_sys_buf
     mov eax, [dk_fm_count]
     call wget_append_num
@@ -1736,9 +1769,26 @@ dk_files_open:
     jmp .done
 .command:
     ; the rest: typed into the Terminal with the keyboard - "cd <here>",
-    ; then what opens it
-    call dk_shell_idle
-    jc .busy
+    ; then what opens it. If that one's busy (a program, the editor,
+    ; half a command typed), into a new Terminal instead.
+    mov bl, [console_fg]
+    cmp byte [shell_at_prompt], 0
+    je .elsewhere
+    cmp word [buf_len], 0
+    je .target
+.elsewhere:
+    xor ebx, ebx
+.free:
+    cmp ebx, CONSOLE_MAX
+    jae .busy
+    cmp byte [console_used + ebx], 0
+    je .new
+    inc ebx
+    jmp .free
+.new:
+    mov byte [console_request], CONSOLE_REQ_NEW
+.target:
+    mov [dk_inject_target], bl
     mov edi, dk_inject_buf
     push esi
     mov esi, dk_cmd_cd
@@ -1756,15 +1806,14 @@ dk_files_open:
     call wget_append                      ; the name
     mov al, 13
     stosb
-    mov eax, edi
-    sub eax, dk_inject_buf
-    mov al, [console_fg]
+    mov al, [dk_inject_target]
     mov [dk_inject_console], al
     mov dword [dk_inject_pos], 0
     mov eax, edi
     sub eax, dk_inject_buf
     mov [dk_inject_len], eax
-    movzx ebx, byte [console_fg]          ; its Terminal to the front
+    movzx ebx, byte [dk_inject_target]    ; its Terminal to the front
+                                          ; (a new one comes up by itself)
     mov eax, K_TERM
     call dk_win_find
     cmp eax, -1
@@ -1773,7 +1822,7 @@ dk_files_open:
     call dk_raise
     jmp .done
 .busy:
-    mov dword [dk_fm_msg], dk_fm_busy
+    mov dword [dk_fm_msg], dk_fm_full
     mov byte [dk_redraw_all], 1
 .done:
     popad
@@ -2487,6 +2536,11 @@ dk_cp_w           dd 0
 dk_cp_h           dd 0
 dk_cp_scale       dd 1
 dk_cp_src         dd 0
+dk_cp_c0          dd 0
+dk_cp_c1          dd 0
+dk_cp_r1          dd 0
+dk_cp_r0          dd 0
+dk_inject_target  db 0
 dk_pic_state      db 0                    ; 0 -, 1 to load, 2 shown, 3 none
 dk_pic_slot       dd -1
 dk_pic_dir        db FS_ROOT_BYTE
@@ -2592,7 +2646,9 @@ dk_fm_up            db "Up", 0
 dk_fm_prev          db "<", 0
 dk_fm_next          db ">", 0
 dk_fm_items         db " items. Double-click opens, drag onto a folder moves.", 0
-dk_fm_busy          db "The terminal is busy - try again at its prompt.", 0
+dk_fm_busy          db "The terminal is busy - try again in a moment.", 0
+dk_fm_full          db "The terminal is busy, and there is no room for another.", 0
+dk_fm_waiting       db "Reading the folder when the terminal is free...", 0
 dk_fm_moved         db "Moved.", 0
 dk_fm_taken         db "There's one by that name there already.", 0
 dk_fm_into_itself   db "A folder can't go inside itself.", 0
