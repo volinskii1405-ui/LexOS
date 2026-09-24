@@ -339,6 +339,17 @@ handle_command:
     cmp ax, 1
     je .do_ifconfig
     mov si, buffer
+    mov di, cmd_mixer
+    call strcmp_eq
+    cmp ax, 1
+    je .do_mixer
+    mov si, buffer
+    mov di, cmd_mixer_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_mixer
+
+    mov si, buffer
     mov di, cmd_desktop
     call strcmp_eq
     cmp ax, 1
@@ -785,6 +796,12 @@ handle_command:
     mov si, buffer
     add si, 8                  ; skip "ifconfig" (a new address may follow)
     call net_ifconfig
+    jmp .done
+
+.do_mixer:
+    mov si, buffer
+    add si, 5                  ; skip "mixer"
+    call mixer_command
     jmp .done
 
 .do_desktop:

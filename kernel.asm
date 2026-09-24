@@ -135,6 +135,7 @@ shared_vga_end:
 %include "src/speaker.asm"
 shared_sound_start:
 %include "src/sound.asm"
+%include "src/mixer.asm"
 shared_sound_end:
 %include "src/chip8.asm"
 %include "src/turtle.asm"

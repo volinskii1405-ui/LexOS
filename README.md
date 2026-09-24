@@ -330,7 +330,12 @@ alex@/PROGRAMS$
   Blaster - the card plays a double buffer over and over (auto-init
   DMA), and its IRQ5 refills each half from a 64KB queue the program
   writes into, so `audio_write` also paces a program that just keeps
-  writing. Time: the system timer interrupts ~1000 times a second -
+  writing. That stream is a mixer (src/mixer.asm): up to 4 voices, each
+  at its own rate (converted on the fly to 22050Hz stereo) with its own
+  volume, mixed by the IRQ handler - so a game's sound plays over
+  `play music.wav &`, and `.WAV` files (now up to 8MB) play through it
+  too. `mixer` lists what's playing; `mixer master 60`, `mixer 2 30`
+  set volumes; programs have `audio_volume()`. Time: the system timer interrupts ~1000 times a second -
   `millis()` counts milliseconds since boot, `sleep_ms` is exact to the
   millisecond, and `sleep_until(next)` gives a game a steady 60 frames
   a second (`next += 16`). Floating point: `float`/`double` work in

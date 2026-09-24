@@ -28,8 +28,8 @@
 ;          app_gfx_off, fh_close_all, app_build_cmdline
 ; ============================================================
 
-FH_COUNT        equ 8
-FH_BUF_BASE     equ 0x4000000            ; 64MB: 8 x 4MB, up to 0x6000000
+FH_COUNT        equ 4
+FH_BUF_BASE     equ 0x4000000            ; 64MB: 4 x 4MB, up to 0x5000000
 FH_BUF_SIZE     equ 0x400000
 
 FH_MODE_READ    equ 0                    ; an existing file, from the start
@@ -777,16 +777,18 @@ sys_keydown:
     ret
 
 ; ============================================================
-; Sound: a stream of 16-bit signed samples through the SB16 (see the
-; end of src/sound.asm). SYS_AUDIO_OPEN: ebx = rate (4000-48000), ecx =
-; channels (1/2) -> 0, or -1 (no SB16, or another program has it).
-; SYS_AUDIO_WRITE: ebx = samples, ecx = bytes - waits for room, so a
-; program writing as fast as it can is paced by the card. SYS_AUDIO_
-; CLOSE lets what's queued finish, then stops.
+; Sound: a voice of the mixer (src/mixer.asm) - 16-bit signed samples
+; at any rate, mixed with whatever else is playing. SYS_AUDIO_OPEN: ebx
+; = rate (4000-48000), ecx = channels (1/2) -> 0, or -1 (no SB16, no
+; free voice, or this program has one already). SYS_AUDIO_WRITE: ebx =
+; samples, ecx = bytes - waits for room, so a program writing as fast
+; as it can is paced by the card. SYS_AUDIO_CLOSE lets what's queued
+; finish, then stops. SYS_AUDIO_VOLUME: ebx = 0-100.
 ; ============================================================
 sys_audio_open:
-    cmp byte [app_audio_owner], 0
-    jne .fail
+    mov eax, [sched_current]
+    call mixer_find_owner
+    jnc .fail                             ; (one voice per program)
     mov eax, [ebp + 16]
     cmp eax, 4000
     jb .fail
@@ -797,44 +799,34 @@ sys_audio_open:
     jb .fail
     cmp ecx, 2
     ja .fail
-    call sb_stream_open
+    call mixer_open
     jc .fail
-    mov eax, [sched_current]
-    inc eax
-    mov [app_audio_owner], al
     xor eax, eax
     ret
 .fail:
     mov eax, -1
     ret
 
-; carry=1 unless the current task owns the stream
-app_audio_mine:
-    push eax
+; -> eax = the current task's voice; carry=1 if it has none
+app_audio_voice:
     mov eax, [sched_current]
-    inc eax
-    cmp [app_audio_owner], al
-    pop eax
-    je .yes
-    stc
-    ret
-.yes:
-    clc
-    ret
+    jmp mixer_find_owner
 
 sys_audio_write:
-    call app_audio_mine
+    call app_audio_voice
     jc .fail
+    mov ebx, eax
     mov eax, [ebp + 16]
     mov ecx, [ebp + 24]
     call app_check_buf
     mov esi, eax
 .more:
-    call sb_stream_put                    ; -> eax queued now
+    mov eax, ebx
+    call mixer_write                      ; -> eax queued now
     add esi, eax
     sub ecx, eax
-    cmp ecx, 1
-    jbe .done
+    cmp ecx, 2
+    jb .done
     call app_check_abort                  ; (Ctrl+C while waiting)
     mov eax, WAIT_TICK
     call task_wait
@@ -847,10 +839,12 @@ sys_audio_write:
     ret
 
 sys_audio_close:
-    call app_audio_mine
+    call app_audio_voice
     jc .fail
+    mov ebx, eax
 .drain:                                   ; let the queue play out
-    call sb_stream_queued
+    mov eax, ebx
+    call mixer_queued
     or eax, eax
     jz .drained
     call app_check_abort
@@ -858,14 +852,14 @@ sys_audio_close:
     call task_wait
     jmp .drain
 .drained:
-    mov eax, 3                            ; and the last halves
-    add eax, [timer_ticks]
+    mov eax, [timer_ms]                   ; and the last half buffers
+    add eax, 200
     mov [app_audio_until], eax
 .tail:
-    mov eax, [timer_ticks]
-    cmp eax, [app_audio_until]
-    jae .stop
-    mov eax, WAIT_TICK
+    mov eax, [timer_ms]
+    sub eax, [app_audio_until]
+    jns .stop
+    mov eax, WAIT_MS
     call task_wait
     jmp .tail
 .stop:
@@ -876,13 +870,25 @@ sys_audio_close:
     mov eax, -1
     ret
 
-; Stops the stream at once if the current task has it (app_abort).
+sys_audio_volume:
+    call app_audio_voice
+    jc .fail
+    mov ecx, [ebp + 16]
+    cmp ecx, 100
+    ja .fail
+    mov [mix_volume + eax*4], ecx
+    xor eax, eax
+    ret
+.fail:
+    mov eax, -1
+    ret
+
+; Stops the current task's sound at once (app_abort).
 app_audio_off:
-    call app_audio_mine
-    jc .done
-    call sb_stream_close
-    mov byte [app_audio_owner], 0
-.done:
+    push eax
+    mov eax, [sched_current]
+    call mixer_close_owner
+    pop eax
     ret
 
 ; ============================================================
@@ -947,5 +953,4 @@ app_rect_y   dd 0
 app_rect_w   dd 0
 app_rect_h   dd 0
 bga_lfb      dd 0
-app_audio_owner db 0                  ; task id + 1 of the stream's program
 app_audio_until dd 0
