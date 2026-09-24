@@ -9,11 +9,12 @@
 ; (to appsys.asm): dk_app_open, dk_app_close, dk_app_blit, dk_app_palette
 ; ============================================================
 
-DESK_IMG_FILE     equ 0x7500000           ; a picture's file (2MB)
-DESK_IMG_FILE_MAX equ 0x200000
-DESK_IMG_PIX      equ 0x7700000           ; ... decoded, 32bpp
-DESK_IMG_MAX_W    equ 960
-DESK_IMG_MAX_H    equ 640
+DESK_IMG_FILE     equ 0x7A00000           ; a picture's file (3MB) - and
+DESK_IMG_FILE_MAX equ 0x300000            ; a screenshot's, being saved
+DESK_IMG_PIX      equ 0x7700000           ; ... decoded, 32bpp (3MB)
+DESK_IMG_MAX_W    equ 1024
+DESK_IMG_MAX_H    equ 768
+DK_SHOT_SIZE      equ 54 + DESK_W * DESK_H * 3
 DK_APPS           equ 3                   ; programs' windows at once
 DK_APP_PIX        equ 0x5000000           ; their pixels, 2MB each
 DK_SB_BASE        equ 0x6340000           ; each console's lines scrolled
@@ -1334,8 +1335,11 @@ dk_draw_files:
     mov ebx, [dk_fm_cell_y]
     add ebx, 44
     mov edi, ecx
-    cmp edx, [dk_fm_sel]
-    jne .plain_name
+    push ebx
+    mov ebx, edx
+    call dk_sel_test
+    pop ebx
+    jc .plain_name
     push eax
     push ebx
     push ecx
@@ -1361,6 +1365,10 @@ dk_draw_files:
     inc edi
     jmp .cell
 .status:
+    cmp byte [dk_fm_state], 4             ; the rubber band
+    jne .no_band
+    call dk_draw_band
+.no_band:
     mov eax, [dk_cx]                      ; the bottom line: a message, or
     add eax, 8                            ; how many things are here
     mov ebx, [dk_cy]
@@ -1682,8 +1690,21 @@ dk_files_click:
     cmp ebx, [dk_fm_count]
     jae .miss
     ; pressed on an entry: selected; a click, a double click or a drag -
-    ; dk_files_drag decides as the mouse moves or the button comes up
+    ; dk_files_drag decides as the mouse moves or the button comes up.
+    ; Ctrl: in or out of the selection. One already selected: the whole
+    ; selection may be about to be dragged.
     mov [dk_fm_sel], ebx
+    cmp byte [kbd_ctrl_held], 0
+    je .no_ctrl
+    call dk_sel_toggle
+    pop eax
+    jmp .redraw
+.no_ctrl:
+    call dk_sel_test
+    jnc .keep
+    call dk_sel_clear
+    call dk_sel_set
+.keep:
     mov [dk_fm_press], ebx
     mov eax, [dk_mx]
     mov [dk_fm_press_x], eax
@@ -1693,7 +1714,15 @@ dk_files_click:
     pop eax
     jmp .redraw
 .miss:
-    mov dword [dk_fm_sel], -1
+    mov dword [dk_fm_sel], -1             ; nothing there: a rubber band
+    call dk_sel_clear                     ; to select with
+    mov ebx, [dk_mx]
+    mov [dk_fm_band_x0], ebx
+    mov [dk_fm_band_x1], ebx
+    mov ebx, [dk_my]
+    mov [dk_fm_band_y0], ebx
+    mov [dk_fm_band_y1], ebx
+    mov byte [dk_fm_state], 4
     pop eax
     jmp .redraw
 
@@ -1701,6 +1730,8 @@ dk_files_click:
 ; the pointer, cl = the button
 dk_files_drag:
     pushad
+    cmp byte [dk_fm_state], 4
+    je .band
     cmp byte [dk_fm_state], 3
     je .dragging
     or cl, cl                             ; state 2: pressed
@@ -1726,6 +1757,11 @@ dk_files_drag:
     jmp .done
 .clicked:
     mov byte [dk_fm_state], 0
+    mov ebx, [dk_fm_press]                ; (a plain click: just it)
+    call dk_sel_clear
+    call dk_sel_set
+    mov eax, K_FILES
+    call dk_mark_kind
     mov eax, [dk_fm_press]                ; a double click: open it
     cmp eax, [dk_fm_last_idx]
     jne .first
@@ -1761,6 +1797,18 @@ dk_files_drag:
 .move:
     mov eax, [dk_fm_press]
     call dk_files_move                    ; eax = what, edx = into
+    jmp .done
+.band:
+    mov [dk_fm_band_x1], eax              ; the rubber band follows...
+    mov [dk_fm_band_y1], ebx
+    push eax
+    mov eax, K_FILES
+    call dk_mark_kind
+    pop eax
+    or cl, cl
+    jnz .done
+    mov byte [dk_fm_state], 0             ; ...and selects what it covers
+    call dk_band_select
 .done:
     popad
     ret
@@ -2472,6 +2520,817 @@ dk_cal_days:
     pop ecx
     ret
 
+; ============================================================
+; Files: the selection (a bit per entry), the rubber band, the context
+; menu, the trash
+; ============================================================
+dk_sel_clear:
+    push edi
+    push ecx
+    push eax
+    mov edi, dk_fm_selmap
+    mov ecx, 32 / 4
+    xor eax, eax
+    cld
+    rep stosd
+    pop eax
+    pop ecx
+    pop edi
+    ret
+
+; ebx = an entry: selected
+dk_sel_set:
+    cmp ebx, 256
+    jae .done
+    bts [dk_fm_selmap], ebx
+.done:
+    ret
+
+dk_sel_toggle:
+    cmp ebx, 256
+    jae .done
+    btc [dk_fm_selmap], ebx
+.done:
+    ret
+
+; ebx = an entry -> carry=0 if selected
+dk_sel_test:
+    cmp ebx, 256
+    jae .no
+    bt [dk_fm_selmap], ebx
+    cmc
+    ret
+.no:
+    stc
+    ret
+
+; The rubber band (screen coordinates, dk_fm_band_*): its outline
+dk_draw_band:
+    pushad
+    mov eax, [dk_fm_band_x0]
+    mov ecx, [dk_fm_band_x1]
+    cmp eax, ecx
+    jle .x
+    xchg eax, ecx
+.x:
+    mov ebx, [dk_fm_band_y0]
+    mov edx, [dk_fm_band_y1]
+    cmp ebx, edx
+    jle .y
+    xchg ebx, edx
+.y:
+    sub ecx, eax
+    inc ecx
+    sub edx, ebx
+    inc edx
+    mov esi, COL_TITLE_ON
+    push edx
+    mov edx, 1                            ; top, bottom
+    call dk_fill
+    pop edx
+    push ebx
+    add ebx, edx
+    dec ebx
+    push edx
+    mov edx, 1
+    call dk_fill
+    pop edx
+    pop ebx
+    push ecx
+    mov ecx, 1                            ; left, right
+    call dk_fill
+    pop ecx
+    add eax, ecx
+    dec eax
+    mov ecx, 1
+    call dk_fill
+    popad
+    ret
+
+; The band let go of: the entries on this page it touches, selected
+dk_band_select:
+    pushad
+    mov eax, K_FILES
+    xor ebx, ebx
+    call dk_win_find
+    cmp eax, -1
+    je .done
+    call dk_client_origin                 ; -> eax, ebx
+    mov [dk_fm_bx], eax
+    mov [dk_fm_by], ebx
+    mov eax, [dk_fm_band_x0]              ; the band, ordered
+    mov ecx, [dk_fm_band_x1]
+    cmp eax, ecx
+    jle .x
+    xchg eax, ecx
+.x:
+    mov ebx, [dk_fm_band_y0]
+    mov edx, [dk_fm_band_y1]
+    cmp ebx, edx
+    jle .y
+    xchg ebx, edx
+.y:
+    mov [dk_fm_bl], eax
+    mov [dk_fm_br], ecx
+    mov [dk_fm_bt], ebx
+    mov [dk_fm_bb], edx
+    xor edi, edi                          ; the cell on the page
+.cell:
+    cmp edi, [dk_fm_page_n]
+    jae .done
+    mov ebx, [dk_fm_page]
+    imul ebx, [dk_fm_page_n]
+    add ebx, edi
+    cmp ebx, [dk_fm_count]
+    jae .done
+    mov eax, edi                          ; its rectangle on the screen
+    xor edx, edx
+    div dword [dk_fm_cols]                ; eax = row, edx = column
+    imul eax, FM_CELL_H
+    add eax, FM_TOP
+    add eax, [dk_fm_by]
+    imul edx, FM_CELL_W
+    add edx, 4
+    add edx, [dk_fm_bx]
+    cmp edx, [dk_fm_br]                   ; left edge right of the band?
+    jg .next
+    lea esi, [edx + FM_CELL_W]
+    cmp esi, [dk_fm_bl]
+    jl .next
+    cmp eax, [dk_fm_bb]
+    jg .next
+    lea esi, [eax + FM_CELL_H]
+    cmp esi, [dk_fm_bt]
+    jl .next
+    mov esi, ebx                          ; (not "..")
+    shl esi, 5
+    cmp byte [DESK_FILES + esi + 17], IC_UP
+    je .next
+    call dk_sel_set
+.next:
+    inc edi
+    jmp .cell
+.done:
+    mov eax, K_FILES
+    call dk_mark_kind
+    popad
+    ret
+
+; A right click (dk_mx, dk_my): over Files, its context menu
+DKC_OPEN    equ 1
+DKC_RENAME  equ 2
+DKC_COPY    equ 3
+DKC_DELETE  equ 4
+DKC_PROPS   equ 5
+DKC_NEWDIR  equ 6
+DKC_SELALL  equ 7
+DKC_FOREVER equ 8
+DKC_EMPTY   equ 9
+DK_CTX_W    equ 160
+DK_CTX_ITEM equ 22
+
+dk_right_click:
+    pushad
+    cmp byte [dk_ctx_open], 0             ; (one already out: away)
+    je .none_out
+    call dk_mark_ctx
+    mov byte [dk_ctx_open], 0
+.none_out:
+    cmp byte [dk_menu_open], 0
+    je .no_menu
+    call dk_mark_menu
+    mov byte [dk_menu_open], 0
+    mov byte [dk_prog_open], 0
+.no_menu:
+    mov eax, [dk_mx]
+    mov ebx, [dk_my]
+    call dk_window_at                     ; -> esi
+    cmp esi, -1
+    je .done
+    cmp byte [dkw_kind + esi], K_FILES
+    jne .done
+    mov eax, esi
+    call dk_raise
+    call dk_trash_find                    ; (in the trash: other items)
+    mov byte [dk_ctx_in_trash], 0
+    jc .not_trash
+    cmp al, [dk_fm_dir]
+    jne .not_trash
+    mov byte [dk_ctx_in_trash], 1
+.not_trash:
+    mov dword [dk_ctx_n], 0
+    call dk_files_entry_at                ; -> edx
+    cmp edx, -1
+    je .empty_space
+    mov eax, edx
+    shl eax, 5
+    cmp byte [DESK_FILES + eax + 17], IC_UP
+    je .done
+    mov ebx, edx                          ; on something: it's what's
+    mov [dk_fm_sel], ebx                  ; selected (unless it already is)
+    call dk_sel_test
+    jnc .selected
+    call dk_sel_clear
+    call dk_sel_set
+.selected:
+    cmp byte [dk_ctx_in_trash], 0
+    jne .trash_item
+    mov al, DKC_OPEN
+    call dk_ctx_add
+    mov al, DKC_RENAME
+    call dk_ctx_add
+    mov al, DKC_COPY
+    call dk_ctx_add
+    mov al, DKC_DELETE
+    call dk_ctx_add
+    mov al, DKC_PROPS
+    call dk_ctx_add
+    jmp .show
+.trash_item:
+    mov al, DKC_FOREVER
+    call dk_ctx_add
+    mov al, DKC_PROPS
+    call dk_ctx_add
+    jmp .show
+.empty_space:
+    call dk_sel_clear
+    mov dword [dk_fm_sel], -1
+    cmp byte [dk_ctx_in_trash], 0
+    jne .trash_space
+    mov al, DKC_NEWDIR
+    call dk_ctx_add
+    mov al, DKC_SELALL
+    call dk_ctx_add
+    jmp .show
+.trash_space:
+    mov al, DKC_EMPTY
+    call dk_ctx_add
+.show:
+    mov eax, [dk_mx]                      ; where: at the pointer, on screen
+    mov ecx, DESK_W - DK_CTX_W
+    cmp eax, ecx
+    jle .x_ok
+    mov eax, ecx
+.x_ok:
+    mov [dk_ctx_x], eax
+    mov eax, [dk_ctx_n]
+    imul eax, DK_CTX_ITEM
+    mov ecx, DESK_H - DK_TASKBAR_H
+    sub ecx, eax
+    mov eax, [dk_my]
+    cmp eax, ecx
+    jle .y_ok
+    mov eax, ecx
+.y_ok:
+    mov [dk_ctx_y], eax
+    mov byte [dk_ctx_open], 1
+    call dk_mark_ctx
+    mov eax, K_FILES
+    call dk_mark_kind
+.done:
+    popad
+    ret
+
+; al = an item for the context menu
+dk_ctx_add:
+    push ebx
+    mov ebx, [dk_ctx_n]
+    mov [dk_ctx_ids + ebx], al
+    inc dword [dk_ctx_n]
+    pop ebx
+    ret
+
+dk_mark_ctx:
+    pushad
+    mov eax, [dk_ctx_x]
+    mov ebx, [dk_ctx_y]
+    mov ecx, DK_CTX_W + 3
+    mov edx, [dk_ctx_n]
+    imul edx, DK_CTX_ITEM
+    add edx, 3
+    call dk_mark
+    popad
+    ret
+
+dk_draw_ctx:
+    pushad
+    mov eax, [dk_ctx_x]
+    mov ebx, [dk_ctx_y]
+    mov ecx, DK_CTX_W
+    mov edx, [dk_ctx_n]
+    imul edx, DK_CTX_ITEM
+    push eax
+    push ebx
+    add eax, 3                            ; a shadow
+    add ebx, 3
+    mov esi, 0x08101C
+    call dk_fill
+    pop ebx
+    pop eax
+    mov esi, COL_FRAME
+    call dk_fill
+    inc eax
+    inc ebx
+    sub ecx, 2
+    sub edx, 2
+    mov esi, COL_MENU
+    call dk_fill
+    xor ecx, ecx
+.item:
+    cmp ecx, [dk_ctx_n]
+    jae .done
+    movzx esi, byte [dk_ctx_ids + ecx]
+    mov esi, [dk_ctx_labels + esi*4 - 4]
+    mov eax, [dk_ctx_x]
+    add eax, 12
+    imul ebx, ecx, DK_CTX_ITEM
+    add ebx, [dk_ctx_y]
+    add ebx, 3
+    mov edx, COL_TEXT
+    call dk_text
+    inc ecx
+    jmp .item
+.done:
+    popad
+    ret
+
+; A left click while the context menu's out: its item, or nothing
+dk_ctx_click:
+    pushad
+    call dk_mark_ctx
+    mov byte [dk_ctx_open], 0
+    sub eax, [dk_ctx_x]
+    js .done
+    cmp eax, DK_CTX_W
+    jae .done
+    sub ebx, [dk_ctx_y]
+    js .done
+    mov eax, ebx
+    xor edx, edx
+    mov ecx, DK_CTX_ITEM
+    div ecx
+    cmp eax, [dk_ctx_n]
+    jae .done
+    movzx eax, byte [dk_ctx_ids + eax]
+    call dk_ctx_do
+.done:
+    popad
+    ret
+
+; eax = a context menu item (DKC_*): done
+dk_ctx_do:
+    pushad
+    mov dword [dk_fm_msg], 0
+    cmp eax, DKC_OPEN
+    jne .not_open
+    mov eax, [dk_fm_sel]
+    cmp eax, -1
+    je .done
+    call dk_files_open
+    jmp .done
+.not_open:
+    cmp eax, DKC_PROPS
+    jne .not_props
+    call dk_files_props
+    jmp .done
+.not_props:
+    cmp eax, DKC_SELALL
+    jne .not_all
+    xor ebx, ebx
+.all:
+    cmp ebx, [dk_fm_count]
+    jae .all_done
+    mov esi, ebx
+    shl esi, 5
+    cmp byte [DESK_FILES + esi + 17], IC_UP
+    je .all_next
+    call dk_sel_set
+.all_next:
+    inc ebx
+    jmp .all
+.all_done:
+    mov eax, K_FILES
+    call dk_mark_kind
+    jmp .done
+.not_all:
+    cmp eax, DKC_DELETE
+    jne .not_delete
+    call dk_files_trash
+    jmp .done
+.not_delete:
+    ; the rest are typed into a Terminal (cd here first): ren/cp/mkdir
+    ; wait for what the new name is; rm goes straight away
+    mov ebp, eax                          ; ebp = the item
+    call dk_pick_terminal                 ; -> bl
+    jc .no_room
+    mov edi, dk_inject_buf
+    mov esi, dk_cmd_cd
+    call wget_append
+    mov esi, dk_fm_path
+    call wget_append
+    mov al, 13
+    stosb
+    cmp ebp, DKC_NEWDIR
+    jne .not_newdir
+    mov esi, dk_cmd_mkdir
+    call wget_append
+    jmp .typed
+.not_newdir:
+    cmp ebp, DKC_RENAME
+    je .named
+    cmp ebp, DKC_COPY
+    jne .removing
+.named:
+    mov esi, dk_cmd_ren
+    cmp ebp, DKC_RENAME
+    je .verb
+    mov esi, dk_cmd_cp
+.verb:
+    call wget_append
+    mov esi, [dk_fm_sel]
+    cmp esi, -1
+    je .done
+    shl esi, 5
+    add esi, DESK_FILES
+    call wget_append
+    mov al, ' '
+    stosb
+    jmp .typed
+.removing:
+    cmp ebp, DKC_FOREVER                  ; (nothing else gets here)
+    je .rm_start
+    cmp ebp, DKC_EMPTY
+    jne .done
+.rm_start:
+    ; Delete forever (the selected) / Empty trash (everything): rm each,
+    ; as many as the typing buffer holds
+    xor ecx, ecx
+.rm:
+    cmp ecx, [dk_fm_count]
+    jae .typed
+    mov esi, ecx
+    shl esi, 5
+    add esi, DESK_FILES
+    cmp byte [esi + 17], IC_UP
+    je .rm_next
+    cmp ebp, DKC_EMPTY
+    je .rm_it
+    push ebx
+    mov ebx, ecx
+    call dk_sel_test
+    pop ebx
+    jc .rm_next
+.rm_it:
+    mov edx, edi
+    sub edx, dk_inject_buf
+    cmp edx, 256 - FS_NAME_LEN - 8
+    ja .typed
+    push esi
+    mov esi, dk_cmd_rm
+    call wget_append
+    pop esi
+    call wget_append
+    mov al, 13
+    stosb
+    mov byte [dk_fm_refresh], 1
+.rm_next:
+    inc ecx
+    jmp .rm
+.typed:
+    call dk_inject_go
+    jmp .done
+.no_room:
+    mov dword [dk_fm_msg], dk_fm_full
+.done:
+    mov byte [dk_redraw_all], 1
+    popad
+    ret
+
+; Properties: the selected one's size / kind, on the status line
+dk_files_props:
+    pushad
+    mov esi, [dk_fm_sel]
+    cmp esi, -1
+    je .done
+    shl esi, 5
+    add esi, DESK_FILES
+    mov edi, dk_fm_propbuf
+    push esi
+    call wget_append                      ; the name
+    pop esi
+    cmp byte [esi + 17], IC_FOLDER
+    jne .file
+    push esi
+    mov esi, dk_fm_is_folder
+    call wget_append
+    pop esi
+    jmp .said
+.file:
+    push esi
+    mov esi, dk_fm_sep
+    call wget_append
+    pop esi
+    mov eax, [esi + 24]
+    call wget_append_num
+    mov esi, dk_fm_bytes
+    call wget_append
+.said:
+    mov byte [edi], 0
+    mov dword [dk_fm_msg], dk_fm_propbuf
+.done:
+    popad
+    ret
+
+; -> al = the trash's slot byte (/TRASH), carry=1 if there's none
+dk_trash_find:
+    push ebx
+    push edx
+    call dk_shell_idle
+    jc .none
+    xor ebx, ebx
+.slot:
+    cmp ebx, FS_TOTAL_SLOTS
+    jae .none
+    mov ax, bx
+    call fs_read_slot
+    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
+    jne .next
+    cmp byte [SCRATCH_ADDR + FS_PARENT_OFFSET], FS_ROOT_BYTE
+    jne .next
+    cmp dword [SCRATCH_ADDR], 'TRAS'
+    jne .next
+    cmp word [SCRATCH_ADDR + 4], 'H'
+    jne .next
+    mov al, bl
+    pop edx
+    pop ebx
+    clc
+    ret
+.next:
+    inc ebx
+    jmp .slot
+.none:
+    pop edx
+    pop ebx
+    stc
+    ret
+
+; Delete: the selected into /TRASH (made the first time)
+dk_files_trash:
+    pushad
+    call dk_shell_idle
+    jc .busy
+    call dk_trash_find
+    jnc .have
+    call fs_find_free_dir                 ; none yet: made, in the root
+    cmp ax, -1
+    je .busy
+    movzx ebx, ax
+    push ebx
+    mov edi, SCRATCH_ADDR
+    mov ecx, FS_CONTENT_OFFSET + FS_CONTENT_LEN
+    xor eax, eax
+    cld
+    rep stosb
+    mov dword [SCRATCH_ADDR], 'TRAS'
+    mov byte [SCRATCH_ADDR + 4], 'H'
+    mov byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
+    mov byte [SCRATCH_ADDR + FS_PARENT_OFFSET], FS_ROOT_BYTE
+    pop eax
+    push eax
+    call fs_write_slot
+    pop eax
+.have:
+    cmp al, [dk_fm_dir]                   ; (in the trash itself: nothing)
+    je .done
+    mov [dk_fm_dest], al
+    mov dword [dk_fm_moved_msg], dk_fm_trashed
+    xor ebx, ebx
+.each:
+    cmp ebx, [dk_fm_count]
+    jae .moved
+    call dk_sel_test
+    jc .next
+    mov eax, ebx
+    call dk_move_entry
+.next:
+    inc ebx
+    jmp .each
+.moved:
+    mov dword [dk_fm_moved_msg], dk_fm_moved
+    jmp .done
+.busy:
+    mov dword [dk_fm_msg], dk_fm_busy
+.done:
+    mov byte [dk_redraw_all], 1
+    popad
+    ret
+
+; ============================================================
+; Screenshots: PrintScreen (keyboard_isr sets dk_shot_req). In the frame
+; the picture's made (dk_shot_capture: the back buffer as a 24-bit
+; .BMP at DESK_IMG_FILE); after it, with no console in the kernel, it's
+; written to PICS/SHOTnn.BMP (dk_shot_save) - slow, so not holding up
+; the whole machine the way a frame does.
+; ============================================================
+dk_shot_capture:
+    pushad
+    cmp byte [dk_shot_req], 0
+    je .done
+    mov byte [dk_shot_req], 0
+    cmp byte [dk_shot_ready], 0           ; (one's still being written)
+    jne .done
+    mov edi, DESK_IMG_FILE
+    mov word [edi], 'BM'
+    mov dword [edi + 2], DK_SHOT_SIZE
+    mov dword [edi + 6], 0
+    mov dword [edi + 10], 54
+    mov dword [edi + 14], 40
+    mov dword [edi + 18], DESK_W
+    mov dword [edi + 22], DESK_H          ; (bottom-up)
+    mov word [edi + 26], 1
+    mov word [edi + 28], 24
+    mov dword [edi + 30], 0
+    mov dword [edi + 34], DESK_W * DESK_H * 3
+    mov dword [edi + 38], 2835
+    mov dword [edi + 42], 2835
+    mov dword [edi + 46], 0
+    mov dword [edi + 50], 0
+    add edi, 54
+    mov edx, DESK_H - 1                   ; the rows, bottom first
+.row:
+    mov esi, edx
+    imul esi, DESK_STRIDE
+    add esi, DESK_BACK
+    mov ecx, DESK_W
+.px:
+    mov eax, [esi]                        ; 0x00RRGGBB -> B, G, R
+    mov [edi], ax
+    shr eax, 16
+    mov [edi + 2], al
+    add esi, 4
+    add edi, 3
+    loop .px
+    dec edx
+    jns .row
+    mov byte [dk_shot_ready], 1
+.done:
+    popad
+    ret
+
+dk_shot_save:
+    pushad
+    cmp byte [dk_shot_ready], 0
+    je .done
+    pushfd                                ; the kernel, while no console's
+    cli                                   ; in it (src/sched.asm)
+    cmp dword [bkl_owner], -1
+    jne .later
+    mov eax, [sched_current]
+    mov [bkl_owner], eax
+    popfd
+    push word [fs_current_dir]            ; (the console on screen's -
+    push dword [fs_tmp_slot]              ;  put back after)
+    ; where: PICS, if there is one
+    mov word [fs_current_dir], FS_ROOT
+    mov byte [dk_shot_where], 0
+    xor ebx, ebx
+.pics:
+    cmp ebx, FS_TOTAL_SLOTS
+    jae .named_dir
+    mov ax, bx
+    call fs_read_slot
+    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
+    jne .pics_next
+    cmp byte [SCRATCH_ADDR + FS_PARENT_OFFSET], FS_ROOT_BYTE
+    jne .pics_next
+    cmp dword [SCRATCH_ADDR], 'PICS'
+    jne .pics_next
+    cmp byte [SCRATCH_ADDR + 4], 0
+    jne .pics_next
+    mov [fs_current_dir], bx
+    mov byte [dk_shot_where], 1
+    jmp .named_dir
+.pics_next:
+    inc ebx
+    jmp .pics
+.named_dir:
+    ; the first SHOTnn.BMP that isn't there yet
+    mov ecx, 1
+.name:
+    mov dword [fs_tmp_name], 'SHOT'
+    mov eax, ecx
+    mov edi, fs_tmp_name + 4
+    call dk_two_digits
+    mov dword [fs_tmp_name + 6], '.BMP'
+    mov byte [fs_tmp_name + 10], 0
+    push ecx
+    mov si, fs_tmp_name
+    call fs_find_by_name
+    pop ecx
+    cmp ax, -1
+    je .free
+    inc ecx
+    cmp ecx, 99
+    jbe .name
+    jmp .failed
+.free:
+    mov dword [fs_stream_size], DK_SHOT_SIZE
+    call fs_stream_prepare
+    jc .failed
+    mov dword [fh_src_ptr], DESK_IMG_FILE
+    mov dword [fs_stream_source], fh_stream_byte
+    call fs_stream_write
+    jc .failed
+    mov edi, dk_toast_buf                 ; "Saved PICS/SHOT01.BMP"
+    mov esi, dk_shot_saved
+    call wget_append
+    cmp byte [dk_shot_where], 0
+    je .in_root
+    mov esi, dk_shot_pics
+    call wget_append
+.in_root:
+    mov esi, fs_tmp_name
+    call wget_append
+    mov byte [edi], 0
+    jmp .said
+.failed:
+    mov edi, dk_toast_buf
+    mov esi, dk_shot_failed
+    call wget_append
+    mov byte [edi], 0
+.said:
+    pop dword [fs_tmp_slot]
+    pop word [fs_current_dir]
+    mov dword [bkl_owner], -1
+    mov byte [dk_shot_ready], 0
+    mov byte [dk_fm_refresh], 1           ; (Files shows it)
+    call dk_toast
+    jmp .done
+.later:
+    popfd
+.done:
+    popad
+    ret
+
+; dk_toast_buf shown at the top for a few seconds
+DK_TOAST_W equ 420
+dk_toast:
+    pushad
+    mov eax, [timer_ms]
+    add eax, 3500
+    mov [dk_toast_until], eax
+    mov byte [dk_toast_on], 1
+    call dk_mark_toast
+    popad
+    ret
+
+dk_mark_toast:
+    pushad
+    mov eax, (DESK_W - DK_TOAST_W) / 2
+    mov ebx, 8
+    mov ecx, DK_TOAST_W + 3
+    mov edx, 34
+    call dk_mark
+    popad
+    ret
+
+; Each frame: gone once its time's up
+dk_toast_work:
+    cmp byte [dk_toast_on], 0
+    je .done
+    push eax
+    mov eax, [timer_ms]
+    sub eax, [dk_toast_until]
+    pop eax
+    js .done
+    mov byte [dk_toast_on], 0
+    call dk_mark_toast
+.done:
+    ret
+
+dk_draw_toast:
+    pushad
+    cmp byte [dk_toast_on], 0
+    je .done
+    mov eax, (DESK_W - DK_TOAST_W) / 2
+    mov ebx, 8
+    mov ecx, DK_TOAST_W
+    mov edx, 30
+    mov esi, 0x2B3445
+    call dk_fill
+    add eax, 12
+    add ebx, 7
+    mov esi, dk_toast_buf
+    mov edx, COL_WHITE
+    push edi
+    mov edi, (DK_TOAST_W - 24) / 8
+    call dk_text_n
+    pop edi
+.done:
+    popad
+    ret
+
 ; -> bl = the console to type a command into: the one on screen, if
 ; its shell waits at an empty prompt - else a new one (asked for here).
 ; carry=1 if there's no room for one.
@@ -2580,9 +3439,6 @@ dk_files_move:
     pushad
     call dk_shell_idle
     jc .busy
-    mov esi, eax
-    shl esi, 5
-    add esi, DESK_FILES                   ; esi = what
     mov edi, edx
     shl edi, 5
     add edi, DESK_FILES                   ; edi = where to
@@ -2592,14 +3448,53 @@ dk_files_move:
     jne .into_folder
     cmp bl, FS_ROOT_BYTE
     je .done
+    push eax
     mov eax, ebx
     call fs_read_slot
+    pop eax
     movzx ebx, byte [SCRATCH_ADDR + FS_PARENT_OFFSET]
     jmp .have_dest
 .into_folder:
     movzx ebx, word [edi + 20]
 .have_dest:
     mov [dk_fm_dest], bl
+    ; the one pressed - or, if it's one of those selected, all of them
+    mov ebx, eax
+    call dk_sel_test
+    jc .just_one
+    xor ebx, ebx
+.each:
+    cmp ebx, [dk_fm_count]
+    jae .done
+    cmp ebx, edx                          ; (not into itself)
+    je .next
+    call dk_sel_test
+    jc .next
+    mov eax, ebx
+    call dk_move_entry
+.next:
+    inc ebx
+    jmp .each
+.just_one:
+    call dk_move_entry                    ; eax = the entry
+    jmp .done
+.busy:
+    mov dword [dk_fm_msg], dk_fm_busy
+    mov byte [dk_redraw_all], 1
+.done:
+    popad
+    ret
+
+; eax = an entry of the list: into the folder dk_fm_dest (its slot
+; byte) - not a folder into itself or below, not onto a name taken
+dk_move_entry:
+    pushad
+    mov esi, eax
+    shl esi, 5
+    add esi, DESK_FILES                   ; esi = what
+    cmp byte [esi + 17], IC_UP
+    je .done
+    movzx ebx, byte [dk_fm_dest]
     ; a folder: not into itself or anything inside it
     cmp byte [esi + 17], IC_FOLDER
     jne .no_loop
@@ -2645,16 +3540,14 @@ dk_files_move:
     mov [SCRATCH_ADDR + FS_PARENT_OFFSET], bl
     call fs_write_slot
     mov byte [dk_fm_refresh], 1
-    mov dword [dk_fm_msg], dk_fm_moved
+    mov eax, [dk_fm_moved_msg]
+    mov [dk_fm_msg], eax
     jmp .done
 .taken:
     mov dword [dk_fm_msg], dk_fm_taken
     jmp .done
 .refuse:
     mov dword [dk_fm_msg], dk_fm_into_itself
-    jmp .done
-.busy:
-    mov dword [dk_fm_msg], dk_fm_busy
 .done:
     mov byte [dk_redraw_all], 1
     popad
@@ -2665,6 +3558,10 @@ dk_files_refresh:
     pushad
     call dk_shell_idle
     jc .done
+    cmp byte [dk_fm_refresh], 0           ; (asked for: things moved - the
+    je .keep_selection                    ; selection's out of date)
+    call dk_sel_clear
+.keep_selection:
     mov byte [dk_fm_refresh], 0
     mov edi, DESK_FILES
     xor edx, edx                          ; entries
@@ -3643,6 +4540,54 @@ dk_cp_c1          dd 0
 dk_cp_r1          dd 0
 dk_cp_r0          dd 0
 dk_inject_target  db 0
+dk_shot_req       db 0                    ; PrintScreen pressed
+dk_shot_ready     db 0                    ; the .BMP's made, to be written
+dk_shot_where     db 0
+dk_toast_on       db 0
+dk_toast_until    dd 0
+dk_toast_buf      times 64 db 0
+dk_shot_saved     db "Screenshot saved: ", 0
+dk_shot_pics      db "PICS/", 0
+dk_shot_failed    db "The screenshot couldn't be saved (disk full?).", 0
+dk_fm_selmap      times 32 db 0           ; Files: the selection, a bit each
+dk_fm_band_x0     dd 0                    ; the rubber band (screen)
+dk_fm_band_y0     dd 0
+dk_fm_band_x1     dd 0
+dk_fm_band_y1     dd 0
+dk_fm_bx          dd 0
+dk_fm_by          dd 0
+dk_fm_bl          dd 0
+dk_fm_br          dd 0
+dk_fm_bt          dd 0
+dk_fm_bb          dd 0
+dk_fm_moved_msg   dd dk_fm_moved
+dk_fm_propbuf     times 64 db 0
+dk_ctx_open       db 0                    ; the context menu
+dk_ctx_in_trash   db 0
+dk_ctx_x          dd 0
+dk_ctx_y          dd 0
+dk_ctx_n          dd 0
+dk_ctx_ids        times 8 db 0
+dk_ctx_labels     dd dk_ctx_l_open, dk_ctx_l_rename, dk_ctx_l_copy, dk_ctx_l_delete
+                  dd dk_ctx_l_props, dk_ctx_l_newdir, dk_ctx_l_selall
+                  dd dk_ctx_l_forever, dk_ctx_l_empty
+dk_ctx_l_open     db "Open", 0
+dk_ctx_l_rename   db "Rename...", 0
+dk_ctx_l_copy     db "Copy to...", 0
+dk_ctx_l_delete   db "Delete", 0
+dk_ctx_l_props    db "Properties", 0
+dk_ctx_l_newdir   db "New folder...", 0
+dk_ctx_l_selall   db "Select all", 0
+dk_ctx_l_forever  db "Delete forever", 0
+dk_ctx_l_empty    db "Empty trash", 0
+dk_cmd_mkdir      db "mkdir ", 0
+dk_cmd_ren        db "ren ", 0
+dk_cmd_cp         db "cp ", 0
+dk_cmd_rm         db "rm ", 0
+dk_fm_trashed     db "Moved to the trash (/TRASH).", 0
+dk_fm_is_folder   db " - a folder", 0
+dk_fm_sep         db " - ", 0
+dk_fm_bytes       db " bytes", 0
 dk_cal_day        dd 0
 dk_cal_month      dd 0
 dk_cal_year       dd 0

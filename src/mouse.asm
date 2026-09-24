@@ -264,7 +264,7 @@ mouse_isr:
     mov [gfx_mouse_buttons], al
 .desk_gfx:
 
-    test byte [mouse_btn_changed], 1 ; the left button went down or up:
+    test byte [mouse_btn_changed], 3 ; a button went down or up:
     jz .eoi                          ; queued with where it happened, so
     movzx ebx, byte [mouse_btn_head] ; a quick double click isn't lost
     inc bl                           ; between two looks
@@ -273,7 +273,7 @@ mouse_isr:
     je .eoi                          ; (full)
     movzx ebx, byte [mouse_btn_head]
     mov al, [mouse_buttons]
-    and al, 1
+    and al, 3                        ; (left, right)
     mov [mouse_btn_queue + ebx], al
     mov eax, [mouse_x]
     mov [mouse_btn_x + ebx*4], eax

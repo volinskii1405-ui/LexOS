@@ -18,9 +18,9 @@ $(BUILD_DIR)/kernel.bin: $(SRC_FILES) | $(BUILD_DIR)
 $(BUILD_DIR)/os-image.bin: $(BUILD_DIR)/boot.bin $(BUILD_DIR)/kernel.bin
 	cat $(BUILD_DIR)/boot.bin $(BUILD_DIR)/kernel.bin > $@
 	@actual=$$(stat -c%s $@); \
-	if [ $$actual -gt 229888 ]; then \
-		echo "ERROR: boot+kernel already larger than the filesystem area start (229888 bytes = 449 sectors)."; \
-		echo "Increase KERNEL_SECTORS_1..4 in boot.asm and FS_START_SECTOR in src/data.asm if needed."; \
+	if [ $$actual -gt 295424 ]; then \
+		echo "ERROR: boot+kernel already larger than the filesystem area start (295424 bytes = 577 sectors)."; \
+		echo "Increase KERNEL_SECTORS_1..5 in boot.asm and FS_START_SECTOR in src/data.asm if needed."; \
 		rm -f $@; \
 		exit 1; \
 	fi

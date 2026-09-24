@@ -217,6 +217,16 @@ keyboard_isr:
     mov bh, [kbd_extended_flag]
     mov byte [kbd_extended_flag], 0
 
+    cmp bh, 0                    ; PrintScreen (E0 37) on the desktop: a
+    je .not_prtsc                ; screenshot (src/dkwins.asm)
+    cmp al, 0x37
+    jne .not_prtsc
+    cmp byte [dk_active], 0
+    je .not_prtsc
+    mov byte [dk_shot_req], 1
+    jmp .eoi
+.not_prtsc:
+
     cmp al, 0x2A                 ; Left Shift (press)
     je .shift_down
     cmp al, 0x36                 ; Right Shift (press)

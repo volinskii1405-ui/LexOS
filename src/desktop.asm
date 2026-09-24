@@ -312,6 +312,8 @@ desktop_task:
     call dk_sync_consoles
     call dk_mouse_events
     call dk_alt_tab_work
+    call dk_shot_capture                  ; (src/dkwins.asm)
+    call dk_toast_work
     call dk_wheel_work                    ; (src/dkwins.asm)
     call dk_vga_frame                     ; (src/dkwins.asm: mode 13h windows)
     call dk_check_changes
@@ -362,6 +364,7 @@ desktop_task:
     call dk_move_pointer                  ; (erased and redrawn if needed)
 .drawn:
     dec dword [sched_lock]
+    call dk_shot_save                     ; (src/dkwins.asm: outside a frame)
     jmp .sleep
 .suspended:
     mov eax, [timer_ms]
@@ -999,7 +1002,7 @@ dk_mouse_events:
     cmp al, [mouse_btn_head]
     je .live
     mov cl, [mouse_btn_queue + eax]
-    mov [dk_btn_now], cl
+    mov [dk_btn_now], cl                  ; (both buttons: dk_mouse_event)
     mov ecx, [mouse_btn_x + eax*4]
     mov [dk_ev_x], ecx
     mov ecx, [mouse_btn_y + eax*4]
@@ -1011,7 +1014,7 @@ dk_mouse_events:
     jmp .queued
 .live:
     mov cl, [mouse_buttons]               ; then the moves
-    and cl, 1
+    and cl, 3
     mov [dk_btn_now], cl
     mov ecx, [mouse_x]
     mov [dk_ev_x], ecx
@@ -1027,6 +1030,19 @@ dk_mouse_event:
     mov eax, [dk_ev_x]
     mov ebx, [dk_ev_y]
     mov cl, [dk_btn_now]
+    shr cl, 1                             ; the right button pressed: a
+    mov ch, [dk_last_right]               ; context menu
+    mov [dk_last_right], cl
+    cmp cl, ch
+    je .no_right
+    or cl, cl
+    jz .no_right
+    mov [dk_mx], eax
+    mov [dk_my], ebx
+    call dk_right_click                   ; (src/dkwins.asm)
+.no_right:
+    mov cl, [dk_btn_now]
+    and cl, 1                             ; (from here on: the left one)
     mov [dk_mx], eax
     mov [dk_my], ebx
     mov ch, [dk_last_buttons]
@@ -1140,6 +1156,11 @@ dk_mouse_event:
 ; A left press at eax, ebx
 dk_click:
     pushad
+    cmp byte [dk_ctx_open], 0             ; a context menu: an item, or
+    je .no_ctx                            ; away it goes
+    call dk_ctx_click                     ; (src/dkwins.asm)
+    jmp .done
+.no_ctx:
     cmp byte [dk_cal_open], 0             ; the calendar: any click closes
     je .no_cal                            ; it (the time's own: see the
     call dk_mark_calendar                 ; tray, it toggles)
@@ -1700,8 +1721,14 @@ dk_render:
     call dk_draw_menu
 .no_menu:
     cmp byte [dk_cal_open], 0
-    je .done
+    je .no_cal
     call dk_draw_calendar                 ; (src/dkwins.asm)
+.no_cal:
+    cmp byte [dk_ctx_open], 0
+    je .no_ctx
+    call dk_draw_ctx                      ; (src/dkwins.asm)
+.no_ctx:
+    call dk_draw_toast
 .done:
     popad
     ret
@@ -2548,6 +2575,7 @@ dk_next_frame     dd 0
 dk_last_fast      dd 0
 dk_mix_sum        dd 0
 dk_btn_now        db 0
+dk_last_right     db 0
 dk_resizing       db 0
 dk_prog_open      db 0                         ; the Programs submenu is out
 dk_cal_open       db 0                         ; the calendar is out

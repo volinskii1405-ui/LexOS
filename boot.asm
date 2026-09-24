@@ -44,6 +44,9 @@ KERNEL_LOAD_OFF3 equ 0x0000
 KERNEL_SECTORS_4 equ 128        ; part 4: another full 64 KB
 KERNEL_LOAD_SEG4 equ 0x3000     ; = physical 0x30000, continuation of part 3
 KERNEL_LOAD_OFF4 equ 0x0000
+KERNEL_SECTORS_5 equ 128        ; part 5: and another
+KERNEL_LOAD_SEG5 equ 0x4000     ; = physical 0x40000
+KERNEL_LOAD_OFF5 equ 0x0000
 
 start:
     cli
@@ -59,30 +62,18 @@ start:
     mov si, msg_booting
     call print_string_16
 
-    ; --- read the kernel with three calls (LBA extended read, see comment above) ---
-    mov dl, [boot_drive]
+    ; --- read the kernel, a part per call (LBA extended read, see above) ---
     mov si, dap
-    mov ah, 0x42
-    int 0x13
-    jc disk_error
-
+    mov cx, 5
+.part:
+    push cx
     mov dl, [boot_drive]
-    mov si, dap2
     mov ah, 0x42
     int 0x13
+    pop cx
     jc disk_error
-
-    mov dl, [boot_drive]
-    mov si, dap3
-    mov ah, 0x42
-    int 0x13
-    jc disk_error
-
-    mov dl, [boot_drive]
-    mov si, dap4
-    mov ah, 0x42
-    int 0x13
-    jc disk_error
+    add si, 16                  ; (the packets follow each other)
+    loop .part
 
     mov si, msg_loaded
     call print_string_16
@@ -163,6 +154,14 @@ dap4:
     dw KERNEL_LOAD_OFF4
     dw KERNEL_LOAD_SEG4
     dq 1 + KERNEL_SECTORS_1 + KERNEL_SECTORS_2 + KERNEL_SECTORS_3
+
+dap5:
+    db 0x10
+    db 0
+    dw KERNEL_SECTORS_5
+    dw KERNEL_LOAD_OFF5
+    dw KERNEL_LOAD_SEG5
+    dq 1 + KERNEL_SECTORS_1 + KERNEL_SECTORS_2 + KERNEL_SECTORS_3 + KERNEL_SECTORS_4
 
 boot_drive     db 0
 msg_booting    db "Booting LexOS (32-bit)...", 13, 10, 0

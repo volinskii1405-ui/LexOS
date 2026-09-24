@@ -35,7 +35,7 @@ SECTOR_COUNT equ 8
 ; in slots 0..FS_DIR_SLOT_LIMIT-1 (fs_find_free_dir) - files take the
 ; rest first (fs_find_free), so up to 255 folders, nested as deep as you
 ; like, and the other ~770 slots for files.
-FS_START_SECTOR   equ 450     ; sector 1=bootloader, 2..449=kernel (448 sectors)
+FS_START_SECTOR   equ 578     ; sector 1=bootloader, 2..577=kernel (576 sectors)
 FS_FILE_COUNT     equ 1024
 FS_DIR_SLOT_LIMIT equ 255
 FS_NAME_LEN       equ 16
