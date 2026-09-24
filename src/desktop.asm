@@ -54,6 +54,10 @@ DK_TITLE_LEN      equ 32
 DK_MENU_W         equ 170
 DK_MENU_ITEM_H    equ 24
 DK_MENU_ITEMS     equ 9
+DK_TRAY_W         equ 124                 ; the taskbar's right end: volume,
+                                          ; network, the time
+DK_CAL_W          equ 244                 ; the calendar
+DK_CAL_H          equ 196
 DK_PROG_W         equ 230                 ; the Programs submenu
 DK_PROG_MAX       equ 22
 
@@ -308,6 +312,7 @@ desktop_task:
     call dk_sync_consoles
     call dk_mouse_events
     call dk_alt_tab_work
+    call dk_wheel_work                    ; (src/dkwins.asm)
     call dk_vga_frame                     ; (src/dkwins.asm: mode 13h windows)
     call dk_check_changes
     pushfd
@@ -422,6 +427,8 @@ dk_win_open:
     mov [dkw_kind + ecx], al
     mov [dkw_param + ecx*4], ebx
     mov byte [dkw_hidden + ecx], 0
+    mov dword [dkw_scroll + ecx*4], 0
+    mov byte [dkw_max + ecx], 0
     ; its size and place: from the kind's defaults
     mov edx, [dk_def_x + eax*4]
     mov [dkw_x + ecx*4], edx
@@ -687,6 +694,12 @@ dk_check_changes:
     pop edi
     pop esi
     je .same
+    cmp dword [dkw_scroll + ebp*4], 0     ; (scrolled back: to the bottom
+    je .not_scrolled                      ; again, it's all new)
+    mov dword [dkw_scroll + ebp*4], 0
+    mov eax, ebp
+    call dk_mark_window_client
+.not_scrolled:
     mov eax, ebp                          ; that row, dirty
     call dk_client_origin                 ; -> eax, ebx
     push edx
@@ -733,9 +746,9 @@ dk_check_changes:
     call dk_mark_kind
     mov eax, K_TASKS
     call dk_mark_kind
-    mov eax, DESK_W - 70
+    mov eax, DESK_W - DK_TRAY_W
     mov ebx, DESK_H - DK_TASKBAR_H
-    mov ecx, 70
+    mov ecx, DK_TRAY_W
     mov edx, DK_TASKBAR_H
     call dk_mark
 .fast:
@@ -1127,6 +1140,15 @@ dk_mouse_event:
 ; A left press at eax, ebx
 dk_click:
     pushad
+    cmp byte [dk_cal_open], 0             ; the calendar: any click closes
+    je .no_cal                            ; it (the time's own: see the
+    call dk_mark_calendar                 ; tray, it toggles)
+    mov byte [dk_cal_open], 0
+    cmp ebx, DESK_H - DK_TASKBAR_H
+    jb .done
+    cmp eax, DESK_W - 64
+    jae .done
+.no_cal:
     ; the start menu first, if it's open
     cmp byte [dk_menu_open], 0
     je .no_menu
@@ -1179,6 +1201,11 @@ dk_click:
     call dk_mark_menu
     jmp .done
 .task_buttons:
+    cmp eax, DESK_W - DK_TRAY_W           ; the tray: volume, network, time
+    jb .not_tray
+    call dk_tray_click                    ; (src/dkwins.asm)
+    jmp .done
+.not_tray:
     sub eax, 96
     js .done
     xor edx, edx
@@ -1669,8 +1696,12 @@ dk_render:
 .wins_done:
     call dk_draw_taskbar
     cmp byte [dk_menu_open], 0
-    je .done
+    je .no_menu
     call dk_draw_menu
+.no_menu:
+    cmp byte [dk_cal_open], 0
+    je .done
+    call dk_draw_calendar                 ; (src/dkwins.asm)
 .done:
     popad
     ret
@@ -1931,7 +1962,7 @@ dk_draw_taskbar:
     mov eax, 134
     or edx, edx
     jz .step_ok
-    mov eax, DESK_W - 96 - 70
+    mov eax, DESK_W - 96 - DK_TRAY_W
     push edx
     mov ecx, edx
     xor edx, edx
@@ -2000,6 +2031,7 @@ dk_draw_taskbar:
     mov esi, dk_clock_text
     mov edx, COL_WHITE
     call dk_text
+    call dk_draw_tray                     ; (src/dkwins.asm)
     popad
     ret
 
@@ -2518,6 +2550,7 @@ dk_mix_sum        dd 0
 dk_btn_now        db 0
 dk_resizing       db 0
 dk_prog_open      db 0                         ; the Programs submenu is out
+dk_cal_open       db 0                         ; the calendar is out
 dk_prog_shown     dd 1                         ; its rows
 dk_alt_tab        db 0                         ; Alt+Tabs to act on
 dk_title_click_ms dd 0                         ; (a double click on a title)
@@ -2570,6 +2603,7 @@ dkw_w             times DK_MAX_WIN dd 0   ; the client area's size
 dkw_h             times DK_MAX_WIN dd 0
 dkw_cursor        times DK_MAX_WIN dd -1  ; a Terminal's cursor, as drawn
 dkw_blink         times DK_MAX_WIN db 0
+dkw_scroll        times DK_MAX_WIN dd 0  ; a Terminal's lines scrolled back
 dkw_title         times DK_MAX_WIN * DK_TITLE_LEN db 0
 dk_zorder         times DK_MAX_WIN db 0
 dk_zcount         dd 0

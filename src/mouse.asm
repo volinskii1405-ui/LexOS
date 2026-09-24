@@ -143,6 +143,29 @@ mouse_init:
 
     mov al, 0xF6                     ; set defaults
     call mouse_send_and_ack
+    ; the IntelliMouse knock: sample rates 200, 100, 80 - a mouse with
+    ; a wheel then says it's ID 3, and sends 4-byte packets (the 4th:
+    ; the wheel's turn, signed)
+    mov al, 0xF3
+    call mouse_send_and_ack
+    mov al, 200
+    call mouse_send_and_ack
+    mov al, 0xF3
+    call mouse_send_and_ack
+    mov al, 100
+    call mouse_send_and_ack
+    mov al, 0xF3
+    call mouse_send_and_ack
+    mov al, 80
+    call mouse_send_and_ack
+    mov al, 0xF2                     ; its ID
+    call mouse_send_and_ack
+    call mouse_wait_output
+    in al, MOUSE_DATA_PORT
+    cmp al, 3
+    jne .no_wheel
+    mov byte [mouse_packet_len], 4
+.no_wheel:
     mov al, 0xF4                     ; enable data reporting
     call mouse_send_and_ack
 
@@ -188,8 +211,14 @@ mouse_isr:
     movzx ebx, byte [mouse_packet_idx]
     mov [mouse_packet + ebx], al
     inc byte [mouse_packet_idx]
-    cmp byte [mouse_packet_idx], 3
+    mov bl, [mouse_packet_idx]
+    cmp bl, [mouse_packet_len]
     jb .eoi
+    cmp byte [mouse_packet_len], 4   ; the wheel's turn, added up for
+    jb .no_wheel                     ; whoever wants it (the desktop)
+    movsx eax, byte [mouse_packet + 3]
+    add [mouse_wheel], eax
+.no_wheel:
 
     mov byte [mouse_packet_idx], 0
 
@@ -269,7 +298,9 @@ mouse_isr:
 mouse_x dd 160
 mouse_y dd 100
 mouse_buttons db 0
-mouse_packet times 3 db 0
+mouse_packet times 4 db 0
+mouse_packet_len db 3            ; 4 with a wheel
+mouse_wheel dd 0                 ; its turns (+: towards you)
 mouse_packet_idx db 0
 mouse_max_x dd 319
 mouse_max_y dd 199

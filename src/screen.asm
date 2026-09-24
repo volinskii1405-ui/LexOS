@@ -192,6 +192,9 @@ print_char:
 scroll_screen:
     pusha
 
+    call dk_scrollback_save          ; (src/dkwins.asm: the line going
+                                     ; off the top, for the desktop's
+                                     ; mouse wheel)
     cld
     mov edi, [text_vram]
     lea esi, [edi + SCREEN_COLS * 2]

@@ -564,6 +564,8 @@ console_saved_addr:
 ; ============================================================
 console_shell_start:
     call bkl_take                           ; (src/sched.asm)
+    movzx eax, byte [console_self]          ; (no scrollback of the one
+    mov dword [dk_sb_count + eax*4], 0      ; that was here before)
     mov byte [kbd_buf_head], 0              ; (none of the other's keys)
     mov byte [kbd_buf_tail], 0
     mov word [buf_len], 0

@@ -16,6 +16,8 @@ DESK_IMG_MAX_W    equ 960
 DESK_IMG_MAX_H    equ 640
 DK_APPS           equ 3                   ; programs' windows at once
 DK_APP_PIX        equ 0x5000000           ; their pixels, 2MB each
+DK_SB_BASE        equ 0x6340000           ; each console's lines scrolled
+DK_SB_LINES       equ 200                 ; off the top (32KB each)
 DK_VGA_LAST       equ 0x5710000           ; mode 13h windows: the picture
                                           ; as last shown (64KB per slot)
 DK_APP_MAX_PIX    equ 0x200000 / 4
@@ -74,13 +76,12 @@ dk_draw_terminal:
     jle .next_row
     cmp ebx, [dk_clip_y1]
     jge .cursor
+    call dk_term_row_src                  ; (scrolled back: an older line)
+    mov [dk_term_rowp], eax
     xor edi, edi                          ; the column
 .cell:
-    mov eax, edx
-    imul eax, SCREEN_COLS
-    add eax, edi
-    shl eax, 1
-    add eax, [dk_term_src]
+    lea eax, [edi*2]
+    add eax, [dk_term_rowp]
     movzx ecx, byte [eax]                 ; the character
     movzx eax, byte [eax + 1]             ; its colors
     push edx
@@ -104,6 +105,23 @@ dk_draw_terminal:
     inc edx
     jmp .row
 .cursor:
+    cmp dword [dkw_scroll + ebp*4], 0     ; scrolled back: no cursor, a tag
+    je .no_tag
+    mov eax, [dk_cx]
+    add eax, [dkw_w + ebp*4]
+    sub eax, 150
+    mov ebx, [dk_cy]
+    mov ecx, 150
+    mov edx, 18
+    mov esi, 0xE0B040
+    call dk_fill
+    add eax, 6
+    add ebx, 1
+    mov esi, dk_msg_scrolled
+    mov edx, COL_BLACK
+    call dk_text
+    jmp dk_contents_done
+.no_tag:
     cmp byte [dk_term_on], 0
     je dk_contents_done
     movzx eax, word [dkw_cursor + ebp*4]      ; column
@@ -122,6 +140,132 @@ dk_draw_terminal:
     mov esi, 0xC0C0C0
     call dk_fill
     jmp dk_contents_done
+
+; ebp = a Terminal, edx = a row of it -> eax = that row's 80 cells:
+; the screen's - or, scrolled back (dkw_scroll lines), older ones
+dk_term_row_src:
+    push ebx
+    push ecx
+    push edx
+    mov ecx, [dkw_scroll + ebp*4]
+    or ecx, ecx
+    jz .screen
+    mov ebx, [dkw_param + ebp*4]          ; its console
+    cmp ecx, [dk_sb_count + ebx*4]
+    jbe .scroll_ok
+    mov ecx, [dk_sb_count + ebx*4]
+.scroll_ok:
+    mov eax, [dk_sb_count + ebx*4]        ; L = count - scroll + row
+    sub eax, ecx
+    add eax, edx
+    cmp eax, [dk_sb_count + ebx*4]
+    jae .below
+    add eax, [dk_sb_head + ebx*4]         ; its place in the ring
+    sub eax, [dk_sb_count + ebx*4]
+    jns .ring
+    add eax, DK_SB_LINES
+.ring:
+    imul eax, eax, SCREEN_COLS * 2
+    shl ebx, 15
+    add eax, ebx
+    add eax, DK_SB_BASE
+    jmp .done
+.below:
+    sub eax, [dk_sb_count + ebx*4]
+    mov edx, eax
+.screen:
+    imul eax, edx, SCREEN_COLS * 2
+    add eax, [dk_term_src]
+.done:
+    pop edx
+    pop ecx
+    pop ebx
+    ret
+
+; A console's line about to scroll off the top of its screen
+; (scroll_screen, src/screen.asm - in its task): kept, a ring of
+; DK_SB_LINES, for its Terminal's mouse wheel
+dk_scrollback_save:
+    pushad
+    movzx ebx, byte [console_self]
+    cmp ebx, CONSOLE_MAX
+    jae .done
+    mov eax, [dk_sb_head + ebx*4]
+    imul edi, eax, SCREEN_COLS * 2
+    mov edx, ebx
+    shl edx, 15
+    add edi, edx
+    add edi, DK_SB_BASE
+    mov esi, [text_vram]
+    mov ecx, SCREEN_COLS * 2 / 4
+    cld
+    rep movsd
+    inc eax
+    cmp eax, DK_SB_LINES
+    jb .head
+    xor eax, eax
+.head:
+    mov [dk_sb_head + ebx*4], eax
+    cmp dword [dk_sb_count + ebx*4], DK_SB_LINES
+    jae .done
+    inc dword [dk_sb_count + ebx*4]
+.done:
+    popad
+    ret
+
+; Each frame: the mouse wheel's turns - over a Terminal, back through
+; what scrolled off it; over Files, its pages
+dk_wheel_work:
+    pushad
+    xor eax, eax
+    xchg eax, [mouse_wheel]
+    or eax, eax
+    jz .done
+    mov ebp, eax
+    mov eax, [dk_mx]
+    mov ebx, [dk_my]
+    call dk_window_at                     ; -> esi
+    cmp esi, -1
+    je .not_window
+    cmp byte [dkw_kind + esi], K_TERM
+    je .terminal
+    cmp byte [dkw_kind + esi], K_FILES
+    jne .done
+    mov eax, [dk_fm_page]                 ; Files: a page per notch
+    add eax, ebp
+    jns .page
+    xor eax, eax
+.page:
+    mov ecx, eax
+    imul ecx, [dk_fm_page_n]
+    cmp ecx, [dk_fm_count]
+    jb .page_ok
+    mov eax, [dk_fm_page]
+.page_ok:
+    mov [dk_fm_page], eax
+    mov eax, esi
+    call dk_mark_window_client
+    jmp .done
+.terminal:
+    imul ebp, ebp, -3                     ; up (-): three lines back each
+    add ebp, [dkw_scroll + esi*4]
+    jns .back
+    xor ebp, ebp
+.back:
+    mov ebx, [dkw_param + esi*4]
+    cmp ebp, [dk_sb_count + ebx*4]
+    jbe .scroll_ok
+    mov ebp, [dk_sb_count + ebx*4]
+.scroll_ok:
+    mov [dkw_scroll + esi*4], ebp
+    mov eax, esi
+    call dk_mark_window_client
+    jmp .done
+.not_window:
+    call dk_tray_wheel                    ; (the taskbar's volume)
+.done:
+    popad
+    ret
 
 ; ebp = a Terminal -> eax = its cursor's row, ebx = column, cl = 1 if
 ; it's showing now (only the console with the keyboard has one, blinking)
@@ -1997,6 +2141,337 @@ dk_prog_run:
     popad
     ret
 
+; ============================================================
+; The taskbar's tray: the volume (Mixer), the network (System), the
+; time (a calendar)
+; ============================================================
+DK_TRAY_VOL_X equ DESK_W - 118
+DK_TRAY_NET_X equ DESK_W - 92
+
+dk_draw_tray:
+    pushad
+    mov ebp, DESK_H - DK_TASKBAR_H + 7    ; (the icons' top)
+    ; the volume: a speaker, and waves as loud as it is
+    mov eax, DK_TRAY_VOL_X
+    lea ebx, [ebp + 5]
+    mov ecx, 4
+    mov edx, 6
+    mov esi, COL_WHITE
+    call dk_fill
+    mov eax, DK_TRAY_VOL_X + 4            ; the cone
+    lea ebx, [ebp + 3]
+    mov ecx, 2
+    mov edx, 10
+    call dk_fill
+    mov eax, DK_TRAY_VOL_X + 6
+    lea ebx, [ebp + 1]
+    mov edx, 14
+    call dk_fill
+    cmp dword [mix_master], 0
+    jne .loud
+    mov eax, DK_TRAY_VOL_X + 10           ; muted: a red cross
+    lea ebx, [ebp + 4]
+    mov esi, 0xE04040
+    mov ecx, DK_TRAY_VOL_X + 16
+    lea edx, [ebp + 10]
+    call dk_line_c
+    mov eax, DK_TRAY_VOL_X + 10
+    lea ebx, [ebp + 10]
+    mov ecx, DK_TRAY_VOL_X + 16
+    lea edx, [ebp + 4]
+    call dk_line_c
+    jmp .net
+.loud:
+    mov eax, DK_TRAY_VOL_X + 10
+    lea ebx, [ebp + 5]
+    mov ecx, 2
+    mov edx, 6
+    mov esi, COL_WHITE
+    call dk_fill
+    cmp dword [mix_master], 50
+    jb .net
+    mov eax, DK_TRAY_VOL_X + 14
+    lea ebx, [ebp + 2]
+    mov edx, 12
+    call dk_fill
+.net:
+    ; the network: four bars, green once it's set up
+    mov esi, 0x5A6B85
+    cmp byte [net_ready], 0
+    je .bars
+    mov esi, 0x43C06B
+.bars:
+    xor ecx, ecx
+.bar:
+    lea eax, [ecx*4 + DK_TRAY_NET_X]
+    lea edx, [ecx*3 + 4]                  ; 4, 7, 10, 13 high
+    mov ebx, ebp
+    add ebx, 16
+    sub ebx, edx
+    push ecx
+    mov ecx, 3
+    call dk_fill
+    pop ecx
+    inc ecx
+    cmp ecx, 4
+    jb .bar
+    popad
+    ret
+
+; dk_line with ebx..edx as dk_line wants it, esi the color (a helper)
+dk_line_c:
+    call dk_line
+    ret
+
+; eax = x of a click on the tray
+dk_tray_click:
+    pushad
+    cmp eax, DK_TRAY_NET_X - 4
+    jae .not_volume
+    mov eax, K_MIXER
+    call dk_win_single
+    jmp .done
+.not_volume:
+    cmp eax, DESK_W - 64
+    jae .time
+    mov eax, K_SYSTEM
+    call dk_win_single
+    jmp .done
+.time:
+    mov byte [dk_cal_open], 1
+    call dk_mark_calendar
+.done:
+    popad
+    ret
+
+; The mouse wheel over the tray's volume: the master volume, 5 a notch
+; (ebp = the turns: - is up, louder)
+dk_tray_wheel:
+    pushad
+    cmp dword [dk_my], DESK_H - DK_TASKBAR_H
+    jb .done
+    cmp dword [dk_mx], DK_TRAY_VOL_X - 4
+    jb .done
+    cmp dword [dk_mx], DK_TRAY_NET_X - 4
+    jae .done
+    imul eax, ebp, -5
+    add eax, [mix_master]
+    jns .low_ok
+    xor eax, eax
+.low_ok:
+    cmp eax, 100
+    jbe .high_ok
+    mov eax, 100
+.high_ok:
+    mov [mix_master], eax
+    mov eax, DESK_W - DK_TRAY_W           ; the icon, the Mixer: redrawn
+    mov ebx, DESK_H - DK_TASKBAR_H
+    mov ecx, DK_TRAY_W
+    mov edx, DK_TASKBAR_H
+    call dk_mark
+    mov eax, K_MIXER
+    call dk_mark_kind
+.done:
+    popad
+    ret
+
+; ============================================================
+; The calendar: this month, today marked
+; ============================================================
+DK_CAL_X equ DESK_W - DK_CAL_W - 4
+DK_CAL_Y equ DESK_H - DK_TASKBAR_H - DK_CAL_H - 4
+
+dk_mark_calendar:
+    pushad
+    mov eax, DK_CAL_X
+    mov ebx, DK_CAL_Y
+    mov ecx, DK_CAL_W
+    mov edx, DK_CAL_H
+    call dk_mark
+    popad
+    ret
+
+dk_draw_calendar:
+    pushad
+    mov eax, DK_CAL_X
+    mov ebx, DK_CAL_Y
+    mov ecx, DK_CAL_W
+    mov edx, DK_CAL_H
+    mov esi, COL_FRAME
+    call dk_fill
+    inc eax
+    inc ebx
+    sub ecx, 2
+    sub edx, 2
+    mov esi, 0xF3F4F8
+    call dk_fill
+    ; today, in the user's time zone
+    call rtc_read_date                    ; bh:bl:cl = day:month:year
+    movzx eax, bh
+    mov [dk_cal_day], eax
+    movzx eax, bl
+    mov [dk_cal_month], eax
+    movzx eax, cl
+    add eax, 2000
+    mov [dk_cal_year], eax
+    call rtc_read_time                    ; bh = the hour (UTC)
+    movzx eax, bh
+    add ax, [user_tz_offset]
+    cwde
+    or eax, eax
+    jns .not_before
+    dec dword [dk_cal_day]                ; (yesterday there)
+    jnz .dated
+    dec dword [dk_cal_month]
+    jnz .prev_month
+    mov dword [dk_cal_month], 12
+    dec dword [dk_cal_year]
+.prev_month:
+    call dk_cal_days                      ; -> eax
+    mov [dk_cal_day], eax
+    jmp .dated
+.not_before:
+    cmp eax, 24
+    jb .dated
+    call dk_cal_days                      ; (tomorrow there)
+    inc dword [dk_cal_day]
+    cmp [dk_cal_day], eax
+    jbe .dated
+    mov dword [dk_cal_day], 1
+    inc dword [dk_cal_month]
+    cmp dword [dk_cal_month], 12
+    jbe .dated
+    mov dword [dk_cal_month], 1
+    inc dword [dk_cal_year]
+.dated:
+    ; "September 2026"
+    mov edi, dk_sys_buf
+    mov eax, [dk_cal_month]
+    mov esi, [dk_month_names + eax*4 - 4]
+    call wget_append
+    mov al, ' '
+    stosb
+    mov eax, [dk_cal_year]
+    call wget_append_num
+    mov byte [edi], 0
+    mov eax, DK_CAL_X + 12
+    mov ebx, DK_CAL_Y + 8
+    mov esi, dk_sys_buf
+    mov edx, COL_TEXT
+    call dk_text
+    mov eax, DK_CAL_X + 12
+    mov ebx, DK_CAL_Y + 32
+    mov esi, dk_cal_weekdays
+    mov edx, 0x6E7B8B
+    call dk_text
+    ; the 1st's weekday (Sakamoto's): 0 = Sunday -> its column, Monday first
+    mov eax, [dk_cal_year]
+    mov ecx, [dk_cal_month]
+    cmp ecx, 3
+    jae .no_shift
+    dec eax
+.no_shift:
+    mov ebx, eax                          ; y + y/4 - y/100 + y/400
+    mov esi, eax
+    shr esi, 2
+    add ebx, esi
+    xor edx, edx
+    mov esi, 100
+    div esi
+    sub ebx, eax
+    shr eax, 2
+    add ebx, eax
+    movzx eax, byte [dk_cal_t + ecx - 1]
+    add ebx, eax
+    inc ebx                               ; + day 1
+    mov eax, ebx
+    xor edx, edx
+    mov esi, 7
+    div esi
+    add edx, 6                            ; Sunday = 0 -> column 6
+    mov eax, edx
+    xor edx, edx
+    div esi
+    mov ebp, edx                          ; ebp = the 1st's column
+    call dk_cal_days
+    mov [dk_cal_dim], eax
+    mov ecx, 1                            ; the day
+.day:
+    cmp ecx, [dk_cal_dim]
+    ja .done
+    lea eax, [ebp + ecx - 1]
+    xor edx, edx
+    mov esi, 7
+    div esi                               ; eax = row, edx = column
+    imul ebx, eax, 22
+    add ebx, DK_CAL_Y + 54
+    imul eax, edx, 32
+    add eax, DK_CAL_X + 10
+    mov edx, COL_TEXT
+    cmp ecx, [dk_cal_day]
+    jne .plain
+    push ecx                              ; today
+    push ebx
+    sub ebx, 3
+    mov ecx, 26
+    mov edx, 21
+    mov esi, COL_TITLE_ON
+    call dk_fill
+    pop ebx
+    pop ecx
+    mov edx, COL_WHITE
+.plain:
+    mov edi, dk_sys_buf
+    push eax
+    mov eax, ecx
+    call dk_two_digits
+    pop eax
+    mov byte [edi], 0
+    cmp byte [dk_sys_buf], '0'
+    jne .two
+    mov byte [dk_sys_buf], ' '
+.two:
+    add eax, 4
+    mov esi, dk_sys_buf
+    call dk_text
+    inc ecx
+    jmp .day
+.done:
+    popad
+    ret
+
+; -> eax = the days in dk_cal_month of dk_cal_year
+dk_cal_days:
+    push ecx
+    mov ecx, [dk_cal_month]
+    movzx eax, byte [dk_cal_month_days + ecx - 1]
+    cmp ecx, 2
+    jne .done
+    mov ecx, [dk_cal_year]                ; February, a leap year
+    test ecx, 3
+    jnz .done
+    push eax
+    push edx
+    mov eax, ecx
+    xor edx, edx
+    mov ecx, 100
+    div ecx
+    or edx, edx
+    jnz .leap_pop
+    test eax, 3                           ; (a century: /400 only)
+    jnz .no_leap_pop
+.leap_pop:
+    pop edx
+    pop eax
+    inc eax
+    jmp .done
+.no_leap_pop:
+    pop edx
+    pop eax
+.done:
+    pop ecx
+    ret
+
 ; -> bl = the console to type a command into: the one on screen, if
 ; its shell waits at an empty prompt - else a new one (asked for here).
 ; carry=1 if there's no room for one.
@@ -3168,6 +3643,31 @@ dk_cp_c1          dd 0
 dk_cp_r1          dd 0
 dk_cp_r0          dd 0
 dk_inject_target  db 0
+dk_cal_day        dd 0
+dk_cal_month      dd 0
+dk_cal_year       dd 0
+dk_cal_dim        dd 0
+dk_cal_t          db 0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4
+dk_cal_month_days db 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+dk_cal_weekdays   db "Mo  Tu  We  Th  Fr  Sa  Su", 0
+dk_month_names    dd dk_m1, dk_m2, dk_m3, dk_m4, dk_m5, dk_m6
+                  dd dk_m7, dk_m8, dk_m9, dk_m10, dk_m11, dk_m12
+dk_m1  db "January", 0
+dk_m2  db "February", 0
+dk_m3  db "March", 0
+dk_m4  db "April", 0
+dk_m5  db "May", 0
+dk_m6  db "June", 0
+dk_m7  db "July", 0
+dk_m8  db "August", 0
+dk_m9  db "September", 0
+dk_m10 db "October", 0
+dk_m11 db "November", 0
+dk_m12 db "December", 0
+dk_term_rowp      dd 0
+dk_sb_head        times CONSOLE_MAX dd 0  ; the scrollback rings (DK_SB_BASE)
+dk_sb_count       times CONSOLE_MAX dd 0
+dk_msg_scrolled   db "scrolled back", 0
 dk_prog_count     dd 0                    ; Programs: what's there
 dk_prog_names     times DK_PROG_MAX * 16 db 0
 dk_prog_paths     times DK_PROG_MAX * 32 db 0
