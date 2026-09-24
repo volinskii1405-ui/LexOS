@@ -296,6 +296,7 @@ dk_settings_work:
     stosb
     mov ax, 0x0A0D
     stosw
+    call dki_save                         ; (src/dkicons.asm: where they are)
     sub edi, dk_cfg_buf
     mov [fs_stream_size], edi
     mov esi, dk_cfg_name
@@ -322,7 +323,7 @@ dk_settings_work:
 ; ============================================================
 ; Data (shared)
 ; ============================================================
-DK_CFG_MAX     equ 256
+DK_CFG_MAX     equ 1024
 dk_theme       dd 0
 dk_cfg_dirty   db 0
 dk_cfg_name    db "DESKTOP.CFG", 0

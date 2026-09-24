@@ -139,6 +139,7 @@ desktop_command:
     cmp byte [vga_graphics_active], 0     ; (not from inside a graphics program)
     jne .done
     call dk_settings_load                 ; (src/dkstyle.asm: DESKTOP.CFG)
+    call dki_forget                       ; (src/dkicons.asm: read them anew)
     ; no windows yet: Clock, and a Terminal per console (made below)
     xor eax, eax
 .clear:
@@ -358,6 +359,7 @@ desktop_task:
     call dk_wheel_work                    ; (src/dkwins.asm)
     call dk_vga_frame                     ; (src/dkwins.asm: mode 13h windows)
     call dk_check_changes
+    call dki_work                         ; (src/dkicons.asm: /DESKTOP)
     pushfd
     cli                                   ; (dk_mark from programs' blits)
     mov al, [dk_redraw_all]
@@ -1236,6 +1238,11 @@ dk_mouse_event:
     jmp .done
 
 .not_dragging:
+    cmp dword [dki_drag], -1              ; a desktop icon being carried
+    je .no_icon_drag                      ; (src/dkicons.asm)
+    call dki_drag_move
+    jmp .done
+.no_icon_drag:
     ; a window's own drag (Files: an icon) gets the moves and the release
     cmp byte [dk_fm_state], 2
     jb .clicks
@@ -1341,7 +1348,7 @@ dk_click:
 .windows:
     call dk_window_at                     ; -> esi = the window, or -1
     cmp esi, -1
-    je .done
+    je .background
     mov eax, esi
     call dk_raise
     call dk_focus_console
@@ -1396,6 +1403,9 @@ dk_click:
 .close:
     mov eax, esi
     call dk_win_x                         ; (src/dkwins.asm: by kind)
+    jmp .done
+.background:
+    call dki_press                        ; (src/dkicons.asm: an icon?)
     jmp .done
 .maximize:
     mov eax, esi
@@ -1796,6 +1806,7 @@ dk_render:
     mov esi, dk_msg_watermark
     mov edx, COL_WATERMARK
     call dk_text
+    call dki_draw                         ; (src/dkicons.asm: the icons)
 
     ; the windows, back to front
     xor ecx, ecx

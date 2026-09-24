@@ -195,6 +195,7 @@ shared_system_start:
 %include "src/dkwins.asm"
 %include "src/dkstyle.asm"
 %include "src/dksound.asm"
+%include "src/dkicons.asm"
 shared_system_end:
 align 4096, db 0
 %include "src/grep.asm"
