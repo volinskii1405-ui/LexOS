@@ -365,8 +365,11 @@ alex@/PROGRAMS$
   then `run modplay.app demo.mod` - DEMO.MOD is built by
   `tools/makemod.py` from synthesized samples; any 4-channel .MOD
   works), `FTEST.APP` (the math functions, and a long sum - run it
-  in two consoles at once) and `CUBE.APP` (a spinning 3D wireframe in
-  640x480, arrows change the spin).
+  in two consoles at once), `CUBE.APP` (a spinning 3D wireframe in
+  640x480, arrows change the spin) and `MAZE.APP` - find the way out
+  of a maze in 3D, Wolfenstein-style: a raycaster with textured walls,
+  a tiled floor and ceiling, fog and a map (M); arrows / WASD, each
+  level a new, bigger maze.
 - **Desktop.** `desktop` switches to a graphical desktop in 1024x768
   true color: windows with title bars you drag with the mouse, that
   come to the front when clicked and close with their [x], minimize
@@ -376,8 +379,20 @@ alex@/PROGRAMS$
   A taskbar with a button per window and a tray - volume (click: the
   Mixer, wheel: the master volume), network (green once it's set up),
   the time (click: this month's calendar) - and a start menu:
-  Programs (every .APP/.COM/.BIN on the disk, run in a Terminal),
-  Terminal, Files, Clock, Pictures, Tasks, Mixer, System, Exit.
+  Programs (every .APP/.COM/.BIN on the disk), Terminal, Files, Clock,
+  Pictures, Tasks, Mixer, System, Exit. Typing while the menu's open
+  searches: Programs shows what has the typed text in its name, Up /
+  Down pick, Enter starts it, Esc closes the menu.
+  - **Icons on the desktop**: whatever's in `/DESKTOP` (src/dkicons.asm).
+    A `.LNK` file there is a shortcut - its text is the path it opens
+    (`/APPS/FIRE.APP`, a folder like `/DEMOS`). Double-click opens,
+    drag moves (the places are remembered).
+  - **Themes**: Classic, Dark, Light, Forest, Plum - System's buttons
+    (src/dkstyle.asm); with the sounds' switch they're kept in
+    `DESKTOP.CFG` in the root.
+  - **Sounds** (src/dksound.asm, through the Sound Blaster's mixer): a
+    tune when the desktop starts, a click for the menu and buttons, a
+    low tone for an error, a high one for news (a screenshot saved).
   PrintScreen saves the desktop as PICS/SHOTnn.BMP. The mouse wheel
   works too (the IntelliMouse protocol).
   - **Terminals.** Every console has its own **Terminal** window -
@@ -429,9 +444,12 @@ alex@/PROGRAMS$
     Delete moves into /TRASH (Delete forever, Empty trash in there);
     Rename, Copy and New folder type the command into a Terminal and
     leave the new name to you.
-  - **Tasks** is a task manager: a CPU-use graph for the last minute,
-    every task with its state and CPU time, and End task for the
-    selected one (not consoles or the desktop).
+  - **Tasks** is a task manager: the CPU use and the memory in use
+    over the last minute, every task with its state, priority, its
+    program's memory (the used pages of its 4MB) and CPU time;
+    Low / Normal / High set the selected one's priority (a low task
+    runs only when nothing else will), End task stops it (not
+    consoles or the desktop).
   - **Mixer** lists what's playing (see the mixer below), with a
     volume slider and a level meter each, and the master volume.
   - **Clock** is an analog clock in your time zone, **Pictures** shows
@@ -869,6 +887,9 @@ src/
   dkwins.asm           the windows' contents: Terminal, Clock,
                        Pictures, System, Files, Tasks, Mixer, and
                        programs' windows (their graphics calls).
+  dkstyle.asm          the desktop's themes, DESKTOP.CFG.
+  dksound.asm          the desktop's own sounds.
+  dkicons.asm          icons on the desktop (/DESKTOP, .LNK shortcuts).
   sched.asm            the scheduler: tasks, priorities, task_wait,
                        ps/kill/clock.
   net.asm              RTL8139 driver (polled), ARP, IPv4, ICMP echo,
