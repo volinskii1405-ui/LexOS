@@ -28,8 +28,8 @@
 ;          app_gfx_off, fh_close_all, app_build_cmdline
 ; ============================================================
 
-FH_COUNT        equ 8
-FH_BUF_BASE     equ 0x4000000            ; 64MB: 8 x 4MB, up to 0x6000000
+FH_COUNT        equ 4
+FH_BUF_BASE     equ 0x4000000            ; 64MB: 4 x 4MB, up to 0x5000000
 FH_BUF_SIZE     equ 0x400000
 
 FH_MODE_READ    equ 0                    ; an existing file, from the start
@@ -367,6 +367,11 @@ sys_gfx:
     je .off
     cmp byte [app_gfx], 0
     jne .done
+    mov eax, 320                          ; the desktop's on: a window
+    mov ebx, 200
+    mov ecx, 1
+    call app_try_window
+    jnc .done
     pushad
     call vga_enter_mode13
     call app_gfx_palette
@@ -388,10 +393,93 @@ sys_gfx:
     xor eax, eax
     ret
 
+; eax x ebx pixels, ecx bytes each (1 / 4): a window on the desktop
+; (src/dkwins.asm) instead of the screen, if the desktop's on and it
+; fits. carry=1 if not.
+app_try_window:
+    cmp byte [dk_active], 0
+    je .no
+    cmp byte [dk_suspended], 0
+    jne .no
+    cmp ecx, 1
+    je .depth_ok
+    cmp ecx, 4
+    jne .no
+.depth_ok:
+    push eax
+    push ecx
+    call dk_app_open                      ; -> eax = its slot
+    pop ecx
+    jc .failed
+    mov [app_win_slot], eax
+    pop eax
+    mov byte [app_gfx], 3
+    mov [app_gfx_w], eax
+    mov [app_gfx_h], ebx
+    mov [app_gfx_bpp], ecx
+    clc
+    ret
+.failed:
+    pop eax
+.no:
+    stc
+    ret
+
+; The desktop went away under a program drawing in a window: the whole
+; screen instead (its next frame shows up there)
+app_unwindow:
+    cmp byte [app_gfx], 3
+    jne .done
+    pushad
+    mov byte [app_gfx], 0                 ; (the window's gone already)
+    mov eax, [app_gfx_w]
+    mov ecx, [app_gfx_h]
+    mov edx, [app_gfx_bpp]
+    shl edx, 3
+    call app_gfx_screen
+    cmp dword [app_gfx_bpp], 1            ; its window's colors, not the
+    jne .colors_done                      ; default ones
+    mov esi, [app_win_slot]
+    shl esi, 10
+    add esi, dk_app_pal
+    mov dx, VGA_DAC_WRITE_INDEX
+    xor al, al
+    out dx, al
+    mov dx, VGA_DAC_DATA
+    mov ecx, 256
+.color:
+    mov ebx, [esi]
+    mov eax, ebx
+    shr eax, 18                           ; red, 8 bits -> 6
+    out dx, al
+    mov eax, ebx
+    shr eax, 10
+    and al, 0x3F
+    out dx, al
+    mov eax, ebx
+    shr eax, 2
+    and al, 0x3F
+    out dx, al
+    add esi, 4
+    loop .color
+.colors_done:
+    popad
+.done:
+    ret
+
 ; Back to text mode, if a program switched to graphics.
 app_gfx_off:
     cmp byte [app_gfx], 0
     je .done
+    cmp byte [app_gfx], 3                 ; a window: just close it
+    jne .screen
+    push eax
+    mov eax, [app_win_slot]
+    call dk_app_close
+    pop eax
+    mov byte [app_gfx], 0
+    ret
+.screen:
     pushad
     cmp byte [app_gfx], 2
     jne .vga
@@ -439,6 +527,49 @@ sys_gfx_mode:
     mov dword [app_gfx_w], 320
     mov dword [app_gfx_h], 200
     mov dword [app_gfx_bpp], 1
+    ret
+.vbe:
+    push eax                              ; the desktop's on: a window, if
+    push ecx                              ; it fits in one
+    push edx
+    call app_gfx_off
+    mov ebx, ecx
+    mov ecx, edx
+    shr ecx, 3
+    call app_try_window
+    pop edx
+    pop ecx
+    pop eax
+    jc .no_window
+    xor eax, eax
+    ret
+.no_window:
+    jmp app_gfx_screen
+
+; eax x ecx pixels, edx bits (8 / 32) on the whole screen - mode 13h
+; for 320x200x8, else VBE -> eax = 0, or -1 if the video can't
+app_gfx_screen:
+    cmp eax, 320
+    jne .vbe
+    cmp ecx, 200
+    jne .vbe
+    cmp edx, 8
+    jne .vbe
+    call app_gfx_off
+    pushad
+    call vga_enter_mode13
+    call app_gfx_palette
+    mov edi, VGA_FB
+    mov ecx, VGA_FB_SIZE / 4
+    xor eax, eax
+    cld
+    rep stosd
+    popad
+    mov byte [app_gfx], 1
+    mov dword [app_gfx_w], 320
+    mov dword [app_gfx_h], 200
+    mov dword [app_gfx_bpp], 1
+    xor eax, eax
     ret
 .vbe:
     cmp eax, 64
@@ -636,6 +767,13 @@ app_blit:
     sub eax, [app_rect_y]
     mov [app_rect_h], eax
 .h_ok:
+    cmp byte [app_gfx], 3                 ; a window: into its pixels
+    jne .screen
+    mov esi, [ebp + 16]
+    mov eax, [app_win_slot]
+    call dk_app_blit
+    jmp .done
+.screen:
     mov edi, VGA_FB                       ; where the screen is
     cmp byte [app_gfx], 2
     jne .have_screen
@@ -745,6 +883,16 @@ sys_palette:
     mov eax, [ebp + 16]
     cmp eax, 255
     ja .bad
+    cmp byte [app_gfx], 3                 ; a window's own palette
+    jne .dac
+    mov ebx, eax
+    mov ecx, [ebp + 24]
+    and ecx, 0xFFFFFF
+    mov eax, [app_win_slot]
+    call dk_app_palette
+    xor eax, eax
+    ret
+.dac:
     mov dx, VGA_DAC_WRITE_INDEX
     out dx, al
     mov dx, VGA_DAC_DATA
@@ -777,16 +925,18 @@ sys_keydown:
     ret
 
 ; ============================================================
-; Sound: a stream of 16-bit signed samples through the SB16 (see the
-; end of src/sound.asm). SYS_AUDIO_OPEN: ebx = rate (4000-48000), ecx =
-; channels (1/2) -> 0, or -1 (no SB16, or another program has it).
-; SYS_AUDIO_WRITE: ebx = samples, ecx = bytes - waits for room, so a
-; program writing as fast as it can is paced by the card. SYS_AUDIO_
-; CLOSE lets what's queued finish, then stops.
+; Sound: a voice of the mixer (src/mixer.asm) - 16-bit signed samples
+; at any rate, mixed with whatever else is playing. SYS_AUDIO_OPEN: ebx
+; = rate (4000-48000), ecx = channels (1/2) -> 0, or -1 (no SB16, no
+; free voice, or this program has one already). SYS_AUDIO_WRITE: ebx =
+; samples, ecx = bytes - waits for room, so a program writing as fast
+; as it can is paced by the card. SYS_AUDIO_CLOSE lets what's queued
+; finish, then stops. SYS_AUDIO_VOLUME: ebx = 0-100.
 ; ============================================================
 sys_audio_open:
-    cmp byte [app_audio_owner], 0
-    jne .fail
+    mov eax, [sched_current]
+    call mixer_find_owner
+    jnc .fail                             ; (one voice per program)
     mov eax, [ebp + 16]
     cmp eax, 4000
     jb .fail
@@ -797,44 +947,34 @@ sys_audio_open:
     jb .fail
     cmp ecx, 2
     ja .fail
-    call sb_stream_open
+    call mixer_open
     jc .fail
-    mov eax, [sched_current]
-    inc eax
-    mov [app_audio_owner], al
     xor eax, eax
     ret
 .fail:
     mov eax, -1
     ret
 
-; carry=1 unless the current task owns the stream
-app_audio_mine:
-    push eax
+; -> eax = the current task's voice; carry=1 if it has none
+app_audio_voice:
     mov eax, [sched_current]
-    inc eax
-    cmp [app_audio_owner], al
-    pop eax
-    je .yes
-    stc
-    ret
-.yes:
-    clc
-    ret
+    jmp mixer_find_owner
 
 sys_audio_write:
-    call app_audio_mine
+    call app_audio_voice
     jc .fail
+    mov ebx, eax
     mov eax, [ebp + 16]
     mov ecx, [ebp + 24]
     call app_check_buf
     mov esi, eax
 .more:
-    call sb_stream_put                    ; -> eax queued now
+    mov eax, ebx
+    call mixer_write                      ; -> eax queued now
     add esi, eax
     sub ecx, eax
-    cmp ecx, 1
-    jbe .done
+    cmp ecx, 2
+    jb .done
     call app_check_abort                  ; (Ctrl+C while waiting)
     mov eax, WAIT_TICK
     call task_wait
@@ -847,10 +987,12 @@ sys_audio_write:
     ret
 
 sys_audio_close:
-    call app_audio_mine
+    call app_audio_voice
     jc .fail
+    mov ebx, eax
 .drain:                                   ; let the queue play out
-    call sb_stream_queued
+    mov eax, ebx
+    call mixer_queued
     or eax, eax
     jz .drained
     call app_check_abort
@@ -858,14 +1000,14 @@ sys_audio_close:
     call task_wait
     jmp .drain
 .drained:
-    mov eax, 3                            ; and the last halves
-    add eax, [timer_ticks]
+    mov eax, [timer_ms]                   ; and the last half buffers
+    add eax, 200
     mov [app_audio_until], eax
 .tail:
-    mov eax, [timer_ticks]
-    cmp eax, [app_audio_until]
-    jae .stop
-    mov eax, WAIT_TICK
+    mov eax, [timer_ms]
+    sub eax, [app_audio_until]
+    jns .stop
+    mov eax, WAIT_MS
     call task_wait
     jmp .tail
 .stop:
@@ -876,13 +1018,25 @@ sys_audio_close:
     mov eax, -1
     ret
 
-; Stops the stream at once if the current task has it (app_abort).
+sys_audio_volume:
+    call app_audio_voice
+    jc .fail
+    mov ecx, [ebp + 16]
+    cmp ecx, 100
+    ja .fail
+    mov [mix_volume + eax*4], ecx
+    xor eax, eax
+    ret
+.fail:
+    mov eax, -1
+    ret
+
+; Stops the current task's sound at once (app_abort).
 app_audio_off:
-    call app_audio_mine
-    jc .done
-    call sb_stream_close
-    mov byte [app_audio_owner], 0
-.done:
+    push eax
+    mov eax, [sched_current]
+    call mixer_close_owner
+    pop eax
     ret
 
 ; ============================================================
@@ -938,14 +1092,9 @@ fh_pos       times FH_COUNT dd 0
 fh_cur       dd 0
 fh_cur_slot  dw 0
 fh_src_ptr   dd 0
-app_gfx      db 0                     ; 0 text, 1 mode 13h, 2 VBE
-app_gfx_w    dd 320
-app_gfx_h    dd 200
-app_gfx_bpp  dd 1                     ; bytes per pixel
 app_rect_x   dd 0
 app_rect_y   dd 0
 app_rect_w   dd 0
 app_rect_h   dd 0
 bga_lfb      dd 0
-app_audio_owner db 0                  ; task id + 1 of the stream's program
 app_audio_until dd 0

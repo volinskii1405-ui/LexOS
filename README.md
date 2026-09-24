@@ -315,7 +315,7 @@ alex@/PROGRAMS$
   line to the program - `main(argc, argv)` in C, `ebx` points to it
   in assembly. Programs open files in the current folder with
   `open`/`read`/`fwrite`/`seek`/`fsize`/`close` (read, write, append
-  or update; up to 4MB each, 8 open at once - whatever was written is
+  or update; up to 4MB each, 4 open at once - whatever was written is
   saved on close, or when the program ends, even by a crash); C
   programs get `malloc`/`free`/`realloc` over their 4MB. `gfx_mode(1)`
   switches to 320x200 in 256 colors: a program draws into a buffer of
@@ -330,7 +330,12 @@ alex@/PROGRAMS$
   Blaster - the card plays a double buffer over and over (auto-init
   DMA), and its IRQ5 refills each half from a 64KB queue the program
   writes into, so `audio_write` also paces a program that just keeps
-  writing. Time: the system timer interrupts ~1000 times a second -
+  writing. That stream is a mixer (src/mixer.asm): up to 4 voices, each
+  at its own rate (converted on the fly to 22050Hz stereo) with its own
+  volume, mixed by the IRQ handler - so a game's sound plays over
+  `play music.wav &`, and `.WAV` files (now up to 8MB) play through it
+  too. `mixer` lists what's playing; `mixer master 60`, `mixer 2 30`
+  set volumes; programs have `audio_volume()`. Time: the system timer interrupts ~1000 times a second -
   `millis()` counts milliseconds since boot, `sleep_ms` is exact to the
   millisecond, and `sleep_until(next)` gives a game a steady 60 frames
   a second (`next += 16`). Floating point: `float`/`double` work in
@@ -357,20 +362,65 @@ alex@/PROGRAMS$
   true color: windows with title bars you drag with the mouse, that
   come to the front when clicked and close with their [x], a taskbar
   with a button per window and the time, and a start menu (Terminal,
-  Clock, Pictures, System, Exit desktop). The **Terminal** window is
-  the console itself - while the desktop is on, text output goes to a
-  buffer in RAM (`text_vram`, src/screen.asm) that the desktop draws
-  with the VGA's own font, so the shell, uranium, BASIC, chat and the
-  text of ring-3 programs all work in it, and the keyboard goes to it
-  as always. **Clock** is an analog clock in your time zone,
-  **Pictures** shows the .BMP files in the current folder (8-, 24- and
-  32-bit; click for the next one), **System** has uptime, memory,
-  tasks and the network address. Graphics programs - paint, Tetris,
-  chip8, `run pong.app`, `run mandel.app` - take over the screen and
-  hand it back when they end. It's a task of its own
-  (src/desktop.asm): a back buffer redrawn only when something changed,
-  just the changed rectangle copied to the screen, the mouse pointer
-  drawn on top. Type `desktop` again (or use the menu) to leave.
+  Files, Clock, Pictures, Tasks, Mixer, System, Exit desktop).
+  - **Terminals.** Every console has its own **Terminal** window -
+    while the desktop is on, each console's text goes to a buffer in
+    RAM (`text_vram`, src/screen.asm) that the desktop draws with the
+    VGA's own font, so the shell, uranium, BASIC, chat and ring-3
+    programs all work in it. Terminal in the menu opens another
+    console; clicking a window gives the keyboard to its console (the
+    focused ones have a yellow "kbd" in the title), Alt+1..9 too - even
+    while a program there is busy computing: one running its own code
+    in ring 3 is paused right where it is.
+  - **Programs in windows.** A ring-3 program that asks for graphics
+    (`run fire.app`, `run cube.app`, `run pong.app`, `run
+    mandel.app`...) gets a window instead of the whole screen - small
+    modes are shown doubled - titled with its name, up to 3 at once;
+    its [x] stops it. Start one in each Terminal to have several side
+    by side (only the console with the keyboard runs; the others wait
+    where they are). The built-in 320x200 graphics programs - Snake,
+    Tetris, Sweeper, 2048 (PROGRAMS/*.BIN), paint, chip8, turtle - get
+    a window too: their 0xA0000 is remapped by paging to that
+    console's own 64KB of RAM (src/vga.asm), which the desktop shows,
+    so they draw exactly as on the real screen; paint and Sweeper get
+    the mouse inside their window (gfx_mouse_*, src/mouse.asm). A
+    window's [x] stops its program (Ctrl+C in ring 3, Esc for the
+    others); leave the desktop while one runs and it moves onto the
+    whole screen, picture and colors kept.
+  - **Text programs** stay in their Terminal - uranium names it
+    ("uranium - NOTES.TXT"), and its [x] asks it to quit. A Terminal's
+    [x] ends that console (its program stopped, then `exit` typed at
+    the prompt); Terminal 1's console is the kernel's own and can't
+    end, so its window just goes - the menu's Terminal brings it back.
+  - **Files** shows the current folder as icons (folders, programs,
+    pictures, sounds, text...), Up and page buttons. Double-click a
+    folder to go in, a .BMP opens in Pictures, anything else is typed
+    into the focused Terminal (or a new one, if that's busy with a
+    program or half a command): `run` for .APP/.COM/.BIN, `play` for
+    .WAV/.IMF, `run modplay.app` for .MOD, `basic` for .BAS, `turtle`,
+    `chip8`, a .HG script by its name, anything else in `uranium`.
+    Drag an icon onto a folder (or "..") to move it there.
+  - **Tasks** is a task manager: a CPU-use graph for the last minute,
+    every task with its state and CPU time, and End task for the
+    selected one (not consoles or the desktop).
+  - **Mixer** lists what's playing (see the mixer below), with a
+    volume slider and a level meter each, and the master volume.
+  - **Clock** is an analog clock in your time zone, **Pictures** shows
+    the .BMP files in the current folder (8-, 24- and 32-bit; click
+    for the next one), **System** has uptime, memory, tasks and the
+    network address.
+
+  It's a task of its own (src/desktop.asm, the windows' contents in
+  src/dkwins.asm), at high priority so the pointer never waits for a
+  busy program's time slice - but resting between frames half as long
+  as the last one took. What changed is kept as a few dirty rectangles;
+  only those are redrawn in the back buffer (starting from the topmost
+  window that covers one whole, nothing hidden under it) and copied to
+  the screen, the mouse pointer drawn on top and repainted wherever a
+  frame drew over it. The mouse driver queues button changes with
+  where they happened, so a quick double click or a fast drag isn't
+  lost between frames. Type `desktop` again
+  (or use the menu) to leave - every console gets its text back.
 - **Preemptive multitasking.** Kernel tasks with their own stacks,
   switched by the timer interrupt (src/sched.asm): equal-priority tasks
   take turns a timer tick (~55ms) at a time, a higher-priority one runs
@@ -681,16 +731,21 @@ outside the kernel image need a full 32-bit linear address:
 | Big-file buffer (hostput, program files) | `0x6400000` – `0x73FFFFF` |
 | Filesystem slot + bitmap cache | `0x3E00000` |
 | IMF song buffer (`play`) | `0x310000` |
-| WAV file / SB16 DMA buffer (`play`) | `0x320000` |
 | Task stacks (64KB each, 16 tasks) | `0x400000` – `0x4FFFFF` |
-| Page directory / user page table | `0x500000` / `0x501000` |
+| Page directory / user page table / first 4MB's table | `0x500000` / `0x501000` / `0x502000` |
 | A ring-3 program's own 4MB | `0x800000` – `0xBFFFFF` |
 | Console save areas (5MB each) | `0x1000000` – `0x3CFFFFF` |
-| Programs' open-file buffers (8 x 4MB) | `0x4000000` – `0x5FFFFFF` |
+| Programs' open-file buffers (4 x 4MB) | `0x4000000` – `0x4FFFFFF` |
+| Program windows' pixels (3 x 2MB) | `0x5000000` – `0x55FFFFF` |
+| Mixer voice queues (4 x 64KB) + scratch | `0x5600000` – `0x5647FFF` |
+| Consoles' mode 13h in a window (9 x 64KB) | `0x5680000` – `0x570FFFF` |
+| Those windows as last shown (3 x 64KB) | `0x5710000` – `0x573FFFF` |
+| WAV file being played (`play`, 8MB) | `0x5800000` – `0x5FFFFFF` |
 | Desktop back buffer (1024x768x4) | `0x6000000` – `0x62FFFFF` |
-| FPU save areas / desktop text | `0x6300000` / `0x6310000` |
+| FPU save areas / consoles' desktop text | `0x6300000` / `0x6310000` |
+| Desktop: shown text / Files list | `0x6320000` / `0x6330000` |
 | Script variables and levels | `0x280000` – `0x29FFFF` |
-| SB16 stream DMA buffer / queue | `0x330000` / `0x340000` |
+| SB16 DMA buffer (the mixer's output) | `0x330000` |
 | Desktop picture file / pixels | `0x7500000` / `0x7700000` |
 | RTL8139 receive ring / transmit buffers | `0x300000` / `0x304000` |
 | .COM program segment | `0x100000` |
@@ -765,8 +820,11 @@ src/
                        system calls.
   console.asm          virtual consoles: Alt+T / Alt+1..9 / exit, the
                        per-console memory swap.
-  desktop.asm          `desktop`: windows, taskbar, start menu, the
-                       console in a Terminal window, Clock, Pictures.
+  desktop.asm          `desktop`: windows, taskbar, start menu, mouse,
+                       redrawing; a Terminal window per console.
+  dkwins.asm           the windows' contents: Terminal, Clock,
+                       Pictures, System, Files, Tasks, Mixer, and
+                       programs' windows (their graphics calls).
   sched.asm            the scheduler: tasks, priorities, task_wait,
                        ps/kill/clock.
   net.asm              RTL8139 driver (polled), ARP, IPv4, ICMP echo,

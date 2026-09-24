@@ -47,6 +47,8 @@ APP_MAX_FILE    equ APP_SIZE - 0x10000 ; leaves room for the stack
 
 PAGE_DIR        equ 0x500000          ; 4KB, then the user page table
 PAGE_TABLE_APP  equ 0x501000
+PAGE_TABLE_LOW  equ 0x502000          ; the first 4MB in 4KB pages (so the
+                                      ; VGA window can be moved: src/vga.asm)
 FPU_AREAS       equ 0x6300000         ; FXSAVE areas, 512 bytes per task
 PAGING_4MB_PAGES equ 32               ; identity-map 128MB (QEMU's -m 128)
 
@@ -78,7 +80,8 @@ SYS_AUDIO_WRITE equ 24                ; ebx = 16-bit samples, ecx = bytes
 SYS_AUDIO_CLOSE equ 25
 SYS_MILLIS      equ 26                ; -> eax = milliseconds since boot
 SYS_SLEEP_UNTIL equ 27                ; ebx = a SYS_MILLIS value to wait for
-SYS_COUNT       equ 28                ; (files/graphics: src/appsys.asm)
+SYS_AUDIO_VOLUME equ 28               ; ebx = 0-100
+SYS_COUNT       equ 29                ; (files/graphics: src/appsys.asm)
 
 ; ============================================================
 ; Paging, the TSS, the ring-3 entry points into the kernel (int 0x80,
@@ -102,6 +105,16 @@ pm_init:
     cmp ecx, PAGING_4MB_PAGES
     jb .pde
     mov dword [PAGE_DIR + (APP_BASE >> 22) * 4], PAGE_TABLE_APP | 0x07
+    xor ecx, ecx                          ; the first 4MB: 1:1, 4KB pages
+.low:
+    mov eax, ecx
+    shl eax, 12
+    or eax, 0x03                          ; present, writable, kernel only
+    mov [PAGE_TABLE_LOW + ecx*4], eax
+    inc ecx
+    cmp ecx, 1024
+    jb .low
+    mov dword [PAGE_DIR], PAGE_TABLE_LOW | 0x03
     xor ecx, ecx
 .pte:
     mov eax, ecx
@@ -279,6 +292,17 @@ app_run:
     cld
     rep stosd
     call app_build_cmdline                ; src/appsys.asm
+    push esi
+    push edi
+    push ecx
+    mov esi, fs_tmp_name                  ; its name (a window's title)
+    mov edi, app_name
+    mov ecx, FS_NAME_LEN + 1
+    cld
+    rep movsb
+    pop ecx
+    pop edi
+    pop esi
     pop eax
     mov edi, APP_BASE
     mov ecx, APP_MAX_FILE
@@ -325,6 +349,7 @@ app_abort:
     mov ecx, [sched_current]
     mov esp, [task_app_esp + ecx*4]
     mov dword [task_kstack + ecx*4], 0
+    mov byte [task_insys + ecx], 0
     mov byte [app_active], 0
     mov byte [app_abort_request], 0
     sti
@@ -379,6 +404,8 @@ app_check_abort:
 ; ============================================================
 syscall_isr:
     pushad
+    mov eax, [sched_current]              ; (inside the kernel: see
+    inc byte [task_insys + eax]           ; dk_shell_idle, src/dkwins.asm)
     sti
     mov ebp, esp                          ; the caller's registers:
     mov eax, [ebp + 28]                   ; eax +28, ecx +24, ebx +16
@@ -386,10 +413,16 @@ syscall_isr:
     jae .bad
     call [syscall_table + eax*4]
     mov [ebp + 28], eax
+    cli
+    mov eax, [sched_current]
+    dec byte [task_insys + eax]
     popad
     iretd
 .bad:
     mov dword [ebp + 28], -1
+    cli
+    mov eax, [sched_current]
+    dec byte [task_insys + eax]
     popad
     iretd
 
@@ -400,6 +433,7 @@ syscall_table:
     dd sys_seek, sys_fsize, sys_gfx, sys_blit, sys_palette
     dd sys_keydown, sys_gfx_mode, sys_blit_rect, sys_audio_open
     dd sys_audio_write, sys_audio_close, sys_millis, sys_sleep_until
+    dd sys_audio_volume
 
 sys_exit:
     mov eax, [ebp + 16]

@@ -1911,6 +1911,15 @@ script_autoexec:
 ; ============================================================
 ; Data (per console)
 ; ============================================================
+; A ring-3 program's graphics (src/appsys.asm) - per console, since
+; with the desktop a program in each console can have a window
+app_gfx              db 0                 ; 0 text, 1 mode 13h, 2 VBE, 3 a window
+app_gfx_w            dd 320
+app_gfx_h            dd 200
+app_gfx_bpp          dd 1                 ; bytes per pixel
+app_win_slot         dd 0                 ; (app_gfx 3: src/dkwins.asm's slot)
+app_name             times FS_NAME_LEN + 1 db 0
+
 script_depth         db 0
 script_level         dd 0
 script_abort         db 0

@@ -46,6 +46,7 @@ SYS_AUDIO_WRITE equ 24      ; ebx = 16-bit signed samples, ecx = bytes (waits)
 SYS_AUDIO_CLOSE equ 25      ; finishes what's queued, then stops
 SYS_MILLIS      equ 26      ; -> eax = milliseconds since boot
 SYS_SLEEP_UNTIL equ 27      ; ebx = a SYS_MILLIS value to wait for
+SYS_AUDIO_VOLUME equ 28     ; ebx = 0-100 (this program's voice)
 
 %macro EXIT 1
     mov ebx, %1

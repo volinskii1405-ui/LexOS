@@ -1127,6 +1127,41 @@ calc_run:
     ret
 
 ; ============================================================
+; si = a program's name (in the current folder), ebx = its template,
+; ecx = its length: a file already there gets the template's bytes
+; again. The stubs call into the kernel at absolute addresses, which
+; move with every build - a disk kept from an older kernel would jump
+; into the middle of something else.
+; ============================================================
+fs_refresh_stub:
+    pushad
+    call fs_find_by_name
+    cmp ax, -1
+    je .done
+    mov [fs_tmp_slot], ax
+    call fs_read_slot
+    cmp [SCRATCH_ADDR + FS_CONTENT_OFFSET], cl
+    jne .write
+    push ecx                              ; (the same already: no write)
+    mov esi, ebx
+    mov edi, SCRATCH_ADDR + FS_CONTENT_OFFSET + 1
+    cld
+    repe cmpsb
+    pop ecx
+    je .done
+.write:
+    mov byte [SCRATCH_ADDR + FS_CONTENT_OFFSET], cl
+    mov esi, ebx
+    mov edi, SCRATCH_ADDR + FS_CONTENT_OFFSET + 1
+    cld
+    rep movsb
+    mov ax, [fs_tmp_slot]
+    call fs_write_slot
+.done:
+    popad
+    ret
+
+; ============================================================
 ; PROGRAMS/CALC.BIN: a tiny stub that just calls calc_run above. The
 ; actual calculator logic lives in the kernel proper instead of being
 ; squeezed into PROGRAM_MAX_LEN (127 bytes) - the same reasoning

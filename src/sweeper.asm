@@ -135,6 +135,7 @@ sweeper_new_game:
 ; ============================================================
 sweeper_poll_keys:
     pusha
+    call console_safe_point       ; (a click on another console's window)
 .loop:
     mov al, [kbd_buf_tail]
     cmp al, [kbd_buf_head]
@@ -176,7 +177,7 @@ sweeper_handle_mouse:
 
     mov byte [sweep_hover_valid], 0
 
-    mov eax, [mouse_y]
+    mov eax, [gfx_mouse_y]
     cmp eax, SWEEP_GRID_TOP
     jl .done_hover
 
@@ -188,7 +189,7 @@ sweeper_handle_mouse:
     jae .done_hover
     mov [sweep_hover_row], eax
 
-    mov eax, [mouse_x]
+    mov eax, [gfx_mouse_x]
     xor edx, edx
     mov ecx, SWEEP_CELL
     div ecx
@@ -206,7 +207,7 @@ sweeper_handle_mouse:
     cmp byte [sweep_won], 0
     jne .skip_clicks
 
-    mov al, [mouse_buttons]
+    mov al, [gfx_mouse_buttons]
     mov ah, [sweep_prev_buttons]
     test al, 1
     jz .not_left
@@ -217,7 +218,7 @@ sweeper_handle_mouse:
     call sweeper_reveal_cell
 .not_left:
 
-    mov al, [mouse_buttons]
+    mov al, [gfx_mouse_buttons]
     mov ah, [sweep_prev_buttons]
     test al, 2
     jz .not_right
@@ -229,7 +230,7 @@ sweeper_handle_mouse:
 .not_right:
 
 .skip_clicks:
-    mov al, [mouse_buttons]
+    mov al, [gfx_mouse_buttons]
     mov [sweep_prev_buttons], al
 
     popa

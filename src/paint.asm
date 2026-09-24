@@ -408,6 +408,7 @@ paint_draw_canvas_border:
 ; ============================================================
 paint_poll_keys:
     pusha
+    call console_safe_point       ; (a click on another console's window)
 .loop:
     mov al, [kbd_buf_tail]
     cmp al, [kbd_buf_head]
@@ -525,7 +526,7 @@ paint_toggle_eraser:
 ; ============================================================
 paint_handle_mouse:
     pusha
-    mov al, [mouse_buttons]
+    mov al, [gfx_mouse_buttons]
     mov ah, [paint_fill_prev_button]
     mov [paint_fill_prev_button], al      ; tracked unconditionally, not just
                                             ; in fill mode - otherwise switching
@@ -547,11 +548,11 @@ paint_handle_mouse:
     ; whether there IS a "last position" yet - it's cleared whenever
     ; the button is up, so releasing and re-pressing starts a fresh
     ; stroke instead of connecting back across the gap. ---
-    test byte [mouse_buttons], 1
+    test byte [gfx_mouse_buttons], 1
     jz .button_up
 
-    mov ebx, [mouse_x]
-    mov edx, [mouse_y]
+    mov ebx, [gfx_mouse_x]
+    mov edx, [gfx_mouse_y]
 
     cmp byte [paint_have_last], 0
     je .first_point
@@ -578,8 +579,8 @@ paint_handle_mouse:
     test ah, 1
     jnz .done                             ; already was down - not a new press
 
-    mov ebx, [mouse_x]
-    mov edx, [mouse_y]
+    mov ebx, [gfx_mouse_x]
+    mov edx, [gfx_mouse_y]
     call paint_flood_fill
 
 .done:
@@ -1082,8 +1083,8 @@ paint_cursor_erase:
 ; --- Draws the cursor overlay at the current mouse position ---
 paint_cursor_show:
     pusha
-    mov ebx, [mouse_x]
-    mov edx, [mouse_y]
+    mov ebx, [gfx_mouse_x]
+    mov edx, [gfx_mouse_y]
     call paint_cursor_toggle
     mov [paint_cursor_x], ebx
     mov [paint_cursor_y], edx

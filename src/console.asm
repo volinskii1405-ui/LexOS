@@ -6,7 +6,7 @@
 ; on across all of them.
 ;
 ; Exports: console_init, console_safe_point, console_cmd_exit,
-;          console_prompt_prefix
+;          console_prompt_prefix, console_saved_addr, console_set_text_vram
 ;
 ; How: every console is a task (src/sched.asm) - console 1 is task 0,
 ; the kernel's own flow; the others are created by Alt+T. Only the
@@ -137,7 +137,12 @@ console_safe_point:
     movzx eax, byte [console_request]
     mov byte [console_request], 0
     cmp byte [vga_graphics_active], 0
-    jne .done                               ; not from a graphics program
+    je .screen_ok
+    cmp byte [dk_active], 0                 ; not from a graphics program -
+    je .done                                ; but the desktop's windows are
+    cmp byte [dk_suspended], 0              ; each a console's, so there
+    jne .done                               ; switching is fine
+.screen_ok:
     mov ecx, [sched_current]
     movzx ebx, byte [task_console + ecx]
     cmp bl, [console_fg]
@@ -229,13 +234,81 @@ console_open:
     call console_save
     mov [console_fg], dl
     call console_after_switch
+    cmp byte [console_open_desk], 0
+    jne .for_desktop
     call console_hand_over
+    popad
+    ret
+.for_desktop:                               ; (console_desktop_switch)
+    pushfd
+    cli
+    mov eax, [console_task + ebx*4]         ; the one that was on screen
+    mov byte [task_state + eax], TASK_PAUSED ; waits; the new one runs
+    mov byte [task_state + ecx], TASK_READY
+    dec dword [sched_lock]
+    popfd
     popad
     ret
 .no_task:
     dec dword [sched_lock]
     mov si, msg_task_table_full
     call print_string
+    popad
+    ret
+
+; ============================================================
+; From the desktop's task, each frame (sched_lock held): a switch asked
+; for (a click on another console's window) while the console on screen
+; is running a program's own code in ring 3 - which never gets to
+; console_safe_point if it doesn't read keys. That's as safe a moment
+; as a key wait: nothing of the kernel's is half done. Its task is
+; paused where it is, like the others.
+; ============================================================
+console_desktop_switch:
+    pushad
+    movzx eax, byte [console_request]
+    or eax, eax
+    jz .done
+    movzx ebx, byte [console_fg]
+    mov ecx, [console_task + ebx*4]
+    cmp byte [app_active], 0                ; a program, in its own code
+    je .done
+    cmp byte [task_insys + ecx], 0
+    jne .done
+    cmp byte [task_keywait + ecx], 0        ; (else it does it itself)
+    jne .done
+    cmp byte [task_state + ecx], TASK_READY
+    jne .done
+    mov byte [console_request], 0
+    cmp eax, CONSOLE_REQ_NEW
+    je .new
+    dec eax
+    cmp eax, CONSOLE_MAX
+    jae .done
+    cmp al, bl
+    je .done
+    cmp byte [console_used + eax], 0
+    je .done
+    mov [console_prev], bl
+    push eax
+    mov eax, ebx
+    call console_save
+    pop eax
+    call console_restore
+    mov [console_fg], al
+    call console_after_switch
+    mov edx, [console_task + eax*4]
+    pushfd
+    cli
+    mov byte [task_state + ecx], TASK_PAUSED
+    mov byte [task_state + edx], TASK_READY
+    popfd
+    jmp .done
+.new:
+    mov byte [console_open_desk], 1
+    call console_open
+    mov byte [console_open_desk], 0
+.done:
     popad
     ret
 
@@ -258,8 +331,76 @@ console_after_switch:
     push eax
     mov al, [kbd_buf_head]
     mov [kbd_buf_tail], al
+    call console_set_text_vram
+    call vga_sync_window                    ; (its mode 13h window's picture)
     call update_hw_cursor
+    cmp byte [dk_active], 0
+    jne .windows
+    call console_unwindow                   ; (no desktop to show them)
+.windows:
     pop eax
+    ret
+
+; A program of the console on screen still drawing in a desktop window
+; that's gone: onto the whole screen
+console_unwindow:
+    call vga_unwindow                       ; (src/vga.asm)
+    call app_unwindow                       ; (src/appsys.asm)
+    ret
+
+; text_vram for the console on screen: the VGA's text memory - or, with
+; the desktop on, that console's buffer (its Terminal window's text)
+console_set_text_vram:
+    push eax
+    mov eax, VIDEO_MEM
+    cmp byte [dk_active], 0
+    je .set
+    movzx eax, byte [console_fg]
+    shl eax, 12
+    add eax, DESK_TEXT
+.set:
+    mov [text_vram], eax
+    pop eax
+    ret
+
+; eax = a console, ebx = an address in per-console memory -> ebx = where
+; that console keeps it: the live address if it's the one on screen,
+; else inside its save area. ebx = 0 if the address isn't per-console.
+console_saved_addr:
+    cmp al, [console_fg]
+    je .live
+    push eax
+    push ecx
+    push edx
+    push esi
+    imul esi, eax, CONSOLE_SAVE_SIZE
+    add esi, CONSOLE_SAVE_BASE            ; esi = where the region's copy starts
+    xor ecx, ecx
+.region:
+    cmp ecx, [console_region_count]
+    jae .none
+    mov eax, [console_regions + ecx*8]
+    mov edx, [console_regions + ecx*8 + 4]
+    cmp ebx, eax
+    jb .next
+    lea eax, [eax + edx]
+    cmp ebx, eax
+    jae .next
+    sub ebx, [console_regions + ecx*8]
+    add ebx, esi
+    jmp .done
+.next:
+    add esi, edx
+    inc ecx
+    jmp .region
+.none:
+    xor ebx, ebx
+.done:
+    pop esi
+    pop edx
+    pop ecx
+    pop eax
+.live:
     ret
 
 ; eax = console index: its per-console memory -> its save area
@@ -323,6 +464,10 @@ console_shell_start:
     mov byte [current_color], 0x07
     mov byte [app_active], 0
     mov byte [app_abort_request], 0
+    mov byte [app_gfx], 0                   ; (not the other console's window)
+    mov byte [vga_windowed], 0
+    mov byte [prog_title], 0
+    call vga_sync_window
     call clear_screen
     mov esi, console_msg_banner1
     call basic_puts
@@ -391,7 +536,9 @@ console_prompt_prefix:
 ; Data (all shared - see console_shared)
 ; ============================================================
 console_fg         db 0
+text_vram          dd VIDEO_MEM       ; src/screen.asm writes the text here
 console_prev       db 0
+console_open_desk  db 0               ; console_open from the desktop
 console_request    db 0               ; set by keyboard_isr: 1-9 or NEW
 console_used       times CONSOLE_MAX db 0
 console_task       times CONSOLE_MAX dd 0

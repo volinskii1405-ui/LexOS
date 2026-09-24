@@ -577,7 +577,7 @@ play_wav_file:
 
     mov ax, [fs_tmp_slot]
     mov edi, WAV_FILE_BUF
-    mov ecx, 0xFFFF
+    mov ecx, WAV_FILE_MAX
     call fs_load_to
     mov [wav_file_len], ecx
     call sound_loading_done
@@ -647,7 +647,7 @@ play_wav_file:
 
     call sb_detect
     jc .speaker
-    call sb_play_wav
+    call mixer_play_wav
     jmp .end
 
 .speaker:
@@ -844,166 +844,119 @@ sb_read:
     clc
     ret
 
-; Plays the loaded WAV (wav_* describe it) through the SB16 by DMA,
-; waiting until it's done - or ESC (foreground only), or a kill
-; (background, via play_bg_kill_hook's sb_stop).
-sb_play_wav:
+; Plays the loaded WAV (wav_* describe it) through a mixer voice
+; (src/mixer.asm), so it mixes with anything else playing: converts it
+; to 16-bit samples a piece at a time and queues them, waiting for
+; room, until it's all played - or ESC (foreground only), or a kill
+; (background: play_bg_kill_hook closes the voice).
+mixer_play_wav:
     pushad
-    call sb_stream_close                  ; (a program's stream, if any)
-    call sb_reset                         ; a clean state every time
-    mov al, 0xD1                          ; speaker on
-    call sb_write
-    mov byte [sb_playing], 1
     mov byte [sound_stop_requested], 0
-
-    mov esi, WAV_FILE_BUF
-    add esi, [wav_data_offset]            ; esi = the samples
-    mov ecx, [wav_data_size]
-    cmp dword [wav_bits], 16
-    jne .dma8
-
-    ; 16-bit: channel 5 counts in words, from a word address
-    test esi, 1
-    jz .aligned
-    push ecx                              ; (a DMA'd word must start
-    mov edi, esi                          ; on an even address: slide
-    dec edi                               ; the samples down one byte)
-    cld
-    rep movsb
-    pop ecx
+    mov eax, [wav_sample_rate]
+    cmp eax, 4000
+    jb .done
+    cmp eax, 48000
+    ja .done
+    mov ecx, [wav_channels]
+    call mixer_open
+    jc .no_voice
+    mov [wav_voice], eax
     mov esi, WAV_FILE_BUF
     add esi, [wav_data_offset]
-    dec esi
-.aligned:
-    shr ecx, 1                            ; ecx = 16-bit samples
-    jz .done
-    dec ecx
-    mov [sb_dma_count], ecx
-    mov al, 0x05                          ; mask channel 5
-    out 0xD4, al
-    xor al, al
-    out 0xD8, al                          ; clear the byte flip-flop
-    mov al, 0x49                          ; single, increment, mem->card, ch 5
-    out 0xD6, al
-    mov eax, esi
-    shr eax, 1                            ; word address
-    out 0xC4, al
-    mov al, ah
-    out 0xC4, al
-    mov eax, esi
-    shr eax, 16
-    out 0x8B, al                          ; page
-    mov eax, ecx
-    out 0xC6, al
-    mov al, ah
-    out 0xC6, al
-    mov al, 0x01                          ; unmask channel 5
-    out 0xD4, al
-    call sb_set_rate
-    mov al, 0xB0                          ; 16-bit output, single-cycle
-    call sb_write
-    mov al, 0x10                          ; signed, mono
-    cmp dword [wav_channels], 2
-    jne .mode16
-    mov al, 0x30                          ; signed, stereo
-.mode16:
-    call sb_write
-    jmp .length
-
-.dma8:
-    dec ecx
-    mov [sb_dma_count], ecx
-    mov al, 0x05                          ; mask channel 1
-    out 0x0A, al
-    xor al, al
-    out 0x0C, al
-    mov al, 0x49                          ; single, increment, mem->card, ch 1
-    out 0x0B, al
-    mov eax, esi
-    out 0x02, al
-    mov al, ah
-    out 0x02, al
-    mov eax, esi
-    shr eax, 16
-    out 0x83, al                          ; page
-    mov eax, ecx
-    out 0x03, al
-    mov al, ah
-    out 0x03, al
-    mov al, 0x01                          ; unmask channel 1
-    out 0x0A, al
-    call sb_set_rate
-    mov al, 0xC0                          ; 8-bit output, single-cycle
-    call sb_write
-    mov al, 0x00                          ; unsigned, mono
-    cmp dword [wav_channels], 2
-    jne .mode8
-    mov al, 0x20                          ; unsigned, stereo
-.mode8:
-    call sb_write
-
-.length:
-    ; The DSP's length is in FRAMES for stereo (one left + right pair),
-    ; not samples - what QEMU's SB16 implements (a stereo file played
-    ; for twice its length with the total-samples count) - while the
-    ; DMA controller above still counts every byte/word it moves.
-    mov eax, [sb_dma_count]
-    cmp dword [wav_channels], 2
-    jne .length_ok
-    shr eax, 1                            ; (count-1)/2 = frames-1
-.length_ok:
-    call sb_write                         ; length - 1, low byte
-    mov al, ah
-    call sb_write                         ; high byte
-
-    ; Wait for the card's "done" interrupt status (mixer register 0x82:
-    ; bit 0 = the 8-bit transfer's, bit 1 = the 16-bit one's) - with a
-    ; generous deadline too, the expected length plus 2 seconds.
-    mov eax, [wav_data_size]
-    xor edx, edx
-    mov ecx, [wav_sample_rate]
-    imul ecx, [wav_channels]
+    mov ebx, [wav_data_size]              ; bytes of the file left
+.chunk:
+    or ebx, ebx
+    jz .drain
+    ; up to 2048 samples -> 16-bit at the voice's own buffer
+    mov edi, [wav_voice]
+    shl edi, 13
+    add edi, MIX_TMP_BASE
+    xor ecx, ecx                          ; bytes made
     cmp dword [wav_bits], 16
-    jne .bytes_per_second
-    shl ecx, 1
-.bytes_per_second:
-    or ecx, ecx
-    jz .no_deadline_math
-    div ecx                               ; seconds, rounded down
-.no_deadline_math:
-    add eax, 2
-    imul eax, eax, 19                     ; ~ticks
-    add eax, [timer_ticks]
-    mov [sb_deadline], eax
-.wait:
+    je .copy16
+.conv8:
+    or ebx, ebx
+    jz .have_chunk
+    cmp ecx, 4096
+    jae .have_chunk
+    movzx eax, byte [esi]                 ; unsigned 8-bit -> signed 16
+    sub eax, 128
+    shl eax, 8
+    mov [edi + ecx], ax
+    inc esi
+    dec ebx
+    add ecx, 2
+    jmp .conv8
+.copy16:
+    cmp ebx, 1
+    jbe .last_byte
+    cmp ecx, 4096
+    jae .have_chunk
+    mov ax, [esi]
+    mov [edi + ecx], ax
+    add esi, 2
+    sub ebx, 2
+    add ecx, 2
+    jmp .copy16
+.last_byte:
+    xor ebx, ebx
+.have_chunk:
+    mov [wav_chunk_left], ecx
+    mov [wav_chunk_ptr], edi
+.queue:
+    mov eax, [wav_voice]
+    cmp byte [mix_used + eax], 0          ; (killed)
+    je .done
+    push esi
+    mov esi, [wav_chunk_ptr]
+    mov ecx, [wav_chunk_left]
+    call mixer_write
+    pop esi
+    add [wav_chunk_ptr], eax
+    sub [wav_chunk_left], eax
+    cmp dword [wav_chunk_left], 2
+    jb .chunk
     call sound_poll_stop_key
     cmp byte [sound_stop_requested], 0
-    jne .stopped
-    cmp byte [sb_playing], 0              ; (a kill hook stopped it)
-    je .done
-    mov dx, SB_MIXER_INDEX
-    mov al, 0x82
-    out dx, al
-    inc dx
-    in al, dx
-    test al, 0x03
-    jnz .finished
-    mov eax, [timer_ticks]
-    cmp eax, [sb_deadline]
-    jae .stopped
+    jne .stop
     mov eax, WAIT_TICK
     call task_wait
-    jmp .wait
-.finished:
-    mov dx, SB_READ_STATUS                ; acknowledge the interrupt
-    in al, dx
-    mov dx, SB_ACK16
-    in al, dx
-    jmp .done
-.stopped:
-    call sb_stop
+    jmp .queue
+.drain:
+    mov eax, [wav_voice]
+    cmp byte [mix_used + eax], 0
+    je .done
+    call mixer_queued
+    or eax, eax
+    jz .drained
+    call sound_poll_stop_key
+    cmp byte [sound_stop_requested], 0
+    jne .stop
+    mov eax, WAIT_TICK
+    call task_wait
+    jmp .drain
+.drained:
+    mov eax, [timer_ms]                   ; the last half buffers
+    add eax, 200
+    mov [wav_until], eax
+.tail:
+    mov eax, [timer_ms]
+    sub eax, [wav_until]
+    jns .stop
+    mov eax, WAIT_TICK
+    call task_wait
+    jmp .tail
+.stop:
+    mov eax, [wav_voice]
+    cmp byte [mix_used + eax], 0
+    je .done
+    call mixer_close
 .done:
-    mov byte [sb_playing], 0
+    popad
+    ret
+.no_voice:
+    mov si, msg_play_no_voice
+    call print_string
     popad
     ret
 
@@ -1118,7 +1071,8 @@ play_bg_task:
 ; `kill` of the background player: stop the sound where it is.
 play_bg_kill_hook:
     pushad
-    call sb_stop
+    mov eax, [play_bg_pid]                ; its mixer voice, if any
+    call mixer_close_owner
     call opl2_silence
     call speaker_direct_off
     call speaker_off
@@ -1168,10 +1122,12 @@ imf_delay_lo     db 0
 imf_delay_hi     db 0
 imf_delay_target dd 0
 
-WAV_FILE_BUF     equ 0x320000         ; a whole .WAV, up to 64KB - 64KB-
-                                        ; aligned and below 16MB, as ISA
-                                        ; DMA needs (neither channel can
-                                        ; cross a 64KB/128KB boundary)
+WAV_FILE_BUF     equ 0x5800000        ; a whole .WAV (the mixer converts
+WAV_FILE_MAX     equ 0x800000         ; it from here - no DMA from it)
+wav_voice        dd 0
+wav_chunk_left   dd 0
+wav_chunk_ptr    dd 0
+wav_until        dd 0
 wav_file_len     dd 0
 wav_have_fmt     db 0
 wav_sample_rate  dd 0
@@ -1196,8 +1152,6 @@ sb_deadline      dd 0
 ; ============================================================
 SB_STREAM_DMA    equ 0x330000             ; 2 halves - word aligned, inside
 SB_STREAM_HALF   equ 4096                 ; one 128KB DMA page
-SB_FIFO          equ 0x340000
-SB_FIFO_SIZE     equ 0x10000              ; a power of 2
 
 ; eax = the rate, ecx = channels (1/2) -> carry=1 if there's no SB16
 sb_stream_open:
@@ -1211,8 +1165,6 @@ sb_stream_open:
     mov al, 0xD1                          ; speaker on
     call sb_write
     xor eax, eax
-    mov [sb_fifo_head], eax
-    mov [sb_fifo_tail], eax
     mov [sb_stream_half_next], eax
     mov edi, SB_STREAM_DMA                ; both halves: silence to start
     mov ecx, SB_STREAM_HALF * 2 / 4
@@ -1275,50 +1227,6 @@ sb_stream_open:
     stc
     ret
 
-; Queues ecx bytes from esi -> eax = how many fitted (the rest: later)
-sb_stream_put:
-    push ebx
-    push ecx
-    push edx
-    push esi
-    push edi
-    mov eax, [sb_fifo_tail]               ; room: size - 1 - queued
-    sub eax, [sb_fifo_head]
-    dec eax
-    and eax, SB_FIFO_SIZE - 1
-    cmp ecx, eax
-    jbe .count
-    mov ecx, eax
-.count:
-    and ecx, ~1                           ; whole samples
-    mov eax, ecx
-    mov edx, [sb_fifo_head]
-    cld
-.byte:
-    jecxz .done
-    mov bl, [esi]
-    mov [SB_FIFO + edx], bl
-    inc esi
-    inc edx
-    and edx, SB_FIFO_SIZE - 1
-    dec ecx
-    jmp .byte
-.done:
-    mov [sb_fifo_head], edx
-    pop edi
-    pop esi
-    pop edx
-    pop ecx
-    pop ebx
-    ret
-
-; -> eax = bytes still queued
-sb_stream_queued:
-    mov eax, [sb_fifo_head]
-    sub eax, [sb_fifo_tail]
-    and eax, SB_FIFO_SIZE - 1
-    ret
-
 sb_stream_close:
     cmp byte [sb_streaming], 0
     je .done
@@ -1348,22 +1256,7 @@ sb_stream_isr:
     imul edi, SB_STREAM_HALF
     add edi, SB_STREAM_DMA
     xor byte [sb_stream_half_next], 1
-    mov ecx, SB_STREAM_HALF
-    mov edx, [sb_fifo_tail]
-.copy:
-    cmp edx, [sb_fifo_head]
-    je .silence
-    mov al, [SB_FIFO + edx]
-    stosb
-    inc edx
-    and edx, SB_FIFO_SIZE - 1
-    loop .copy
-    jmp .copied
-.silence:
-    xor al, al
-    rep stosb
-.copied:
-    mov [sb_fifo_tail], edx
+    call mixer_fill                       ; every voice, mixed (src/mixer.asm)
 .eoi:
     mov al, 0x20
     out PIC1_CMD, al
@@ -1374,5 +1267,3 @@ sb_streaming         db 0
 sb_stream_rate       dd 0
 sb_stream_channels   dd 0
 sb_stream_half_next  dd 0
-sb_fifo_head         dd 0
-sb_fifo_tail         dd 0

@@ -19,9 +19,9 @@
 ; Clears the screen: overwrites all video memory with spaces of the
 ; current color and resets the cursor to (0,0).
 ; ============================================================
-; The text screen's memory: VIDEO_MEM, or - while the desktop
-; (src/desktop.asm) shows the console in a window - a buffer in RAM.
-text_vram dd VIDEO_MEM
+; The text screen's memory is [text_vram] (src/console.asm): VIDEO_MEM,
+; or - while the desktop (src/desktop.asm) shows consoles in windows -
+; the console's own buffer in RAM.
 
 clear_screen:
     pusha

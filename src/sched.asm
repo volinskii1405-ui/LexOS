@@ -632,6 +632,7 @@ sched_current      dd 0
 sched_lock         dd 0             ; >0: no switching (see the header)
 sched_idle         db 0             ; task_wait is halting, nothing to run
 task_keywait       times SCHED_MAX db 0 ; waiting in read_key (a safe point)
+task_insys         times SCHED_MAX db 0 ; inside a program's system call
 sched_cs           dd 0x08
 task_state         times SCHED_MAX db 0
 task_prio          times SCHED_MAX db 0
