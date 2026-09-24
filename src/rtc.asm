@@ -166,3 +166,162 @@ print_dec2:
     pop bx
     pop ax
     ret
+
+; ============================================================
+; Sets the RTC from eax = seconds since 1970-01-01 00:00 UTC (for
+; `ntp`, src/inet.asm). Good until 2099: the RTC only keeps two
+; year digits, and every 4th year in 2001-2099 is a leap year.
+; ============================================================
+rtc_set_unix:
+    pushad
+    xor edx, edx
+    mov ecx, 86400
+    div ecx                               ; eax = days, edx = second of the day
+    mov ebx, eax
+    mov eax, edx
+    xor edx, edx
+    mov ecx, 3600
+    div ecx
+    mov [rtc_new + 2], al                 ; hours
+    mov eax, edx
+    xor edx, edx
+    mov ecx, 60
+    div ecx
+    mov [rtc_new + 1], al                 ; minutes
+    mov [rtc_new], dl                     ; seconds
+    lea eax, [ebx + 4]                    ; 1970-01-01 was a Thursday
+    xor edx, edx
+    mov ecx, 7
+    div ecx
+    inc dl
+    mov [rtc_new + 3], dl                 ; weekday, 1 = Sunday
+
+    mov eax, ebx                          ; days -> year
+    mov ebx, 1970
+.year:
+    mov ecx, 365
+    test bl, 3
+    jnz .year_len
+    inc ecx
+.year_len:
+    cmp eax, ecx
+    jb .month_start
+    sub eax, ecx
+    inc ebx
+    jmp .year
+.month_start:
+    mov [rtc_new_year], bx
+    xor esi, esi                          ; month index 0-11
+.month:
+    movzx ecx, byte [rtc_month_days + esi]
+    cmp esi, 1
+    jne .month_len
+    test bl, 3
+    jnz .month_len
+    inc ecx                               ; February 29
+.month_len:
+    cmp eax, ecx
+    jb .day
+    sub eax, ecx
+    inc esi
+    jmp .month
+.day:
+    inc eax
+    mov [rtc_new + 4], al                 ; day of the month
+    inc esi
+    mov eax, esi
+    mov [rtc_new + 5], al                 ; month
+    movzx eax, word [rtc_new_year]
+    xor edx, edx
+    mov ecx, 100
+    div ecx
+    mov [rtc_new + 6], dl                 ; year % 100
+    mov [rtc_new + 7], al                 ; century
+
+    cli
+    call rtc_wait_ready
+    mov al, 0x0B                          ; SET: freeze the clock while we write
+    out CMOS_INDEX, al
+    in al, CMOS_DATA
+    mov [rtc_reg_b], al
+    or al, 0x80
+    mov ah, al
+    mov al, 0x0B
+    out CMOS_INDEX, al
+    mov al, ah
+    out CMOS_DATA, al
+    xor esi, esi
+.write:
+    mov al, [rtc_new + esi]
+    test byte [rtc_reg_b], 0x04           ; binary mode? (LexOS reads BCD)
+    jnz .raw
+    call bin_to_bcd
+.raw:
+    mov ah, al
+    mov al, [rtc_regs + esi]
+    out CMOS_INDEX, al
+    mov al, ah
+    out CMOS_DATA, al
+    inc esi
+    cmp esi, 8
+    jb .write
+    mov al, 0x0B
+    out CMOS_INDEX, al
+    mov al, [rtc_reg_b]
+    and al, 0x7F
+    out CMOS_DATA, al
+    sti
+    popad
+    ret
+
+; al (0-99) -> BCD
+bin_to_bcd:
+    push ecx
+    xor ah, ah
+    mov cl, 10
+    div cl
+    shl al, 4
+    or al, ah
+    pop ecx
+    ret
+
+; Prints the RTC's date and time as YYYY-MM-DD HH:MM:SS (no time zone).
+rtc_print_utc:
+    pushad
+    call rtc_read_date                    ; bh = day, bl = month, cl = year
+    push ebx
+    mov al, 20
+    call print_dec2
+    mov al, cl
+    call print_dec2
+    mov al, '-'
+    call print_char
+    pop ebx
+    mov al, bl
+    call print_dec2
+    mov al, '-'
+    call print_char
+    mov al, bh
+    call print_dec2
+    mov al, ' '
+    call print_char
+    call rtc_read_time                    ; bh:bl:cl
+    mov al, bh
+    call print_dec2
+    mov al, ':'
+    call print_char
+    mov al, bl
+    call print_dec2
+    mov al, ':'
+    call print_char
+    mov al, cl
+    call print_dec2
+    popad
+    ret
+
+; seconds, minutes, hours, weekday, day, month, year, century
+rtc_regs       db 0x00, 0x02, 0x04, 0x06, 0x07, 0x08, 0x09, 0x32
+rtc_new        times 8 db 0
+rtc_new_year   dw 0
+rtc_reg_b      db 0
+rtc_month_days db 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31

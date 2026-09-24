@@ -177,7 +177,8 @@ mouse_init:
 
 ; ============================================================
 ; IRQ12 handler: reassembles the standard 3-byte packet (flags, dx,
-; dy), updates mouse_x/y/buttons, clamped to a 320x200 screen.
+; dy), updates mouse_x/y/buttons, clamped to the screen (320x200 -
+; or the desktop's 1024x768: mouse_max_x/y, src/desktop.asm).
 ; ============================================================
 mouse_isr:
     push eax
@@ -196,26 +197,31 @@ mouse_isr:
     mov [mouse_buttons], al
 
     movsx eax, byte [mouse_packet + 1]
+    imul eax, [mouse_speed]
     add [mouse_x], eax
     movsx eax, byte [mouse_packet + 2]
+    imul eax, [mouse_speed]
     sub [mouse_y], eax               ; PS/2 Y is inverted vs. screen Y
 
     cmp dword [mouse_x], 0
     jge .x_low_ok
     mov dword [mouse_x], 0
 .x_low_ok:
-    cmp dword [mouse_x], 319
+    mov eax, [mouse_max_x]
+    cmp [mouse_x], eax
     jle .x_high_ok
-    mov dword [mouse_x], 319
+    mov [mouse_x], eax
 .x_high_ok:
     cmp dword [mouse_y], 0
     jge .y_low_ok
     mov dword [mouse_y], 0
 .y_low_ok:
-    cmp dword [mouse_y], 199
+    mov eax, [mouse_max_y]
+    cmp [mouse_y], eax
     jle .y_high_ok
-    mov dword [mouse_y], 199
+    mov [mouse_y], eax
 .y_high_ok:
+    inc dword [mouse_events]         ; (for whoever's watching it move)
 
 .eoi:
     mov al, 0x20
@@ -234,3 +240,7 @@ mouse_y dd 100
 mouse_buttons db 0
 mouse_packet times 3 db 0
 mouse_packet_idx db 0
+mouse_max_x dd 319
+mouse_max_y dd 199
+mouse_speed dd 1
+mouse_events dd 0

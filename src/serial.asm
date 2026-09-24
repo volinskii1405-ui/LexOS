@@ -207,7 +207,8 @@ cmd_recv:
     jc .bad_args
     cmp ax, RECV_MAX_LEN
     ja .bad_args
-    mov [fs_stream_size], ax
+    movzx eax, ax
+    mov [fs_stream_size], eax
 
     call fs_stream_prepare
     jc .end                             ; the reason is already printed

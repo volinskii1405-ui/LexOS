@@ -26,9 +26,34 @@ fs_read_slot:
     cmp ax, FS_FILE_COUNT
     jae .ram_slot
 
+    ; the slot cache (FS_SLOT_CACHE, data.asm) first
+    push ecx
+    push esi
+    push edi
+    movzx ecx, ax
+    bt [FS_SLOT_VALID], ecx
+    jnc .miss
+    shl ecx, 9
+    lea esi, [FS_SLOT_CACHE + ecx]
+    mov edi, SCRATCH_ADDR
+    mov ecx, 128
+    cld
+    rep movsd
+    pop edi
+    pop esi
+    pop ecx
+    pop ax
+    clc
+    ret
+.miss:
     add ax, FS_START_SECTOR       ; ax = absolute LBA sector
     call ata_read_sector
-
+    jc .uncached
+    call fs_cache_store           ; ecx = the slot
+.uncached:
+    pop edi
+    pop esi
+    pop ecx
     pop ax
     ret
 
@@ -51,6 +76,13 @@ fs_write_slot:
     setc [fs_last_carry]
 
     pop ax
+    cmp byte [fs_last_carry], 0
+    jne .not_cached
+    push ecx
+    movzx ecx, ax
+    call fs_cache_store
+    pop ecx
+.not_cached:
 
     cmp byte [fs_last_carry], 0
     je .ok
@@ -462,44 +494,32 @@ fs_find_free:
     cmp ax, [fs_tmp_dir_slot]
     je .scan_ram
 
-    xor bx, bx
-.scan:
+    ; files: the slots folders can't use first, then the rest
+    mov bx, FS_DIR_SLOT_LIMIT
+.scan_high:
     cmp bx, FS_FILE_COUNT
-    jae .not_found
-
-    push ax
-    mov ax, bx
-    call fs_read_slot
-    pop ax
-
-    push ax
-    mov ax, FS_TYPE_OFFSET
-    call fs_scratch_read_byte
-    cmp al, FS_TYPE_FREE
-    pop ax
+    jae .scan_low_start
+    call fs_slot_free_bx
     je .found
-
     inc bx
-    jmp .scan
+    jmp .scan_high
+.scan_low_start:
+    xor bx, bx
+.scan_low:
+    cmp bx, FS_DIR_SLOT_LIMIT
+    jae .not_found
+    call fs_slot_free_bx
+    je .found
+    inc bx
+    jmp .scan_low
 
 .scan_ram:
     mov bx, FS_FILE_COUNT
 .scan_ram_loop:
     cmp bx, FS_TOTAL_SLOTS
     jae .not_found
-
-    push ax
-    mov ax, bx
-    call fs_read_slot
-    pop ax
-
-    push ax
-    mov ax, FS_TYPE_OFFSET
-    call fs_scratch_read_byte
-    cmp al, FS_TYPE_FREE
-    pop ax
+    call fs_slot_free_bx
     je .found
-
     inc bx
     jmp .scan_ram_loop
 
@@ -512,6 +532,57 @@ fs_find_free:
 
 .end:
     pop bx
+    ret
+
+; --- A free slot for a FOLDER: only 0..FS_DIR_SLOT_LIMIT-1, so that
+;     every parent pointer fits the one-byte parent field (see data.asm).
+;     ax = the slot, or -1. ---
+fs_find_free_dir:
+    push bx
+    xor bx, bx
+.scan:
+    cmp bx, FS_DIR_SLOT_LIMIT
+    jae .none
+    call fs_slot_free_bx
+    je .found
+    inc bx
+    jmp .scan
+.found:
+    mov ax, bx
+    pop bx
+    ret
+.none:
+    mov ax, -1
+    pop bx
+    ret
+
+; --- ZF=1 if slot bx is free. Preserves everything but flags. ---
+fs_slot_free_bx:
+    push ax
+    mov ax, bx
+    call fs_read_slot
+    mov ax, FS_TYPE_OFFSET
+    call fs_scratch_read_byte
+    cmp al, FS_TYPE_FREE
+    pop ax
+    ret
+
+; --- Copies SCRATCH_ADDR into the slot cache as slot ecx and marks it
+;     valid (fs_read_slot/fs_write_slot). Preserves registers. ---
+fs_cache_store:
+    push ecx
+    push esi
+    push edi
+    bts [FS_SLOT_VALID], ecx
+    shl ecx, 9
+    lea edi, [FS_SLOT_CACHE + ecx]
+    mov esi, SCRATCH_ADDR
+    mov ecx, 128
+    cld
+    rep movsd
+    pop edi
+    pop esi
+    pop ecx
     ret
 
 ; --- Returns the type of a slot (index in ax): FS_TYPE_FREE/FILE/DIR ---
@@ -551,78 +622,46 @@ fs_cat:
     jmp .end
 
 .is_file:
-    mov ax, FS_TOTAL_LEN_OFFSET
-    call fs_scratch_read_word
-    mov [fs_cat_remaining], ax
-
-    mov ax, FS_CHAIN_OFFSET
-    call fs_scratch_read_word
+    push eax
+    call fs_get_size
+    mov [fs_cat_remaining], eax
+    mov ax, [SCRATCH_ADDR + FS_CHAIN_OFFSET]
     mov [fs_cat_chain], ax
+    pop eax
 
-    mov bx, FS_CONTENT_OFFSET
-    mov cx, FS_CONTENT_LEN - 1        ; cx = min(127, remaining) - how many
-    cmp cx, [fs_cat_remaining]          ; bytes to print from the inline part
-    jbe .inline_loop
-    mov cx, [fs_cat_remaining]
-
-.inline_loop:
-    cmp cx, 0
-    je .inline_done
-    push cx
-    push bx
-    mov ax, bx
-    call fs_scratch_read_byte
-    pop bx
-    pop cx
-    call print_char
-    inc bx
-    dec cx
-    dec word [fs_cat_remaining]
-    jmp .inline_loop
-.inline_done:
-
-    cmp word [fs_cat_remaining], 0
-    jle .print_done
+    push ecx
+    push esi
+    mov esi, SCRATCH_ADDR + FS_CONTENT_OFFSET
+    mov ecx, FS_CONTENT_LEN - 1       ; ecx = min(127, remaining) - how many
+    cmp ecx, [fs_cat_remaining]       ; bytes to print from the inline part
+    jbe .inline
+    mov ecx, [fs_cat_remaining]
+.inline:
+    call .print_run
 
 .chain_loop:
-    cmp word [fs_cat_remaining], 0
-    jle .print_done
+    cmp dword [fs_cat_remaining], 0
+    je .print_done
     cmp word [fs_cat_chain], FS_NO_CHAIN
     je .print_done
-
+    call net_check_esc                ; ESC stops a long one
+    jc .print_done
     mov ax, [fs_cat_chain]
     call fs_extra_read
-
-    mov cx, FS_EXTRA_CONTENT_LEN
-    cmp cx, [fs_cat_remaining]
-    jbe .have_count
-    mov cx, [fs_cat_remaining]
-.have_count:
-    xor bx, bx
-.extra_print_loop:
-    cmp cx, 0
-    je .extra_print_done
-    push cx
-    push bx
-    mov ax, bx
-    call fs_scratch_read_byte
-    pop bx
-    pop cx
-    call print_char
-    inc bx
-    dec cx
-    dec word [fs_cat_remaining]
-    jmp .extra_print_loop
-.extra_print_done:
-    ; scratch still holds this same sector (the printing above didn't
-    ; touch it) - the next pointer can be read without re-reading
-    ; the disk
-    mov ax, FS_EXTRA_NEXT_OFFSET
-    call fs_scratch_read_word
+    mov ax, [SCRATCH_ADDR + FS_EXTRA_NEXT_OFFSET]
     mov [fs_cat_chain], ax
+    mov esi, SCRATCH_ADDR
+    mov ecx, FS_EXTRA_CONTENT_LEN
+    cmp ecx, [fs_cat_remaining]
+    jbe .extra
+    mov ecx, [fs_cat_remaining]
+.extra:
+    call .print_run
     jmp .chain_loop
 
 .print_done:
+    pop esi
+    pop ecx
     mov si, msg_newline
     call print_string
 
@@ -632,7 +671,19 @@ fs_cat:
     pop ax
     ret
 
-fs_cat_remaining dw 0
+; prints ecx bytes from esi, counting them off fs_cat_remaining
+.print_run:
+    sub [fs_cat_remaining], ecx
+    jecxz .run_done
+.run_char:
+    mov al, [esi]
+    call print_char
+    inc esi
+    loop .run_char
+.run_done:
+    ret
+
+fs_cat_remaining dd 0
 fs_cat_chain dw 0
 
 ; --- rm <name> ---
@@ -710,11 +761,7 @@ fs_rm:
     call fs_read_slot
     pop ax
 
-    push ax
-    mov ax, FS_TYPE_OFFSET
-    call fs_scratch_read_byte
-    pop ax
-    cmp al, FS_TYPE_FILE
+    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_FILE
     jne .no_chain
     push ax
     call fs_free_chain          ; free the extra sectors (if any)
@@ -966,24 +1013,16 @@ fs_df:
     mov si, msg_df_extra_label
     call print_string
 
-    mov ax, FS_BITMAP_SECTOR
-    call ata_read_sector
-    jc .extra_error
-
-    xor bx, bx
-    xor cx, cx                    ; cx = number of used extra sectors
+    xor ebx, ebx                  ; (from the in-RAM bitmap, src/fs_extra.asm)
+    xor ecx, ecx                  ; cx = number of used extra sectors
 .scan_extra:
-    cmp bx, FS_EXTRA_COUNT
+    cmp ebx, FS_EXTRA_COUNT
     jae .extra_done
-    push bx
-    mov ax, bx
-    call fs_scratch_read_byte
-    pop bx
-    cmp al, 0
+    cmp byte [FS_BITMAP_CACHE + ebx], 0
     je .extra_free
-    inc cx
+    inc ecx
 .extra_free:
-    inc bx
+    inc ebx
     jmp .scan_extra
 .extra_done:
     mov ax, cx
@@ -1077,9 +1116,10 @@ fs_size:
     jmp .end
 
 .is_file:
-    mov ax, FS_TOTAL_LEN_OFFSET
-    call fs_scratch_read_word
-    call print_dec_word
+    push eax
+    call fs_get_size
+    call basic_print_num
+    pop eax
     mov si, msg_bytes_suffix
     call print_string
 
@@ -1279,7 +1319,7 @@ fs_mkdir:
     jmp .end3
 
 .free_slot:
-    call fs_find_free
+    call fs_find_free_dir
     cmp ax, -1
     jne .have_slot
 
@@ -1346,6 +1386,49 @@ fs_mkdir:
     pop cx
     pop bx
     pop ax
+    ret
+
+; ============================================================
+; bld <name> - creates a new, empty file in the current folder
+; (DS:SI = the argument). Refuses a name that's already taken.
+; ============================================================
+fs_bld:
+    pushad
+    mov di, fs_tmp_name
+    xor cx, cx
+.name_loop:
+    mov al, [si]
+    cmp al, 0
+    je .name_done
+    cmp al, ' '
+    je .name_done
+    cmp cx, FS_NAME_LEN
+    jae .skip_char
+    mov [di], al
+    inc di
+.skip_char:
+    inc si
+    inc cx
+    jmp .name_loop
+.name_done:
+    mov byte [di], 0
+    mov si, msg_bld_usage
+    cmp byte [fs_tmp_name], 0
+    je .say
+
+    mov si, fs_tmp_name
+    call fs_find_by_name
+    mov si, msg_fs_name_taken
+    cmp ax, -1
+    jne .say
+
+    call fs_stream_prepare            ; makes the empty slot (or says why not)
+    jc .end
+    mov si, msg_bld_done
+.say:
+    call print_string
+.end:
+    popad
     ret
 
 ; --- cd <name> / cd .. / cd (empty -> root) : DS:SI points to the argument ---
@@ -1893,7 +1976,7 @@ fs_ensure_readme:
     mov ax, FS_TOTAL_LEN_OFFSET
     mov dx, bx
     sub dx, FS_CONTENT_OFFSET
-    call fs_scratch_write_word
+    call fs_scratch_write_size16
     mov ax, FS_CHAIN_OFFSET
     mov dx, FS_NO_CHAIN
     call fs_scratch_write_word

@@ -24,12 +24,20 @@ SECTOR_COUNT equ 8
 
 ; --- Filesystem ---
 ; Layout of one record (1 record = 1 disk sector):
-;   bytes 0..7   - name (ASCII, zero-padded)
-;   byte 8       - type (0=free, 1=file, 2=folder)
-;   byte 9       - parent (slot index of the parent folder, 0xFF = root)
-;   bytes 10..   - content (zero-terminated, unused for folders)
-FS_START_SECTOR   equ 386     ; sector 1=bootloader, 2..385=kernel (384 sectors)
-FS_FILE_COUNT     equ 24
+;   bytes 0..15  - name (ASCII, zero-padded)
+;   byte 16      - type (0=free, 1=file, 2=folder)
+;   byte 17      - parent (slot index of the parent folder, 0xFF = root)
+;   bytes 18..145 - inline content (the first 127 bytes)
+;   bytes 146-147 - total length, high word (see FS_TOTAL_LEN_HI_OFFSET)
+;   bytes 508-511 - total length low word, first extra sector
+;
+; 1024 slots. A parent is still one byte, because folders only ever live
+; in slots 0..FS_DIR_SLOT_LIMIT-1 (fs_find_free_dir) - files take the
+; rest first (fs_find_free), so up to 255 folders, nested as deep as you
+; like, and the other ~770 slots for files.
+FS_START_SECTOR   equ 450     ; sector 1=bootloader, 2..449=kernel (448 sectors)
+FS_FILE_COUNT     equ 1024
+FS_DIR_SLOT_LIMIT equ 255
 FS_NAME_LEN       equ 16
 FS_CONTENT_LEN    equ 128
 FS_SCRATCH_ADDR   equ SCRATCH_ADDR
@@ -68,11 +76,14 @@ FS_TYPE_PROGRAM equ 3
 
 ; --- Chains of extra sectors (for files larger than 127 bytes,
 ;     see src/fs_extra.asm and the append command) ---
-; In every directory slot (and in every extra sector) bytes
-; 146-507 aren't used for anything at all (max inline content
-; ends at 145) - that leaves room for 2 auxiliary 16-bit
-; fields right at the tail of the sector, without shifting the existing layout:
-FS_TOTAL_LEN_OFFSET equ 508    ; (FS_TYPE_FILE only) total content length
+; In every directory slot bytes 146-507 aren't used for inline content
+; (max inline content ends at 145) - that leaves room for auxiliary
+; fields without shifting the existing layout:
+FS_TOTAL_LEN_OFFSET equ 508    ; (FS_TYPE_FILE only) total length, low word
+FS_TOTAL_LEN_HI_OFFSET equ 146 ; ... and its high word (files > 64KB).
+                               ; Old 16-bit writers go through
+                               ; fs_scratch_write_size16, which zeroes it;
+                               ; fs_get_size / fs_set_size do both words
 FS_CHAIN_OFFSET     equ 510    ; index of the first extra sector, FS_NO_CHAIN=none
 FS_NO_CHAIN         equ 0xFFFF
 
@@ -83,9 +94,23 @@ FS_EXTRA_CONTENT_LEN equ 508
 FS_EXTRA_USED_OFFSET equ 508
 FS_EXTRA_NEXT_OFFSET equ 510
 
-FS_EXTRA_COUNT equ 300         ; bumped for PAINT.BIN's .BMP saves (see src/paint.asm)
+FS_EXTRA_COUNT equ 30000       ; ~15MB of file data
+FS_BITMAP_SECTORS equ (FS_EXTRA_COUNT + 511) / 512   ; one byte per extra sector
 FS_BITMAP_SECTOR equ FS_START_SECTOR + FS_FILE_COUNT
-FS_EXTRA_START_SECTOR equ FS_BITMAP_SECTOR + 1
+FS_EXTRA_START_SECTOR equ FS_BITMAP_SECTOR + FS_BITMAP_SECTORS
+FS_MAX_FILE equ FS_EXTRA_COUNT * FS_EXTRA_CONTENT_LEN   ; (a bound, not a promise)
+
+; --- High memory (above the kernel image), shared by all consoles ---
+; The filesystem's in-RAM caches (write-through: every change goes to
+; disk at once, the cache only saves re-reading): all 1024 directory
+; slots, and the whole extra-sector bitmap.
+FS_SLOT_CACHE     equ 0x3E00000             ; 1024 x 512 bytes
+FS_SLOT_VALID     equ FS_SLOT_CACHE + FS_FILE_COUNT * 512   ; 1 bit per slot
+FS_BITMAP_CACHE   equ FS_SLOT_VALID + FS_FILE_COUNT / 8
+FS_SCRATCH_SAVE   equ FS_BITMAP_CACHE + FS_BITMAP_SECTORS * 512
+; A big buffer for whole-file work (hostput, wget, a program's files)
+BIG_FILE_BUF      equ 0x6400000             ; 100MB, up to 16MB
+BIG_FILE_MAX      equ 0x1000000
 
 ; --- Programs and the hex editor ---
 ; content[0] of PROGRAM-type files stores the length (0..127), content[1..] -
@@ -165,6 +190,7 @@ help_l10 db "  rm <n>        - delete file or folder n", 13, 10, 0
 help_l11 db "  ren <n> <new> - rename file or folder n to new", 13, 10, 0
 help_l12 db "  size <n>      - show content size of file n", 13, 10, 0
 help_l14 db "  mkdir <n>     - create a folder n", 13, 10, 0
+help_l61 db "  bld <n>       - create a new empty file n", 13, 10, 0
 help_l15 db "  cd <n>        - enter folder n", 13, 10, 0
 help_l16 db "  cd ..         - go to parent folder", 13, 10, 0
 help_l17 db "  cd /a/b       - enter folder by path (cd, cd /, cd // = root)", 13, 10, 0
@@ -186,7 +212,8 @@ help_l32 db "  date          - show current date", 13, 10, 0
 help_l33 db "  time          - show current time", 13, 10, 0
 help_l34 db "  beep [hz]     - play a short tone (frequency in hex)", 13, 10, 0
 help_l35 db "  serial <text> - send text out over COM1", 13, 10, 0
-help_l38 db "  <n>.hg        - type its name to run every line as a command", 13, 10, 0
+help_l38 db "  <n>.hg [args] - run a script: set, input, if/while/for, goto (README)", 13, 10, 0
+help_l65 db "  set <v> = <x> / vars / unset <v> / input <v> / sleep <ms>", 13, 10, 0
 help_l39 db "  grep <n> <t>  - search file n for text t, highlight matches", 13, 10, 0
 help_l40 db "  head <n> [k]  - print first k lines of file n (default 10)", 13, 10, 0
 help_l41 db "  tail <n> [k]  - print last k lines of file n (default 10)", 13, 10, 0
@@ -194,6 +221,7 @@ help_l42 db "  uranium <n>   - open file n in the full-screen text editor", 13, 
 help_l43 db "  history       - list previously run commands", 13, 10, 0
 help_l44 db "  df / free     - show directory slot / extra sector usage", 13, 10, 0
 help_l45 db "  run <n>.com   - run a small MS-DOS .com program", 13, 10, 0
+help_l62 db "  run <n>.app [args] - run a protected program (files, graphics: apps/)", 13, 10, 0
 help_l46 db "  recv <n> <hex size> - receive a file over COM1 (serial)", 13, 10, 0
 help_l47 db "  paint <n> [w] [h] - mouse picture editor, saves to n.BMP (default 320x200)", 13, 10, 0
 help_l48 db "  view <n>      - display a picture saved by paint (.BMP)", 13, 10, 0
@@ -203,8 +231,13 @@ help_l51 db "  turtle <n>   - run a turtle-graphics script (FORWARD/LEFT/...)", 
 help_l52 db "  hostls       - list files in the host's shared folder", 13, 10, 0
 help_l53 db "  hostget <n> [new] - copy a file from the host's shared folder here", 13, 10, 0
 help_l55 db "  hostput <n> [host] - copy file n into the host's shared folder", 13, 10, 0
-help_l56 db "  ifconfig     - show the network card and LexOS's address", 13, 10, 0
+help_l56 db "  ifconfig [ip] - show the network card and address (or set the address)", 13, 10, 0
 help_l57 db "  ping <host> [n] - n ICMP echo requests (default 4); nslookup <name>; dhcp", 13, 10, 0
+help_l64 db "  wget <url> [n] - download http://host[:port]/path into a file", 13, 10, 0
+help_l66 db "  httpd [port] - serve this disk on the web (make run: http://localhost:8080)", 13, 10, 0
+help_l67 db "  chat [nick]  - chat with other LexOS machines on the network (make lan1/lan2)", 13, 10, 0
+help_l68 db "  desktop      - windows, mouse, taskbar (1024x768); again to leave", 13, 10, 0
+help_l63 db "  ntp [server] - set the clock from a time server (default pool.ntp.org)", 13, 10, 0
 help_l58 db "  ps / kill <pid> - list tasks / stop one; <cmd> & runs play in the background", 13, 10, 0
 help_l59 db "  clock        - toggle a clock in the top-right corner (a background task)", 13, 10, 0
 help_l60 db "  Alt+T / Alt+1..9 / exit - new console / switch console / close this one", 13, 10, 0
@@ -213,14 +246,14 @@ help_l54 db "  basic [n]    - Tiny BASIC (optionally load and run program n)", 1
 help_lines:
     dw help_l01, help_l02, help_l03, help_l04, help_l05
     dw help_l06, help_l08, help_l10, help_l11, help_l12
-    dw help_l14, help_l15, help_l16, help_l17, help_l18
+    dw help_l14, help_l61, help_l15, help_l16, help_l17, help_l18
     dw help_l19, help_l20, help_l21, help_l22, help_l23
     dw help_l24, help_l25, help_l26, help_l27, help_l28
     dw help_l29, help_l30, help_l31, help_l32, help_l33
-    dw help_l34, help_l35, help_l38, help_l39, help_l40
-    dw help_l41, help_l42, help_l43, help_l44, help_l45
+    dw help_l34, help_l35, help_l38, help_l65, help_l39, help_l40
+    dw help_l41, help_l42, help_l43, help_l44, help_l45, help_l62
     dw help_l46, help_l47, help_l48, help_l49, help_l50, help_l51
-    dw help_l52, help_l53, help_l55, help_l54, help_l56, help_l57
+    dw help_l52, help_l53, help_l55, help_l54, help_l56, help_l57, help_l63, help_l64, help_l66, help_l67, help_l68
     dw help_l58, help_l59, help_l60
 help_lines_end:
 
@@ -257,8 +290,6 @@ msg_fs_renamed     db "Renamed.", 13, 10, 0
 msg_fs_usage_append db "Usage: append <n> <text>", 13, 10, 0
 msg_fs_appended     db "Appended.", 13, 10, 0
 msg_fs_disk_full    db "No free space for more content - saved what fit.", 13, 10, 0
-msg_hg_echo_off_line db "@echo off", 0
-msg_hg_too_deep      db "Scripts nested too deeply.", 13, 10, 0
 msg_grep_usage       db "Usage: grep <n> <text>", 13, 10, 0
 msg_grep_header_mid  db " matches found with ", 34, 0
 msg_grep_quote_nl    db 34, 13, 10, 0
@@ -318,7 +349,10 @@ msg_host_exists      db "The shared folder already has a file by that name - hos
 msg_host_absent      db "No host shared folder attached - start LexOS with 'make run'.", 13, 10, 0
 msg_host_not_fat     db "The host disk isn't a FAT16 volume LexOS can read.", 13, 10, 0
 msg_host_io_error    db "Host disk read error.", 13, 10, 0
-msg_host_too_big     db "Too big - a LexOS file can hold at most 65535 bytes.", 13, 10, 0
+msg_bld_usage        db "Usage: bld <name>  (creates an empty file)", 13, 10, 0
+msg_bld_done         db "File created.", 13, 10, 0
+msg_append_too_big   db "append: that file is too big to append to (max ~64KB).", 13, 10, 0
+msg_host_too_big     db "Too big - LexOS takes files up to 16MB.", 13, 10, 0
 msg_host_is_dir      db "That's a folder - only top-level files can be copied for now.", 13, 10, 0
 msg_host_copied1     db "Copied ", 0
 msg_host_copied2     db " bytes as ", 0
@@ -491,9 +525,6 @@ msg_g2048_quit     db "Quit.", 13, 10, 0
 msg_g2048_score    db "Score: ", 0
 msg_g2048_highscore db "Best:  ", 0
 
-BATCH_BUF_LEN equ 511
-batch_content_buf times (BATCH_BUF_LEN + 1) db 0
-
 ; --- content_buf: the buffer that grep/head/tail/uranium read the whole
 ; file content into (not streamed, like cat/batch) via fs_load_content
 ; (src/fs_extra.asm) - grep counts matches in two passes, head/tail
@@ -595,6 +626,7 @@ cmd_rm_prefix    db "rm ", 0
 cmd_ren_prefix   db "ren ", 0
 cmd_size_prefix  db "size ", 0
 cmd_mkdir_prefix db "mkdir ", 0
+cmd_bld_prefix db "bld ", 0
 cmd_reboot       db "reboot", 0
 cmd_about        db "about", 0
 cmd_date         db "date", 0
@@ -634,6 +666,22 @@ cmd_ifconfig     db "ifconfig", 0
 cmd_ping_prefix  db "ping ", 0
 cmd_nslookup_prefix db "nslookup ", 0
 cmd_dhcp         db "dhcp", 0
+cmd_ntp          db "ntp", 0
+cmd_set          db "set", 0
+cmd_set_prefix   db "set ", 0
+cmd_vars         db "vars", 0
+cmd_unset_prefix db "unset ", 0
+cmd_input_prefix db "input ", 0
+cmd_sleep_prefix db "sleep ", 0
+cmd_wget         db "wget", 0
+cmd_httpd        db "httpd", 0
+cmd_chat         db "chat", 0
+cmd_desktop      db "desktop", 0
+cmd_chat_prefix  db "chat ", 0
+cmd_ifconfig_prefix db "ifconfig ", 0
+cmd_httpd_prefix db "httpd ", 0
+cmd_wget_prefix  db "wget ", 0
+cmd_ntp_prefix   db "ntp ", 0
 cmd_basic_prefix db "basic ", 0
 cmd_history      db "history", 0
 cmd_df           db "df", 0
@@ -722,8 +770,6 @@ fs_tmp_slot2 dw 0
 fs_cp_dest_byte db 0
 fs_cp_new_chain dw 0
 fs_mv_dest_byte db 0
-fs_hg_echo db 1                     ; src/fs_extra.asm's fs_run_hg_script: is
-                                     ; the current script echoing its lines?
 fs_tmp_text_ptr dw 0
 fs_tmp_dest_byte db 0
 fs_resolve_found dw 0

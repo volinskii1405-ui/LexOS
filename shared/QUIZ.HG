@@ -1,0 +1,21 @@
+@echo off
+# QUIZ.HG - a times-table quiz in LexOS's script language.
+# Run it as:  quiz.hg        (5 questions)
+#        or:  quiz.hg 10     (as many as you like)
+set total = 5
+if $# > 0 then set total = $1
+set right = 0
+for q = 1 to $total
+  set a = $RANDOM % 9 + 2
+  set b = $RANDOM % 9 + 2
+  set product = $a * $b
+  input answer Question $q: $a x $b =
+  if $answer == $product
+    echo Right!
+    set right = $right + 1
+  else
+    echo No, it is $product.
+  end
+end
+echo You got $right out of $total.
+if $right == $total then echo Perfect score!

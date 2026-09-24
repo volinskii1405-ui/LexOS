@@ -50,6 +50,7 @@ kernel_start:
     call sched_init          ; this flow becomes task 0 (src/sched.asm)
     call devmgr_init         ; initializes all devices (screen/keyboard/disk/timer)
     call pm_init             ; paging, TSS, ring 3 (src/usermode.asm)
+    call fs_cache_init       ; slot cache + extra-sector bitmap (src/fs_extra.asm)
     call console_init        ; (src/console.asm)
 
     call clear_screen
@@ -81,6 +82,7 @@ kernel_start:
 
     call fs_ensure_license   ; creates LICENSE in the root if it doesn't exist yet
     call fs_ensure_user_cfg  ; loads USER.CFG, or runs first-boot setup to create it
+    call script_autoexec     ; AUTOEXEC.HG in the root, if there is one (src/script.asm)
 
     call fs_print_prompt
 
@@ -140,19 +142,25 @@ shared_sound_end:
 %include "src/basic.asm"
 shared_net_start:
 %include "src/net.asm"
+%include "src/inet.asm"
+%include "src/httpd.asm"
+%include "src/chat.asm"
 shared_net_end:
 ; the scheduler, ring 3 and the consoles themselves: shared across
 ; consoles (see src/console.asm)
 shared_system_start:
 %include "src/sched.asm"
 %include "src/usermode.asm"
+%include "src/appsys.asm"
 %include "src/console.asm"
+%include "src/desktop.asm"
 shared_system_end:
 %include "src/grep.asm"
 %include "src/headtail.asm"
 %include "src/uranium.asm"
 %include "src/user.asm"
 %include "src/tabcomplete.asm"
+%include "src/script.asm"
 
 ; src/atadma.asm (Bus Master IDE / ATA DMA) is included here, at the very
 ; end, rather than next to src/ata.asm above: none of its own code needs
@@ -170,74 +178,6 @@ shared_tail_start:                ; (src/console.asm: from here to the end)
 ; to keep it out of the way of the margin described in src/devices.asm.
 %include "src/dosrun.asm"
 
-; --- fs_run_hg_script's (src/fs_extra.asm) nested-script save area ---
-; Deliberately placed here, after every %include, so appending it can
-; never push some earlier label past the 0x10000 boundary the way adding
-; the calculator once pushed serial_init's address past it (see the note
-; at the top of src/devices.asm) - fs_hg_save_state/fs_hg_restore_state
-; only ever reach it through 32-bit registers (mov edi/esi, not the usual
-; 16-bit mov di/si), so unlike batch_content_buf itself, it doesn't need
-; to sit below 0x10000 at all.
-HG_MAX_NESTED equ 3      ; how many already-running scripts can be paused
-                          ; while a nested one runs (total depth: this + 1)
-fs_hg_depth       db 0
-hg_save_buf       times (BATCH_BUF_LEN + 1) * HG_MAX_NESTED db 0
-hg_save_remaining times HG_MAX_NESTED dw 0
-hg_save_chain     times HG_MAX_NESTED dw 0
-hg_save_echo      times HG_MAX_NESTED db 0
-
-; fs_hg_save_state / fs_hg_restore_state: copy fs_run_hg_script's live
-; state (batch_content_buf, fs_batch_remaining, fs_batch_chain,
-; fs_hg_echo - all in src/data.asm/src/fs_extra.asm) to/from slot number
-; eax (0..HG_MAX_NESTED-1) of hg_save_buf & friends just above. Called
-; from fs_run_hg_script (src/fs_extra.asm) only when a script's line
-; names another *.hg file, so the paused outer script's data isn't
-; clobbered by the nested one - reachable from there through an ordinary
-; call regardless of address, same as any other function in this kernel.
-;
-; Addressed entirely through 32-bit registers (mov edi/esi/ebx, not the
-; usual 16-bit mov di/si most of this kernel uses) specifically so this
-; code and the hg_save_buf data above are both free to sit here, past
-; the 0x10000 mark batch_content_buf itself must stay under - see the
-; note at the top of src/devices.asm.
-fs_hg_save_state:
-    pushad
-    mov ebx, eax
-    imul eax, ebx, BATCH_BUF_LEN + 1
-    mov edi, hg_save_buf
-    add edi, eax
-    mov esi, batch_content_buf
-    mov ecx, BATCH_BUF_LEN + 1
-    rep movsb
-
-    mov ax, [fs_batch_remaining]
-    mov [hg_save_remaining + ebx*2], ax
-    mov ax, [fs_batch_chain]
-    mov [hg_save_chain + ebx*2], ax
-    mov al, [fs_hg_echo]
-    mov [hg_save_echo + ebx], al
-    popad
-    ret
-
-fs_hg_restore_state:
-    pushad
-    mov ebx, eax
-    imul eax, ebx, BATCH_BUF_LEN + 1
-    mov esi, hg_save_buf
-    add esi, eax
-    mov edi, batch_content_buf
-    mov ecx, BATCH_BUF_LEN + 1
-    rep movsb
-
-    mov ax, [hg_save_remaining + ebx*2]
-    mov [fs_batch_remaining], ax
-    mov ax, [hg_save_chain + ebx*2]
-    mov [fs_batch_chain], ax
-    mov al, [hg_save_echo + ebx]
-    mov [fs_hg_echo], al
-    popad
-    ret
-
 ; print_string32: same job as print_string (src/screen.asm) - print the
 ; null-terminated string at DS:ESI, one print_char (screen.asm; doesn't
 ; touch ESI itself) at a time - but through plain ESI-based `lodsb`
@@ -245,8 +185,7 @@ fs_hg_restore_state:
 ; effective address, so print_string can only ever print a string
 ; living below 0x10000 (see src/devices.asm); this version has no such
 ; limit, so any NEW message text this kernel needs can live right here
-; at the tail rather than competing with batch_content_buf and friends
-; for that thin margin.
+; at the tail rather than competing for that thin margin.
 print_string32:
     pushad
 .loop:
@@ -487,7 +426,7 @@ com_saved_idt21    times 8 db 0
 com_shift_held     db 0     ; com_poll_key's own Shift-key tracking
 
 ; Pad the remaining space within the sectors the bootloader reads,
-; so the file size is a multiple of 512 bytes (see KERNEL_SECTORS_1..4 in boot.asm).
+; so the file size is a multiple of 512 bytes (see KERNEL_SECTORS_1..4 in boot.asm: 64+128+128+128 = 448).
 kernel_image_end:
 KERNEL_IMAGE_START equ 0x8000
-times (512*384)-($-$$) db 0
+times (512*448)-($-$$) db 0

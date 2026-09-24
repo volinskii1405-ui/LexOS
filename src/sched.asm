@@ -58,6 +58,7 @@ TASK_PAUSED        equ 3            ; a console not on screen (src/console.asm)
 WAIT_KEY           equ 1            ; keyboard interrupt
 WAIT_TICK          equ 2            ; timer tick (~18.2Hz)
 WAIT_AUDIO         equ 4            ; audio_fast_tick_isr
+WAIT_MS            equ 8            ; every timer interrupt (~1000Hz)
 
 SCHED_PRIO_NORMAL  equ 1
 SCHED_PRIO_HIGH    equ 2
@@ -121,6 +122,14 @@ sched_event:
     call sched_best_prio                  ; bl = highest READY priority
     cmp bl, [task_prio + edx]
     ja .preempt
+    ; the current task is only halting in task_wait: anyone ready, now
+    cmp byte [sched_idle], 0
+    je .not_idle
+    or bl, bl
+    jz .stay
+    call sched_find_other
+    ret
+.not_idle:
     ; equal priority: take turns, one tick each
     test eax, WAIT_TICK
     jz .stay
@@ -180,6 +189,7 @@ sched_find_other:
 ; is switched back to.
 ; ============================================================
 sched_switch_to:
+    mov byte [sched_idle], 0              ; (the next one isn't halting)
     mov eax, [sched_current]
     mov [task_esp + eax*4], esp
     mov [sched_current], ecx
@@ -188,6 +198,9 @@ sched_switch_to:
     jz .no_ring3                          ; interrupts from it land on
     mov [tss_block + 4], eax              ; its own kernel stack
 .no_ring3:
+    mov eax, cr0                          ; its FPU state: loaded on first
+    or al, 0x08                           ; use (TS -> #NM, fpu_nm_isr in
+    mov cr0, eax                          ; src/usermode.asm)
     mov esp, [task_esp + ecx*4]
     ret
 
@@ -333,6 +346,7 @@ sched_task_start:
 ; ============================================================
 task_exit:
     cli
+    call fpu_forget_current               ; (src/usermode.asm)
     mov edx, [sched_current]
     mov byte [task_state + edx], TASK_FREE
     mov dword [sched_lock], 0
@@ -349,6 +363,9 @@ task_exit:
     jz .no_ring3
     mov [tss_block + 4], eax
 .no_ring3:
+    mov eax, cr0                          ; (see sched_switch_to)
+    or al, 0x08
+    mov cr0, eax
     mov esp, [task_esp + ecx*4]
     ret                                   ; into its sched_resume
 
@@ -614,6 +631,7 @@ clock_kill_hook:
 sched_current      dd 0
 sched_lock         dd 0             ; >0: no switching (see the header)
 sched_idle         db 0             ; task_wait is halting, nothing to run
+task_keywait       times SCHED_MAX db 0 ; waiting in read_key (a safe point)
 sched_cs           dd 0x08
 task_state         times SCHED_MAX db 0
 task_prio          times SCHED_MAX db 0

@@ -93,15 +93,31 @@ alex@/PROGRAMS$
   inline bytes into a chain of extra disk sectors, tracked by a small
   on-disk bitmap. `cat`, `size`, `head`, `tail`, `grep`, `cp`, and `rm` all
   understand the chain.
-- Typing a `*.hg` file's own bare name (no arguments) runs it as a
-  script: every line is fed to the shell as a command, same as `run`
-  already does for machine-code programs. Lines are echoed before they
-  run, like a real DOS batch file, unless the script contains a line
-  that's exactly `@echo off` (silences the echo - and doesn't run as a
-  command itself - for the rest of that script; every run starts back
-  with echo on). A script's own line can name another `*.hg` file - each
-  nested script gets its own echo state and resumes the outer one
-  correctly when it finishes, up to `HG_MAX_NESTED` (3) levels deep.
+- **Scripts.** Typing a `*.hg` file's name (with arguments if you like:
+  `quiz.hg 10`) runs it: each line goes to the shell as a command, with
+  a small language on top (src/script.asm):
+  ```
+  @echo off                      # don't echo each line
+  set n = ($1 + 1) * 2           # an arithmetic expression: its value
+  set who = big world            # anything else: text
+  input name Your name?          # a line typed at the keyboard
+  if $n > 10                     # == != < > <= >=, exist <file>, not ...
+    echo big: $n
+  else
+    echo small
+  end
+  if exist NOTES.TXT then cat NOTES.TXT
+  for i = 1 to 10 step 2         # ... end
+  while $n > 0                   # ... end
+  goto done / :done / exit / shift / sleep 500
+  ```
+  `$name`, `${name}`, `$1`..`$9`, `$0`, `$#`, `$*`, `$RANDOM`, `$$`.
+  Comparisons are numeric when both sides are numbers, text otherwise.
+  Scripts can run other scripts (4 levels deep); ESC stops a runaway
+  loop. `set`, `unset`, `vars`, `input` and `sleep` also work at the
+  prompt, which expands `$variables` too (unknown ones stay as typed).
+  `AUTOEXEC.HG` in the root folder runs at every boot. Try
+  `hostget quiz.hg`, then `quiz.hg` - a times-table quiz.
 - `cp`/`mv` also support wildcards: `cp *.txt <folder>` copies every match
   into `<folder>` under its own name, and `mv *.txt <folder>` moves them
   the same way; both skip `USER.CFG` and any name already taken in the
@@ -126,11 +142,17 @@ alex@/PROGRAMS$
   folder for scratch files (see below).
 - `ls` prints folders in bright yellow so they stand out from regular
   files, which stay whatever color you've set with `color`.
-- `df` (or `free`) shows how many of the 24 directory slots, 64 extra
-  disk sectors, and 8 `TMP` RAM slots (see below) are in use.
+- `df` (or `free`) shows how many of the 1024 directory slots, 30000
+  extra disk sectors, and 8 `TMP` RAM slots (see below) are in use.
+- `bld <n>` creates a new, empty file `n` in the current folder.
+- The filesystem holds up to 1024 files and folders (up to 255 of them
+  folders), nested as deep as you like, and a single file can be up to
+  16MB (the extra-sector pool is ~15MB in total). Directory slots and
+  the free-space map are cached in RAM, so `ls`/`cd`/`tree` don't hit
+  the disk, and big files are written one disk write per sector.
 - `TMP` is a RAM disk: create a file while `cd`'d directly into it (not
   a subfolder within it) and its up-to-127-byte primary record lives
-  entirely in memory instead of costing one of the 24 real directory
+  entirely in memory instead of costing one of the real directory
   slots - `ls`, `cat`, `rm`, wildcards and everything else treat it like
   any other file, but it vanishes on reboot along with everything else
   that was only ever in RAM. Content past 127 bytes still chains into
@@ -269,12 +291,12 @@ alex@/PROGRAMS$
   kernel keeps session state in ordinary globals, a switch swaps them:
   the kernel image except its shared parts (interrupts, drivers, the
   scheduler, sound, network, RAM-backed TMP files), plus BASIC's
-  memory, the program's 1MB and the text screen, into a 2MB save area
+  memory, the program's 4MB and the text screen, into a 5MB save area
   per console - only ever at a safe point, while the console on screen
   is waiting for a key.
 - **Protected programs (ring 3).** `run <name>.app` runs a program in
   user mode, the way real operating systems do: paging maps it its own
-  1MB and nothing else, so it can't touch the kernel, the screen or
+  4MB and nothing else, so it can't touch the kernel, the screen or
   any I/O port - it asks the kernel for things through system calls
   (`int 0x80`: write, getkey, readline, sleep, ticks, cursor, color,
   beep, exit). When a program does something it mustn't - writes over
@@ -288,6 +310,67 @@ alex@/PROGRAMS$
   `gcc -m32`): `make apps` builds the examples into `shared/` -
   `HELLO.APP`, `CRASH.APP` (a menu of forbidden things to try) and
   `GUESS.APP` (in C). Try `hostget crash.app`, then `run crash.app`.
+- **Files, arguments, memory and graphics for programs**
+  (src/appsys.asm). `run <name>.app arg1 arg2` passes the rest of the
+  line to the program - `main(argc, argv)` in C, `ebx` points to it
+  in assembly. Programs open files in the current folder with
+  `open`/`read`/`fwrite`/`seek`/`fsize`/`close` (read, write, append
+  or update; up to 4MB each, 8 open at once - whatever was written is
+  saved on close, or when the program ends, even by a crash); C
+  programs get `malloc`/`free`/`realloc` over their 4MB. `gfx_mode(1)`
+  switches to 320x200 in 256 colors: a program draws into a buffer of
+  its own and `gfx_blit`s it to the screen, can set any palette color,
+  and `keydown(scancode)` tells whether a key is held - what games
+  need. `gfx_mode_ex(800, 600, 32)` asks for more: up to 1600x1200,
+  in 256 colors or true color (0x00RRGGBB pixels), through QEMU's VBE
+  adapter (Bochs "BGA", its framebuffer found on PCI), and
+  `gfx_blit_rect` updates just part of the screen. The screen goes back
+  to text by itself when the program ends. Sound: `audio_open(22050, 2)`
+  and `audio_write(samples, bytes)` stream 16-bit PCM to the Sound
+  Blaster - the card plays a double buffer over and over (auto-init
+  DMA), and its IRQ5 refills each half from a 64KB queue the program
+  writes into, so `audio_write` also paces a program that just keeps
+  writing. Time: the system timer interrupts ~1000 times a second -
+  `millis()` counts milliseconds since boot, `sleep_ms` is exact to the
+  millisecond, and `sleep_until(next)` gives a game a steady 60 frames
+  a second (`next += 16`). Floating point: `float`/`double` work in
+  programs - the kernel turns the FPU (and SSE, where the CPU has it)
+  on and hands its registers from task to task lazily (CR0.TS, the
+  #NM fault, FXSAVE/FXRSTOR), so every program has its own; lexos.h
+  adds `sqrt`, `sin`, `cos`, `tan`, `atan2`, `exp`, `log`, `pow`,
+  `floor` and `print_float`, each a few x87 instructions. The old ~18.2Hz tick everything else in the
+  kernel is paced by keeps going underneath, counted off the same
+  interrupt.
+  Examples (`make apps`, then `hostget` them): `WC.APP` (`run wc.app
+  LICENSE` - lines, words, bytes), `NOTE.APP` (`run note.app todo.txt
+  buy milk` adds a line, `run note.app todo.txt` lists them),
+  `FIRE.APP` (the demo-scene fire effect), `PONG.APP` (W/S or
+  Up/Down against LexOS), `MANDEL.APP` (the Mandelbrot set in
+  800x600 true color: arrows move, +/- zoom), `MODPLAY.APP`, a
+  ProTracker `.MOD` player mixing 4 channels in software (`hostget
+  demo.mod`, then `run modplay.app demo.mod` - DEMO.MOD is built by
+  `tools/makemod.py` from synthesized samples; any 4-channel .MOD
+  works), `FTEST.APP` (the math functions, and a long sum - run it
+  in two consoles at once) and `CUBE.APP` (a spinning 3D wireframe in
+  640x480, arrows change the spin).
+- **Desktop.** `desktop` switches to a graphical desktop in 1024x768
+  true color: windows with title bars you drag with the mouse, that
+  come to the front when clicked and close with their [x], a taskbar
+  with a button per window and the time, and a start menu (Terminal,
+  Clock, Pictures, System, Exit desktop). The **Terminal** window is
+  the console itself - while the desktop is on, text output goes to a
+  buffer in RAM (`text_vram`, src/screen.asm) that the desktop draws
+  with the VGA's own font, so the shell, uranium, BASIC, chat and the
+  text of ring-3 programs all work in it, and the keyboard goes to it
+  as always. **Clock** is an analog clock in your time zone,
+  **Pictures** shows the .BMP files in the current folder (8-, 24- and
+  32-bit; click for the next one), **System** has uptime, memory,
+  tasks and the network address. Graphics programs - paint, Tetris,
+  chip8, `run pong.app`, `run mandel.app` - take over the screen and
+  hand it back when they end. It's a task of its own
+  (src/desktop.asm): a back buffer redrawn only when something changed,
+  just the changed rectangle copied to the screen, the mouse pointer
+  drawn on top. Type `desktop` again (or use the menu) to leave.
 - **Preemptive multitasking.** Kernel tasks with their own stacks,
   switched by the timer interrupt (src/sched.asm): equal-priority tasks
   take turns a timer tick (~55ms) at a time, a higher-priority one runs
@@ -302,7 +385,7 @@ alex@/PROGRAMS$
   reentrant, so only the tasks written for it run in the background
   (the player loads its whole file first, with switching held off).
 - **Networking.** An RTL8139 driver (the card `make run` gives QEMU),
-  Ethernet, ARP, IPv4, ICMP echo, UDP, DHCP and DNS. The first network
+  Ethernet, ARP, IPv4, ICMP echo, UDP, TCP, DHCP, DNS, NTP and HTTP. The first network
   command gets LexOS an address by DHCP (`dhcp` asks again); `ifconfig`
   shows the card, MAC, address, gateway and DNS server; `nslookup
   <name>` resolves a name through that DNS server - real internet
@@ -312,7 +395,34 @@ alex@/PROGRAMS$
   summary at the end, ESC stops it. `ping 10.0.2.2` (QEMU's gateway)
   always answers; outside addresses go through QEMU's ICMP proxy, which
   works when the host allows unprivileged ping (most Linux
-  distributions, macOS).
+  distributions, macOS). `ntp [server]` sets the clock from a time
+  server over NTP (UDP port 123, `pool.ntp.org` by default): the RTC
+  keeps UTC, and `time`/`date` add your time zone as always.
+  `wget http://host[:port]/path [name]` downloads a file over HTTP -
+  a small TCP of LexOS's own (src/inet.asm: connect, in-order receive
+  with acknowledgements, resends, FIN/RST) under an HTTP/1.0 GET - and
+  saves the body into the current folder (named after the path's last
+  part, or `INDEX.HTM`), up to 16MB; ESC stops it. A non-200 answer is
+  shown instead (with where a redirect points). There's no TLS, so
+  `https://` is out. Try `python3 -m http.server` in a folder on your
+  machine and `wget http://10.0.2.2:8000/somefile` in LexOS.
+  `httpd [port]` turns LexOS into a web server: `make run` forwards
+  the host's port 8080 to LexOS's port 80, so open
+  http://localhost:8080/ in your browser and every folder is a page
+  listing its files (or its `INDEX.HTM`), every file a link - served
+  with a content type from its extension, HEAD too, each request
+  logged on LexOS's screen; ESC stops it. The same TCP now also takes
+  connections (LISTEN, SYN-ACK) and sends big answers as a window of
+  segments, resending from the last acknowledged byte when an ACK
+  doesn't come (a 3MB file goes out in a few seconds).
+  `chat [nick]` is a chat room for every LexOS on the same network:
+  messages are UDP broadcasts to port 5555, so there's no server. The
+  screen splits into the conversation and a line to type into; `/nick`,
+  `/me`, `/who`, Esc leaves. `make lan1` and `make lan2` (in two
+  terminals) start two LexOS machines joined by a virtual Ethernet
+  cable (QEMU's socket network), each with its own disk and MAC - with
+  no DHCP server on that cable each takes an address from its MAC, or
+  `ifconfig <a.b.c.d>` sets one.
 - **Shared folder with the host.** `make run` attaches the repo's
   `shared/` folder as a second disk (QEMU's vvfat presents a host
   directory as a whole FAT16 volume). `hostls` lists it and
@@ -323,8 +433,8 @@ alex@/PROGRAMS$
   LexOS file out into `shared/` - a `.BMP` from paint, a BASIC program
   you SAVEd - where it appears on your machine immediately. Top-level
   files only, 8.3 short names (a long host name shows up DOS-style, e.g.
-  `MY-LON~1.TXT`; hostput needs an 8.3 name), up to 65535 bytes per
-  file - the most a LexOS file holds. Files added on the host while
+  `MY-LON~1.TXT`; hostput needs an 8.3 name), up to 16MB per
+  file. Files added on the host while
   QEMU is running show up after the next start. hostput only creates
   new files and refuses a name that's already there: QEMU's vvfat
   can't reliably rewrite an existing host file (it ignores a changed
@@ -478,11 +588,16 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `hostls` | list the files in the host's shared folder (`shared/`, see below) |
 | `hostget <n> [new]` | copy a file from the host's shared folder into the current directory |
 | `hostput <n> [host]` | copy file n into the host's shared folder (a new 8.3 name) |
-| `ifconfig` | show the network card, MAC address and IP |
+| `ifconfig [ip]` | show the network card, MAC address and IP (or set the IP) |
 | `ping <host> [n]` | send n ICMP echo requests (default 4) to a name or address, ESC stops |
 | `nslookup <name>` | look a name up in DNS |
+| `wget <url> [name]` | download a file over HTTP into the current folder |
+| `desktop` | the graphical desktop (again to leave) |
+| `chat [nick]` | chat with every LexOS on the network (`make lan1` + `make lan2`) |
+| `httpd [port]` | serve this disk on the web (`make run`: http://localhost:8080/) |
+| `ntp [server]` | set the clock from a time server (default `pool.ntp.org`) |
 | `dhcp` | get an address from the DHCP server again |
-| `run <n>.app` | run a protected (ring 3) program - see `apps/` |
+| `run <n>.app [args]` | run a protected (ring 3) program - see `apps/` |
 | Alt+T / Alt+1..9 / `exit` | open a new console / switch to console N / close this one |
 | `ps` | list the running tasks (pid, state, priority, CPU time) |
 | `kill <pid>` | stop a background task |
@@ -501,6 +616,7 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `cd ..` | go to the parent folder |
 | `cd /a/b` | enter a folder by path (`cd`, `cd /`, `cd //` all go to root) |
 | `mkdir <name>` | create a folder |
+| `bld <name>` | create a new empty file |
 | `cat <n>` | print a file's contents |
 | `head <n> [k]` | print the first `k` lines of a file (default 10) |
 | `tail <n> [k]` | print the last `k` lines of a file (default 10) |
@@ -509,7 +625,9 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `ren <n> <new>` | rename a file or folder |
 | `cp <n> <new>` | copy a file (independent content, not aliased); `cp *.ext <folder>` copies every match into `<folder>` |
 | `mv <n> <path>` | move a file into a folder at `path`; `mv *.ext <folder>` moves every match into `<folder>` |
-| `<n>.hg` | type a script's own name to run every line as a shell command (`@echo off` silences the echo) |
+| `<n>.hg [args]` | run a script (variables, if/while/for - see Scripts) |
+| `set <v> = <x>` / `vars` / `unset <v>` | script variables, at the prompt too |
+| `input <v> [prompt]` / `sleep <ms>` | read a line into a variable / wait |
 | `grep <n> <text>` | search file `n` for `text`; prints `Line <n>, Symbol <col> <line>` for each match, with the match highlighted in red |
 | **Editors** | |
 | `uranium <n>` | full-screen text editor (creates the file if it doesn't exist) |
@@ -538,7 +656,7 @@ BIOS  →  boot.asm (16-bit real mode)
             │  loads kernel.bin via FOUR LBA reads (int 13h/ah=42h) -
             │  a real-mode segment:offset BIOS read can't cross a 64 KB
             │  segment boundary, so the kernel is split at each one:
-            │  64 sectors into 0x0000:0x8000, then 128 + 128 + 64 into
+            │  64 sectors into 0x0000:0x8000, then 128 + 128 + 128 into
             │  0x1000/0x2000/0x3000:0000 - physically contiguous
             │  enables A20, builds a flat GDT, sets CR0.PE
             ▼
@@ -551,7 +669,7 @@ BIOS  →  boot.asm (16-bit real mode)
 Everything below `0x10000` is the kernel itself — code and all working
 data — small enough that internal pointers still fit in 16 bits and most
 of the code reads like a real-mode program, even though the kernel image
-as a whole (padded to 384 sectors, split across the boot loader's four reads
+as a whole (padded to 448 sectors, split across the boot loader's four reads
 as described above) now extends past that boundary. Only things that live
 outside the kernel image need a full 32-bit linear address:
 
@@ -560,23 +678,32 @@ outside the kernel image need a full 32-bit linear address:
 | Video memory (VGA text mode) | `0xB8000` |
 | ATA scratch buffer (one sector) | `0x91000` |
 | BASIC program, arrays, strings (`basic`) | `0x200000` – `0x26FFFF` |
-| hostput staging buffer | `0x280000` |
+| Big-file buffer (hostput, program files) | `0x6400000` – `0x73FFFFF` |
+| Filesystem slot + bitmap cache | `0x3E00000` |
 | IMF song buffer (`play`) | `0x310000` |
 | WAV file / SB16 DMA buffer (`play`) | `0x320000` |
 | Task stacks (64KB each, 16 tasks) | `0x400000` – `0x4FFFFF` |
 | Page directory / user page table | `0x500000` / `0x501000` |
-| A ring-3 program's own 1MB | `0x800000` – `0x8FFFFF` |
-| Console save areas (2MB each) | `0x1000000` – `0x21FFFFF` |
+| A ring-3 program's own 4MB | `0x800000` – `0xBFFFFF` |
+| Console save areas (5MB each) | `0x1000000` – `0x3CFFFFF` |
+| Programs' open-file buffers (8 x 4MB) | `0x4000000` – `0x5FFFFFF` |
+| Desktop back buffer (1024x768x4) | `0x6000000` – `0x62FFFFF` |
+| FPU save areas / desktop text | `0x6300000` / `0x6310000` |
+| Script variables and levels | `0x280000` – `0x29FFFF` |
+| SB16 stream DMA buffer / queue | `0x330000` / `0x340000` |
+| Desktop picture file / pixels | `0x7500000` / `0x7700000` |
 | RTL8139 receive ring / transmit buffers | `0x300000` / `0x304000` |
 | .COM program segment | `0x100000` |
-| Kernel code/data | `0x8000` – `0x37FFF` (384 sectors) |
+| Kernel code/data | `0x8000` – `0x3FFFF` (448 sectors) |
 | Boot sector | `0x7C00` |
 
-On disk, sectors are laid out as: boot sector, then the kernel (384
-sectors), then 24 directory slots (one file/folder per 512-byte sector —
-name, type, parent pointer, up to 127 bytes of inline content), a 1-sector
-free-space bitmap for the extra-sector pool, then 300 extra 512-byte
-sectors that files chain into once they outgrow the inline area.
+On disk, sectors are laid out as: boot sector, then the kernel (448
+sectors), then 1024 directory slots (one file/folder per 512-byte sector —
+name, type, parent pointer, a 32-bit size, up to 127 bytes of inline
+content; folders only ever take slots 0-254, so a parent pointer still
+fits in one byte), a 59-sector free-space map (one byte per extra
+sector), then 30000 extra 512-byte sectors that files chain into once
+they outgrow the inline area (508 data bytes each).
 
 ## Project layout
 
@@ -634,12 +761,20 @@ src/
                        as snake.asm.
   usermode.asm         ring 3: paging, TSS, int 0x80 system calls,
                        exception handling, `run <n>.app`.
+  appsys.asm           programs' files, command line and graphics
+                       system calls.
   console.asm          virtual consoles: Alt+T / Alt+1..9 / exit, the
                        per-console memory swap.
+  desktop.asm          `desktop`: windows, taskbar, start menu, the
+                       console in a Terminal window, Clock, Pictures.
   sched.asm            the scheduler: tasks, priorities, task_wait,
                        ps/kill/clock.
   net.asm              RTL8139 driver (polled), ARP, IPv4, ICMP echo,
                        UDP, DHCP, DNS: ping/ifconfig/nslookup/dhcp.
+  inet.asm             Internet clients on top of it: ntp, and a
+                       small TCP for wget.
+  httpd.asm            httpd: the web server on that TCP.
+  chat.asm             chat: a serverless chat room over UDP broadcast.
   basic.asm            `basic [name]`, a Tiny BASIC interpreter/REPL -
                        text mode, program stored above 1MB, SAVE/LOAD
                        through fs_stream_write/fs_load_to.
@@ -665,6 +800,8 @@ src/
   tabcomplete.asm      Tab completion: matches the word being typed against
                        filenames in the current directory and shows the
                        rest as blue "ghost text" until Tab accepts it.
+  script.asm           *.hg scripts: variables, expressions, if/while/
+                       for/goto, set/vars/input/sleep, AUTOEXEC.HG.
 ```
 
 ## Known limitations
@@ -693,7 +830,7 @@ src/
   support - no header parsing, no segment relocation.
 - One file's inline metadata + content lives in a single 512-byte sector;
   content past that grows through a chain of extra sectors, but the pool
-  is fixed at 64 sectors and file/folder names are capped at 8 characters
+  is fixed at 30000 sectors (~15MB) and file/folder names are capped at 8 characters
   before the extension.
 - `grep`, `head`, `tail`, and `uranium` all read a file through the same
   4 KB `content_buf` (see `fs_load_content` in `src/fs_extra.asm`), so
@@ -706,9 +843,9 @@ src/
   is silently skipped rather than reported individually. `uranium`'s
   `Ctrl+F` search is case-sensitive, like `grep`, and its search text is
   also capped at 32 characters.
-- `*.hg` scripts can call other `*.hg` scripts, but only `HG_MAX_NESTED`
-  (3) levels deep - a 4th nested call is refused with a message rather
-  than running.
+- Script variables are 64 at most, their values up to 63 characters,
+  numbers 32-bit integers; a script line handed to the shell is cut at
+  63 characters (the shell's own line length).
 - The mini-assembler resolves labels in one pass, so jumps can only target
   a label that already appears earlier in the same program. It also has
   no memory operands (no `[bx]`, no `[label]`) and no 16-bit-register

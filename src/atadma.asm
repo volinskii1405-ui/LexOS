@@ -15,7 +15,7 @@
 ;
 ; Uses only 32-bit registers and direct memory operands (never the
 ; 16-bit mov si/di most of this kernel uses for addressing), so unlike
-; batch_content_buf and friends, none of this file's own code needs to
+; the shell's own buffers, none of this file's own code needs to
 ; sit below the 0x10000 mark described in src/devices.asm - its state
 ; (ata_prdt, ata_bmide_base, ata_dma_available) lives at the tail of
 ; kernel.asm for the same reason.

@@ -1,6 +1,6 @@
 ; usermode.asm — protected mode for programs: `run <name>.app` runs a
 ; flat 32-bit binary in ring 3, with paging keeping it inside its own
-; 1MB. A program that goes wrong - touches memory that isn't its own,
+; 4MB. A program that goes wrong - touches memory that isn't its own,
 ; executes a privileged instruction, divides by zero - is stopped with
 ; a message saying what it did, and the shell carries on. It talks to
 ; the kernel only through system calls (int 0x80, see SYS_* below).
@@ -8,8 +8,8 @@
 ; Exports: pm_init, app_run, fs_name_ends_with_app
 ;
 ; The pieces:
-;   - Paging (pm_init): the first 64MB identity-mapped with 4MB pages,
-;     all supervisor-only - except APP_BASE..APP_BASE+1MB, mapped with
+;   - Paging (pm_init): the first 128MB identity-mapped with 4MB pages,
+;     all supervisor-only - except APP_BASE..APP_BASE+4MB, mapped with
 ;     4KB user pages from a page table of its own. Everything else is
 ;     invisible to ring 3: a program's every stray pointer faults.
 ;   - Segments: ring-3 code/data descriptors (0x28/0x30) and a TSS
@@ -29,7 +29,8 @@
 ;     the key-waiting system calls check for it themselves.
 ;
 ; A program is loaded at APP_BASE and entered at its first byte, with
-; its stack at the top of its 1MB (APP_STACK_TOP). It ends with
+; its command line ("NAME.APP arg1 arg2", 0-terminated) at APP_ARGS
+; near the top of its 4MB, ebx pointing to it, and its stack just below. It ends with
 ; SYS_EXIT; app_run returns once it has, however it ended. See apps/
 ; for the program side: lexos.inc (assembly), lexos.h + crt0.asm (C).
 ; ============================================================
@@ -40,26 +41,44 @@ TSS_SEL         equ 0x38
 KERNEL_SS       equ 0x10
 
 APP_BASE        equ 0x800000
-APP_SIZE        equ 0x100000          ; 1MB: 256 user pages
+APP_SIZE        equ 0x400000          ; 4MB: 1024 user pages (one page table)
 APP_STACK_TOP   equ APP_BASE + APP_SIZE
-APP_MAX_FILE    equ 0xFFFF
+APP_MAX_FILE    equ APP_SIZE - 0x10000 ; leaves room for the stack
 
 PAGE_DIR        equ 0x500000          ; 4KB, then the user page table
 PAGE_TABLE_APP  equ 0x501000
-PAGING_4MB_PAGES equ 16               ; identity-map 64MB
+FPU_AREAS       equ 0x6300000         ; FXSAVE areas, 512 bytes per task
+PAGING_4MB_PAGES equ 32               ; identity-map 128MB (QEMU's -m 128)
 
 SYS_EXIT        equ 0                 ; ebx = exit code
 SYS_WRITE       equ 1                 ; ebx = text, ecx = length
 SYS_GETKEY      equ 2                 ; -> eax = ASCII | scancode << 8
 SYS_POLLKEY     equ 3                 ; -> eax = the same, or 0 if none
 SYS_TICKS       equ 4                 ; -> eax = timer ticks (18.2/s)
-SYS_SLEEP       equ 5                 ; ebx = milliseconds
+SYS_SLEEP       equ 5                 ; ebx = milliseconds (1ms resolution)
 SYS_CLEAR       equ 6
 SYS_SETCURSOR   equ 7                 ; ebx = row, ecx = column (0-based)
 SYS_SETCOLOR    equ 8                 ; ebx = text attribute
 SYS_READLINE    equ 9                 ; ebx = buffer, ecx = size -> eax = length
 SYS_BEEP        equ 10                ; ebx = Hz, ecx = milliseconds
-SYS_COUNT       equ 11
+SYS_OPEN        equ 11                ; ebx = name, ecx = mode -> eax = handle / -1
+SYS_READ        equ 12                ; ebx = handle, ecx = buffer, edx = count
+SYS_FWRITE      equ 13                ; ebx = handle, ecx = data, edx = count
+SYS_CLOSE       equ 14                ; ebx = handle
+SYS_SEEK        equ 15                ; ebx = handle, ecx = position
+SYS_FSIZE       equ 16                ; ebx = handle -> eax = size
+SYS_GFX         equ 17                ; ebx = 1 graphics / 0 text
+SYS_BLIT        equ 18                ; ebx = 320x200 frame (64000 bytes)
+SYS_PALETTE     equ 19                ; ebx = color, ecx = 0xRRGGBB
+SYS_KEYDOWN     equ 20                ; ebx = scancode -> eax = 1 if held
+SYS_GFX_MODE    equ 21                ; ebx = width, ecx = height, edx = bpp
+SYS_BLIT_RECT   equ 22                ; ebx = frame, ecx = x|y<<16, edx = w|h<<16
+SYS_AUDIO_OPEN  equ 23                ; ebx = rate, ecx = channels
+SYS_AUDIO_WRITE equ 24                ; ebx = 16-bit samples, ecx = bytes
+SYS_AUDIO_CLOSE equ 25
+SYS_MILLIS      equ 26                ; -> eax = milliseconds since boot
+SYS_SLEEP_UNTIL equ 27                ; ebx = a SYS_MILLIS value to wait for
+SYS_COUNT       equ 28                ; (files/graphics: src/appsys.asm)
 
 ; ============================================================
 ; Paging, the TSS, the ring-3 entry points into the kernel (int 0x80,
@@ -134,6 +153,8 @@ pm_init:
     cmp ecx, 20
     jb .exc
 
+    call fpu_init
+
     mov ax, USER_DATA_SEL
     mov ds, ax
     mov es, ax
@@ -143,18 +164,121 @@ pm_init:
     ret
 
 ; ============================================================
+; The FPU (and SSE, where the CPU has it) for programs. The kernel
+; itself never touches it, so its state belongs to whichever task last
+; used it (fpu_owner) and is only moved when another task does: every
+; task switch sets CR0.TS, the next FPU/SSE instruction then faults
+; (#NM, vector 7), and fpu_nm_isr saves the owner's registers into its
+; area (FXSAVE - or FNSAVE on a CPU without it), loads the new user's
+; (or gives a program that never used it yet a fresh FNINIT'd FPU)
+; and clears TS. So a program in one console keeps its floating-point
+; registers while another console's program computes.
+; ============================================================
+fpu_init:
+    pushad
+    mov eax, 1
+    cpuid
+    mov [fpu_cpuid_edx], edx
+    test edx, 1                           ; an FPU at all?
+    jz .none
+    mov eax, cr0
+    and eax, ~0x04                        ; EM off: execute FPU instructions
+    or eax, 0x22                          ; MP, NE: #NM on TS, #MF errors
+    mov cr0, eax
+    test edx, 1 << 24                     ; FXSAVE/FXRSTOR
+    jz .no_fxsr
+    mov byte [fpu_fxsr], 1
+    mov eax, cr4
+    or eax, 0x200                         ; OSFXSR
+    test edx, 1 << 25                     ; SSE: its exceptions too
+    jz .cr4
+    or eax, 0x400                         ; OSXMMEXCPT
+.cr4:
+    mov cr4, eax
+.no_fxsr:
+    fninit
+    mov edi, idt_table + 7 * 8
+    mov eax, fpu_nm_isr
+    call set_idt_entry_at_edi
+    mov byte [fpu_present], 1
+.none:
+    popad
+    ret
+
+fpu_nm_isr:
+    pushad
+    clts
+    mov eax, [sched_current]
+    inc eax                               ; task id + 1 (0 = nobody)
+    cmp eax, [fpu_owner]
+    je .done
+    mov ebx, [fpu_owner]
+    or ebx, ebx
+    jz .load
+    dec ebx                               ; save the owner's registers
+    shl ebx, 9
+    cmp byte [fpu_fxsr], 0
+    je .fnsave
+    fxsave [FPU_AREAS + ebx]
+    jmp .load
+.fnsave:
+    fnsave [FPU_AREAS + ebx]
+.load:
+    mov [fpu_owner], eax
+    dec eax
+    cmp byte [fpu_used + eax], 0
+    je .fresh
+    shl eax, 9
+    cmp byte [fpu_fxsr], 0
+    je .frstor
+    fxrstor [FPU_AREAS + eax]
+    jmp .done
+.frstor:
+    frstor [FPU_AREAS + eax]
+    jmp .done
+.fresh:
+    mov byte [fpu_used + eax], 1
+    fninit
+    test dword [fpu_cpuid_edx], 1 << 25
+    jz .done
+    push dword 0x1F80                     ; SSE's defaults: all exceptions
+    ldmxcsr [esp]                         ; masked, round to nearest
+    add esp, 4
+.done:
+    popad
+    iret
+
+; The current task's program starts (or ends): no FPU state of its own
+; to keep - the next FPU instruction gets a fresh one.
+fpu_forget_current:
+    push eax
+    mov eax, [sched_current]
+    mov byte [fpu_used + eax], 0
+    inc eax
+    cmp eax, [fpu_owner]
+    jne .ts
+    mov dword [fpu_owner], 0
+.ts:
+    mov eax, cr0                          ; so its next FPU instruction
+    or al, 0x08                           ; faults and gets it a fresh FPU
+    mov cr0, eax                          ; (and makes it the owner)
+    pop eax
+    ret
+
+; ============================================================
 ; `run <name>.app`: ax = its slot. Returns when the program has ended.
 ; ============================================================
 app_run:
     pushfd
     pushad
     push eax
-    ; a clean 1MB for it: code/data, zeroed "bss", stack
+    ; a clean 4MB for it: code/data, zeroed "bss", stack
     mov edi, APP_BASE
     mov ecx, APP_SIZE / 4
     xor eax, eax
     cld
     rep stosd
+    call app_build_cmdline                ; src/appsys.asm
     pop eax
     mov edi, APP_BASE
     mov ecx, APP_MAX_FILE
@@ -164,6 +288,7 @@ app_run:
 
     mov byte [app_abort_request], 0
     mov byte [app_active], 1
+    call fpu_forget_current               ; a clean FPU for it
     cli
     mov ecx, [sched_current]
     mov [task_app_esp + ecx*4], esp       ; where app_abort comes back to
@@ -171,7 +296,7 @@ app_run:
     mov [tss_block + 4], esp              ; start from (esp0)
 
     push dword USER_DATA_SEL              ; ss
-    push dword APP_STACK_TOP              ; esp
+    push dword APP_ARGS - 16              ; esp: below the command line
     push dword 0x202                      ; eflags: interrupts on, IOPL 0
     push dword USER_CODE_SEL              ; cs
     push dword APP_BASE                   ; eip
@@ -182,6 +307,7 @@ app_run:
     xor esi, esi
     xor edi, edi
     xor ebp, ebp
+    mov ebx, APP_ARGS                     ; the command line (crt0.asm)
     iretd
 
 .empty:
@@ -201,7 +327,12 @@ app_abort:
     mov dword [task_kstack + ecx*4], 0
     mov byte [app_active], 0
     mov byte [app_abort_request], 0
+    sti
     push eax
+    call app_gfx_off                      ; src/appsys.asm
+    call app_audio_off                    ; silence, if it was playing
+    call fpu_forget_current
+    call fh_close_all                     ; saves what it wrote
     call speaker_off
     ; a fresh line, unless the program left the cursor at the start of one
     cmp word [cursor_col], 0
@@ -228,6 +359,7 @@ APP_EXIT_CRASHED equ 0x80000000
 
 ; Ctrl+C, acted on by timer_isr (src/interrupts.asm) while in ring 3.
 app_ctrl_c:
+    call app_gfx_off
     mov esi, app_msg_ctrl_c
     call basic_puts
     mov eax, APP_EXIT_CRASHED
@@ -264,7 +396,10 @@ syscall_isr:
 syscall_table:
     dd sys_exit, sys_write, sys_getkey, sys_pollkey, sys_ticks
     dd sys_sleep, sys_clear, sys_setcursor, sys_setcolor, sys_readline
-    dd sys_beep
+    dd sys_beep, sys_open, sys_read, sys_fwrite, sys_close
+    dd sys_seek, sys_fsize, sys_gfx, sys_blit, sys_palette
+    dd sys_keydown, sys_gfx_mode, sys_blit_rect, sys_audio_open
+    dd sys_audio_write, sys_audio_close, sys_millis, sys_sleep_until
 
 sys_exit:
     mov eax, [ebp + 16]
@@ -358,21 +493,30 @@ sys_ticks:
     ret
 
 sys_sleep:
+    mov eax, [timer_ms]
+    add eax, [ebp + 16]
+    jmp app_sleep_until
+
+; SYS_SLEEP_UNTIL: ebx = a timer_ms value to wait for (a frame's start)
+sys_sleep_until:
     mov eax, [ebp + 16]
-    xor edx, edx
-    mov ecx, 55
-    div ecx
-    add eax, [timer_ticks]
-    mov ebx, eax
+app_sleep_until:
+    mov [app_wake_ms], eax
 .wait:
     call app_check_abort
-    cmp [timer_ticks], ebx
-    jae .done
-    mov eax, WAIT_TICK
+    mov eax, [timer_ms]
+    sub eax, [app_wake_ms]
+    jns .done                             ; (wraps safely: a signed difference)
+    mov eax, WAIT_MS
     call task_wait
     jmp .wait
 .done:
     xor eax, eax
+    ret
+
+; SYS_MILLIS -> eax = milliseconds since boot
+sys_millis:
+    mov eax, [timer_ms]
     ret
 
 sys_clear:
@@ -455,19 +599,13 @@ sys_beep:
     call speaker_set_freq
     pop ebx
     mov eax, [ebp + 24]
-    xor edx, edx
-    mov ecx, 55
-    div ecx
-    or eax, eax
-    jnz .have
-    inc eax
-.have:
-    add eax, [timer_ticks]
+    add eax, [timer_ms]
     mov ebx, eax
 .wait:
-    cmp [timer_ticks], ebx
-    jae .off
-    mov eax, WAIT_TICK
+    mov eax, [timer_ms]
+    sub eax, ebx
+    jns .off
+    mov eax, WAIT_MS
     call task_wait
     jmp .wait
 .off:
@@ -536,6 +674,7 @@ exc_common:
     mov ds, ax
     mov es, ax
     sti
+    call app_gfx_off                      ; so the message can be read
     mov esi, app_msg_crashed
     call basic_puts
     call exc_print_name
@@ -651,6 +790,8 @@ fs_name_ends_with_app:
 ; ============================================================
 ; (app_active / app_abort_request are per console - in src/data.asm)
 exc_vector         dd 0
+app_wake_ms        dd 0
+app_args_src       dw 0                   ; fs_run: what followed the name
 exc_error          dd 0
 exc_eip            dd 0
 exc_cr2            dd 0
@@ -658,6 +799,13 @@ task_app_esp       times SCHED_MAX dd 0   ; app_run's frame, per task
 task_kstack        times SCHED_MAX dd 0   ; esp0 while in ring 3, per task
 
 tss_block          times 104 db 0
+
+fpu_present        db 0
+fpu_fxsr           db 0
+fpu_cpuid_edx      dd 0
+fpu_owner          dd 0                   ; task id + 1 of the registers' owner
+fpu_used           times SCHED_MAX db 0   ; has this task's program used it yet?
+
 
 exc_names:
     dd exc_name_0, 0, 0, 0, 0, exc_name_5, exc_name_6, exc_name_7

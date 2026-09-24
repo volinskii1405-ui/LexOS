@@ -140,7 +140,7 @@ uranium_editor:
 
     mov ax, FS_TOTAL_LEN_OFFSET
     xor dx, dx
-    call fs_scratch_write_word
+    call fs_scratch_write_size16
     mov ax, FS_CHAIN_OFFSET
     mov dx, FS_NO_CHAIN
     call fs_scratch_write_word
@@ -816,7 +816,7 @@ fs_save_content:
 
     mov ax, FS_TOTAL_LEN_OFFSET
     mov dx, [content_buf_len]
-    call fs_scratch_write_word
+    call fs_scratch_write_size16
 
     mov cx, [content_buf_len]
     cmp cx, [fs_save_inline_count]
@@ -913,7 +913,7 @@ fs_save_content:
     call fs_read_slot
     mov ax, FS_TOTAL_LEN_OFFSET
     mov dx, si
-    call fs_scratch_write_word
+    call fs_scratch_write_size16
     mov ax, [fs_tmp_slot]
     call fs_write_slot
 

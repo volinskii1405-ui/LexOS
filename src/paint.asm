@@ -1251,7 +1251,7 @@ paint_save_bmp:
 
     mov ax, FS_TOTAL_LEN_OFFSET         ; provisional - patched below
     xor dx, dx
-    call fs_scratch_write_word
+    call fs_scratch_write_size16
     mov ax, FS_CHAIN_OFFSET
     mov dx, FS_NO_CHAIN
     call fs_scratch_write_word
@@ -1325,7 +1325,7 @@ paint_save_bmp:
     call fs_read_slot
     mov ax, FS_TOTAL_LEN_OFFSET
     mov dx, [paint_save_total_size]
-    call fs_scratch_write_word
+    call fs_scratch_write_size16
     mov ax, FS_CHAIN_OFFSET
     mov dx, [paint_chain_first]
     call fs_scratch_write_word

@@ -68,6 +68,16 @@ net_ifconfig:
     pushad
     call net_init
     jc .done
+    movzx esi, si                         ; ifconfig <a.b.c.d>: set it
+    call basic_skip
+    cmp byte [esi], 0
+    je .show
+    call net_parse_ip
+    jc .bad_ip
+    mov [net_my_ip], eax
+    mov byte [net_dhcp_ok], 0
+    mov byte [net_route_valid], 0
+.show:
     mov esi, net_msg_card
     call basic_puts
     movzx eax, word [net_io]
@@ -113,6 +123,11 @@ net_ifconfig:
     call basic_puts
     call basic_newline
 .done:
+    popad
+    ret
+.bad_ip:
+    mov esi, net_msg_ifconfig_usage
+    call basic_puts
     popad
     ret
 
@@ -513,6 +528,7 @@ net_send:
 ; (net_ping_*).
 net_poll:
     pushad
+    inc byte [net_in_poll]
 .next:
     mov dx, [net_io]
     add dx, RTL_CR
@@ -554,6 +570,7 @@ net_poll:
     out dx, ax
     jmp .next
 .done:
+    dec byte [net_in_poll]
     popad
     ret
 
@@ -608,6 +625,11 @@ net_handle_frame:
     add edx, ebx                          ; edx = the IP payload
     cmp byte [ebx + 9], 17                ; UDP
     je .udp
+    cmp byte [ebx + 9], 6                 ; TCP (src/inet.asm)
+    jne .not_tcp
+    call tcp_input
+    jmp .done
+.not_tcp:
     cmp byte [ebx + 9], 1                 ; ICMP
     jne .done
     cmp byte [edx], 0                     ; echo reply
@@ -662,6 +684,11 @@ net_handle_frame:
 ; eax = an IP on our subnet -> its MAC in net_hop_mac. Three requests,
 ; a second each. carry=1 if nobody answered.
 net_arp_resolve:
+    cmp byte [net_in_poll], 0             ; from a frame handler: polling
+    je .can_poll                          ; again would re-enter net_poll
+    stc                                   ; and lose its place in the ring
+    ret
+.can_poll:
     pushad
     mov [net_arp_want], eax
     mov byte [net_arp_got], 0
@@ -1097,13 +1124,31 @@ net_dhcp:
     ret
 
 .fallback:
-    mov dword [net_my_ip], 0x0F02000A     ; 10.0.2.15
+    ; slirp's usual 10.0.2.15 - unless this isn't QEMU's default MAC
+    ; (52:54:00:12:34:56): then, on a network of several LexOS machines
+    ; with no DHCP server (make lan1/lan2), one from the MAC, so that
+    ; they differ: 10.0.2.(20 + last byte % 200)
+    mov eax, 0x0F02000A
+    cmp word [net_mac + 4], 0x5634
+    je .have_fallback
+    movzx eax, byte [net_mac + 5]
+    xor edx, edx
+    mov ecx, 200
+    div ecx
+    lea eax, [edx + 20]
+    shl eax, 24
+    or eax, 0x0002000A
+.have_fallback:
+    mov [net_my_ip], eax
     mov dword [net_mask], 0x00FFFFFF
     mov dword [net_gw_ip], 0x0202000A
     mov dword [net_dns_ip], 0x0302000A
     mov byte [net_dhcp_ok], 0
     mov esi, net_msg_dhcp_failed
     call basic_puts
+    mov eax, [net_my_ip]
+    call net_print_ip
+    call basic_newline
     popad
     ret
 
@@ -1644,6 +1689,7 @@ net_udp_got        db 0
 net_udp_len        dd 0
 net_udp_from       dd 0
 net_udp_buf        times NET_UDP_MAX db 0
+net_in_poll        db 0                 ; inside net_poll (a frame handler)
 net_io             dw 0
 net_pci_addr       dd 0
 net_mac            times 6 db 0
@@ -1700,7 +1746,8 @@ net_msg_rtt2       db "ms, max = ", 0
 net_msg_rtt3       db "ms, average = ", 0
 net_msg_ms         db "ms", 10, 0
 net_msg_dhcp       db "DHCP... ", 0
-net_msg_dhcp_failed db "no answer - using 10.0.2.15 (QEMU's usual).", 10, 0
+net_msg_dhcp_failed db "no answer - using ", 0
+net_msg_ifconfig_usage db "Usage: ifconfig [a.b.c.d]  (sets LexOS's own address)", 10, 0
 net_msg_dns        db "DNS server   ", 0
 net_msg_via_dhcp   db "   (from DHCP)", 0
 net_msg_static     db "   (static - DHCP didn't answer)", 0

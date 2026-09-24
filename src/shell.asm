@@ -49,6 +49,8 @@ shell_strip_background:
 handle_command:
     pusha
 
+    call script_expand_prompt      ; $variables (src/script.asm)
+
     ; "<command> &": run it in the background (src/sched.asm) - for now
     ; only play knows how
     call shell_strip_background
@@ -139,6 +141,12 @@ handle_command:
     call strcmp_prefix
     cmp ax, 1
     je .do_mkdir
+
+    mov si, buffer
+    mov di, cmd_bld_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_bld
 
     mov si, buffer
     mov di, cmd_reboot
@@ -325,6 +333,26 @@ handle_command:
     call strcmp_eq
     cmp ax, 1
     je .do_ifconfig
+    mov si, buffer
+    mov di, cmd_ifconfig_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_ifconfig
+    mov si, buffer
+    mov di, cmd_desktop
+    call strcmp_eq
+    cmp ax, 1
+    je .do_desktop
+    mov si, buffer
+    mov di, cmd_chat
+    call strcmp_eq
+    cmp ax, 1
+    je .do_chat
+    mov si, buffer
+    mov di, cmd_chat_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_chat
 
     mov si, buffer
     mov di, cmd_ping_prefix
@@ -337,6 +365,72 @@ handle_command:
     call strcmp_prefix
     cmp ax, 1
     je .do_nslookup
+
+    mov si, buffer
+    mov di, cmd_set
+    call strcmp_eq
+    cmp ax, 1
+    je .do_set
+    mov si, buffer
+    mov di, cmd_set_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_set
+    mov si, buffer
+    mov di, cmd_vars
+    call strcmp_eq
+    cmp ax, 1
+    je .do_vars
+    mov si, buffer
+    mov di, cmd_unset_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_unset
+    mov si, buffer
+    mov di, cmd_input_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_input
+    mov si, buffer
+    mov di, cmd_sleep_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_sleep
+
+    mov si, buffer
+    mov di, cmd_httpd
+    call strcmp_eq
+    cmp ax, 1
+    je .do_httpd
+    mov si, buffer
+    mov di, cmd_httpd_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_httpd
+
+    mov si, buffer
+    mov di, cmd_wget
+    call strcmp_eq
+    cmp ax, 1
+    je .do_wget
+
+    mov si, buffer
+    mov di, cmd_wget_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_wget
+
+    mov si, buffer
+    mov di, cmd_ntp
+    call strcmp_eq
+    cmp ax, 1
+    je .do_ntp
+
+    mov si, buffer
+    mov di, cmd_ntp_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_ntp
 
     mov si, buffer
     mov di, cmd_dhcp
@@ -405,11 +499,10 @@ handle_command:
     ; Not a built-in command - if it names a *.hg file, running a script
     ; is just typing its name (see fs_run_hg_script in src/fs_extra.asm),
     ; the same way `run` already works for machine-code programs.
-    call shell_looks_like_hg
+    call shell_looks_like_hg       ; src/script.asm
     cmp ax, 1
     jne .truly_unknown
-    mov si, buffer
-    call fs_run_hg_script
+    call script_run
     jmp .done
 
 .truly_unknown:
@@ -489,6 +582,12 @@ handle_command:
     mov si, buffer
     add si, 6                  ; skip "mkdir "
     call fs_mkdir
+    jmp .done
+
+.do_bld:
+    mov si, buffer
+    add si, 4                  ; skip "bld "
+    call fs_bld
     jmp .done
 
 .do_reboot:
@@ -683,7 +782,19 @@ handle_command:
     jmp .done
 
 .do_ifconfig:
+    mov si, buffer
+    add si, 8                  ; skip "ifconfig" (a new address may follow)
     call net_ifconfig
+    jmp .done
+
+.do_desktop:
+    call desktop_command
+    jmp .done
+
+.do_chat:
+    mov si, buffer
+    add si, 4                  ; skip "chat"
+    call net_chat
     jmp .done
 
 .do_ping:
@@ -696,6 +807,48 @@ handle_command:
     mov si, buffer
     add si, 9                  ; skip "nslookup "
     call net_nslookup
+    jmp .done
+
+.do_set:
+    mov si, buffer
+    add si, 3                  ; skip "set"
+    call script_cmd_set
+    jmp .done
+.do_vars:
+    call script_cmd_vars
+    jmp .done
+.do_unset:
+    mov si, buffer
+    add si, 6
+    call script_cmd_unset
+    jmp .done
+.do_input:
+    mov si, buffer
+    add si, 6
+    call script_cmd_input
+    jmp .done
+.do_sleep:
+    mov si, buffer
+    add si, 6
+    call script_cmd_sleep
+    jmp .done
+
+.do_httpd:
+    mov si, buffer
+    add si, 5                  ; skip "httpd"
+    call net_httpd
+    jmp .done
+
+.do_wget:
+    mov si, buffer
+    add si, 4                  ; skip "wget" (net_wget skips the spaces)
+    call net_wget
+    jmp .done
+
+.do_ntp:
+    mov si, buffer
+    add si, 3                  ; skip "ntp" (net_ntp skips the spaces)
+    call net_ntp
     jmp .done
 
 .do_dhcp:
@@ -723,58 +876,6 @@ handle_command:
 
 .done:
     popa
-    ret
-
-; ============================================================
-; Does DS:buffer hold nothing but a bare "something.hg" filename
-; (case-insensitive, no arguments)? Used by handle_command to recognize a
-; script invocation before falling back to "Unknown command" - see
-; fs_run_hg_script in src/fs_extra.asm. A space anywhere disqualifies it
-; (a script is run by typing its name alone), so "somecmd file.hg" is
-; never mistaken for a script when "somecmd" isn't a real command.
-; Output: ax = 1 if so, otherwise ax = 0.
-; ============================================================
-shell_looks_like_hg:
-    push si
-    push cx
-
-    mov si, buffer
-    xor cx, cx
-.len_loop:
-    cmp byte [si], 0
-    je .len_done
-    cmp byte [si], ' '
-    je .no
-    inc si
-    inc cx
-    jmp .len_loop
-.len_done:
-    cmp cx, 3
-    jb .no
-
-    mov si, buffer
-    add si, cx
-    sub si, 3                     ; si -> the last 3 characters
-
-    mov al, [si]
-    cmp al, '.'
-    jne .no
-    mov al, [si + 1]
-    call to_upper_al
-    cmp al, 'H'
-    jne .no
-    mov al, [si + 2]
-    call to_upper_al
-    cmp al, 'G'
-    jne .no
-
-    mov ax, 1
-    jmp .done
-.no:
-    xor ax, ax
-.done:
-    pop cx
-    pop si
     ret
 
 ; ============================================================

@@ -19,7 +19,7 @@
 ; So a switch saves those and brings in the other console's -
 ; everything in the kernel image EXCEPT the shared parts (interrupts,
 ; drivers, the scheduler, sound, network, the TMP files kept in RAM:
-; console_shared below), plus BASIC's memory, the ring-3 program's 1MB
+; console_shared below), plus BASIC's memory, the ring-3 program's 4MB
 ; and text video memory - into a per-console save area above 16MB.
 ; A few MB of copying, only when you press Alt+something.
 ;
@@ -31,7 +31,7 @@
 
 CONSOLE_MAX        equ 9
 CONSOLE_SAVE_BASE  equ 0x1000000       ; 16MB
-CONSOLE_SAVE_SIZE  equ 0x200000        ; 2MB each
+CONSOLE_SAVE_SIZE  equ 0x500000        ; 5MB each (a program's 4MB + the rest)
 CONSOLE_REQ_NEW    equ 0x80
 CONSOLE_REGIONS_MAX equ 32
 
@@ -110,6 +110,9 @@ console_init:
 .fixed:
     mov dword [console_regions + edx*8], BASIC_PROG_ADDR
     mov dword [console_regions + edx*8 + 4], BASIC_TEXT_ADDR - BASIC_PROG_ADDR
+    inc edx
+    mov dword [console_regions + edx*8], SCRIPT_MEM
+    mov dword [console_regions + edx*8 + 4], SCRIPT_MEM_SIZE
     inc edx
     mov dword [console_regions + edx*8], APP_BASE
     mov dword [console_regions + edx*8 + 4], APP_SIZE

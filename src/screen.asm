@@ -19,14 +19,18 @@
 ; Clears the screen: overwrites all video memory with spaces of the
 ; current color and resets the cursor to (0,0).
 ; ============================================================
+; The text screen's memory: VIDEO_MEM, or - while the desktop
+; (src/desktop.asm) shows the console in a window - a buffer in RAM.
+text_vram dd VIDEO_MEM
+
 clear_screen:
     pusha
-    xor edi, edi
+    mov edi, [text_vram]
     mov ecx, SCREEN_COLS * SCREEN_ROWS   ; "loop" uses ECX by default in a 32-bit
     mov ah, [current_color]              ; code segment - must be the full register,
     mov al, ' '                          ; not cx, or the high half could be garbage
 .loop:
-    mov [VIDEO_MEM + edi], ax
+    mov [edi], ax
     add edi, 2
     loop .loop
 
@@ -47,11 +51,11 @@ clear_screen:
 ; ============================================================
 repaint_screen_color:
     pusha
-    xor edi, edi
+    mov edi, [text_vram]
     mov ecx, SCREEN_COLS * SCREEN_ROWS
     mov al, [current_color]
 .loop:
-    mov [VIDEO_MEM + edi + 1], al        ; +1: the attribute byte of each
+    mov [edi + 1], al                    ; +1: the attribute byte of each
     add edi, 2                            ; (char, attribute) word - see
     loop .loop                             ; clear_screen's own note above
     popa
@@ -114,7 +118,8 @@ print_char:
     movzx edi, ax
     pop ax
 
-    mov [VIDEO_MEM + edi], bx  ; bl=character (low byte), bh=attribute (high byte)
+    add edi, [text_vram]
+    mov [edi], bx              ; bl=character (low byte), bh=attribute (high byte)
 
     inc word [cursor_col]
     cmp word [cursor_col], SCREEN_COLS
@@ -165,7 +170,8 @@ print_char:
 
     mov bl, ' '
     mov bh, [current_color]
-    mov [VIDEO_MEM + edi], bx
+    add edi, [text_vram]
+    mov [edi], bx
 
     jmp .sync
 
@@ -187,12 +193,13 @@ scroll_screen:
     pusha
 
     cld
-    mov esi, VIDEO_MEM + SCREEN_COLS * 2
-    mov edi, VIDEO_MEM
+    mov edi, [text_vram]
+    lea esi, [edi + SCREEN_COLS * 2]
     mov ecx, SCREEN_COLS * (SCREEN_ROWS - 1)
     rep movsw
 
-    mov edi, VIDEO_MEM + SCREEN_COLS * (SCREEN_ROWS - 1) * 2
+    mov edi, [text_vram]
+    add edi, SCREEN_COLS * (SCREEN_ROWS - 1) * 2
     mov ecx, SCREEN_COLS
     mov ah, [current_color]
     mov al, ' '
@@ -289,8 +296,9 @@ screen_putc_at:
     add eax, ecx                ; eax = row * 80 + col
     shl eax, 1                  ; eax = offset in bytes
     mov edi, eax
+    add edi, [text_vram]
 
-    mov [VIDEO_MEM + edi], bx  ; bl = character, bh = color attribute
+    mov [edi], bx              ; bl = character, bh = color attribute
     popa
     ret
 
