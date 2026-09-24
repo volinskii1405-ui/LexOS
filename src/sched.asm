@@ -60,8 +60,9 @@ WAIT_TICK          equ 2            ; timer tick (~18.2Hz)
 WAIT_AUDIO         equ 4            ; audio_fast_tick_isr
 WAIT_MS            equ 8            ; every timer interrupt (~1000Hz)
 
-SCHED_PRIO_NORMAL  equ 1
-SCHED_PRIO_HIGH    equ 2
+SCHED_PRIO_LOW     equ 1            ; (runs only when nothing else will)
+SCHED_PRIO_NORMAL  equ 2
+SCHED_PRIO_HIGH    equ 3
 
 TASK_NAME_LEN      equ 20
 
@@ -562,8 +563,12 @@ sched_cmd_ps:
     call basic_puts
     mov esi, sched_msg_normal
     cmp byte [task_prio + ecx], SCHED_PRIO_HIGH
-    jne .prio
+    jne .not_high
     mov esi, sched_msg_high
+.not_high:
+    cmp byte [task_prio + ecx], SCHED_PRIO_LOW
+    jne .prio
+    mov esi, sched_msg_low
 .prio:
     call basic_puts
     ; CPU time in seconds, one decimal: ticks * 10 / 182
@@ -778,4 +783,5 @@ sched_msg_waiting  db "waiting   ", 0
 sched_msg_paused   db "paused    ", 0
 sched_msg_normal   db "normal  ", 0
 sched_msg_high     db "high    ", 0
+sched_msg_low      db "low     ", 0
 sched_msg_gap      db "   ", 0

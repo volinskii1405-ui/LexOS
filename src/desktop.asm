@@ -2890,10 +2890,10 @@ dk_zcount         dd 0
 
 ; each kind's place and size when it opens, and name
 ;                   term  clock pics  sys   files tasks mixer app
-dk_def_x          dd 30,   800,  240,  560,  60,   320,  420,  200
-dk_def_y          dd 24,   30,   120,  320,  90,   150,  260,  60
-dk_def_w          dd 640,  200,  320,  420,  560,  420,  400,  320
-dk_def_h          dd 400,  214,  200,  210,  380,  330,  210,  200
+dk_def_x          dd 30,   800,  240,  560,  60,   250,  420,  200
+dk_def_y          dd 24,   30,   120,  320,  90,   90,   260,  60
+dk_def_w          dd 640,  200,  320,  420,  560,  520,  400,  320
+dk_def_h          dd 400,  214,  200,  210,  380,  400,  210,  200
 dk_kind_names     dd dk_title_terminal, dk_title_clock, dk_title_pictures, dk_title_system
                   dd dk_title_files, dk_title_tasks, dk_title_mixer, dk_title_program
 dk_menu_labels    dd dk_menu_programs

@@ -914,49 +914,19 @@ dk_sys_line:
 ; Tasks: the CPU over the last minute, the tasks, End task
 ; ============================================================
 dk_draw_tasks:
-    ; the graph: 60 one-second bars
+    ; the graphs: the CPU, and the memory in use, over the last minute
     mov eax, [dk_cx]
     add eax, 10
     mov ebx, [dk_cy]
     add ebx, 8
-    mov ecx, 60 * 5
-    mov edx, 80
-    mov esi, 0x101820
-    call dk_fill
-    xor edi, edi
-.bar:
-    mov eax, [dk_cpu_pos]                 ; oldest first
-    add eax, edi
-    xor edx, edx
-    mov ecx, 60
-    div ecx
-    movzx edx, byte [dk_cpu_hist + edx]
-    imul edx, 80
-    push eax
-    mov eax, edx
-    xor edx, edx
-    mov ecx, 100
-    div ecx
-    mov edx, eax                          ; the bar's height
-    pop eax
-    or edx, edx
-    jz .next_bar
-    mov eax, edi
-    imul eax, 5
-    add eax, [dk_cx]
-    add eax, 10
-    mov ebx, [dk_cy]
-    add ebx, 88
-    sub ebx, edx
-    mov ecx, 4
-    mov esi, 0x43C06B
-    call dk_fill
-.next_bar:
-    inc edi
-    cmp edi, 60
-    jb .bar
-    ; "CPU 12%" beside it
-    mov edi, dk_sys_buf
+    mov esi, dk_cpu_hist
+    mov edx, 0x43C06B
+    call dk_task_graph
+    add eax, 260
+    mov esi, dk_mem_hist
+    mov edx, 0x5DADE2
+    call dk_task_graph
+    mov edi, dk_sys_buf                   ; "CPU 12%"
     mov esi, dk_task_cpu
     call wget_append
     movzx eax, byte [dk_cpu_now]
@@ -965,17 +935,29 @@ dk_draw_tasks:
     stosb
     mov byte [edi], 0
     mov eax, [dk_cx]
-    add eax, 324
+    add eax, 10
     mov ebx, [dk_cy]
-    add ebx, 40
+    add ebx, 94
     mov esi, dk_sys_buf
     mov edx, COL_TEXT
+    call dk_text
+    mov edi, dk_sys_buf                   ; "Memory 45 of 128 MB"
+    mov esi, dk_task_mem
+    call wget_append
+    mov eax, [dk_mem_now]
+    call wget_append_num
+    mov esi, dk_task_mem_of
+    call wget_append
+    mov byte [edi], 0
+    mov eax, [dk_cx]
+    add eax, 270
+    mov esi, dk_sys_buf
     call dk_text
     ; the table
     mov eax, [dk_cx]
     add eax, 10
     mov ebx, [dk_cy]
-    add ebx, 100
+    add ebx, 116
     mov esi, dk_task_header
     mov edx, COL_MUTED
     call dk_text
@@ -983,21 +965,23 @@ dk_draw_tasks:
     mov dword [dk_task_row], 0
 .task:
     cmp ebp, SCHED_MAX
-    jae .button
+    jae .buttons
     cmp byte [task_state + ebp], TASK_FREE
     je .next_task
+    cmp dword [dk_task_row], DK_TASK_ROWS
+    jae .buttons
     mov eax, [dk_cx]
     add eax, 6
     mov ebx, [dk_task_row]
     imul ebx, 18
     add ebx, [dk_cy]
-    add ebx, 120
+    add ebx, 136
     mov edx, COL_TEXT
     cmp ebp, [dk_task_sel]
     jne .not_sel
     push ebx
     sub ebx, 1
-    mov ecx, 390
+    mov ecx, 500
     push edx
     mov edx, 18
     mov esi, COL_TITLE_ON
@@ -1007,7 +991,7 @@ dk_draw_tasks:
     mov edx, COL_WHITE
 .not_sel:
     add eax, 4
-    mov edi, dk_sys_buf                   ; "3   play TUNE.WAV   waiting  1.2s"
+    mov edi, dk_sys_buf                   ; the pid
     push eax
     mov eax, ebp
     call wget_append_num
@@ -1015,16 +999,50 @@ dk_draw_tasks:
     mov byte [edi], 0
     mov esi, dk_sys_buf
     call dk_text
-    add eax, 40
+    add eax, 40                           ; its name
     mov esi, ebp
     imul esi, TASK_NAME_LEN
     add esi, task_names
-    call dk_text
-    add eax, 170
+    push edi
+    mov edi, 20
+    call dk_text_n
+    pop edi
+    add eax, 168                          ; its state
     movzx esi, byte [task_state + ebp]
     mov esi, [dk_state_names + esi*4]
     call dk_text
-    add eax, 90
+    add eax, 76                           ; its priority
+    movzx esi, byte [task_prio + ebp]
+    cmp esi, SCHED_PRIO_HIGH
+    jbe .prio_ok
+    xor esi, esi
+.prio_ok:
+    mov esi, [dk_prio_names + esi*4]
+    call dk_text
+    add eax, 72                           ; its program's memory
+    mov esi, dk_task_none
+    movzx ecx, byte [task_console + ebp]
+    cmp ecx, CONSOLE_MAX
+    jae .mem_shown
+    mov ecx, [dk_con_mem + ecx*4]
+    jecxz .mem_shown
+    mov edi, dk_sys_buf
+    push eax
+    mov eax, ecx
+    call wget_append_num
+    pop eax
+    mov esi, dk_task_kb
+    push esi
+    push eax
+    mov esi, dk_task_kb
+    call wget_append
+    pop eax
+    pop esi
+    mov byte [edi], 0
+    mov esi, dk_sys_buf
+.mem_shown:
+    call dk_text
+    add eax, 80                           ; its CPU time
     mov edi, dk_sys_buf
     push eax
     push edx
@@ -1053,12 +1071,52 @@ dk_draw_tasks:
 .next_task:
     inc ebp
     jmp .task
-.button:
+.buttons:
+    ; Priority: [Low] [Normal] [High] - the selected task's lit
+    mov eax, [dk_cx]
+    add eax, 10
+    mov ebx, [dk_cy]
+    add ebx, DK_TASK_PRIO_Y + 4
+    mov esi, dk_task_prio
+    mov edx, COL_TEXT
+    call dk_text
+    xor ebp, ebp
+.prio_button:
+    imul eax, ebp, DK_TASK_PBTN_W + 6
+    add eax, [dk_cx]
+    add eax, DK_TASK_PBTN_X
+    mov ebx, [dk_cy]
+    add ebx, DK_TASK_PRIO_Y
+    mov ecx, DK_TASK_PBTN_W
+    mov edx, 24
+    mov esi, COL_BUTTON
+    mov edi, COL_TEXT
+    push eax
+    mov eax, [dk_task_sel]
+    cmp eax, -1
+    je .plain_prio
+    movzx eax, byte [task_prio + eax]
+    dec eax
+    cmp eax, ebp
+    jne .plain_prio
+    mov esi, COL_TITLE_ON
+    mov edi, COL_WHITE
+.plain_prio:
+    pop eax
+    call dk_fill
+    add eax, 10
+    add ebx, 4
+    mov edx, edi
+    mov esi, [dk_prio_names + ebp*4 + 4]
+    call dk_text
+    inc ebp
+    cmp ebp, 3
+    jb .prio_button
     ; [End task], and a message line
     mov eax, [dk_cx]
-    add eax, 300
+    add eax, DK_TASK_END_X
     mov ebx, [dk_cy]
-    add ebx, 296
+    add ebx, DK_TASK_END_Y
     mov ecx, 110
     mov edx, 24
     mov esi, 0xC0392B
@@ -1076,6 +1134,114 @@ dk_draw_tasks:
     mov edx, 0xB03A2E
     call dk_text
     jmp dk_contents_done
+
+; A graph at eax, ebx: esi's 60 samples (0-100, oldest at dk_cpu_pos),
+; bars in color edx
+dk_task_graph:
+    pushad
+    mov [dk_tg_color], edx
+    mov [dk_tg_x], eax
+    mov [dk_tg_y], ebx
+    mov ecx, 60 * 4
+    mov edx, 80
+    push esi
+    mov esi, 0x101820
+    call dk_fill
+    pop esi
+    xor edi, edi
+.bar:
+    mov eax, [dk_cpu_pos]                 ; oldest first
+    add eax, edi
+    xor edx, edx
+    mov ecx, 60
+    div ecx
+    movzx edx, byte [esi + edx]
+    imul edx, 80
+    mov eax, edx
+    xor edx, edx
+    mov ecx, 100
+    div ecx
+    mov edx, eax                          ; the bar's height
+    or edx, edx
+    jz .next_bar
+    lea eax, [edi*4]
+    add eax, [dk_tg_x]
+    mov ebx, [dk_tg_y]
+    add ebx, 80
+    sub ebx, edx
+    mov ecx, 3
+    push esi
+    mov esi, [dk_tg_color]
+    call dk_fill
+    pop esi
+.next_bar:
+    inc edi
+    cmp edi, 60
+    jb .bar
+    popad
+    ret
+
+; Each console's program: how much of its 4MB it has used (pages that
+; aren't all zeros - app_run cleared them all) -> dk_con_mem, in KB;
+; and all the memory in use -> dk_mem_now (MB), dk_mem_pct
+dk_mem_sample:
+    pushad
+    mov ebp, 16 * 1024                    ; the kernel and low memory (KB)
+    cmp byte [dk_active], 0
+    je .consoles
+    add ebp, 32 * 1024                    ; the desktop's pictures
+.consoles:
+    xor ebx, ebx
+.console:
+    mov dword [dk_con_mem + ebx*4], 0
+    cmp byte [console_used + ebx], 0
+    je .next
+    add ebp, 1024                         ; its own pages, roughly
+    push ebx
+    mov eax, ebx
+    mov ebx, app_active
+    call console_saved_addr
+    mov al, [ebx]
+    pop ebx
+    or al, al
+    jz .next
+    imul edi, ebx, CONSOLE_SAVE_SIZE      ; its program's pages
+    add edi, CONSOLE_SAVE_BASE
+    xor edx, edx                          ; (used ones)
+    mov esi, APP_SIZE / 4096
+.page:
+    push edi
+    mov ecx, 1024
+    xor eax, eax
+    cld
+    repe scasd
+    pop edi
+    je .empty
+    add edx, 4
+.empty:
+    add edi, 4096
+    dec esi
+    jnz .page
+    mov [dk_con_mem + ebx*4], edx
+    add ebp, edx
+.next:
+    inc ebx
+    cmp ebx, CONSOLE_MAX
+    jb .console
+    mov eax, ebp                          ; KB -> MB, and a percentage
+    shr eax, 10
+    mov [dk_mem_now], eax
+    imul eax, 100
+    xor edx, edx
+    mov ecx, 128
+    div ecx
+    cmp eax, 100
+    jbe .pct
+    mov eax, 100
+.pct:
+    mov [dk_mem_pct], al
+    popad
+    ret
 
 ; Once a second: the CPU used since the last sample
 dk_tasks_sample:
@@ -1106,6 +1272,19 @@ dk_tasks_sample:
     mov [dk_cpu_now], al
     mov ecx, [dk_cpu_pos]
     mov [dk_cpu_hist + ecx], al
+    push eax                              ; the memory too, while Tasks is
+    push ebx                              ; open (it reads programs' pages)
+    mov eax, K_TASKS
+    xor ebx, ebx
+    call dk_win_find
+    pop ebx
+    cmp eax, -1
+    pop eax
+    je .no_mem
+    call dk_mem_sample
+    mov dl, [dk_mem_pct]
+    mov [dk_mem_hist + ecx], dl
+.no_mem:
     inc ecx
     cmp ecx, 60
     jb .pos
@@ -4095,9 +4274,11 @@ dk_win_click:
 
 dk_tasks_click:
     mov dword [dk_task_msg], 0
-    cmp ebx, 290                          ; [End task]
-    jb .row
-    cmp ecx, 300
+    cmp ebx, DK_TASK_END_Y                ; [End task]
+    jl .not_end
+    cmp ebx, DK_TASK_END_Y + 24
+    jge .redraw
+    cmp ecx, DK_TASK_END_X
     jb .redraw
     mov eax, [dk_task_sel]
     cmp eax, -1
@@ -4114,8 +4295,34 @@ dk_tasks_click:
 .refuse:
     mov dword [dk_task_msg], dk_task_cant
     jmp .redraw
-.row:
-    sub ebx, 118
+.not_end:
+    cmp ebx, DK_TASK_PRIO_Y               ; Priority: [Low] [Normal] [High]
+    jl .not_prio
+    cmp ebx, DK_TASK_PRIO_Y + 24
+    jge .redraw
+    sub ecx, DK_TASK_PBTN_X
+    js .redraw
+    mov eax, ecx
+    xor edx, edx
+    mov ecx, DK_TASK_PBTN_W + 6
+    div ecx
+    cmp eax, 3
+    jae .redraw
+    mov ecx, [dk_task_sel]
+    cmp ecx, -1
+    je .redraw
+    cmp ecx, [dk_task]                    ; (the desktop stays as it is)
+    je .no_prio
+    inc eax
+    mov [task_prio + ecx], al
+    mov dword [dk_task_msg], dk_task_prio_set
+    call snd_click
+    jmp .redraw
+.no_prio:
+    mov dword [dk_task_msg], dk_task_prio_no
+    jmp .redraw
+.not_prio:
+    sub ebx, 136
     js .redraw
     mov eax, ebx
     xor edx, edx
@@ -5224,7 +5431,31 @@ dk_sys_ip           db "Address: ", 0
 dk_sys_no_ip        db "(no network yet)", 0
 dk_sys_hint         db "Type `desktop` again to leave.", 0
 dk_task_cpu         db "CPU ", 0
-dk_task_header      db "PID  NAME                 STATE      CPU", 0
+dk_task_header      db "PID  NAME                 STATE     PRIO     MEMORY    CPU", 0
+DK_TASK_ROWS        equ 10
+DK_TASK_PRIO_Y      equ 330
+DK_TASK_PBTN_X      equ 90
+DK_TASK_PBTN_W      equ 76
+DK_TASK_END_X       equ 400
+DK_TASK_END_Y       equ 362
+dk_task_mem         db "Memory ", 0
+dk_task_mem_of      db " of 128 MB in use", 0
+dk_task_prio        db "Priority:", 0
+dk_task_prio_set    db "Priority set.", 0
+dk_task_prio_no     db "The desktop's own priority stays.", 0
+dk_task_none        db "-", 0
+dk_task_kb          db " KB", 0
+dk_prio_names       dd dk_task_none, dk_prio_low, dk_prio_normal, dk_prio_high
+dk_prio_low         db "Low", 0
+dk_prio_normal      db "Normal", 0
+dk_prio_high        db "High", 0
+dk_mem_hist         times 60 db 0
+dk_mem_now          dd 0
+dk_mem_pct          db 0
+dk_con_mem          times CONSOLE_MAX dd 0
+dk_tg_color         dd 0
+dk_tg_x             dd 0
+dk_tg_y             dd 0
 dk_task_end         db "End task", 0
 dk_task_ended       db "Ended.", 0
 dk_task_cant        db "Not that one (a console, or the desktop).", 0
