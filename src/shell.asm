@@ -518,6 +518,13 @@ handle_command:
     jmp .done
 
 .truly_unknown:
+    cmp byte [dk_active], 0    ; (on the desktop: its error sound)
+    je .no_sound
+    push eax
+    mov eax, SND_ERROR
+    call snd_play
+    pop eax
+.no_sound:
     mov si, msg_unknown
     call print_string
     mov si, buffer

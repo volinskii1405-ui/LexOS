@@ -2227,6 +2227,8 @@ dk_launch:
 .full:
     mov dword [dk_fm_msg], dk_fm_full
     mov byte [dk_redraw_all], 1
+    mov eax, SND_ERROR
+    call snd_play
     jmp .done
 .found:
     mov byte [console_request], CONSOLE_REQ_NEW   ; (it'll be ebx)
@@ -3449,6 +3451,8 @@ dk_shot_save:
 DK_TOAST_W equ 420
 dk_toast:
     pushad
+    mov eax, SND_NOTIFY
+    call snd_play
     mov eax, [timer_ms]
     add eax, 3500
     mov [dk_toast_until], eax
@@ -3938,6 +3942,7 @@ DKP_EXIT equ 2                            ; and end the console
 
 dk_win_x:
     pushad
+    call snd_click
     movzx edx, byte [dkw_kind + eax]
     cmp edx, K_TERM
     jne .not_term

@@ -335,6 +335,8 @@ desktop_resume_hook:
 ; The desktop's task
 ; ============================================================
 desktop_task:
+    mov eax, SND_START                    ; (src/dksound.asm: a tune)
+    call snd_play
     mov eax, [timer_ms]
     mov [dk_next_frame], eax
 .frame:
@@ -403,6 +405,7 @@ desktop_task:
     dec dword [sched_lock]
     call dk_shot_save                     ; (src/dkwins.asm: outside a frame)
     call dk_settings_work                 ; (src/dkstyle.asm: DESKTOP.CFG)
+    call snd_work                         ; (src/dksound.asm: its sounds)
     jmp .sleep
 .suspended:
     mov eax, [timer_ms]
@@ -433,6 +436,7 @@ desktop_task:
     jmp .wait
 
 .quit:
+    call snd_stop
     call dk_apps_close_all                ; programs' windows: back to text
     cmp byte [dk_suspended], 0
     jne .text_back
@@ -1312,6 +1316,7 @@ dk_click:
     cmp eax, 90
     jae .task_buttons
     mov byte [dk_menu_open], 1            ; the start button
+    call snd_click                        ; (src/dksound.asm)
     call dk_mark_menu
     jmp .done
 .task_buttons:
@@ -1670,6 +1675,7 @@ dk_on_taskbar:
 
 ; The start menu's item eax
 dk_menu_choose:
+    call snd_click
     or eax, eax                           ; Programs: its submenu
     jnz .not_programs
     mov byte [dk_menu_open], 1
