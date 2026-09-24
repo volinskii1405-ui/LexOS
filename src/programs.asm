@@ -11,6 +11,31 @@
 ; with an ordinary near call. The program must end with a ret instruction
 ; (0xC3) so control returns correctly back to the shell.
 ; ============================================================
+; fs_tmp_name in the root's APPS folder (where the example programs
+; are, tools/mkdisk.py) -> ax = its slot, or -1. The current folder
+; stays as it was - a program started this way still works on the
+; files where you are (run wc.app readme).
+fs_find_in_apps:
+    push si
+    push word [fs_current_dir]
+    mov word [fs_current_dir], FS_ROOT
+    mov si, fs_apps_dir_name
+    call fs_find_by_name
+    cmp ax, -1
+    je .done
+    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
+    jne .none
+    mov [fs_current_dir], ax
+    mov si, fs_tmp_name
+    call fs_find_by_name
+    jmp .done
+.none:
+    mov ax, -1
+.done:
+    pop word [fs_current_dir]
+    pop si
+    ret
+
 fs_run:
     push ax
     push bx
@@ -47,6 +72,9 @@ fs_run:
 .have_name:
     mov si, fs_tmp_name
     call fs_find_by_name
+    cmp ax, -1
+    jne .found
+    call fs_find_in_apps           ; not here: the APPS folder, then?
     cmp ax, -1
     jne .found
 

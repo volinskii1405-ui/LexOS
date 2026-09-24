@@ -793,3 +793,4 @@ fs_list_type db 0
 fs_tree_depth db 0
 
 fs_current_dir dw FS_ROOT
+fs_apps_dir_name db "APPS", 0

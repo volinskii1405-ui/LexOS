@@ -117,7 +117,7 @@ alex@/PROGRAMS$
   loop. `set`, `unset`, `vars`, `input` and `sleep` also work at the
   prompt, which expands `$variables` too (unknown ones stay as typed).
   `AUTOEXEC.HG` in the root folder runs at every boot. Try
-  `hostget quiz.hg`, then `quiz.hg` - a times-table quiz.
+  `cd /demos`, then `quiz.hg` - a times-table quiz.
 - `cp`/`mv` also support wildcards: `cp *.txt <folder>` copies every match
   into `<folder>` under its own name, and `mv *.txt <folder>` moves them
   the same way; both skip `USER.CFG` and any name already taken in the
@@ -269,8 +269,8 @@ alex@/PROGRAMS$
   program, and errors come out the classic way (`?SYNTAX ERROR IN 30`).
   Lines are interpreted straight from their text, Tiny BASIC style; the
   program, strings and arrays live above the 1MB mark, so a program can
-  be up to 64KB. Try `shared/GUESS.BAS` (guess the number) and
-  `shared/CATCH.BAS` (catch falling stars with A/D or the arrows).
+  be up to 64KB. Try `/DEMOS/GUESS.BAS` (guess the number) and
+  `/DEMOS/CATCH.BAS` (catch falling stars with A/D or the arrows).
 - **Sound.** `play <n.imf>` plays AdLib music (OPL2, Type-0 IMF at
   560Hz); `play <n.wav>` plays uncompressed PCM - 8- or 16-bit, mono or
   stereo, any rate - through a **Sound Blaster 16**: the DSP is found
@@ -313,9 +313,12 @@ alex@/PROGRAMS$
   LexOS itself now shows a kernel panic screen (which exception,
   where) instead of silently hanging. Programs can be written in
   assembly (`apps/lexos.inc`) or C (`apps/lexos.h`, built with
-  `gcc -m32`): `make apps` builds the examples into `shared/` -
-  `HELLO.APP`, `CRASH.APP` (a menu of forbidden things to try) and
-  `GUESS.APP` (in C). Try `hostget crash.app`, then `run crash.app`.
+  `gcc -m32`): `make apps` builds the examples into `disk/APPS/`, and
+  they're on LexOS's disk from the start, in `/APPS` - `HELLO.APP`,
+  `CRASH.APP` (a menu of forbidden things to try) and `GUESS.APP` (in
+  C). Try `run crash.app`: `run` looks in `/APPS` when the program
+  isn't in the current folder (which stays the program's current
+  folder, so `run wc.app readme` counts the README where you are).
 - **Files, arguments, memory and graphics for programs**
   (src/appsys.asm). `run <name>.app arg1 arg2` passes the rest of the
   line to the program - `main(argc, argv)` in C, `ebx` points to it
@@ -352,14 +355,14 @@ alex@/PROGRAMS$
   `floor` and `print_float`, each a few x87 instructions. The old ~18.2Hz tick everything else in the
   kernel is paced by keeps going underneath, counted off the same
   interrupt.
-  Examples (`make apps`, then `hostget` them): `WC.APP` (`run wc.app
+  Examples (in `/APPS`, built by `make apps`): `WC.APP` (`run wc.app
   LICENSE` - lines, words, bytes), `NOTE.APP` (`run note.app todo.txt
   buy milk` adds a line, `run note.app todo.txt` lists them),
   `FIRE.APP` (the demo-scene fire effect), `PONG.APP` (W/S or
   Up/Down against LexOS), `MANDEL.APP` (the Mandelbrot set in
   800x600 true color: arrows move, +/- zoom), `MODPLAY.APP`, a
-  ProTracker `.MOD` player mixing 4 channels in software (`hostget
-  demo.mod`, then `run modplay.app demo.mod` - DEMO.MOD is built by
+  ProTracker `.MOD` player mixing 4 channels in software (`cd /demos`,
+  then `run modplay.app demo.mod` - DEMO.MOD is built by
   `tools/makemod.py` from synthesized samples; any 4-channel .MOD
   works), `FTEST.APP` (the math functions, and a long sum - run it
   in two consoles at once) and `CUBE.APP` (a spinning 3D wireframe in
@@ -409,9 +412,14 @@ alex@/PROGRAMS$
     end, so its window just goes - the menu's Terminal brings it back.
   - **Files** shows the current folder as icons (folders, programs,
     pictures, sounds, text...), Up and page buttons. Double-click a
-    folder to go in, a .BMP opens in Pictures, anything else is typed
-    into the focused Terminal (or a new one, if that's busy with a
-    program or half a command): `run` for .APP/.COM/.BIN, `play` for
+    folder to go in, a .BMP opens in Pictures, a program (.APP, .COM,
+    .BIN, .CH8 - from Files or the start menu's Programs) just starts:
+    in a console of its own with no Terminal shown, only the program's
+    window. A program for the text screen gets its Terminal, named
+    after it, once it writes something; the console closes by itself
+    when the program ends (one that left text to read stays open).
+    Anything else is typed into the focused Terminal (or a new one, if
+    that's busy with a program or half a command): `play` for
     .WAV/.IMF, `run modplay.app` for .MOD, `basic` for .BAS, `turtle`,
     `chip8`, a .HG script by its name, anything else in `uranium`.
     Drag an icon onto a folder (or "..") to move it there; a rubber
@@ -495,7 +503,9 @@ alex@/PROGRAMS$
   no DHCP server on that cable each takes an address from its MAC, or
   `ifconfig <a.b.c.d>` sets one.
 - **Shared folder with the host.** `make run` attaches the repo's
-  `shared/` folder as a second disk (QEMU's vvfat presents a host
+  `shared/` folder (empty to begin with - the examples are on LexOS's
+  own disk, in `/APPS` and `/DEMOS`: `tools/mkdisk.py` puts the repo's
+  `disk/` folder onto the image at build time) as a second disk (QEMU's vvfat presents a host
   directory as a whole FAT16 volume). `hostls` lists it and
   `hostget <n> [new]` copies a file from it into the current LexOS
   directory - drop a script, CHIP-8 ROM or `.WAV` into `shared/` on
@@ -510,7 +520,7 @@ alex@/PROGRAMS$
   new files and refuses a name that's already there: QEMU's vvfat
   can't reliably rewrite an existing host file (it ignores a changed
   size, and a shrinking file crashes QEMU outright).
-  Try `hostget star.trg` then `turtle star.trg`.
+  Try `hostput readme` - it appears in `shared/`.
 - `chip8 <name> [speed]` interprets a CHIP-8 / SUPER-CHIP ROM - not LexOS's own format
   (like `run <n>.com` below, but for a much older and simpler bytecode
   VM: the 35-opcode interpreted machine mid-70s COSMAC VIP calculators
@@ -529,8 +539,8 @@ alex@/PROGRAMS$
   Timendus' chip8-test-suite (flags, quirks, scrolling). An optional
   second argument sets the speed in instructions per frame
   (`chip8 game.ch8 20`); by default it's 10, and 30 once a ROM
-  switches to high-res. `shared/BOUNCE.CH8` is a small high-res demo:
-  `hostget bounce.ch8` then `chip8 bounce.ch8`.
+  switches to high-res. `/DEMOS/BOUNCE.CH8` is a small high-res demo:
+  `cd /demos` then `chip8 bounce.ch8`.
 - `turtle <name>` runs a LOGO-style turtle graphics script - one
   command per line (or several per line; the parser only cares about
   tokens, whitespace and newlines are equivalent) like `FORWARD 10` /

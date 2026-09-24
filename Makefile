@@ -15,7 +15,11 @@ $(BUILD_DIR)/boot.bin: boot.asm | $(BUILD_DIR)
 $(BUILD_DIR)/kernel.bin: $(SRC_FILES) | $(BUILD_DIR)
 	$(ASM) -f bin -i. kernel.asm -o $@
 
-$(BUILD_DIR)/os-image.bin: $(BUILD_DIR)/boot.bin $(BUILD_DIR)/kernel.bin
+# The files LexOS's own disk starts with (tools/mkdisk.py): disk/APPS -
+# the example programs, disk/DEMOS - scripts, music, a CHIP-8 ROM...
+DISK_FILES = $(wildcard disk/* disk/*/*)
+
+$(BUILD_DIR)/os-image.bin: $(BUILD_DIR)/boot.bin $(BUILD_DIR)/kernel.bin $(DISK_FILES) tools/mkdisk.py
 	cat $(BUILD_DIR)/boot.bin $(BUILD_DIR)/kernel.bin > $@
 	@actual=$$(stat -c%s $@); \
 	if [ $$actual -gt 295424 ]; then \
@@ -25,6 +29,7 @@ $(BUILD_DIR)/os-image.bin: $(BUILD_DIR)/boot.bin $(BUILD_DIR)/kernel.bin
 		exit 1; \
 	fi
 	truncate -s 16M $@
+	python3 tools/mkdisk.py $@ disk
 
 # Audio backend for `beep` (see README > Running the pre-built image).
 # Override if the default doesn't work for you, e.g.: make run AUDIODEV=alsa
@@ -88,8 +93,8 @@ lan2: $(BUILD_DIR)/os-image.bin
 	$(LAN_QEMU) -drive format=raw,file=$(BUILD_DIR)/os-image-2.bin,if=ide,index=0 \
 		-nic socket,model=rtl8139,connect=127.0.0.1:$(LAN_PORT),mac=52:54:00:4c:58:16
 
-# Example ring-3 programs (src/usermode.asm), built into shared/ so
-# LexOS can fetch them: hostget hello.app, then run hello.app. The
+# Example ring-3 programs (src/usermode.asm), built into disk/APPS, so
+# they're on LexOS's disk from the start: run hello.app. The
 # assembly ones need only nasm; the C one also a 32-bit-capable gcc
 # and ld (on Debian/Ubuntu: gcc-multilib). The built .APP files are
 # committed, so plain `make` / `make run` never needs any of this.
@@ -97,20 +102,20 @@ APP_CFLAGS = -m32 -ffreestanding -fno-pic -fno-pie -fno-stack-protector \
 	-fno-asynchronous-unwind-tables -nostdlib -O2 -Wall
 C_APPS = guess wc note fire pong mandel modplay ftest cube
 upper = $(shell echo $(1) | tr a-z A-Z)
-apps: shared/HELLO.APP shared/CRASH.APP $(foreach a,$(C_APPS),shared/$(call upper,$(a)).APP)
+apps: disk/APPS/HELLO.APP disk/APPS/CRASH.APP $(foreach a,$(C_APPS),disk/APPS/$(call upper,$(a)).APP)
 
-shared/HELLO.APP: apps/hello.asm apps/lexos.inc
+disk/APPS/HELLO.APP: apps/hello.asm apps/lexos.inc
 	$(ASM) -f bin -i apps/ $< -o $@
 
-shared/CRASH.APP: apps/crash.asm apps/lexos.inc
+disk/APPS/CRASH.APP: apps/crash.asm apps/lexos.inc
 	$(ASM) -f bin -i apps/ $< -o $@
 
 $(BUILD_DIR)/crt0.o: apps/crt0.asm | $(BUILD_DIR)
 	$(ASM) -f elf32 $< -o $@
 
-# one C program per file: apps/guess.c -> shared/GUESS.APP, and so on
+# one C program per file: apps/guess.c -> disk/APPS/GUESS.APP, and so on
 define C_APP_RULE
-shared/$(call upper,$(1)).APP: apps/$(1).c apps/lexos.h apps/app.ld $(BUILD_DIR)/crt0.o
+disk/APPS/$(call upper,$(1)).APP: apps/$(1).c apps/lexos.h apps/app.ld $(BUILD_DIR)/crt0.o
 	gcc $$(APP_CFLAGS) -c apps/$(1).c -o $(BUILD_DIR)/$(1).o
 	ld -m elf_i386 -T apps/app.ld --oformat binary -o $$@ $(BUILD_DIR)/crt0.o $(BUILD_DIR)/$(1).o
 endef
