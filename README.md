@@ -596,8 +596,15 @@ project is developed and tested against.
 make             # assembles boot.asm + kernel.asm into build/os-image.bin
 make run         # builds, then boots it in QEMU
 make run-serial  # same, but also exposes COM1 on localhost:4444 for `recv`
-make clean       # remove build/
+make fresh-disk  # start LexOS's disk over (your files in it are gone)
+make clean       # remove build/ - the disk with it
 ```
+
+The disk image is made once: after that `make` only writes the new
+bootloader and kernel over its start, so the files you made in LexOS
+survive a rebuild, and `tools/mkdisk.py` adds what's new in `disk/`
+(the programs in `/APPS` are brought up to date; anything else that's
+there already is left alone).
 
 `os-image.bin` is a raw disk image: `dd` it to a USB stick, or point any
 BIOS-based emulator (QEMU, Bochs, VirtualBox in legacy-BIOS mode, ...) at
@@ -801,6 +808,10 @@ boot.asm              16-bit boot sector: loads the kernel, enables A20,
 kernel.asm             32-bit kernel entry point; %includes everything below.
 apps/                  example ring-3 programs (`make apps`): lexos.inc for
                        assembly, lexos.h + crt0.asm + app.ld for C.
+disk/                  what LexOS's disk starts with: APPS/ (the built
+                       programs), DEMOS/ (scripts, music, a CHIP-8 ROM).
+tools/                 mkdisk.py (disk/ -> the image's filesystem),
+                       makemod.py (DEMO.MOD).
 src/
   data.asm             constants, messages, working variables.
   screen.asm           VGA text output, hardware cursor.

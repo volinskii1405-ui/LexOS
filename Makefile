@@ -2,7 +2,7 @@ ASM = nasm
 BUILD_DIR = build
 SRC_FILES = kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/serial.asm src/mouse.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/vga.asm src/snake.asm src/paint.asm src/sweeper.asm src/tetris.asm src/game2048.asm src/convert.asm src/assembler.asm src/rtc.asm src/speaker.asm src/sound.asm src/mixer.asm src/chip8.asm src/turtle.asm src/hostfs.asm src/basic.asm src/net.asm src/inet.asm src/httpd.asm src/chat.asm src/sched.asm src/usermode.asm src/appsys.asm src/console.asm src/desktop.asm src/dkwins.asm src/grep.asm src/headtail.asm src/uranium.asm src/user.asm src/tabcomplete.asm src/script.asm
 
-.PHONY: all run run-serial lan1 lan2 clean apps
+.PHONY: all run run-serial lan1 lan2 clean apps fresh-disk
 
 all: $(BUILD_DIR)/os-image.bin
 
@@ -19,7 +19,12 @@ $(BUILD_DIR)/kernel.bin: $(SRC_FILES) | $(BUILD_DIR)
 # the example programs, disk/DEMOS - scripts, music, a CHIP-8 ROM...
 DISK_FILES = $(wildcard disk/* disk/*/*)
 
-$(BUILD_DIR)/os-image.bin: $(BUILD_DIR)/boot.bin $(BUILD_DIR)/kernel.bin $(DISK_FILES) tools/mkdisk.py
+# The disk image: the bootloader and kernel at its start, LexOS's own
+# filesystem after them. Made once; after that a build only writes the
+# new bootloader and kernel over the start, so what you made in LexOS
+# stays - and mkdisk.py adds whatever's new in disk/ (see its header).
+# `make fresh-disk` starts the disk over, as it was.
+$(BUILD_DIR)/system.bin: $(BUILD_DIR)/boot.bin $(BUILD_DIR)/kernel.bin
 	cat $(BUILD_DIR)/boot.bin $(BUILD_DIR)/kernel.bin > $@
 	@actual=$$(stat -c%s $@); \
 	if [ $$actual -gt 295424 ]; then \
@@ -28,8 +33,21 @@ $(BUILD_DIR)/os-image.bin: $(BUILD_DIR)/boot.bin $(BUILD_DIR)/kernel.bin $(DISK_
 		rm -f $@; \
 		exit 1; \
 	fi
-	truncate -s 16M $@
+
+$(BUILD_DIR)/os-image.bin: $(BUILD_DIR)/system.bin $(DISK_FILES) tools/mkdisk.py
+	@if [ -f $@ ]; then \
+		echo "updating the kernel in $@ (its files stay)"; \
+		dd if=$(BUILD_DIR)/system.bin of=$@ conv=notrunc 2>/dev/null; \
+	else \
+		cp $(BUILD_DIR)/system.bin $@; \
+	fi
+	truncate -s '>16M' $@
 	python3 tools/mkdisk.py $@ disk
+	@touch $@
+
+fresh-disk: $(BUILD_DIR)/system.bin
+	rm -f $(BUILD_DIR)/os-image.bin
+	$(MAKE) $(BUILD_DIR)/os-image.bin
 
 # Audio backend for `beep` (see README > Running the pre-built image).
 # Override if the default doesn't work for you, e.g.: make run AUDIODEV=alsa
