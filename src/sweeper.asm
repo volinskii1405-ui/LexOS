@@ -46,9 +46,8 @@ sweeper_run:
     pusha
 
     mov si, msg_sweeper_intro
-    call print_string
     mov ecx, 1500
-    call speaker_delay_ms
+    call game_intro            ; (src/dkwins.asm)
 
     call vga_enter_mode13
 

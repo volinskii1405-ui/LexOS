@@ -1993,6 +1993,12 @@ dk_files_open:
     call dk_win_single
     jmp .done
 .command:
+    cmp ecx, IC_APP                       ; a program: started by itself
+    jne .typed_in
+    mov edi, dk_fm_path
+    call dk_launch
+    jmp .done
+.typed_in:
     ; the rest: typed into the Terminal with the keyboard - "cd <here>",
     ; then what opens it. If that one's busy (a program, the editor,
     ; half a command typed), into a new Terminal instead.
@@ -2181,34 +2187,177 @@ dk_draw_programs:
     popad
     ret
 
-; eax = a row of the submenu: that program, run in a Terminal
+; eax = a row of the submenu: that program, started by itself
 dk_prog_run:
     pushad
     cmp eax, [dk_prog_count]
     jae .done
-    mov ebp, eax
-    call dk_pick_terminal                 ; -> bl
-    jc .done
-    mov edi, dk_inject_buf                ; "cd <where>", "run <name>"
-    mov esi, dk_cmd_cd
-    call wget_append
-    mov esi, ebp
-    shl esi, 5
-    add esi, dk_prog_paths
-    call wget_append
-    mov al, 13
-    stosb
-    mov esi, dk_verb_run
-    call wget_append
-    mov esi, ebp
+    mov esi, eax
     shl esi, 4
     add esi, dk_prog_names
+    mov edi, eax
+    shl edi, 5
+    add edi, dk_prog_paths
+    call dk_launch
+.done:
+    popad
+    ret
+
+; ============================================================
+; Starting a program with a click: in a console of its own that no one
+; sees - no Terminal window, only the program's own. If it writes text
+; (a program for the text screen), its Terminal shows up with its name
+; on it; when it ends, the console closes by itself - unless it left
+; text to read (a .BIN, a game for the text screen, always closes).
+; dk_launch_state: 0 -, 1 started ("cd" typed), 2 the program running.
+; ============================================================
+
+; esi = a program's name, edi = the folder it's in ("/A/B")
+dk_launch:
+    pushad
+    mov ebx, 1                            ; a free console
+.free:
+    cmp ebx, CONSOLE_MAX
+    jae .full
+    cmp byte [console_used + ebx], 0
+    je .found
+    inc ebx
+    jmp .free
+.full:
+    mov dword [dk_fm_msg], dk_fm_full
+    mov byte [dk_redraw_all], 1
+    jmp .done
+.found:
+    mov byte [console_request], CONSOLE_REQ_NEW   ; (it'll be ebx)
+    mov byte [dk_launch_state + ebx], 1
+    mov byte [dk_launch_show + ebx], 0
+    mov dword [dk_launch_seen + ebx*4], 0
+    call dk_ext_dword                     ; a .BIN: always closes after
+    cmp eax, 'BIN'
+    sete [dk_launch_bin + ebx]
+    push edi
+    mov edi, ebx                          ; its name, for its Terminal
+    shl edi, 4
+    add edi, dk_launch_name
+    push esi
+    mov ecx, 15
+.name:
+    lodsb
+    stosb
+    or al, al
+    loopnz .name
+    mov byte [edi], 0
+    pop esi
+    pop edx                               ; edx = the folder
+    mov edi, dk_inject_buf                ; "cd <where>", "<verb> <name>"
+    push esi
+    mov esi, dk_cmd_cd
+    call wget_append
+    mov esi, edx
     call wget_append
     mov al, 13
     stosb
-    call dk_inject_go
+    pop esi
+    call dk_open_command                  ; -> edx = the verb
+    push esi
+    mov esi, edx
+    call wget_append
+    pop esi
+    call wget_append
+    mov al, 13
+    stosb
+    call dk_inject_go                     ; (bl = the console)
 .done:
     popad
+    ret
+
+; The shell of console_self is about to carry out `buffer`: a launched
+; console's program starts (after its "cd") on a clean screen
+dk_launch_start:
+    push eax
+    movzx eax, byte [console_self]
+    cmp byte [dk_launch_state + eax], 1
+    jne .out
+    cmp word [buffer], 'cd'
+    jne .program
+    cmp byte [buffer + 2], ' '
+    je .out
+.program:
+    mov byte [dk_launch_state + eax], 2
+    call clear_screen
+.out:
+    pop eax
+    ret
+
+; ... and it has: a launched console's program ended - the console
+; closes (doesn't return), or stays, its Terminal shown, if there's
+; text on its screen to read
+dk_launch_end:
+    pushad
+    movzx edx, byte [console_self]
+    cmp byte [dk_launch_state + edx], 2
+    jne .out
+    mov byte [dk_launch_state + edx], 0
+    cmp byte [dk_active], 0
+    je .shown                             ; (no desktop: a console as any)
+    cmp byte [dk_launch_bin + edx], 0
+    jne .close
+    mov ebx, edx
+    call dk_launch_text
+    jnc .close
+.shown:
+    mov byte [dk_launch_show + edx], 1    ; (the desktop shows its Terminal)
+.out:
+    popad
+    ret
+.close:
+    popad
+    jmp console_cmd_exit
+
+; A game's line of help (si) and a moment to read it (ecx ms) before
+; it takes the screen - left out when it was started with a click: it
+; opens its own window at once, no Terminal flashing up first
+game_intro:
+    push eax
+    movzx eax, byte [console_self]
+    cmp byte [dk_launch_state + eax], 2
+    pop eax
+    je .done
+    push ecx
+    call print_string
+    pop ecx
+    call speaker_delay_ms
+.done:
+    ret
+
+; ebx = a console -> carry=1 if there's any text on its screen
+dk_launch_text:
+    push eax
+    push ecx
+    push esi
+    mov esi, ebx
+    shl esi, 12
+    add esi, DESK_TEXT
+    mov ecx, 80 * 25
+.cell:
+    mov al, [esi]
+    cmp al, ' '
+    je .next
+    or al, al
+    jnz .yes
+.next:
+    add esi, 2
+    loop .cell
+    pop esi
+    pop ecx
+    pop eax
+    clc
+    ret
+.yes:
+    pop esi
+    pop ecx
+    pop eax
+    stc
     ret
 
 ; ============================================================
@@ -3827,7 +3976,8 @@ dk_win_x:
     jne .close
     mov ecx, [dkw_param + eax*4]          ; a program's: it's stopped
     movzx ebx, byte [dk_app_console + ecx]
-    mov al, DKP_STOP
+    mov byte [dk_launch_bin + ebx], 1     ; (started with a click: its
+    mov al, DKP_STOP                      ; console goes too)
     call dk_pend
     jmp .done
 .close:
@@ -3932,7 +4082,11 @@ dk_vga_open:
     push esi
     push edi
     mov esi, buffer                       ; the title: the command line
-    mov edi, dk_vga_title                 ; (it's run from)
+    mov edi, dk_vga_title                 ; (it's run from) - "run " left out
+    cmp dword [esi], 'run '
+    jne .from
+    add esi, 4
+.from:
     mov ecx, DK_TITLE_LEN - 1
 .char:
     lodsb
@@ -4757,6 +4911,11 @@ dk_pend_since     dd 0
 dk_title_uranium  db "uranium - ", 0
 dk_cmd_exit       db "exit", 13, 0
 dk_app_console    times DK_APPS db 0
+dk_launch_state   times CONSOLE_MAX db 0  ; a program started with a click
+dk_launch_bin     times CONSOLE_MAX db 0  ; closes after, whatever (a .BIN; [x])
+dk_launch_show    times CONSOLE_MAX db 0  ; its Terminal to be shown
+dk_launch_seen    times CONSOLE_MAX dd 0  ; when text was first on its screen
+dk_launch_name    times CONSOLE_MAX * 16 db 0
 dk_app_win        times DK_APPS dd 0
 dk_app_w          times DK_APPS dd 0
 dk_app_h          times DK_APPS dd 0

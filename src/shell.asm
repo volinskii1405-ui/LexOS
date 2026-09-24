@@ -69,6 +69,7 @@ handle_command:
     call play_spawn
     jmp .done
 .foreground:
+    call dk_launch_start       ; (src/dkwins.asm: a clicked program's console)
 
     mov si, buffer
     mov di, cmd_shutdown
@@ -896,6 +897,7 @@ handle_command:
     call fs_df
 
 .done:
+    call dk_launch_end         ; (and it ended: its console may close)
     popa
     ret
 

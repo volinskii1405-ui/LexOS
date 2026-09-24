@@ -163,9 +163,8 @@ chip8_run:
     call fs_load_content
 
     mov si, msg_chip8_intro
-    call print_string
     mov ecx, 800
-    call speaker_delay_ms
+    call game_intro            ; (src/dkwins.asm)
 
     call chip8_reset
 

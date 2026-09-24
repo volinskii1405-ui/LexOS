@@ -612,14 +612,65 @@ dk_sync_consoles:
     cmp byte [console_used + ebx], 0
     je .unused
     cmp eax, -1
-    jne .next
+    jne .have
     mov eax, K_TERM                       ; a new console: its window
     call dk_win_open
+    cmp eax, -1
+    je .next
+    cmp byte [dk_launch_state + ebx], 0
+    je .next
+    mov byte [dkw_hidden + eax], 2        ; a program's: not shown, and
+    mov esi, ebx                          ; named after the program
+    shl esi, 4
+    add esi, dk_launch_name
+    imul edi, eax, DK_TITLE_LEN
+    add edi, dkw_title
+.title:
+    lodsb
+    stosb
+    or al, al
+    jnz .title
     jmp .next
 .unused:
+    mov byte [dk_launch_state + ebx], 0
     cmp eax, -1
     je .next
     call dk_win_close                     ; it exited
+    jmp .next
+.have:                                    ; a launched program's Terminal:
+    cmp byte [dkw_hidden + eax], 2        ; shown once it writes text
+    jne .next                             ; (or it ended leaving some)
+    cmp byte [dk_launch_show + ebx], 0
+    jne .show
+    cmp byte [dk_launch_state + ebx], 2
+    jne .next
+    call dk_launch_text                   ; text on its screen for a while
+    jnc .no_text                          ; (not just a line before its
+    push eax                              ; own window opens), and no
+    call dk_app_window_of                 ; window of its own
+    cmp eax, -1
+    pop eax
+    jne .no_text
+    mov ecx, [dk_launch_seen + ebx*4]
+    jecxz .first_seen
+    mov edx, [timer_ms]
+    sub edx, ecx
+    cmp edx, 400
+    jb .next
+    jmp .show
+.first_seen:
+    mov ecx, [timer_ms]
+    or ecx, 1
+    mov [dk_launch_seen + ebx*4], ecx
+    jmp .next
+.no_text:
+    mov dword [dk_launch_seen + ebx*4], 0
+    jmp .next
+.show:
+    mov byte [dk_launch_show + ebx], 0
+    mov byte [dkw_hidden + eax], 0
+    call dk_raise
+    mov byte [dk_redraw_all], 1
 .next:
     inc ebx
     cmp ebx, CONSOLE_MAX
@@ -637,6 +688,10 @@ dk_sync_consoles:
     call dk_win_find
     cmp eax, -1
     je .done
+    cmp byte [dkw_hidden + eax], 2        ; (a launched program's, not
+    jne .raise                            ; shown yet: stays that way)
+    cmp byte [dk_launch_state + ebx], 0
+    jne .done
 .raise:
     mov byte [dkw_hidden + eax], 0
     call dk_raise
@@ -1600,6 +1655,9 @@ dk_menu_choose:
     cmp byte [dkw_kind + ecx], K_TERM
     jne .hidden_next
     cmp byte [dkw_hidden + ecx], 2
+    jne .hidden_next
+    mov eax, [dkw_param + ecx*4]
+    cmp byte [dk_launch_state + eax], 0
     je .unhide
 .hidden_next:
     inc ecx
