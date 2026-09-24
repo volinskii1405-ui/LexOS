@@ -1113,9 +1113,5 @@ fh_pos       times FH_COUNT dd 0
 fh_cur       dd 0
 fh_cur_slot  dw 0
 fh_src_ptr   dd 0
-app_rect_x   dd 0
-app_rect_y   dd 0
-app_rect_w   dd 0
-app_rect_h   dd 0
 bga_lfb      dd 0
 app_audio_until dd 0

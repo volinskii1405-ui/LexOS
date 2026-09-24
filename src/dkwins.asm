@@ -1801,7 +1801,7 @@ dk_files_drag:
     jmp .done
 .dragging:
     or cl, cl
-    jnz .done                             ; (dk_move_pointer draws it)
+    jnz .done                             ; (dk_present draws it)
     mov byte [dk_fm_state], 0             ; dropped: onto a folder?
     mov byte [dk_redraw_all], 1
     call dk_files_entry_at                ; -> edx = the entry, or -1
@@ -1921,7 +1921,7 @@ dk_screen_fill:
     mov edi, ebx
     imul edi, DESK_STRIDE
     lea edi, [edi + eax*4]
-    add edi, [bga_lfb]
+    add edi, [dk_page_lfb]
     mov eax, esi
     mov edx, ecx
     cld
@@ -4496,7 +4496,8 @@ dk_app_blit:
     je .done
     jmp .unshown
 .shown:
-    mov [dk_ab_slot], eax
+    inc dword [sched_lock]                ; (the desktop mustn't draw a
+    mov [dk_ab_slot], eax                 ; half-copied frame)
     mov dword [dk_ab_y0], -1              ; (the rows that change)
     mov edi, eax
     shl edi, 21
@@ -4564,6 +4565,7 @@ dk_app_blit:
     inc ebx
     jmp .row
 .rows_done:
+    dec dword [sched_lock]
     ; the rows of that rectangle that changed, scaled, are dirty
     cmp dword [dk_ab_y0], -1
     je .done                              ; (nothing did)

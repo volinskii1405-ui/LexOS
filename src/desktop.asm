@@ -43,7 +43,8 @@ DESK_H            equ 768
 DESK_STRIDE       equ DESK_W * 4
 DESK_BACK         equ 0x6000000           ; the picture (3MB)
 DESK_TEXT         equ 0x6310000           ; each console's text, 4KB apart
-DESK_FRONT        equ 0x7D00000           ; what's on the screen (3MB)
+DESK_FRONT0       equ 0x7D00000           ; what's on each video page (3MB)
+DESK_FRONT1       equ 0x7400000
 DESK_SHOWN        equ 0x6320000           ; each window's text as last drawn
 DESK_FILES        equ 0x6330000           ; the Files window's list
 
@@ -210,6 +211,10 @@ dk_video_on:
     mov dword [mouse_x], DESK_W / 2
     mov dword [mouse_y], DESK_H / 2
     mov byte [dk_redraw_all], 1
+    mov dword [dk_page], 0                ; (the mode set: page 0 shown)
+    mov dword [dk_prev_n], 0
+    mov byte [dk_pg_ptr_on], 0
+    mov byte [dk_pg_ptr_on + 1], 0
     call dk_front_forget
     call vga_sync_window                  ; (a program's window's picture)
     popad
@@ -357,13 +362,10 @@ desktop_task:
     mov edx, [dk_frame_rects + esi + 12]
     mov [dk_clip_y1], edx
     call dk_render
-    sub ecx, eax
-    sub edx, ebx
-    call dk_blit
     inc ebp
     jmp .rect
 .rects_done:
-    call dk_move_pointer                  ; (erased and redrawn if needed)
+    call dk_present                       ; -> the hidden page, then shown
     mov dword [dk_app_unshown], 0         ; (their frames are on screen:
                                           ; the next ones may come)
 .drawn:
@@ -1767,6 +1769,7 @@ dk_draw_window:
     add eax, ecx
     add ebx, 3
     mov ecx, 2
+    dec edx                               ; (inside what dk_mark_window marks)
     mov esi, 0x08101C
     call dk_fill
     pop edx
@@ -1778,6 +1781,7 @@ dk_draw_window:
     push ecx
     add ebx, edx
     add eax, 3
+    dec ecx
     mov edx, 2
     mov esi, 0x08101C
     call dk_fill
@@ -2392,10 +2396,10 @@ dk_line:
 ; To the screen
 ; ============================================================
 
-; DESK_BACK's rectangle eax, ebx, ecx (w), edx (h) -> the screen - only
-; the pixels that differ from what's there already (DESK_FRONT: a copy
-; of the screen in RAM). Writing the video memory is the slow part (an
-; emulator watches every write to it); comparing RAM is cheap, and
+; DESK_BACK's rectangle eax, ebx, ecx (w), edx (h) -> the page being
+; drawn (dk_page_lfb) - only the pixels that differ from what's there
+; already (dk_page_front: a copy of that page in RAM). The video memory
+; is the slow part (an emulator watches it); comparing RAM is cheap, and
 ; most of a frame - a black background, a still half of a picture -
 ; hasn't changed.
 dk_blit:
@@ -2411,10 +2415,11 @@ dk_blit:
     mov esi, ebx
     imul esi, DESK_STRIDE
     lea esi, [esi + eax*4]
-    lea edi, [esi + DESK_FRONT]
+    mov edi, esi
+    add edi, [dk_page_front]
     add esi, DESK_BACK
-    mov ebp, [bga_lfb]                    ; ebp = the screen - the copy
-    sub ebp, DESK_FRONT
+    mov ebp, [dk_page_lfb]                ; ebp = the page - its copy
+    sub ebp, [dk_page_front]
     cld
 .row:
     push esi
@@ -2447,90 +2452,135 @@ dk_blit:
     popad
     ret
 
-; The same, every pixel of it (where the pointer was drawn straight
-; onto the screen, which DESK_FRONT doesn't know about)
-dk_blit_all:
+; The frame onto the screen. There are two pages of video memory: one
+; shown, and one drawn into while it isn't, then shown in one step (the
+; BGA's Y offset) - so the screen never shows a frame half drawn. The
+; hidden page last got the frame before the one just shown, so it takes
+; this frame's rectangles and the last frame's, and the pointer: rubbed
+; out where it was drawn on this page, drawn where it is.
+dk_present:
     pushad
-    add ecx, eax
-    add edx, ebx
-    call dk_clip_screen
-    jc .done
-    sub ecx, eax
-    mov ebp, edx
-    sub ebp, ebx
-    mov esi, ebx
-    imul esi, DESK_STRIDE
-    lea esi, [esi + eax*4]
-    mov edi, esi
-    add esi, DESK_BACK
-    add edi, [bga_lfb]
-    mov edx, ecx
+    cmp dword [dk_frame_n], 0
+    jne .go
+    cmp dword [dk_prev_n], 0
+    jne .go
+    mov eax, [dk_mx]                      ; nothing drawn: the pointer?
+    cmp eax, [dk_ptr_x]
+    jne .go
+    mov eax, [dk_my]
+    cmp eax, [dk_ptr_y]
+    jne .go
+    cmp byte [dk_fm_state], 3             ; (a dragged icon follows too)
+    je .go
+    cmp byte [dk_ptr_ghost], 0            ; (just dropped: the icon goes)
+    jne .go
+    jmp .done
+.go:
+    mov ebp, [dk_page]
+    xor ebp, 1                            ; ebp = the hidden page
+    imul eax, ebp, DESK_H * DESK_STRIDE
+    add eax, [bga_lfb]
+    mov [dk_page_lfb], eax
+    mov eax, [dk_fronts + ebp*4]
+    mov [dk_page_front], eax
+    mov esi, dk_frame_rects               ; this frame's
+    mov ecx, [dk_frame_n]
+    call .rects
+    mov esi, dk_prev_rects                ; the last one's
+    mov ecx, [dk_prev_n]
+    call .rects
+    cmp byte [dk_pg_ptr_on + ebp], 0      ; the pointer as drawn here
+    je .no_old
+    mov esi, ebp
+    shl esi, 4
+    add esi, dk_pg_ptr
+    mov ecx, 1
+    call .rects
+.no_old:
+    call dk_draw_pointer
+    call dk_ptr_rect
+    mov esi, ebp
+    shl esi, 4
+    mov [dk_pg_ptr + esi], eax
+    mov [dk_pg_ptr + esi + 4], ebx
+    mov [dk_pg_ptr + esi + 8], ecx
+    mov [dk_pg_ptr + esi + 12], edx
+    mov byte [dk_pg_ptr_on + ebp], 1
+    call dk_front_poison                  ; (its copy doesn't have it)
+    mov ax, BGA_Y_OFFSET                  ; shown
+    imul edx, ebp, DESK_H
+    call bga_write
+    mov [dk_page], ebp
+    mov esi, dk_frame_rects               ; (the other page lacks these now)
+    mov edi, dk_prev_rects
+    mov ecx, [dk_frame_n]
+    mov [dk_prev_n], ecx
+    shl ecx, 2
     cld
-.row:
-    push esi
-    push edi
-    mov ecx, edx
     rep movsd
-    pop edi
-    pop esi
-    add esi, DESK_STRIDE
-    add edi, DESK_STRIDE
-    dec ebp
-    jnz .row
 .done:
     popad
     ret
+; esi = ecx rectangles (x0, y0, x1, y1) -> the hidden page
+.rects:
+    jecxz .rects_done
+    push esi
+    push ecx
+.rect:
+    push ecx
+    mov eax, [esi]
+    mov ebx, [esi + 4]
+    mov ecx, [esi + 8]
+    mov edx, [esi + 12]
+    sub ecx, eax
+    sub edx, ebx
+    call dk_blit
+    add esi, 16
+    pop ecx
+    loop .rect
+    pop ecx
+    pop esi
+.rects_done:
+    ret
 
-; The screen's contents unknown (the mode just set): DESK_FRONT made to
-; match nothing, so the next frame writes every pixel
+; The video pages' contents unknown (the mode just set): their copies
+; made to match nothing, so the next frames write every pixel
 dk_front_forget:
     pushad
-    mov edi, DESK_FRONT
-    mov ecx, DESK_W * DESK_H
     mov eax, 0xFF000000                   ; (no pixel of DESK_BACK is that)
+    mov edi, DESK_FRONT0
+    mov ecx, DESK_W * DESK_H
     cld
+    rep stosd
+    mov edi, DESK_FRONT1
+    mov ecx, DESK_W * DESK_H
     rep stosd
     popad
     ret
 
-; After a frame: if the pointer moved, or something was just copied
-; over where it is, repaint where it was and draw it where it is.
-dk_move_pointer:
+; eax, ebx, ecx, edx = x0, y0, x1, y1 drawn straight onto the page:
+; its copy made to match nothing there, so that it's all written again
+dk_front_poison:
     pushad
-    mov eax, [dk_mx]
-    cmp eax, [dk_ptr_x]
-    jne .redraw
-    mov eax, [dk_my]
-    cmp eax, [dk_ptr_y]
-    jne .redraw
-    cmp byte [dk_fm_state], 3             ; (a dragged icon follows too)
-    je .redraw
-    cmp byte [dk_ptr_ghost], 0            ; (just dropped: the icon goes)
-    jne .redraw
-    call dk_ptr_rect                      ; drawn over?
-    xor esi, esi
-.over:
-    cmp esi, [dk_frame_n]
-    jae .done
-    mov edi, esi
-    shl edi, 4
-    cmp eax, [dk_frame_rects + edi + 8]
-    jge .next
-    cmp ecx, [dk_frame_rects + edi]
-    jle .next
-    cmp ebx, [dk_frame_rects + edi + 12]
-    jge .next
-    cmp edx, [dk_frame_rects + edi + 4]
-    jg .redraw
-.next:
-    inc esi
-    jmp .over
-.redraw:
-    call dk_ptr_rect                      ; where it was: from the back buffer
+    call dk_clip_screen
+    jc .done
     sub ecx, eax
     sub edx, ebx
-    call dk_blit_all
-    call dk_draw_pointer
+    mov edi, ebx
+    imul edi, DESK_STRIDE
+    lea edi, [edi + eax*4]
+    add edi, [dk_page_front]
+    mov eax, 0xFF000000
+    mov ebx, ecx
+    cld
+.row:
+    push edi
+    mov ecx, ebx
+    rep stosd
+    pop edi
+    add edi, DESK_STRIDE
+    dec edx
+    jnz .row
 .done:
     popad
     ret
@@ -2575,7 +2625,7 @@ dk_draw_pointer:
     cmp edx, DESK_H
     jae .done
     imul edx, DESK_STRIDE
-    add edx, [bga_lfb]
+    add edx, [dk_page_lfb]
     movzx esi, word [dk_ptr_outline + ebp*2]
     movzx edi, word [dk_ptr_fill + ebp*2]
     xor ecx, ecx                          ; the column
@@ -2689,6 +2739,14 @@ dk_last_fg        db 0xFF
 dk_mx             dd 0
 dk_my             dd 0
 dk_ptr_x          dd 0
+dk_page           dd 0                    ; the video page shown (0, 1)
+dk_page_lfb       dd 0                    ; the one being drawn
+dk_page_front     dd 0                    ; ... and its copy
+dk_fronts         dd DESK_FRONT0, DESK_FRONT1
+dk_prev_n         dd 0                    ; the last frame's rectangles
+dk_prev_rects     times DK_DIRTY_MAX * 4 dd 0
+dk_pg_ptr         times 2 * 4 dd 0        ; the pointer as drawn on each
+dk_pg_ptr_on      times 2 db 0
 dk_ptr_y          dd 0
 dk_last_buttons   db 0
 dk_dragging       db 0

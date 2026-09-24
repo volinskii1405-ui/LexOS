@@ -13,7 +13,7 @@
 ; Exports: net_httpd
 ; ============================================================
 
-HTTPD_REQ         equ 0x7400000           ; the request (past BIG_FILE_BUF)
+HTTPD_REQ         equ 0x3F00000           ; the request (past the FS caches)
 HTTPD_REQ_MAX     equ 4096
 HTTPD_OUT         equ BIG_FILE_BUF        ; a page / a file's content
 HTTPD_OUT_MAX     equ BIG_FILE_MAX
