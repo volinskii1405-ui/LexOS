@@ -279,6 +279,13 @@ keyboard_isr:
     ; recorded here, acted on at the next safe point
     cmp byte [kbd_alt_held], 0
     je .not_alt
+    cmp al, 0x0F                   ; Tab, on the desktop: the next window
+    jne .not_alt_tab               ; (src/desktop.asm)
+    cmp byte [dk_active], 0
+    je .not_alt_tab
+    inc byte [dk_alt_tab]
+    jmp .eoi
+.not_alt_tab:
     cmp al, 0x14                   ; T
     jne .not_alt_t
     mov byte [console_request], CONSOLE_REQ_NEW

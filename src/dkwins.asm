@@ -21,8 +21,6 @@ DK_VGA_LAST       equ 0x5710000           ; mode 13h windows: the picture
 DK_APP_MAX_PIX    equ 0x200000 / 4
 FM_MAX            equ 250                 ; Files: entries in a folder
 FM_ENTRY          equ 32                  ; name 0-16, kind 17, slot 20, size 24
-FM_COLS           equ 6
-FM_ROWS           equ 4
 FM_CELL_W         equ 90
 FM_CELL_H         equ 80
 FM_TOP            equ 32
@@ -358,11 +356,11 @@ dk_copy_pixels:
 .row:                                     ; edx = the screen row, from the top
     cmp edx, [dk_cp_r1]
     jge .done
-    mov eax, edx                          ; the source row
-    cmp dword [dk_cp_scale], 2
-    jne .row1
-    shr eax, 1
-.row1:
+    push edx                              ; the source row
+    mov eax, edx
+    xor edx, edx
+    div dword [dk_cp_scale]
+    pop edx
     imul eax, [dk_cp_w]
     shl eax, 2
     add eax, [dk_cp_src]
@@ -376,12 +374,19 @@ dk_copy_pixels:
     mov ebx, [dk_cp_c0]
     mov ecx, [dk_cp_c1]
     sub ecx, ebx
-    cmp dword [dk_cp_scale], 2
-    jne .straight
-    test edx, 1                           ; doubled: an odd row is the one
-    jz .doubled                           ; above it again, if that's drawn
-    cmp edx, [dk_cp_r0]
-    je .doubled
+    cmp dword [dk_cp_scale], 1
+    je .straight
+    cmp edx, [dk_cp_r0]                   ; scaled: a row that repeats the
+    je .scaled                            ; one above, if that's drawn
+    push eax
+    push edx
+    mov eax, edx
+    xor edx, edx
+    div dword [dk_cp_scale]
+    or edx, edx
+    pop edx
+    pop eax
+    jz .scaled
     lea esi, [edi - DESK_STRIDE]
     rep movsd
     jmp .next_row
@@ -389,13 +394,25 @@ dk_copy_pixels:
     lea esi, [esi + ebx*4]                ; 1:1 - a straight copy
     rep movsd
     jmp .next_row
-.doubled:
-    mov eax, ebx
-    shr eax, 1
-    mov eax, [esi + eax*4]
+.scaled:
+    push edx
+    mov eax, ebx                          ; the first source pixel, and how
+    xor edx, edx                          ; far into its repeats
+    div dword [dk_cp_scale]
+    lea esi, [esi + eax*4]
+    mov ebx, edx
+    mov eax, [esi]
+.px:
     stosd
     inc ebx
-    loop .doubled
+    cmp ebx, [dk_cp_scale]
+    jb .same_px
+    xor ebx, ebx
+    add esi, 4
+    mov eax, [esi]
+.same_px:
+    loop .px
+    pop edx
 .next_row:
     inc edx
     jmp .row
@@ -1123,10 +1140,10 @@ dk_draw_files:
     ; the grid
     xor edi, edi                          ; the cell
 .cell:
-    cmp edi, FM_COLS * FM_ROWS
+    cmp edi, [dk_fm_page_n]
     jae .status
     mov eax, [dk_fm_page]
-    imul eax, FM_COLS * FM_ROWS
+    imul eax, [dk_fm_page_n]
     add eax, edi
     cmp eax, [dk_fm_count]
     jae .status
@@ -1137,7 +1154,7 @@ dk_draw_files:
     push eax
     mov eax, edi                          ; its cell's corner
     xor edx, edx
-    mov ecx, FM_COLS
+    mov ecx, [dk_fm_cols]
     div ecx
     imul ebx, eax, FM_CELL_H
     add ebx, FM_TOP
@@ -1482,7 +1499,7 @@ dk_files_click:
     jb .prev
     mov edx, [dk_fm_page]                 ; [>]
     inc edx
-    imul edx, FM_COLS * FM_ROWS
+    imul edx, [dk_fm_page_n]
     cmp edx, [dk_fm_count]
     jae .done
     inc dword [dk_fm_page]
@@ -1502,20 +1519,21 @@ dk_files_click:
     xor edx, edx
     mov ebx, FM_CELL_H
     div ebx                               ; eax = the row
-    cmp eax, FM_ROWS
+    cmp eax, [dk_fm_rows]
     jae .miss
-    imul ebx, eax, FM_COLS
+    mov ebx, eax
+    imul ebx, [dk_fm_cols]
     mov eax, ecx
     sub eax, 4
     js .miss
     xor edx, edx
     mov ecx, FM_CELL_W
     div ecx                               ; eax = the column
-    cmp eax, FM_COLS
+    cmp eax, [dk_fm_cols]
     jae .miss
     add ebx, eax
     mov eax, [dk_fm_page]
-    imul eax, FM_COLS * FM_ROWS
+    imul eax, [dk_fm_page_n]
     add ebx, eax
     cmp ebx, [dk_fm_count]
     jae .miss
@@ -1634,18 +1652,19 @@ dk_files_entry_at:
     xor edx, edx
     mov ebx, FM_CELL_H
     div ebx
-    cmp eax, FM_ROWS
+    cmp eax, [dk_fm_rows]
     jae .none
-    imul ebx, eax, FM_COLS
+    mov ebx, eax
+    imul ebx, [dk_fm_cols]
     mov eax, ecx
     xor edx, edx
     mov ecx, FM_CELL_W
     div ecx
-    cmp eax, FM_COLS
+    cmp eax, [dk_fm_cols]
     jae .none
     add ebx, eax
     mov eax, [dk_fm_page]
-    imul eax, FM_COLS * FM_ROWS
+    imul eax, [dk_fm_page_n]
     add ebx, eax
     cmp ebx, [dk_fm_count]
     jae .none
@@ -1763,24 +1782,8 @@ dk_files_open:
     ; the rest: typed into the Terminal with the keyboard - "cd <here>",
     ; then what opens it. If that one's busy (a program, the editor,
     ; half a command typed), into a new Terminal instead.
-    mov bl, [console_fg]
-    cmp byte [shell_at_prompt], 0
-    je .elsewhere
-    cmp word [buf_len], 0
-    je .target
-.elsewhere:
-    xor ebx, ebx
-.free:
-    cmp ebx, CONSOLE_MAX
-    jae .busy
-    cmp byte [console_used + ebx], 0
-    je .new
-    inc ebx
-    jmp .free
-.new:
-    mov byte [console_request], CONSOLE_REQ_NEW
-.target:
-    mov [dk_inject_target], bl
+    call dk_pick_terminal                 ; -> bl
+    jc .busy
     mov edi, dk_inject_buf
     push esi
     mov esi, dk_cmd_cd
@@ -1798,24 +1801,244 @@ dk_files_open:
     call wget_append                      ; the name
     mov al, 13
     stosb
-    mov al, [dk_inject_target]
-    mov [dk_inject_console], al
+    call dk_inject_go
+    jmp .done
+.busy:
+    mov dword [dk_fm_msg], dk_fm_full
+    mov byte [dk_redraw_all], 1
+.done:
+    popad
+    ret
+
+; ============================================================
+; The start menu's Programs: every .APP / .COM / .BIN on the disk
+; ============================================================
+dk_prog_scan:
+    pushad
+    mov dword [dk_prog_count], 0
+    mov dword [dk_prog_shown], 1
+    call dk_shell_idle                    ; (the filesystem's free?)
+    jc .done
+    xor ebx, ebx
+.slot:
+    cmp ebx, FS_TOTAL_SLOTS
+    jae .done
+    cmp dword [dk_prog_count], DK_PROG_MAX
+    jae .done
+    mov ax, bx
+    call fs_read_slot
+    mov al, [SCRATCH_ADDR + FS_TYPE_OFFSET]
+    cmp al, FS_TYPE_FREE
+    je .next
+    cmp al, FS_TYPE_DIR
+    je .next
+    mov edi, [dk_prog_count]              ; its name
+    shl edi, 4
+    add edi, dk_prog_names
+    mov esi, SCRATCH_ADDR
+    mov ecx, FS_NAME_LEN
+    rep movsb
+    mov byte [edi], 0
+    sub edi, FS_NAME_LEN
+    mov esi, edi
+    call dk_name_kind
+    cmp al, IC_APP
+    jne .next
+    mov al, [SCRATCH_ADDR + FS_PARENT_OFFSET]   ; and where it is
+    mov edi, [dk_prog_count]
+    shl edi, 5
+    add edi, dk_prog_paths
+    call dk_dir_path
+    mov ax, bx                            ; (the slot again: the path
+    call fs_read_slot                     ; walk read others)
+    inc dword [dk_prog_count]
+.next:
+    inc ebx
+    jmp .slot
+.done:
+    mov eax, [dk_prog_count]
+    or eax, eax
+    jnz .shown
+    inc eax                               ; ("nothing" takes a row)
+.shown:
+    mov [dk_prog_shown], eax
+    popad
+    ret
+
+; al = a folder's slot byte (FS_ROOT_BYTE: the root), edi = 32 bytes ->
+; its path there, "/" or "/A/B"
+dk_dir_path:
+    pushad
+    mov byte [edi], '/'
+    mov byte [edi + 1], 0
+    xor ecx, ecx                          ; folders on the way up
+.up:
+    cmp al, FS_ROOT_BYTE
+    je .climbed
+    cmp ecx, 4
+    jae .climbed
+    movzx eax, al
+    mov [dk_path_up + ecx*4], eax
+    inc ecx
+    call fs_read_slot
+    mov al, [SCRATCH_ADDR + FS_PARENT_OFFSET]
+    jmp .up
+.climbed:
+    jecxz .done
+.down:
+    dec ecx
+    push ecx
+    mov eax, [dk_path_up + ecx*4]
+    call fs_read_slot
+    mov esi, SCRATCH_ADDR
+    mov ecx, FS_NAME_LEN
+.skip:
+    cmp byte [edi], 0
+    je .at_end
+    inc edi
+    jmp .skip
+.at_end:
+    cmp byte [edi - 1], '/'
+    je .name
+    mov byte [edi], '/'
+    inc edi
+.name:
+    lodsb
+    or al, al
+    jz .named
+    stosb
+    loop .name
+.named:
+    mov byte [edi], 0
+    pop ecx
+    or ecx, ecx
+    jnz .down
+.done:
+    popad
+    ret
+
+; The submenu, right of the menu, down to the taskbar
+dk_draw_programs:
+    pushad
+    mov eax, DK_MENU_W
+    mov edx, [dk_prog_shown]
+    imul edx, DK_MENU_ITEM_H
+    mov ebx, DESK_H - DK_TASKBAR_H
+    sub ebx, edx
+    mov ecx, DK_PROG_W
+    mov esi, 0xDCE1EA
+    call dk_fill
+    cmp dword [dk_prog_count], 0
+    jne .items
+    add eax, 14
+    add ebx, 4
+    mov esi, dk_prog_none
+    mov edx, 0x6E7B8B
+    call dk_text
+    jmp .done
+.items:
+    xor ecx, ecx
+.item:
+    cmp ecx, [dk_prog_count]
+    jae .done
+    push ebx
+    imul edx, ecx, DK_MENU_ITEM_H
+    add ebx, edx
+    add ebx, 4
+    mov eax, DK_MENU_W + 12
+    mov esi, ecx
+    shl esi, 4
+    add esi, dk_prog_names
+    mov edx, COL_TEXT
+    call dk_text
+    mov eax, DK_MENU_W + 130              ; (and where)
+    mov esi, ecx
+    shl esi, 5
+    add esi, dk_prog_paths
+    mov edx, 0x6E7B8B
+    push edi
+    mov edi, 12
+    call dk_text_n
+    pop edi
+    pop ebx
+    inc ecx
+    jmp .item
+.done:
+    popad
+    ret
+
+; eax = a row of the submenu: that program, run in a Terminal
+dk_prog_run:
+    pushad
+    cmp eax, [dk_prog_count]
+    jae .done
+    mov ebp, eax
+    call dk_pick_terminal                 ; -> bl
+    jc .done
+    mov edi, dk_inject_buf                ; "cd <where>", "run <name>"
+    mov esi, dk_cmd_cd
+    call wget_append
+    mov esi, ebp
+    shl esi, 5
+    add esi, dk_prog_paths
+    call wget_append
+    mov al, 13
+    stosb
+    mov esi, dk_verb_run
+    call wget_append
+    mov esi, ebp
+    shl esi, 4
+    add esi, dk_prog_names
+    call wget_append
+    mov al, 13
+    stosb
+    call dk_inject_go
+.done:
+    popad
+    ret
+
+; -> bl = the console to type a command into: the one on screen, if
+; its shell waits at an empty prompt - else a new one (asked for here).
+; carry=1 if there's no room for one.
+dk_pick_terminal:
+    mov bl, [console_fg]
+    cmp byte [shell_at_prompt], 0
+    je .elsewhere
+    cmp word [buf_len], 0
+    je .ok
+.elsewhere:
+    xor ebx, ebx
+.free:
+    cmp ebx, CONSOLE_MAX
+    jae .full
+    cmp byte [console_used + ebx], 0
+    je .new
+    inc ebx
+    jmp .free
+.new:
+    mov byte [console_request], CONSOLE_REQ_NEW
+.ok:
+    clc
+    ret
+.full:
+    stc
+    ret
+
+; bl = that console, edi = the end of the keys in dk_inject_buf: typed
+; into it, and its Terminal to the front (a new one comes up by itself)
+dk_inject_go:
+    pushad
+    mov [dk_inject_console], bl
     mov dword [dk_inject_pos], 0
-    mov eax, edi
-    sub eax, dk_inject_buf
-    mov [dk_inject_len], eax
-    movzx ebx, byte [dk_inject_target]    ; its Terminal to the front
-                                          ; (a new one comes up by itself)
+    sub edi, dk_inject_buf
+    mov [dk_inject_len], edi
+    movzx ebx, bl
     mov eax, K_TERM
     call dk_win_find
     cmp eax, -1
     je .done
     mov byte [dkw_hidden + eax], 0
     call dk_raise
-    jmp .done
-.busy:
-    mov dword [dk_fm_msg], dk_fm_full
-    mov byte [dk_redraw_all], 1
 .done:
     popad
     ret
@@ -2036,7 +2259,7 @@ dk_files_refresh:
 .listed:
     mov [dk_fm_count], edx
     mov eax, [dk_fm_page]                 ; (a page that's gone: back to one)
-    imul eax, FM_COLS * FM_ROWS
+    imul eax, [dk_fm_page_n]
     cmp eax, edx
     jb .page_ok
     mov dword [dk_fm_page], 0
@@ -2189,7 +2412,7 @@ dk_win_x:
     ; Terminal 1: its console is the kernel's own and can't end - the
     ; window goes (the menu's Terminal brings it back), and the
     ; keyboard to another console, if there is one
-    mov byte [dkw_hidden + ecx], 1
+    mov byte [dkw_hidden + ecx], 2        ; (closed - not just minimized)
     mov byte [dk_redraw_all], 1
     cmp byte [console_fg], 0
     jne .done
@@ -2543,12 +2766,57 @@ dk_clear_prog_title:
     mov byte [dk_redraw_all], 1
     ret
 
-; Each frame: pictures and file lists waiting to be (re)loaded
+; Files' grid: as many columns and rows as its window has room for
+dk_fm_layout:
+    pushad
+    mov eax, K_FILES
+    xor ebx, ebx
+    call dk_win_find
+    cmp eax, -1
+    je .done
+    mov ebp, eax
+    mov eax, [dkw_w + ebp*4]
+    sub eax, 8
+    xor edx, edx
+    mov ecx, FM_CELL_W
+    div ecx
+    cmp eax, 1
+    jae .cols
+    mov eax, 1
+.cols:
+    mov ebx, eax
+    mov eax, [dkw_h + ebp*4]
+    sub eax, FM_TOP + 26
+    jns .rows_room
+    xor eax, eax
+.rows_room:
+    xor edx, edx
+    mov ecx, FM_CELL_H
+    div ecx
+    cmp eax, 1
+    jae .rows
+    mov eax, 1
+.rows:
+    cmp ebx, [dk_fm_cols]
+    jne .changed
+    cmp eax, [dk_fm_rows]
+    je .done
+.changed:
+    mov [dk_fm_cols], ebx
+    mov [dk_fm_rows], eax
+    imul eax, ebx
+    mov [dk_fm_page_n], eax
+    mov dword [dk_fm_page], 0             ; (from the first page again)
+    mov byte [dk_redraw_all], 1
+.done:
+    popad
+    ret
 
 ; Each frame: pictures and file lists waiting to be (re)loaded
 dk_windows_work:
     pushad
     call dk_pend_work
+    call dk_fm_layout
     cmp byte [dk_pic_state], 1
     jne .files
     mov eax, K_PICS
@@ -2900,6 +3168,14 @@ dk_cp_c1          dd 0
 dk_cp_r1          dd 0
 dk_cp_r0          dd 0
 dk_inject_target  db 0
+dk_prog_count     dd 0                    ; Programs: what's there
+dk_prog_names     times DK_PROG_MAX * 16 db 0
+dk_prog_paths     times DK_PROG_MAX * 32 db 0
+dk_path_up        times 4 dd 0
+dk_prog_none      db "(no programs)", 0
+dk_fm_cols        dd 6                    ; Files: the grid the window has
+dk_fm_rows        dd 4                    ; room for (dk_fm_layout)
+dk_fm_page_n      dd 24
 dk_pic_state      db 0                    ; 0 -, 1 to load, 2 shown, 3 none
 dk_pic_slot       dd -1
 dk_pic_dir        db FS_ROOT_BYTE
