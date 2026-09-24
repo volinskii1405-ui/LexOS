@@ -687,6 +687,11 @@ outside the kernel image need a full 32-bit linear address:
 | A ring-3 program's own 4MB | `0x800000` – `0xBFFFFF` |
 | Console save areas (5MB each) | `0x1000000` – `0x3CFFFFF` |
 | Programs' open-file buffers (8 x 4MB) | `0x4000000` – `0x5FFFFFF` |
+| Desktop back buffer (1024x768x4) | `0x6000000` – `0x62FFFFF` |
+| FPU save areas / desktop text | `0x6300000` / `0x6310000` |
+| Script variables and levels | `0x280000` – `0x29FFFF` |
+| SB16 stream DMA buffer / queue | `0x330000` / `0x340000` |
+| Desktop picture file / pixels | `0x7500000` / `0x7700000` |
 | RTL8139 receive ring / transmit buffers | `0x300000` / `0x304000` |
 | .COM program segment | `0x100000` |
 | Kernel code/data | `0x8000` – `0x3FFFF` (448 sectors) |
