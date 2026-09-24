@@ -22,7 +22,7 @@ SYS_WRITE       equ 1       ; ebx = text, ecx = length
 SYS_GETKEY      equ 2       ; -> eax = ASCII | scancode << 8 (waits)
 SYS_POLLKEY     equ 3       ; -> the same, or 0 if no key is waiting
 SYS_TICKS       equ 4       ; -> eax = timer ticks (18.2 a second)
-SYS_SLEEP       equ 5       ; ebx = milliseconds
+SYS_SLEEP       equ 5       ; ebx = milliseconds (1ms resolution)
 SYS_CLEAR       equ 6       ; clear the screen
 SYS_SETCURSOR   equ 7       ; ebx = row (0-24), ecx = column (0-79)
 SYS_SETCOLOR    equ 8       ; ebx = text attribute (e.g. 0x0E yellow)
@@ -44,6 +44,8 @@ SYS_BLIT_RECT   equ 22      ; ebx = frame, ecx = x | y<<16, edx = w | h<<16
 SYS_AUDIO_OPEN  equ 23      ; ebx = rate, ecx = channels -> 0 / -1
 SYS_AUDIO_WRITE equ 24      ; ebx = 16-bit signed samples, ecx = bytes (waits)
 SYS_AUDIO_CLOSE equ 25      ; finishes what's queued, then stops
+SYS_MILLIS      equ 26      ; -> eax = milliseconds since boot
+SYS_SLEEP_UNTIL equ 27      ; ebx = a SYS_MILLIS value to wait for
 
 %macro EXIT 1
     mov ebx, %1

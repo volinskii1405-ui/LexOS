@@ -54,7 +54,7 @@ SYS_WRITE       equ 1                 ; ebx = text, ecx = length
 SYS_GETKEY      equ 2                 ; -> eax = ASCII | scancode << 8
 SYS_POLLKEY     equ 3                 ; -> eax = the same, or 0 if none
 SYS_TICKS       equ 4                 ; -> eax = timer ticks (18.2/s)
-SYS_SLEEP       equ 5                 ; ebx = milliseconds
+SYS_SLEEP       equ 5                 ; ebx = milliseconds (1ms resolution)
 SYS_CLEAR       equ 6
 SYS_SETCURSOR   equ 7                 ; ebx = row, ecx = column (0-based)
 SYS_SETCOLOR    equ 8                 ; ebx = text attribute
@@ -75,7 +75,9 @@ SYS_BLIT_RECT   equ 22                ; ebx = frame, ecx = x|y<<16, edx = w|h<<1
 SYS_AUDIO_OPEN  equ 23                ; ebx = rate, ecx = channels
 SYS_AUDIO_WRITE equ 24                ; ebx = 16-bit samples, ecx = bytes
 SYS_AUDIO_CLOSE equ 25
-SYS_COUNT       equ 26                ; (files/graphics: src/appsys.asm)
+SYS_MILLIS      equ 26                ; -> eax = milliseconds since boot
+SYS_SLEEP_UNTIL equ 27                ; ebx = a SYS_MILLIS value to wait for
+SYS_COUNT       equ 28                ; (files/graphics: src/appsys.asm)
 
 ; ============================================================
 ; Paging, the TSS, the ring-3 entry points into the kernel (int 0x80,
@@ -290,7 +292,7 @@ syscall_table:
     dd sys_beep, sys_open, sys_read, sys_fwrite, sys_close
     dd sys_seek, sys_fsize, sys_gfx, sys_blit, sys_palette
     dd sys_keydown, sys_gfx_mode, sys_blit_rect, sys_audio_open
-    dd sys_audio_write, sys_audio_close
+    dd sys_audio_write, sys_audio_close, sys_millis, sys_sleep_until
 
 sys_exit:
     mov eax, [ebp + 16]
@@ -384,22 +386,30 @@ sys_ticks:
     ret
 
 sys_sleep:
+    mov eax, [timer_ms]
+    add eax, [ebp + 16]
+    jmp app_sleep_until
+
+; SYS_SLEEP_UNTIL: ebx = a timer_ms value to wait for (a frame's start)
+sys_sleep_until:
     mov eax, [ebp + 16]
-    add eax, 54                           ; rounded up to whole ~55ms ticks,
-    xor edx, edx                          ; so sleep_ms(1) waits for the next
-    mov ecx, 55
-    div ecx
-    add eax, [timer_ticks]
-    mov ebx, eax
+app_sleep_until:
+    mov [app_wake_ms], eax
 .wait:
     call app_check_abort
-    cmp [timer_ticks], ebx
-    jae .done
-    mov eax, WAIT_TICK
+    mov eax, [timer_ms]
+    sub eax, [app_wake_ms]
+    jns .done                             ; (wraps safely: a signed difference)
+    mov eax, WAIT_MS
     call task_wait
     jmp .wait
 .done:
     xor eax, eax
+    ret
+
+; SYS_MILLIS -> eax = milliseconds since boot
+sys_millis:
+    mov eax, [timer_ms]
     ret
 
 sys_clear:
@@ -482,19 +492,13 @@ sys_beep:
     call speaker_set_freq
     pop ebx
     mov eax, [ebp + 24]
-    xor edx, edx
-    mov ecx, 55
-    div ecx
-    or eax, eax
-    jnz .have
-    inc eax
-.have:
-    add eax, [timer_ticks]
+    add eax, [timer_ms]
     mov ebx, eax
 .wait:
-    cmp [timer_ticks], ebx
-    jae .off
-    mov eax, WAIT_TICK
+    mov eax, [timer_ms]
+    sub eax, ebx
+    jns .off
+    mov eax, WAIT_MS
     call task_wait
     jmp .wait
 .off:
@@ -679,6 +683,7 @@ fs_name_ends_with_app:
 ; ============================================================
 ; (app_active / app_abort_request are per console - in src/data.asm)
 exc_vector         dd 0
+app_wake_ms        dd 0
 app_args_src       dw 0                   ; fs_run: what followed the name
 exc_error          dd 0
 exc_eip            dd 0

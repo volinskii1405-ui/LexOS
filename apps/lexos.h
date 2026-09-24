@@ -32,6 +32,12 @@ static inline int  getkey_full(void)          { return lx_syscall(2, 0, 0); }  /
 static inline int  pollkey(void)              { return lx_syscall(3, 0, 0); }  /* the same, or 0 */
 static inline unsigned ticks(void)            { return (unsigned)lx_syscall(4, 0, 0); } /* 18.2/s */
 static inline void sleep_ms(int ms)           { lx_syscall(5, ms, 0); }
+static inline unsigned millis(void)           { return (unsigned)lx_syscall(26, 0, 0); } /* since boot */
+/* sleep_until(t): wait until millis() reaches t - for a steady frame
+ * rate: unsigned next = millis(); for (;;) { ...draw...; next += 16;
+ * sleep_until(next); }  gives 60 frames a second, however long the
+ * drawing took (as long as it took less than 16ms). */
+static inline void sleep_until(unsigned t)    { lx_syscall(27, (int)t, 0); }
 static inline void clear(void)                { lx_syscall(6, 0, 0); }
 static inline void setcursor(int row, int col){ lx_syscall(7, row, col); }
 static inline void setcolor(int attr)         { lx_syscall(8, attr, 0); }

@@ -1829,18 +1829,15 @@ script_cmd_sleep:
     call script_skip_spaces
     call script_arith
     jc .usage
-    add eax, 54
-    xor edx, edx
-    mov ecx, 55
-    div ecx
-    add eax, [timer_ticks]
+    add eax, [timer_ms]
     mov ebx, eax
 .wait:
-    cmp [timer_ticks], ebx
-    jae .done
+    mov eax, [timer_ms]
+    sub eax, ebx
+    jns .done
     call net_check_esc
     jc .esc
-    mov eax, WAIT_TICK
+    mov eax, WAIT_MS
     call task_wait
     jmp .wait
 .esc:

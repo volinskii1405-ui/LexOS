@@ -11,6 +11,7 @@ static unsigned rnd(void) { seed = seed * 1103515245u + 12345u; return seed >> 1
 int main(void)
 {
     int x, y, i;
+    unsigned next;
     gfx_mode(1);
     for (i = 0; i < 256; i++) {            /* black -> red -> yellow -> white */
         unsigned r = i < 85 ? i * 3 : 255;
@@ -19,6 +20,7 @@ int main(void)
         gfx_palette(i, r << 16 | g << 8 | b);
     }
     seed = ticks();
+    next = millis();
     while (!pollkey()) {
         for (x = 0; x < GFX_W; x++)         /* new sparks along the bottom */
             heat[GFX_H + 1][x] = heat[GFX_H][x] = rnd() % 3 ? 255 : 40;
@@ -31,7 +33,9 @@ int main(void)
         for (y = 0; y < GFX_H; y++)
             memcpy(frame + y * GFX_W, heat[y], GFX_W);
         gfx_blit(frame);
-        sleep_ms(1);                        /* the next timer tick */
+        next += 16;                         /* up to 60 frames a second */
+        sleep_until(next);
+        if ((int)(millis() - next) > 100) next = millis();   /* fell behind: don't rush */
     }
     gfx_mode(0);
     return 0;

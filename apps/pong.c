@@ -1,5 +1,6 @@
 /* pong.c - you (W/S or Up/Down) against LexOS, first to 5. Esc quits.
- * Shows graphics and keydown() for smooth, held-key movement. */
+ * Shows graphics, keydown() for smooth, held-key movement, and
+ * sleep_until() for a steady 60 frames a second. */
 #include "lexos.h"
 
 #define PADDLE_H 32
@@ -30,31 +31,33 @@ static void digit(int x, int y, int d, int color)
 int main(void)
 {
     int py = 84, cy = 84, bx, by, dx, dy, me = 0, cpu = 0, y;
+    unsigned next;
     gfx_mode(1);
-    bx = 160 * 16; by = 100 * 16; dx = -96; dy = 48;         /* ball in 1/16 pixels */
+    next = millis();
+    bx = 160 * 16; by = 100 * 16; dx = -32; dy = 16;         /* ball in 1/16 pixels */
     while (!keydown(KEY_ESC) && me < WIN && cpu < WIN) {
-        if ((keydown(KEY_W) || keydown(KEY_UP)) && py > 0) py -= 9;
-        if ((keydown(KEY_S) || keydown(KEY_DOWN)) && py < GFX_H - PADDLE_H) py += 9;
-        if (cy + PADDLE_H / 2 < by / 16 - 4 && cy < GFX_H - PADDLE_H) cy += 6;  /* LexOS follows */
-        if (cy + PADDLE_H / 2 > by / 16 + 4 && cy > 0) cy -= 6;
+        if ((keydown(KEY_W) || keydown(KEY_UP)) && py > 0) py -= 3;
+        if ((keydown(KEY_S) || keydown(KEY_DOWN)) && py < GFX_H - PADDLE_H) py += 3;
+        if (cy + PADDLE_H / 2 < by / 16 - 4 && cy < GFX_H - PADDLE_H) cy += 2;  /* LexOS follows */
+        if (cy + PADDLE_H / 2 > by / 16 + 4 && cy > 0) cy -= 2;
 
         bx += dx; by += dy;
         if (by < 0 || by > (GFX_H - 4) * 16) { dy = -dy; by += dy; beep(900, 5); }
         if (dx < 0 && bx / 16 <= 12 && bx / 16 >= 0 && by / 16 + 4 >= py && by / 16 <= py + PADDLE_H) {
-            dx = -dx + 4; dy += (by / 16 - (py + PADDLE_H / 2)) / 2; beep(600, 10);
+            dx = -dx + 1; dy += (by / 16 - (py + PADDLE_H / 2)) / 4; beep(600, 10);
         }
         if (dx > 0 && bx / 16 >= GFX_W - 16 && bx / 16 <= GFX_W - 4 && by / 16 + 4 >= cy && by / 16 <= cy + PADDLE_H) {
-            dx = -dx - 4; dy += (by / 16 - (cy + PADDLE_H / 2)) / 2; beep(600, 10);
+            dx = -dx - 1; dy += (by / 16 - (cy + PADDLE_H / 2)) / 4; beep(600, 10);
         }
-        if (dy > 80) dy = 80;
-        if (dy < -80) dy = -80;
+        if (dy > 28) dy = 28;
+        if (dy < -28) dy = -28;
         if (bx < 0 || bx > GFX_W * 16) {                     /* a point */
             int lost = bx < 0;
             if (lost) cpu++; else me++;
             beep(lost ? 200 : 1200, 150);
             bx = 160 * 16; by = 100 * 16;
-            dx = lost ? 96 : -96;                               /* serve to whoever scored */
-            dy = (int)(ticks() % 96) - 48;
+            dx = lost ? 32 : -32;                               /* serve to whoever scored */
+            dy = (int)(millis() % 32) - 16;
         }
 
         memset(frame, 0, sizeof frame);
@@ -65,7 +68,9 @@ int main(void)
         rect(GFX_W - 12, cy, 4, PADDLE_H, 15);
         rect(bx / 16, by / 16, 4, 4, RGB6(5, 5, 0));
         gfx_blit(frame);
-        sleep_ms(1);                                         /* the next timer tick: ~18 fps */
+        next += 16;                                          /* 60 frames a second */
+        sleep_until(next);
+        if ((int)(millis() - next) > 100) next = millis();   /* fell behind: don't rush */
     }
     gfx_mode(0);
     if (me == WIN) puts("You win!\n");

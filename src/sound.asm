@@ -260,6 +260,7 @@ audio_timer_start:
 
     mov dword [audio_fast_ticks], 0
     mov dword [audio_tick_accum], 0
+    mov dword [audio_ms_accum], 0
     mov byte [audio_timer_active], 1
 
     cli
@@ -296,11 +297,7 @@ audio_timer_stop:
     mov ecx, 8
     rep movsb
 
-    mov al, 00110110b
-    out PIT_COMMAND, al
-    xor al, al                      ; divisor 0 = 65536 -> ~18.2Hz, the
-    out PIT_CH0_DATA, al             ; kernel's normal default rate
-    out PIT_CH0_DATA, al
+    call pit_set_ms_rate            ; the kernel's normal ~1000Hz
 
     sti
     popa
@@ -319,6 +316,15 @@ audio_fast_tick_isr:
     inc dword [audio_fast_ticks]
     mov ebx, WAIT_AUDIO
     mov eax, [audio_pit_divisor]
+    add [audio_ms_accum], eax             ; the millisecond clock goes on too
+.ms:
+    cmp dword [audio_ms_accum], PIT_MS_DIVISOR
+    jb .ms_done
+    sub dword [audio_ms_accum], PIT_MS_DIVISOR
+    inc dword [timer_ms]
+    or ebx, WAIT_MS
+    jmp .ms
+.ms_done:
     add [audio_tick_accum], eax
     cmp dword [audio_tick_accum], 65536
     jb .no_tick
@@ -1143,6 +1149,7 @@ IMF_BUF            equ 0x310000     ; a whole .IMF, up to 64KB
 audio_fast_ticks   dd 0
 audio_pit_divisor  dd 0
 audio_tick_accum   dd 0
+audio_ms_accum     dd 0
 audio_timer_active db 0
 audio_saved_idt0   times 8 db 0
 sound_stop_requested db 0

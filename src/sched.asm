@@ -58,6 +58,7 @@ TASK_PAUSED        equ 3            ; a console not on screen (src/console.asm)
 WAIT_KEY           equ 1            ; keyboard interrupt
 WAIT_TICK          equ 2            ; timer tick (~18.2Hz)
 WAIT_AUDIO         equ 4            ; audio_fast_tick_isr
+WAIT_MS            equ 8            ; every timer interrupt (~1000Hz)
 
 SCHED_PRIO_NORMAL  equ 1
 SCHED_PRIO_HIGH    equ 2

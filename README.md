@@ -330,7 +330,12 @@ alex@/PROGRAMS$
   Blaster - the card plays a double buffer over and over (auto-init
   DMA), and its IRQ5 refills each half from a 64KB queue the program
   writes into, so `audio_write` also paces a program that just keeps
-  writing.
+  writing. Time: the system timer interrupts ~1000 times a second -
+  `millis()` counts milliseconds since boot, `sleep_ms` is exact to the
+  millisecond, and `sleep_until(next)` gives a game a steady 60 frames
+  a second (`next += 16`). The old ~18.2Hz tick everything else in the
+  kernel is paced by keeps going underneath, counted off the same
+  interrupt.
   Examples (`make apps`, then `hostget` them): `WC.APP` (`run wc.app
   LICENSE` - lines, words, bytes), `NOTE.APP` (`run note.app todo.txt
   buy milk` adds a line, `run note.app todo.txt` lists them),

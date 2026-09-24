@@ -160,8 +160,33 @@ install_timer_isr:
     mov edi, idt_table + IRQ_BASE * 8
     mov eax, timer_isr
     call set_idt_entry_at_edi
+    call pit_set_ms_rate
 
     pop edi
+    pop eax
+    ret
+
+; ============================================================
+; The PIT (channel 0) at ~1000Hz: an interrupt a millisecond. timer_ms
+; counts them; timer_ticks still counts the BIOS-era ~18.2Hz ticks the
+; rest of the kernel is paced by (the scheduler's time slices, delays,
+; the games) - one every 65536 PIT counts, as before, via an
+; accumulator of the counts that have gone by.
+; ============================================================
+PIT_MS_DIVISOR equ 1193                   ; 1193182Hz / 1193 = 1000.15Hz
+PIT_COMMAND_PORT equ 0x43
+
+pit_set_ms_rate:
+    push eax
+    pushfd
+    cli
+    mov al, 00110110b                     ; channel 0, lo/hi byte, mode 3
+    out PIT_COMMAND_PORT, al
+    mov ax, PIT_MS_DIVISOR
+    out 0x40, al
+    mov al, ah
+    out 0x40, al
+    popfd
     pop eax
     ret
 
@@ -344,7 +369,15 @@ push_key_to_buffer:
 timer_isr:
     pushad
 
+    inc dword [timer_ms]
+    mov ebx, WAIT_MS
+    add dword [timer_ms_accum], PIT_MS_DIVISOR
+    cmp dword [timer_ms_accum], 65536
+    jb .not_a_tick
+    sub dword [timer_ms_accum], 65536
     inc dword [timer_ticks]
+    or ebx, WAIT_TICK
+.not_a_tick:
 
     mov al, 0x20
     out PIC1_CMD, al
@@ -358,7 +391,7 @@ timer_isr:
 .no_abort:
 
     ; the scheduler's turn (src/sched.asm): maybe another task's
-    mov eax, WAIT_TICK
+    mov eax, ebx
     call sched_event
     cmp ecx, -1
     je .same_task
@@ -462,6 +495,8 @@ kbd_extended_flag db 0
 key_held times 0x80 db 0
 
 timer_ticks dd 0
+timer_ms    dd 0                 ; milliseconds since boot (pit_set_ms_rate)
+timer_ms_accum dd 0
 
 idt_descriptor:
     dw 256 * 8 - 1
