@@ -351,6 +351,7 @@ desktop_task:
     call console_do_request               ; (src/console.asm: a click's)
     call dk_sync_consoles
     call dk_mouse_events
+    call dk_menu_keys_work                ; (src/dkwins.asm: the menu's search)
     call dk_alt_tab_work
     call dk_shot_capture                  ; (src/dkwins.asm)
     call dk_toast_work
@@ -1317,6 +1318,7 @@ dk_click:
     jae .task_buttons
     mov byte [dk_menu_open], 1            ; the start button
     call snd_click                        ; (src/dksound.asm)
+    call dk_search_clear                  ; (src/dkwins.asm: typing searches)
     call dk_mark_menu
     jmp .done
 .task_buttons:
@@ -2204,6 +2206,7 @@ dk_draw_menu:
     je .no_sub
     call dk_draw_programs                 ; (src/dkwins.asm)
 .no_sub:
+    call dk_draw_search
     popad
     ret
 

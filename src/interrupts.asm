@@ -375,6 +375,14 @@ keyboard_isr:
 ; the console on screen - every console has its own (src/data.asm), so
 ; only the one being typed at ever sees the keys, whoever else runs ---
 push_key_to_buffer:
+    cmp byte [dk_active], 0        ; the desktop's start menu open: typing
+    je .console                    ; is its search (src/dkwins.asm)
+    cmp byte [dk_menu_open], 0
+    je .console
+    cmp byte [dk_suspended], 0
+    jne .console
+    jmp dk_menu_key_in
+.console:
     pushad
     mov ecx, eax
     movzx eax, byte [console_fg]

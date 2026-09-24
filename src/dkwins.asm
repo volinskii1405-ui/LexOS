@@ -2077,12 +2077,235 @@ dk_prog_scan:
     inc ebx
     jmp .slot
 .done:
-    mov eax, [dk_prog_count]
-    or eax, eax
+    call dk_prog_filter
+    popad
+    ret
+
+; dk_prog_view: the programs whose names have dk_search in them (all,
+; with nothing typed); dk_prog_shown its rows, dk_prog_sel the first
+dk_prog_filter:
+    pushad
+    xor ebx, ebx                          ; the program
+    xor edx, edx                          ; the view's length
+.prog:
+    cmp ebx, [dk_prog_count]
+    jae .filtered
+    mov esi, ebx
+    shl esi, 4
+    add esi, dk_prog_names
+.start:                                   ; dk_search at any place in it?
+    xor ecx, ecx
+.cmp:
+    mov al, [dk_search + ecx]
+    or al, al
+    jz .match
+    mov ah, [esi + ecx]
+    or ah, ah
+    jz .no
+    cmp ah, 'a'
+    jb .upper
+    cmp ah, 'z'
+    ja .upper
+    sub ah, 32
+.upper:
+    cmp al, ah
+    jne .shift
+    inc ecx
+    jmp .cmp
+.shift:
+    inc esi
+    cmp byte [esi], 0
+    jne .start
+    jmp .no
+.match:
+    mov [dk_prog_view + edx*4], ebx
+    inc edx
+.no:
+    inc ebx
+    jmp .prog
+.filtered:
+    mov [dk_prog_vn], edx
+    mov dword [dk_prog_sel], -1
+    cmp byte [dk_search], 0
+    je .rows
+    or edx, edx
+    jz .rows
+    mov dword [dk_prog_sel], 0
+.rows:
+    or edx, edx
     jnz .shown
-    inc eax                               ; ("nothing" takes a row)
+    inc edx                               ; ("nothing" takes a row)
 .shown:
-    mov [dk_prog_shown], eax
+    mov [dk_prog_shown], edx
+    popad
+    ret
+
+; ============================================================
+; The start menu's search: while it's open, the keyboard types here
+; (push_key_to_buffer, src/interrupts.asm, hands the keys over) - the
+; Programs submenu shows what has the typed text in its name, the
+; arrows pick, Enter starts it, Esc closes the menu
+; ============================================================
+
+; al/ah = a key (from the keyboard's interrupt)
+dk_menu_key_in:
+    push ebx
+    movzx ebx, byte [dk_mkey_head]
+    mov [dk_mkeys + ebx*2], ax
+    inc bl
+    and bl, 15
+    cmp bl, [dk_mkey_tail]
+    je .full
+    mov [dk_mkey_head], bl
+.full:
+    pop ebx
+    ret
+
+; Each frame: the keys typed at the menu
+dk_menu_keys_work:
+    pushad
+.key:
+    movzx ebx, byte [dk_mkey_tail]
+    cmp bl, [dk_mkey_head]
+    je .done
+    mov ax, [dk_mkeys + ebx*2]
+    inc bl
+    and bl, 15
+    mov [dk_mkey_tail], bl
+    cmp byte [dk_menu_open], 0
+    je .key
+    call dk_mark_menu
+    cmp al, 27
+    je .escape
+    cmp al, 13
+    je .enter
+    cmp al, 8
+    je .back
+    or al, al
+    jz .special
+    cmp al, ' '
+    jb .key
+    cmp al, 'a'                           ; typed: into the search
+    jb .char
+    cmp al, 'z'
+    ja .char
+    sub al, 32
+.char:
+    mov ecx, [dk_search_len]
+    cmp ecx, DK_SEARCH_MAX
+    jae .key
+    mov [dk_search + ecx], al
+    mov byte [dk_search + ecx + 1], 0
+    inc dword [dk_search_len]
+    cmp byte [dk_prog_open], 0            ; (the list, read the first time)
+    jne .refilter
+    mov byte [dk_prog_open], 1
+    call dk_prog_scan
+    jmp .key
+.refilter:
+    call dk_prog_filter
+    jmp .key
+.back:
+    mov ecx, [dk_search_len]
+    or ecx, ecx
+    jz .key
+    dec ecx
+    mov [dk_search_len], ecx
+    mov byte [dk_search + ecx], 0
+    call dk_prog_filter
+    jmp .key
+.special:
+    cmp dword [dk_prog_vn], 0
+    je .key
+    mov ecx, [dk_prog_sel]
+    cmp ah, 0x48                          ; Up
+    jne .down
+    dec ecx
+    jns .picked
+    xor ecx, ecx
+    jmp .picked
+.down:
+    cmp ah, 0x50                          ; Down
+    jne .key
+    cmp byte [dk_prog_open], 0
+    jne .have_list
+    mov byte [dk_prog_open], 1
+    call dk_prog_scan
+    mov ecx, -1
+.have_list:
+    inc ecx
+    cmp ecx, [dk_prog_vn]
+    jb .picked
+    mov ecx, [dk_prog_vn]
+    dec ecx
+.picked:
+    mov [dk_prog_sel], ecx
+    jmp .key
+.enter:
+    mov eax, [dk_prog_sel]
+    cmp eax, -1
+    je .key
+    mov byte [dk_menu_open], 0
+    mov byte [dk_prog_open], 0
+    call snd_click
+    call dk_prog_run
+    call dk_search_clear
+    jmp .key
+.escape:
+    mov byte [dk_menu_open], 0
+    mov byte [dk_prog_open], 0
+    call dk_search_clear
+    jmp .key
+.done:
+    popad
+    ret
+
+dk_search_clear:
+    mov dword [dk_search_len], 0
+    mov byte [dk_search], 0
+    mov dword [dk_prog_sel], -1
+    ret
+
+; The search's box, over the menu (when something's typed)
+dk_draw_search:
+    pushad
+    cmp dword [dk_search_len], 0
+    jne .typed
+    xor eax, eax                          ; nothing yet: a hint
+    mov ebx, DESK_H - DK_TASKBAR_H - DK_MENU_ITEMS * DK_MENU_ITEM_H - DK_MENU_ITEM_H - 4
+    mov ecx, DK_MENU_W
+    mov edx, DK_MENU_ITEM_H + 4
+    mov esi, COL_SUBMENU
+    call dk_fill
+    add eax, 8
+    add ebx, 6
+    mov esi, dk_msg_find_hint
+    mov edx, COL_MUTED
+    call dk_text
+    jmp .done
+.typed:
+    xor eax, eax
+    mov ebx, DESK_H - DK_TASKBAR_H - DK_MENU_ITEMS * DK_MENU_ITEM_H - DK_MENU_ITEM_H - 4
+    mov ecx, DK_MENU_W
+    mov edx, DK_MENU_ITEM_H + 4
+    mov esi, COL_TITLE_ON
+    call dk_fill
+    add eax, 8
+    add ebx, 6
+    mov esi, dk_msg_find
+    mov edx, COL_WHITE
+    call dk_text
+    add eax, 6 * 8
+    mov esi, dk_search
+    call dk_text
+    mov ecx, [dk_search_len]              ; the cursor
+    lea eax, [eax + ecx*8]
+    add ebx, 13
+    mov ecx, 8
+    mov edx, 2
+    mov esi, COL_WHITE
+    call dk_fill
+.done:
     popad
     ret
 
@@ -2149,7 +2372,7 @@ dk_draw_programs:
     mov ecx, DK_PROG_W
     mov esi, COL_SUBMENU
     call dk_fill
-    cmp dword [dk_prog_count], 0
+    cmp dword [dk_prog_vn], 0
     jne .items
     add eax, 14
     add ebx, 4
@@ -2160,20 +2383,34 @@ dk_draw_programs:
 .items:
     xor ecx, ecx
 .item:
-    cmp ecx, [dk_prog_count]
+    cmp ecx, [dk_prog_vn]
     jae .done
     push ebx
     imul edx, ecx, DK_MENU_ITEM_H
     add ebx, edx
+    mov edx, COL_TEXT
+    cmp ecx, [dk_prog_sel]                ; (the one Enter starts: lit)
+    jne .plain
+    push ecx
+    mov eax, DK_MENU_W
+    mov ecx, DK_PROG_W
+    mov edx, DK_MENU_ITEM_H
+    mov esi, COL_TITLE_ON
+    call dk_fill
+    pop ecx
+    mov edx, COL_WHITE
+.plain:
     add ebx, 4
     mov eax, DK_MENU_W + 12
+    push ecx
+    mov ecx, [dk_prog_view + ecx*4]
     mov esi, ecx
     shl esi, 4
     add esi, dk_prog_names
-    mov edx, COL_TEXT
     call dk_text
     mov eax, DK_MENU_W + 130              ; (and where)
     mov esi, ecx
+    pop ecx
     shl esi, 5
     add esi, dk_prog_paths
     mov edx, COL_MUTED
@@ -2191,8 +2428,9 @@ dk_draw_programs:
 ; eax = a row of the submenu: that program, started by itself
 dk_prog_run:
     pushad
-    cmp eax, [dk_prog_count]
+    cmp eax, [dk_prog_vn]
     jae .done
+    mov eax, [dk_prog_view + eax*4]
     mov esi, eax
     shl esi, 4
     add esi, dk_prog_names
@@ -4858,6 +5096,17 @@ dk_prog_names     times DK_PROG_MAX * 16 db 0
 dk_prog_paths     times DK_PROG_MAX * 32 db 0
 dk_path_up        times 4 dd 0
 dk_prog_none      db "(no programs)", 0
+DK_SEARCH_MAX     equ 14
+dk_search         times DK_SEARCH_MAX + 2 db 0
+dk_search_len     dd 0
+dk_prog_view      times DK_PROG_MAX dd 0  ; the rows shown: which programs
+dk_prog_vn        dd 0
+dk_prog_sel       dd -1                   ; the row Enter starts
+dk_mkeys          times 16 dw 0           ; keys typed at the menu
+dk_mkey_head      db 0
+dk_mkey_tail      db 0
+dk_msg_find       db "Find:", 0
+dk_msg_find_hint  db "Type to search", 0
 dk_fm_cols        dd 6                    ; Files: the grid the window has
 dk_fm_rows        dd 4                    ; room for (dk_fm_layout)
 dk_fm_page_n      dd 24
