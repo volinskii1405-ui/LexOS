@@ -44,6 +44,8 @@ VGA_FB_SIZE     equ 320*200
 VGA_TEXT_FB     equ 0xB8000
 VGA_TEXT_SIZE   equ 80*25*2
 VGA_FONT_SIZE   equ 8192      ; generous for a 256-char 8x16 font (4096 bytes)
+VGA_SHADOW_BASE equ 0x5680000 ; each console's mode 13h picture while it's
+                              ; shown in a desktop window (64KB each)
 
 ; ============================================================
 ; Switches the VGA hardware into mode 13h (320x200, 256 colors, one
@@ -51,6 +53,35 @@ VGA_FONT_SIZE   equ 8192      ; generous for a 256-char 8x16 font (4096 bytes)
 ; switch back first - see vga_leave_mode13.
 ; ============================================================
 vga_enter_mode13:
+    ; With the desktop on, the picture goes into a window instead: the
+    ; 64KB at 0xA0000 is remapped (paging) to this console's own RAM,
+    ; which the desktop shows - the program draws exactly as always.
+    cmp byte [dk_active], 0
+    je .screen
+    cmp byte [dk_suspended], 0
+    jne .screen
+    push eax
+    call dk_vga_open                   ; (src/dkwins.asm) -> eax = its slot
+    jc .no_window
+    mov [vga_win_slot], eax
+    mov byte [vga_windowed], 1
+    push ecx
+    push edi
+    movzx edi, byte [console_fg]
+    shl edi, 16
+    add edi, VGA_SHADOW_BASE
+    xor eax, eax
+    mov ecx, 0x10000 / 4
+    cld
+    rep stosd
+    pop edi
+    pop ecx
+    call vga_sync_window
+    pop eax
+    ret
+.no_window:
+    pop eax
+.screen:
     call desktop_suspend_hook          ; (src/desktop.asm: out of the way)
     mov byte [vga_graphics_active], 1  ; (for background tasks that draw
                                        ; on the text screen - the clock)
@@ -83,6 +114,38 @@ vga_enter_mode13:
 ; vga_enter_mode13.
 ; ============================================================
 vga_leave_mode13:
+    cmp byte [vga_windowed], 0
+    je vga_leave_screen
+    mov byte [vga_windowed], 0         ; a window: just close it
+    push eax
+    mov eax, [vga_win_slot]
+    call dk_app_close
+    call vga_sync_window
+    pop eax
+    ret
+
+; The desktop went away under a mode 13h program in a window: the real
+; mode 13h, with the picture it has drawn so far
+vga_unwindow:
+    cmp byte [vga_windowed], 0
+    je .done
+    pushad
+    mov byte [vga_windowed], 0
+    call vga_sync_window                  ; (0xA0000 is the VGA's again)
+    call vga_enter_mode13
+    movzx esi, byte [console_fg]
+    shl esi, 16
+    add esi, VGA_SHADOW_BASE
+    mov edi, VGA_FB
+    mov ecx, VGA_FB_SIZE / 4
+    cld
+    rep movsd
+    popad
+.done:
+    ret
+
+; The screen itself back to text (also the desktop's way out)
+vga_leave_screen:
     mov esi, vga_saved_regs
     call vga_apply_regs
 
@@ -106,6 +169,41 @@ vga_leave_mode13:
     call vga_apply_regs
     mov byte [vga_graphics_active], 0
     call desktop_resume_hook           ; (src/desktop.asm: back, if it was on)
+    ret
+
+; ============================================================
+; 0xA0000-0xAFFFF: the VGA's own memory - or, while the console on
+; screen has its mode 13h in a desktop window, that console's RAM
+; picture (VGA_SHADOW_BASE). After every console switch too.
+; ============================================================
+vga_sync_window:
+    pushad
+    mov eax, VGA_FB
+    cmp byte [vga_windowed], 0
+    je vga_map_eax
+    movzx eax, byte [console_fg]
+    shl eax, 16
+    add eax, VGA_SHADOW_BASE
+    jmp vga_map_eax
+
+; 0xA0000 the VGA's own memory, whatever program's window is on screen
+; (the desktop switching modes: the font is saved and restored there)
+vga_map_real:
+    pushad
+    mov eax, VGA_FB
+vga_map_eax:                           ; (eax = what's to be seen there)
+    or eax, 0x03                       ; present, writable
+    mov ebx, VGA_FB
+    xor ecx, ecx
+.page:
+    mov [PAGE_TABLE_LOW + (VGA_FB >> 12) * 4 + ecx*4], eax
+    invlpg [ebx]
+    add eax, 4096
+    add ebx, 4096
+    inc ecx
+    cmp ecx, 16
+    jb .page
+    popad
     ret
 
 ; ============================================================

@@ -277,6 +277,7 @@ snake_save_highscore:
 ; ============================================================
 snake_poll_keys:
     pusha
+    call console_safe_point       ; (a click on another console's window)
 .loop:
     mov al, [kbd_buf_tail]
     cmp al, [kbd_buf_head]

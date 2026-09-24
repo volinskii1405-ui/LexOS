@@ -16,6 +16,8 @@ DESK_IMG_MAX_W    equ 960
 DESK_IMG_MAX_H    equ 640
 DK_APPS           equ 3                   ; programs' windows at once
 DK_APP_PIX        equ 0x5000000           ; their pixels, 2MB each
+DK_VGA_LAST       equ 0x5710000           ; mode 13h windows: the picture
+                                          ; as last shown (64KB per slot)
 DK_APP_MAX_PIX    equ 0x200000 / 4
 FM_MAX            equ 250                 ; Files: entries in a folder
 FM_ENTRY          equ 32                  ; name 0-16, kind 17, slot 20, size 24
@@ -2169,22 +2171,57 @@ dk_mixer_click:
 
 ; [x] on window eax: a Terminal minimizes, a program is asked to end,
 ; the rest close
+DKP_STOP equ 1                            ; stop the program in it
+DKP_EXIT equ 2                            ; and end the console
+
 dk_win_x:
     pushad
     movzx edx, byte [dkw_kind + eax]
     cmp edx, K_TERM
     jne .not_term
-    mov byte [dkw_hidden + eax], 1
+    mov ebx, [dkw_param + eax*4]          ; its console
+    mov ecx, eax
+    call dk_win_title                     ; a text program in it (uranium):
+    imul edx, ecx, DK_TITLE_LEN
+    add edx, dkw_title
+    cmp esi, edx
+    je .no_program
+    mov al, DKP_STOP
+    call dk_pend
+    jmp .done
+.no_program:
+    or ebx, ebx
+    jz .first
+    mov al, DKP_EXIT                      ; others: the console ends
+    call dk_pend
+    jmp .done
+.first:
+    ; Terminal 1: its console is the kernel's own and can't end - the
+    ; window goes (the menu's Terminal brings it back), and the
+    ; keyboard to another console, if there is one
+    mov byte [dkw_hidden + ecx], 1
     mov byte [dk_redraw_all], 1
+    cmp byte [console_fg], 0
+    jne .done
+    mov ebx, 1
+.other:
+    cmp ebx, CONSOLE_MAX
+    jae .done
+    cmp byte [console_used + ebx], 0
+    jne .to_other
+    inc ebx
+    jmp .other
+.to_other:
+    inc ebx
+    mov [console_request], bl
     jmp .done
 .not_term:
     cmp edx, K_APP
     jne .close
-    mov ecx, [dkw_param + eax*4]          ; its console has the keyboard?
-    mov cl, [dk_app_console + ecx]
-    cmp cl, [console_fg]
-    jne .done                             ; (it's just been asked to)
-    mov byte [app_abort_request], 1       ; then Ctrl+C it
+    mov ecx, [dkw_param + eax*4]          ; a program's: it's stopped
+    movzx ebx, byte [dk_app_console + ecx]
+    mov al, DKP_STOP
+    call dk_pend
     jmp .done
 .close:
     call dk_win_close
@@ -2192,9 +2229,336 @@ dk_win_x:
     popad
     ret
 
+; bl = a console, al = DKP_*: what a window's [x] asked for, done by
+; dk_pend_work once that console has the keyboard (asked for here)
+dk_pend:
+    mov [dk_pend_console], bl
+    mov [dk_pend_action], al
+    mov byte [dk_pend_step], 0
+    push eax
+    mov eax, [timer_ms]
+    mov [dk_pend_since], eax
+    pop eax
+    cmp bl, [console_fg]
+    je .here
+    push ebx
+    inc ebx
+    mov [console_request], bl
+    pop ebx
+.here:
+    ret
+
+; Each frame: carries out a pending [x] (see dk_pend) - a program is
+; stopped (Ctrl+C for one in ring 3, Esc for the others), then for
+; DKP_EXIT, "exit" is typed at the shell's prompt. Given up after 8s.
+dk_pend_work:
+    pushad
+    cmp byte [dk_pend_console], 0xFF
+    je .done
+    mov eax, [timer_ms]
+    sub eax, [dk_pend_since]
+    cmp eax, 8000
+    ja .finished
+    movzx ebx, byte [dk_pend_console]
+    cmp bl, [console_fg]
+    jne .done                             ; (not switched to yet)
+    mov ecx, [console_task + ebx*4]       ; (its memory is the live one now)
+    cmp byte [app_active], 0
+    je .no_app
+    cmp byte [dk_pend_step], 1            ; a ring-3 program: Ctrl+C
+    je .done
+    mov byte [dk_pend_step], 1
+    mov byte [app_abort_request], 1
+    jmp .asked
+.no_app:
+    cmp byte [vga_windowed], 0            ; a game/paint in a window: Esc
+    jne .esc
+    cmp byte [prog_title], 0              ; uranium: Esc
+    jne .esc
+    cmp byte [shell_at_prompt], 0
+    je .other
+    cmp byte [dk_pend_action], DKP_EXIT   ; at the prompt: nothing to stop
+    jne .finished
+    cmp byte [task_keywait + ecx], 0
+    je .done                              ; (in a moment)
+    mov edi, dk_inject_buf                ; End, the half-typed line
+    mov byte [edi], DK_KEY_END            ; rubbed out, "exit"
+    inc edi
+    movzx ecx, word [buf_len]
+    cmp ecx, 200
+    jbe .rub
+    mov ecx, 200
+.rub:
+    mov al, 8
+    rep stosb
+    mov esi, dk_cmd_exit
+    call wget_append
+    mov [dk_inject_console], bl
+    mov dword [dk_inject_pos], 0
+    sub edi, dk_inject_buf
+    mov [dk_inject_len], edi
+    jmp .finished
+.other:
+    cmp byte [dk_pend_action], DKP_EXIT   ; something else (BASIC...):
+    jne .finished                         ; Esc once, then wait
+.esc:
+    cmp byte [dk_pend_step], 2
+    je .done
+    mov byte [dk_pend_step], 2
+    mov ax, 0x011B                        ; Esc (ascii 27, scancode 1)
+    call push_key_to_buffer
+.asked:
+    cmp byte [dk_pend_action], DKP_EXIT   ; just stopping: done
+    je .done
+.finished:
+    mov byte [dk_pend_console], 0xFF
+.done:
+    popad
+    ret
+
+; Mode 13h in a window (src/vga.asm): a 320x200 window, titled with
+; the command that started it, the 16 colors vga_enter_mode13 would set
+; -> eax = the slot, carry=1 if there's no room
+dk_vga_open:
+    push ebx
+    push ecx
+    push esi
+    push edi
+    mov esi, buffer                       ; the title: the command line
+    mov edi, dk_vga_title                 ; (it's run from)
+    mov ecx, DK_TITLE_LEN - 1
+.char:
+    lodsb
+    or al, al
+    jz .titled
+    stosb
+    loop .char
+.titled:
+    mov byte [edi], 0
+    mov dword [dk_ao_title], dk_vga_title
+    mov eax, 320
+    mov ebx, 200
+    mov ecx, 1
+    call dk_app_open
+    mov dword [dk_ao_title], 0
+    jc .out
+    mov byte [dk_app_vga + eax], 1
+    mov edi, eax                          ; its palette: 0-15 as mode 13h's
+    shl edi, 10
+    add edi, dk_app_pal
+    mov esi, vga_default_palette
+    mov ecx, 16
+.color:
+    push ecx
+    xor ebx, ebx
+    mov ecx, 3
+.part:
+    shl ebx, 8
+    movzx edx, byte [esi]                 ; 6 bits -> 8
+    shl edx, 2
+    mov dh, dl
+    shr dh, 6
+    or dl, dh
+    xor dh, dh
+    or ebx, edx
+    inc esi
+    loop .part
+    mov [edi], ebx
+    add edi, 4
+    pop ecx
+    loop .color
+    push eax                              ; nothing shown yet
+    mov edi, eax
+    shl edi, 16
+    add edi, DK_VGA_LAST
+    xor eax, eax
+    mov ecx, 0x10000 / 4
+    cld
+    rep stosd
+    pop eax
+    clc
+.out:
+    pop edi
+    pop esi
+    pop ecx
+    pop ebx
+    ret
+
+; Each frame: every mode 13h window's rows that changed since last
+; shown, into its pixels and onto the screen - and the mouse, for the
+; one with the keyboard, as its program sees it (gfx_mouse_*)
+dk_vga_frame:
+    pushad
+    xor ebp, ebp                          ; the slot
+.slot:
+    cmp byte [dk_app_used + ebp], 0
+    je .next
+    cmp byte [dk_app_vga + ebp], 0
+    je .next
+    movzx esi, byte [dk_app_console + ebp]
+    shl esi, 16
+    add esi, VGA_SHADOW_BASE
+    mov edi, ebp
+    shl edi, 16
+    add edi, DK_VGA_LAST
+    mov dword [dk_vg_y0], -1
+    xor edx, edx                          ; the row
+    cld
+.row:
+    push esi
+    push edi
+    mov ecx, 320 / 4
+    repe cmpsd
+    pop edi
+    pop esi
+    je .same
+    push esi
+    push edi
+    mov ecx, 320 / 4                      ; remembered...
+    rep movsd
+    pop edi
+    pop esi
+    call dk_vga_row                       ; ...and converted
+    cmp dword [dk_vg_y0], -1
+    jne .y0
+    mov [dk_vg_y0], edx
+.y0:
+    mov [dk_vg_y1], edx
+.same:
+    add esi, 320
+    add edi, 320
+    inc edx
+    cmp edx, 200
+    jb .row
+    cmp dword [dk_vg_y0], -1
+    je .next
+    mov eax, [dk_app_win + ebp*4]         ; those rows of its window: dirty
+    call dk_client_origin                 ; -> eax, ebx
+    mov esi, [dk_app_scale + ebp*4]
+    mov edx, [dk_vg_y0]
+    imul edx, esi
+    add ebx, edx
+    mov edx, [dk_vg_y1]
+    sub edx, [dk_vg_y0]
+    inc edx
+    imul edx, esi
+    mov ecx, 320
+    imul ecx, esi
+    call dk_mark
+.next:
+    inc ebp
+    cmp ebp, DK_APPS
+    jb .slot
+
+    ; the mouse, over the keyboard's console's window
+    movzx ebx, byte [console_fg]
+    call dk_app_window_of                 ; -> eax, or -1
+    cmp eax, -1
+    je .done
+    mov ebp, [dkw_param + eax*4]
+    cmp byte [dk_app_vga + ebp], 0
+    je .done
+    mov byte [gfx_mouse_buttons], 0       ; (not over it: no buttons)
+    mov edi, eax
+    mov eax, [dk_mx]
+    mov ebx, [dk_my]
+    call dk_window_at                     ; -> esi
+    cmp esi, edi
+    jne .done
+    mov eax, edi
+    call dk_client_origin                 ; -> eax, ebx
+    mov ecx, [dk_app_scale + ebp*4]
+    mov esi, eax
+    mov eax, [dk_mx]
+    sub eax, esi
+    js .done                              ; (on its title bar)
+    xor edx, edx
+    div ecx
+    cmp eax, 319
+    jbe .x
+    mov eax, 319
+.x:
+    mov [gfx_mouse_x], eax
+    mov eax, [dk_my]
+    sub eax, ebx
+    js .done
+    xor edx, edx
+    div ecx
+    cmp eax, 199
+    jbe .y
+    mov eax, 199
+.y:
+    mov [gfx_mouse_y], eax
+    mov al, [mouse_buttons]
+    and al, 3
+    mov [gfx_mouse_buttons], al
+.done:
+    popad
+    ret
+
+; ebp = a slot, edx = a row, esi = its 320 bytes -> its pixels
+dk_vga_row:
+    pushad
+    mov edi, ebp
+    shl edi, 21
+    add edi, DK_APP_PIX
+    imul eax, edx, 320 * 4
+    add edi, eax
+    mov ebx, ebp
+    shl ebx, 10
+    add ebx, dk_app_pal
+    mov ecx, 320
+    cld
+.px:
+    movzx eax, byte [esi]
+    mov eax, [ebx + eax*4]
+    stosd
+    inc esi
+    loop .px
+    popad
+    ret
+
+; esi = a prefix, edi = a name (to a space or the end): the console's
+; Terminal is titled with them while a text program runs (uranium)
+dk_set_prog_title:
+    pushad
+    mov ebx, prog_title
+    mov ecx, DK_TITLE_LEN - 1
+.prefix:
+    lodsb
+    or al, al
+    jz .name
+    mov [ebx], al
+    inc ebx
+    loop .prefix
+    jmp .end
+.name:
+    mov al, [edi]
+    or al, al
+    jz .end
+    cmp al, ' '
+    je .end
+    mov [ebx], al
+    inc ebx
+    inc edi
+    loop .name
+.end:
+    mov byte [ebx], 0
+    mov byte [dk_redraw_all], 1
+    popad
+    ret
+
+dk_clear_prog_title:
+    mov byte [prog_title], 0
+    mov byte [dk_redraw_all], 1
+    ret
+
+; Each frame: pictures and file lists waiting to be (re)loaded
+
 ; Each frame: pictures and file lists waiting to be (re)loaded
 dk_windows_work:
     pushad
+    call dk_pend_work
     cmp byte [dk_pic_state], 1
     jne .files
     mov eax, K_PICS
@@ -2306,6 +2670,10 @@ dk_app_open:
     imul edi, eax, DK_TITLE_LEN           ; its title: the program's name
     add edi, dkw_title
     mov esi, app_name
+    cmp dword [dk_ao_title], 0            ; (or the caller's)
+    je .name
+    mov esi, [dk_ao_title]
+.name:
     mov ecx, FS_NAME_LEN
 .title:
     lodsb
@@ -2345,6 +2713,7 @@ dk_app_close:
     je .done
     inc dword [sched_lock]
     mov byte [dk_app_used + eax], 0
+    mov byte [dk_app_vga + eax], 0
     mov eax, [dk_app_win + eax*4]
     call dk_win_close
     dec dword [sched_lock]
@@ -2587,6 +2956,17 @@ dk_ao_h           dd 0
 dk_ab_slot        dd 0
 dk_ab_dest        dd 0
 dk_app_used       times DK_APPS db 0
+dk_app_vga        times DK_APPS db 0      ; a kernel program's mode 13h
+dk_ao_title       dd 0                    ; dk_app_open's title, if not app_name
+dk_vga_title      times DK_TITLE_LEN db 0
+dk_vg_y0          dd 0
+dk_vg_y1          dd 0
+dk_pend_console   db 0xFF                 ; a window's [x] being carried out
+dk_pend_action    db 0
+dk_pend_step      db 0
+dk_pend_since     dd 0
+dk_title_uranium  db "uranium - ", 0
+dk_cmd_exit       db "exit", 13, 0
 dk_app_console    times DK_APPS db 0
 dk_app_win        times DK_APPS dd 0
 dk_app_w          times DK_APPS dd 0

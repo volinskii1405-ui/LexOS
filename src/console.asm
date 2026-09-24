@@ -332,8 +332,20 @@ console_after_switch:
     mov al, [kbd_buf_head]
     mov [kbd_buf_tail], al
     call console_set_text_vram
+    call vga_sync_window                    ; (its mode 13h window's picture)
     call update_hw_cursor
+    cmp byte [dk_active], 0
+    jne .windows
+    call console_unwindow                   ; (no desktop to show them)
+.windows:
     pop eax
+    ret
+
+; A program of the console on screen still drawing in a desktop window
+; that's gone: onto the whole screen
+console_unwindow:
+    call vga_unwindow                       ; (src/vga.asm)
+    call app_unwindow                       ; (src/appsys.asm)
     ret
 
 ; text_vram for the console on screen: the VGA's text memory - or, with
@@ -453,6 +465,9 @@ console_shell_start:
     mov byte [app_active], 0
     mov byte [app_abort_request], 0
     mov byte [app_gfx], 0                   ; (not the other console's window)
+    mov byte [vga_windowed], 0
+    mov byte [prog_title], 0
+    call vga_sync_window
     call clear_screen
     mov esi, console_msg_banner1
     call basic_puts

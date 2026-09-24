@@ -73,6 +73,34 @@ kernel_start:
     call fs_ensure_tetris_exe ; creates PROGRAMS/TETRIS.BIN if it doesn't exist yet
     call fs_ensure_g2048_exe ; creates PROGRAMS/2048.BIN if it doesn't exist yet
     call fs_ensure_convert_exe ; creates PROGRAMS/CONVERT.BIN if it doesn't exist yet
+    mov si, test_exe_name
+    mov ebx, test_exe_template
+    mov ecx, TEST_EXE_LENGTH
+    call fs_refresh_stub
+    mov si, calc_exe_name
+    mov ebx, calc_exe_template
+    mov ecx, CALC_EXE_LENGTH
+    call fs_refresh_stub
+    mov si, snake_exe_name
+    mov ebx, snake_exe_template
+    mov ecx, SNAKE_EXE_LENGTH
+    call fs_refresh_stub
+    mov si, sweeper_exe_name
+    mov ebx, sweeper_exe_template
+    mov ecx, SWEEPER_EXE_LENGTH
+    call fs_refresh_stub
+    mov si, tetris_exe_name
+    mov ebx, tetris_exe_template
+    mov ecx, TETRIS_EXE_LENGTH
+    call fs_refresh_stub
+    mov si, g2048_exe_name
+    mov ebx, g2048_exe_template
+    mov ecx, G2048_EXE_LENGTH
+    call fs_refresh_stub
+    mov si, convert_exe_name
+    mov ebx, convert_exe_template
+    mov ecx, CONVERT_EXE_LENGTH
+    call fs_refresh_stub
     pop word [fs_current_dir]
 .no_programs_dir:
 

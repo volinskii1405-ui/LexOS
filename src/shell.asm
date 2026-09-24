@@ -717,9 +717,13 @@ handle_command:
     jmp .done
 
 .do_uranium:
+    mov esi, dk_title_uranium  ; (its Terminal's title on the desktop)
+    mov edi, buffer + 8
+    call dk_set_prog_title
     mov si, buffer
     add si, 8                  ; skip "uranium "
     call uranium_editor
+    call dk_clear_prog_title
     jmp .done
 
 .do_paint:

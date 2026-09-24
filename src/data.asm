@@ -661,6 +661,9 @@ cmd_exit         db "exit", 0
 ; src/usermode.asm's, per console (src/console.asm swaps this file)
 app_active         db 0
 shell_at_prompt    db 0               ; reading a command line (main_loop)
+vga_windowed       db 0               ; mode 13h shown in a desktop window
+vga_win_slot       dd 0               ; (its program window: src/dkwins.asm)
+prog_title         times 32 db 0      ; a text program's name for its Terminal
 app_abort_request  db 0
 cmd_kill_prefix  db "kill ", 0
 cmd_clock        db "clock", 0

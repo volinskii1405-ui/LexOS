@@ -378,8 +378,20 @@ alex@/PROGRAMS$
     modes are shown doubled - titled with its name, up to 3 at once;
     its [x] stops it. Start one in each Terminal to have several side
     by side (only the console with the keyboard runs; the others wait
-    where they are). Built-in fullscreen graphics - paint, Tetris,
-    chip8 - still take over the screen and hand it back.
+    where they are). The built-in 320x200 graphics programs - Snake,
+    Tetris, Sweeper, 2048 (PROGRAMS/*.BIN), paint, chip8, turtle - get
+    a window too: their 0xA0000 is remapped by paging to that
+    console's own 64KB of RAM (src/vga.asm), which the desktop shows,
+    so they draw exactly as on the real screen; paint and Sweeper get
+    the mouse inside their window (gfx_mouse_*, src/mouse.asm). A
+    window's [x] stops its program (Ctrl+C in ring 3, Esc for the
+    others); leave the desktop while one runs and it moves onto the
+    whole screen, picture and colors kept.
+  - **Text programs** stay in their Terminal - uranium names it
+    ("uranium - NOTES.TXT"), and its [x] asks it to quit. A Terminal's
+    [x] ends that console (its program stopped, then `exit` typed at
+    the prompt); Terminal 1's console is the kernel's own and can't
+    end, so its window just goes - the menu's Terminal brings it back.
   - **Files** shows the current folder as icons (folders, programs,
     pictures, sounds, text...), Up and page buttons. Double-click a
     folder to go in, a .BMP opens in Pictures, anything else is typed
@@ -720,12 +732,14 @@ outside the kernel image need a full 32-bit linear address:
 | Filesystem slot + bitmap cache | `0x3E00000` |
 | IMF song buffer (`play`) | `0x310000` |
 | Task stacks (64KB each, 16 tasks) | `0x400000` – `0x4FFFFF` |
-| Page directory / user page table | `0x500000` / `0x501000` |
+| Page directory / user page table / first 4MB's table | `0x500000` / `0x501000` / `0x502000` |
 | A ring-3 program's own 4MB | `0x800000` – `0xBFFFFF` |
 | Console save areas (5MB each) | `0x1000000` – `0x3CFFFFF` |
 | Programs' open-file buffers (4 x 4MB) | `0x4000000` – `0x4FFFFFF` |
 | Program windows' pixels (3 x 2MB) | `0x5000000` – `0x55FFFFF` |
 | Mixer voice queues (4 x 64KB) + scratch | `0x5600000` – `0x5647FFF` |
+| Consoles' mode 13h in a window (9 x 64KB) | `0x5680000` – `0x570FFFF` |
+| Those windows as last shown (3 x 64KB) | `0x5710000` – `0x573FFFF` |
 | WAV file being played (`play`, 8MB) | `0x5800000` – `0x5FFFFFF` |
 | Desktop back buffer (1024x768x4) | `0x6000000` – `0x62FFFFF` |
 | FPU save areas / consoles' desktop text | `0x6300000` / `0x6310000` |

@@ -168,6 +168,7 @@ desktop_command:
 ; 1024x768x32 on, with the text mode saved to come back to
 dk_video_on:
     pushad
+    call vga_map_real                     ; (the VGA's memory, for the font)
     mov byte [vga_graphics_active], 1     ; (no clock drawing on the text screen)
     call vga_save_regs
     call vga_save_font
@@ -198,21 +199,25 @@ dk_video_on:
     mov dword [mouse_max_x], DESK_W - 1
     mov dword [mouse_max_y], DESK_H - 1
     mov dword [mouse_speed], 2
+    mov byte [gfx_mouse_desk], 1          ; (dk_vga_frame feeds paint & co)
     mov dword [mouse_x], DESK_W / 2
     mov dword [mouse_y], DESK_H / 2
     mov byte [dk_redraw_all], 1
+    call vga_sync_window                  ; (a program's window's picture)
     popad
     ret
 
 ; back to the text mode dk_video_on saved (src/vga.asm restores it all)
 dk_video_off:
     pushad
+    call vga_map_real                     ; (the font goes back in there)
     mov byte [dk_in_transition], 1
     mov ax, BGA_ENABLE
     xor dx, dx
     call bga_write
-    call vga_leave_mode13
+    call vga_leave_screen
     mov byte [dk_in_transition], 0
+    mov byte [gfx_mouse_desk], 0
     mov dword [mouse_max_x], 319
     mov dword [mouse_max_y], 199
     mov dword [mouse_speed], 1
@@ -300,6 +305,7 @@ desktop_task:
     call console_desktop_switch           ; (src/console.asm)
     call dk_sync_consoles
     call dk_mouse_events
+    call dk_vga_frame                     ; (src/dkwins.asm: mode 13h windows)
     call dk_check_changes
     pushfd
     cli                                   ; (dk_mark from programs' blits)
@@ -384,6 +390,7 @@ desktop_task:
     call dk_video_off
 .text_back:
     call dk_text_back
+    call console_unwindow                 ; (src/console.asm)
     mov byte [dk_quit], 0
     mov byte [dk_suspended], 0
     ret                                   ; -> task_exit
@@ -1197,8 +1204,8 @@ dk_taskbar_window:
 .w:
     cmp ecx, DK_MAX_WIN
     jae .none
-    cmp byte [dkw_kind + ecx], K_NONE
-    je .next
+    call dk_on_taskbar
+    jc .next
     cmp edx, eax
     je .found
     inc edx
@@ -1216,11 +1223,70 @@ dk_taskbar_window:
     pop ecx
     ret
 
+; ecx = a window -> esi = its title: a Terminal running a text program
+; that named itself (prog_title: uranium) shows that name instead
+dk_win_title:
+    imul esi, ecx, DK_TITLE_LEN
+    add esi, dkw_title
+    cmp byte [dkw_kind + ecx], K_TERM
+    jne .done
+    push eax
+    push ebx
+    mov eax, [dkw_param + ecx*4]
+    mov ebx, prog_title
+    call console_saved_addr               ; (src/console.asm)
+    or ebx, ebx
+    jz .own
+    cmp byte [ebx], 0
+    je .own
+    mov esi, ebx
+.own:
+    pop ebx
+    pop eax
+.done:
+    ret
+
+; ecx = a window -> carry=1 if it has no taskbar button (none there,
+; or a closed Terminal 1 - its console can't end; the menu brings it back)
+dk_on_taskbar:
+    cmp byte [dkw_kind + ecx], K_NONE
+    je .no
+    cmp byte [dkw_kind + ecx], K_TERM
+    jne .yes
+    cmp byte [dkw_hidden + ecx], 0
+    jne .no
+.yes:
+    clc
+    ret
+.no:
+    stc
+    ret
+
 ; The start menu's item eax
 dk_menu_choose:
     cmp eax, 0
     jne .not_terminal
-    mov byte [console_request], CONSOLE_REQ_NEW   ; a new console (Alt+T)
+    push ecx                              ; a closed Terminal 1: back
+    xor ecx, ecx
+.hidden:
+    cmp byte [dkw_kind + ecx], K_TERM
+    jne .hidden_next
+    cmp byte [dkw_hidden + ecx], 0
+    jne .unhide
+.hidden_next:
+    inc ecx
+    cmp ecx, DK_MAX_WIN
+    jb .hidden
+    pop ecx
+    mov byte [console_request], CONSOLE_REQ_NEW   ; else a new console (Alt+T)
+    ret
+.unhide:
+    mov byte [dkw_hidden + ecx], 0
+    mov eax, ecx
+    call dk_raise
+    call dk_focus_console
+    mov byte [dk_redraw_all], 1
+    pop ecx
     ret
 .not_terminal:
     cmp eax, 7
@@ -1400,10 +1466,17 @@ dk_draw_window:
     push ebx
     add eax, 6
     add ebx, 3
-    imul esi, ebp, DK_TITLE_LEN
-    add esi, dkw_title
+    push ecx
+    mov ecx, ebp
+    call dk_win_title                     ; -> esi
+    pop ecx
     mov edx, COL_WHITE
-    call dk_text
+    push edi
+    mov edi, [dkw_w + ebp*4]              ; (clear of "kbd" and the [x])
+    sub edi, 60
+    shr edi, 3
+    call dk_text_n
+    pop edi
     pop ebx
     pop eax
     ; the keyboard's console: a mark before the [x]
@@ -1515,8 +1588,8 @@ dk_draw_taskbar:
     xor ecx, ecx
     xor edx, edx
 .count:
-    cmp byte [dkw_kind + ecx], K_NONE
-    je .count_next
+    call dk_on_taskbar
+    jc .count_next
     inc edx
 .count_next:
     inc ecx
@@ -1543,8 +1616,8 @@ dk_draw_taskbar:
 .button:
     cmp ecx, DK_MAX_WIN
     jae .clock
-    cmp byte [dkw_kind + ecx], K_NONE
-    je .next
+    call dk_on_taskbar
+    jc .next
     push eax
     push ecx
     mov ebx, DESK_H - DK_TASKBAR_H + 3
@@ -1565,8 +1638,7 @@ dk_draw_taskbar:
     pop ecx
     add eax, 6
     add ebx, 4
-    imul esi, ecx, DK_TITLE_LEN           ; the title, as much as fits
-    add esi, dkw_title
+    call dk_win_title                     ; the title, as much as fits
     mov edi, [dk_btn_step]
     sub edi, 12
     shr edi, 3
@@ -2056,8 +2128,17 @@ dk_inject_key:
     inc dword [dk_inject_pos]
     xor ah, ah
     cmp al, 13
-    jne .have
+    jne .not_enter
     mov ah, 0x1C                          ; (Enter's scancode)
+.not_enter:
+    cmp al, 8
+    jne .not_bs
+    mov ah, 0x0E                          ; Backspace
+.not_bs:
+    cmp al, DK_KEY_END
+    jne .have
+    xor al, al                            ; End (an extended key)
+    mov ah, 0x4F
 .have:
     pop ebx
     clc
@@ -2119,6 +2200,7 @@ dk_ldy            dd 0
 dk_lsx            dd 0
 dk_lsy            dd 0
 dk_clock_text     times 12 db 0
+DK_KEY_END        equ 1                        ; (in dk_inject_buf: End)
 dk_inject_buf     times 256 db 0
 dk_inject_len     dd 0
 dk_inject_pos     dd 0

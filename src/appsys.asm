@@ -425,6 +425,48 @@ app_try_window:
     stc
     ret
 
+; The desktop went away under a program drawing in a window: the whole
+; screen instead (its next frame shows up there)
+app_unwindow:
+    cmp byte [app_gfx], 3
+    jne .done
+    pushad
+    mov byte [app_gfx], 0                 ; (the window's gone already)
+    mov eax, [app_gfx_w]
+    mov ecx, [app_gfx_h]
+    mov edx, [app_gfx_bpp]
+    shl edx, 3
+    call app_gfx_screen
+    cmp dword [app_gfx_bpp], 1            ; its window's colors, not the
+    jne .colors_done                      ; default ones
+    mov esi, [app_win_slot]
+    shl esi, 10
+    add esi, dk_app_pal
+    mov dx, VGA_DAC_WRITE_INDEX
+    xor al, al
+    out dx, al
+    mov dx, VGA_DAC_DATA
+    mov ecx, 256
+.color:
+    mov ebx, [esi]
+    mov eax, ebx
+    shr eax, 18                           ; red, 8 bits -> 6
+    out dx, al
+    mov eax, ebx
+    shr eax, 10
+    and al, 0x3F
+    out dx, al
+    mov eax, ebx
+    shr eax, 2
+    and al, 0x3F
+    out dx, al
+    add esi, 4
+    loop .color
+.colors_done:
+    popad
+.done:
+    ret
+
 ; Back to text mode, if a program switched to graphics.
 app_gfx_off:
     cmp byte [app_gfx], 0
@@ -502,6 +544,34 @@ sys_gfx_mode:
     xor eax, eax
     ret
 .no_window:
+    jmp app_gfx_screen
+
+; eax x ecx pixels, edx bits (8 / 32) on the whole screen - mode 13h
+; for 320x200x8, else VBE -> eax = 0, or -1 if the video can't
+app_gfx_screen:
+    cmp eax, 320
+    jne .vbe
+    cmp ecx, 200
+    jne .vbe
+    cmp edx, 8
+    jne .vbe
+    call app_gfx_off
+    pushad
+    call vga_enter_mode13
+    call app_gfx_palette
+    mov edi, VGA_FB
+    mov ecx, VGA_FB_SIZE / 4
+    xor eax, eax
+    cld
+    rep stosd
+    popad
+    mov byte [app_gfx], 1
+    mov dword [app_gfx_w], 320
+    mov dword [app_gfx_h], 200
+    mov dword [app_gfx_bpp], 1
+    xor eax, eax
+    ret
+.vbe:
     cmp eax, 64
     jb .fail
     cmp eax, BGA_MAX_W

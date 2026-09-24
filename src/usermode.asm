@@ -47,6 +47,8 @@ APP_MAX_FILE    equ APP_SIZE - 0x10000 ; leaves room for the stack
 
 PAGE_DIR        equ 0x500000          ; 4KB, then the user page table
 PAGE_TABLE_APP  equ 0x501000
+PAGE_TABLE_LOW  equ 0x502000          ; the first 4MB in 4KB pages (so the
+                                      ; VGA window can be moved: src/vga.asm)
 FPU_AREAS       equ 0x6300000         ; FXSAVE areas, 512 bytes per task
 PAGING_4MB_PAGES equ 32               ; identity-map 128MB (QEMU's -m 128)
 
@@ -103,6 +105,16 @@ pm_init:
     cmp ecx, PAGING_4MB_PAGES
     jb .pde
     mov dword [PAGE_DIR + (APP_BASE >> 22) * 4], PAGE_TABLE_APP | 0x07
+    xor ecx, ecx                          ; the first 4MB: 1:1, 4KB pages
+.low:
+    mov eax, ecx
+    shl eax, 12
+    or eax, 0x03                          ; present, writable, kernel only
+    mov [PAGE_TABLE_LOW + ecx*4], eax
+    inc ecx
+    cmp ecx, 1024
+    jb .low
+    mov dword [PAGE_DIR], PAGE_TABLE_LOW | 0x03
     xor ecx, ecx
 .pte:
     mov eax, ecx

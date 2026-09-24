@@ -225,6 +225,15 @@ mouse_isr:
     mov [mouse_y], eax
 .y_high_ok:
     inc dword [mouse_events]         ; (for whoever's watching it move)
+    cmp byte [gfx_mouse_desk], 0     ; paint/sweeper's view of it: the
+    jne .desk_gfx                    ; same - unless they're in a desktop
+    mov eax, [mouse_x]               ; window (the desktop sets it then)
+    mov [gfx_mouse_x], eax
+    mov eax, [mouse_y]
+    mov [gfx_mouse_y], eax
+    mov al, [mouse_buttons]
+    mov [gfx_mouse_buttons], al
+.desk_gfx:
 
     test byte [mouse_btn_changed], 1 ; the left button went down or up:
     jz .eoi                          ; queued with where it happened, so
@@ -266,6 +275,10 @@ mouse_max_x dd 319
 mouse_max_y dd 199
 mouse_speed dd 1
 mouse_events dd 0
+gfx_mouse_x dd 160               ; the mouse as mode 13h programs see it
+gfx_mouse_y dd 100
+gfx_mouse_buttons db 0
+gfx_mouse_desk db 0              ; 1: the desktop feeds gfx_mouse_*
 MOUSE_BTN_QUEUE equ 16
 mouse_btn_queue times MOUSE_BTN_QUEUE db 0 ; the left button's changes (0/1)
 mouse_btn_x times MOUSE_BTN_QUEUE dd 0     ; and where the pointer was
