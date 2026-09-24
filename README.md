@@ -285,15 +285,21 @@ alex@/PROGRAMS$
   you're in; the prompt says which you're in (`[2] test@/$`). Each is
   a whole separate session - its own screen, command line and
   history, current directory, colors, BASIC program, uranium file, even
-  a ring-3 program left waiting for input - while background tasks
-  (the clock, music) carry on across all of them. Every console is a
-  task; only the one on screen runs, the rest are paused. Since the
-  kernel keeps session state in ordinary globals, a switch swaps them:
-  the kernel image except its shared parts (interrupts, drivers, the
-  scheduler, sound, network, RAM-backed TMP files), plus BASIC's
-  memory, the program's 4MB and the text screen, into a 5MB save area
-  per console - only ever at a safe point, while the console on screen
-  is waiting for a key.
+  a ring-3 program - and they all run at once: a program computing in
+  one carries on while you type in another, background tasks (the
+  clock, music) across all of them. Every console is a task with its
+  own page tables (src/console.asm): the kernel keeps session state in
+  ordinary globals, so each console has its own copy of the kernel
+  image except its shared parts (interrupts, drivers, the scheduler,
+  sound, network, the desktop - page-aligned in kernel.asm for this),
+  plus BASIC's and the scripts' memory, its program's 4MB, its text
+  screen and its keyboard queue, in 5MB of its own - shown at the usual
+  addresses to its task. A switch copies nothing: it says which
+  console's on screen (and moves the text screen). The kernel isn't
+  reentrant, so a console's task holds the kernel lock (src/sched.asm)
+  while it's in the kernel, and lets go while it waits or runs ring-3
+  code; games, BASIC and the network let others in at safe points. The
+  keys go only to the console on screen.
 - **Protected programs (ring 3).** `run <name>.app` runs a program in
   user mode, the way real operating systems do: paging maps it its own
   4MB and nothing else, so it can't touch the kernel, the screen or
@@ -360,9 +366,17 @@ alex@/PROGRAMS$
   640x480, arrows change the spin).
 - **Desktop.** `desktop` switches to a graphical desktop in 1024x768
   true color: windows with title bars you drag with the mouse, that
-  come to the front when clicked and close with their [x], a taskbar
-  with a button per window and the time, and a start menu (Terminal,
-  Files, Clock, Pictures, Tasks, Mixer, System, Exit desktop).
+  come to the front when clicked and close with their [x], minimize
+  with [_] (to the taskbar) and - Files and programs - maximize with
+  the box or a double click on the title; Files resizes by its
+  bottom-right corner; Alt+Tab brings the window at the back forward.
+  A taskbar with a button per window and a tray - volume (click: the
+  Mixer, wheel: the master volume), network (green once it's set up),
+  the time (click: this month's calendar) - and a start menu:
+  Programs (every .APP/.COM/.BIN on the disk, run in a Terminal),
+  Terminal, Files, Clock, Pictures, Tasks, Mixer, System, Exit.
+  PrintScreen saves the desktop as PICS/SHOTnn.BMP. The mouse wheel
+  works too (the IntelliMouse protocol).
   - **Terminals.** Every console has its own **Terminal** window -
     while the desktop is on, each console's text goes to a buffer in
     RAM (`text_vram`, src/screen.asm) that the desktop draws with the
@@ -371,14 +385,15 @@ alex@/PROGRAMS$
     console; clicking a window gives the keyboard to its console (the
     focused ones have a yellow "kbd" in the title), Alt+1..9 too - even
     while a program there is busy computing: one running its own code
-    in ring 3 is paused right where it is.
+    in ring 3 is paused right where it is. The wheel over a Terminal
+    scrolls back through the last 200 lines that went off its top.
   - **Programs in windows.** A ring-3 program that asks for graphics
     (`run fire.app`, `run cube.app`, `run pong.app`, `run
     mandel.app`...) gets a window instead of the whole screen - small
     modes are shown doubled - titled with its name, up to 3 at once;
-    its [x] stops it. Start one in each Terminal to have several side
-    by side (only the console with the keyboard runs; the others wait
-    where they are). The built-in 320x200 graphics programs - Snake,
+    its [x] stops it, maximizing blows its picture up as far as it
+    fits. Start one in each Terminal to have several running side by
+    side. The built-in 320x200 graphics programs - Snake,
     Tetris, Sweeper, 2048 (PROGRAMS/*.BIN), paint, chip8, turtle - get
     a window too: their 0xA0000 is remapped by paging to that
     console's own 64KB of RAM (src/vga.asm), which the desktop shows,
@@ -399,7 +414,13 @@ alex@/PROGRAMS$
     program or half a command): `run` for .APP/.COM/.BIN, `play` for
     .WAV/.IMF, `run modplay.app` for .MOD, `basic` for .BAS, `turtle`,
     `chip8`, a .HG script by its name, anything else in `uranium`.
-    Drag an icon onto a folder (or "..") to move it there.
+    Drag an icon onto a folder (or "..") to move it there; a rubber
+    band on empty space or Ctrl+click selects several, and dragging one
+    of them moves them all. Right-click: Open, Rename..., Copy to...,
+    Delete, Properties - or New folder..., Select all on empty space.
+    Delete moves into /TRASH (Delete forever, Empty trash in there);
+    Rename, Copy and New folder type the command into a Terminal and
+    leave the new name to you.
   - **Tasks** is a task manager: a CPU-use graph for the last minute,
     every task with its state and CPU time, and End task for the
     selected one (not consoles or the desktop).
@@ -719,7 +740,7 @@ BIOS  →  boot.asm (16-bit real mode)
 Everything below `0x10000` is the kernel itself — code and all working
 data — small enough that internal pointers still fit in 16 bits and most
 of the code reads like a real-mode program, even though the kernel image
-as a whole (padded to 448 sectors, split across the boot loader's four reads
+as a whole (padded to 576 sectors, split across the boot loader's five reads
 as described above) now extends past that boundary. Only things that live
 outside the kernel image need a full 32-bit linear address:
 
@@ -733,8 +754,9 @@ outside the kernel image need a full 32-bit linear address:
 | IMF song buffer (`play`) | `0x310000` |
 | Task stacks (64KB each, 16 tasks) | `0x400000` – `0x4FFFFF` |
 | Page directory / user page table / first 4MB's table | `0x500000` / `0x501000` / `0x502000` |
+| Consoles' page tables (directory, first 4MB, program: 12KB each) | `0x510000` – `0x52AFFF` |
 | A ring-3 program's own 4MB | `0x800000` – `0xBFFFFF` |
-| Console save areas (5MB each) | `0x1000000` – `0x3CFFFFF` |
+| Consoles' own memory (5MB each: program, kernel pages, text screen) | `0x1000000` – `0x3CFFFFF` |
 | Programs' open-file buffers (4 x 4MB) | `0x4000000` – `0x4FFFFFF` |
 | Program windows' pixels (3 x 2MB) | `0x5000000` – `0x55FFFFF` |
 | Mixer voice queues (4 x 64KB) + scratch | `0x5600000` – `0x5647FFF` |
@@ -744,15 +766,16 @@ outside the kernel image need a full 32-bit linear address:
 | Desktop back buffer (1024x768x4) | `0x6000000` – `0x62FFFFF` |
 | FPU save areas / consoles' desktop text | `0x6300000` / `0x6310000` |
 | Desktop: shown text / Files list | `0x6320000` / `0x6330000` |
+| Terminals' scrollback (200 lines per console) | `0x6340000` – `0x6387FFF` |
 | Script variables and levels | `0x280000` – `0x29FFFF` |
 | SB16 DMA buffer (the mixer's output) | `0x330000` |
-| Desktop picture file / pixels | `0x7500000` / `0x7700000` |
+| Desktop picture pixels / its file (and a screenshot's) | `0x7700000` / `0x7A00000` |
 | RTL8139 receive ring / transmit buffers | `0x300000` / `0x304000` |
 | .COM program segment | `0x100000` |
-| Kernel code/data | `0x8000` – `0x3FFFF` (448 sectors) |
+| Kernel code/data | `0x8000` – `0x4FFFF` (576 sectors) |
 | Boot sector | `0x7C00` |
 
-On disk, sectors are laid out as: boot sector, then the kernel (448
+On disk, sectors are laid out as: boot sector, then the kernel (576
 sectors), then 1024 directory slots (one file/folder per 512-byte sector —
 name, type, parent pointer, a 32-bit size, up to 127 bytes of inline
 content; folders only ever take slots 0-254, so a parent pointer still

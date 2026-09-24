@@ -17,16 +17,15 @@
 ; 64 sectors (32 KB, exactly up to the 0x10000 boundary); every call
 ; after that starts at offset 0 of its own segment, so each can carry
 ; up to the full 128 sectors before hitting that same 64 KB ceiling
-; again. The kernel needs more than 64+128+128 sectors by now, so it's
-; loaded in FOUR calls back to back: 64 sectors into 0x0000:0x8000
-; (physically 0x8000..0xFFFF), then 128 into 0x1000:0x0000 (physically
-; 0x10000..0x1FFFF), then 128 into 0x2000:0x0000 (physically
-; 0x20000..0x2FFFF), then the rest into 0x3000:0x0000 (physically
-; 0x30000..). The physical addresses are contiguous across all four
-; (each segment's base picks up exactly where the previous call's
-; transfer ended), so for the kernel itself (assembled as a single
-; flat binary with ORG 0x8000) none of these boundaries exist - it has
-; no idea it was loaded by four separate BIOS calls.
+; again. The kernel needs more than 64+128+128+128 sectors by now, so
+; it's loaded in FIVE calls back to back (a loop over the packets at
+; dap..dap5): 64 sectors into 0x0000:0x8000 (physically 0x8000..0xFFFF),
+; then 128 each into 0x1000:0, 0x2000:0, 0x3000:0 and 0x4000:0
+; (physically 0x10000.. up to 0x4FFFF). The physical addresses are
+; contiguous across all five (each segment's base picks up exactly
+; where the previous call's transfer ended), so for the kernel itself
+; (assembled as a single flat binary with ORG 0x8000) none of these
+; boundaries exist - it has no idea it was loaded by five BIOS calls.
 
 [BITS 16]
 [ORG 0x7C00]
