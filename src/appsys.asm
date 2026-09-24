@@ -367,6 +367,11 @@ sys_gfx:
     je .off
     cmp byte [app_gfx], 0
     jne .done
+    mov eax, 320                          ; the desktop's on: a window
+    mov ebx, 200
+    mov ecx, 1
+    call app_try_window
+    jnc .done
     pushad
     call vga_enter_mode13
     call app_gfx_palette
@@ -388,10 +393,51 @@ sys_gfx:
     xor eax, eax
     ret
 
+; eax x ebx pixels, ecx bytes each (1 / 4): a window on the desktop
+; (src/dkwins.asm) instead of the screen, if the desktop's on and it
+; fits. carry=1 if not.
+app_try_window:
+    cmp byte [dk_active], 0
+    je .no
+    cmp byte [dk_suspended], 0
+    jne .no
+    cmp ecx, 1
+    je .depth_ok
+    cmp ecx, 4
+    jne .no
+.depth_ok:
+    push eax
+    push ecx
+    call dk_app_open                      ; -> eax = its slot
+    pop ecx
+    jc .failed
+    mov [app_win_slot], eax
+    pop eax
+    mov byte [app_gfx], 3
+    mov [app_gfx_w], eax
+    mov [app_gfx_h], ebx
+    mov [app_gfx_bpp], ecx
+    clc
+    ret
+.failed:
+    pop eax
+.no:
+    stc
+    ret
+
 ; Back to text mode, if a program switched to graphics.
 app_gfx_off:
     cmp byte [app_gfx], 0
     je .done
+    cmp byte [app_gfx], 3                 ; a window: just close it
+    jne .screen
+    push eax
+    mov eax, [app_win_slot]
+    call dk_app_close
+    pop eax
+    mov byte [app_gfx], 0
+    ret
+.screen:
     pushad
     cmp byte [app_gfx], 2
     jne .vga
@@ -441,6 +487,21 @@ sys_gfx_mode:
     mov dword [app_gfx_bpp], 1
     ret
 .vbe:
+    push eax                              ; the desktop's on: a window, if
+    push ecx                              ; it fits in one
+    push edx
+    call app_gfx_off
+    mov ebx, ecx
+    mov ecx, edx
+    shr ecx, 3
+    call app_try_window
+    pop edx
+    pop ecx
+    pop eax
+    jc .no_window
+    xor eax, eax
+    ret
+.no_window:
     cmp eax, 64
     jb .fail
     cmp eax, BGA_MAX_W
@@ -636,6 +697,13 @@ app_blit:
     sub eax, [app_rect_y]
     mov [app_rect_h], eax
 .h_ok:
+    cmp byte [app_gfx], 3                 ; a window: into its pixels
+    jne .screen
+    mov esi, [ebp + 16]
+    mov eax, [app_win_slot]
+    call dk_app_blit
+    jmp .done
+.screen:
     mov edi, VGA_FB                       ; where the screen is
     cmp byte [app_gfx], 2
     jne .have_screen
@@ -745,6 +813,16 @@ sys_palette:
     mov eax, [ebp + 16]
     cmp eax, 255
     ja .bad
+    cmp byte [app_gfx], 3                 ; a window's own palette
+    jne .dac
+    mov ebx, eax
+    mov ecx, [ebp + 24]
+    and ecx, 0xFFFFFF
+    mov eax, [app_win_slot]
+    call dk_app_palette
+    xor eax, eax
+    ret
+.dac:
     mov dx, VGA_DAC_WRITE_INDEX
     out dx, al
     mov dx, VGA_DAC_DATA
@@ -944,10 +1022,6 @@ fh_pos       times FH_COUNT dd 0
 fh_cur       dd 0
 fh_cur_slot  dw 0
 fh_src_ptr   dd 0
-app_gfx      db 0                     ; 0 text, 1 mode 13h, 2 VBE
-app_gfx_w    dd 320
-app_gfx_h    dd 200
-app_gfx_bpp  dd 1                     ; bytes per pixel
 app_rect_x   dd 0
 app_rect_y   dd 0
 app_rect_w   dd 0

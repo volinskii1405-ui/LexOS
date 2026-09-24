@@ -155,6 +155,7 @@ shared_system_start:
 %include "src/appsys.asm"
 %include "src/console.asm"
 %include "src/desktop.asm"
+%include "src/dkwins.asm"
 shared_system_end:
 %include "src/grep.asm"
 %include "src/headtail.asm"

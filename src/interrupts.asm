@@ -434,6 +434,11 @@ read_key:
     push ebx
 .wait:
     call console_safe_point          ; Alt+T / Alt+1..9 (src/console.asm)
+    call dk_inject_key               ; typed by the desktop (src/desktop.asm)
+    jc .real_keys
+    pop ebx
+    ret
+.real_keys:
     mov al, [kbd_buf_tail]
     cmp al, [kbd_buf_head]
     jne .have_key

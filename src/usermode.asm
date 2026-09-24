@@ -280,6 +280,17 @@ app_run:
     cld
     rep stosd
     call app_build_cmdline                ; src/appsys.asm
+    push esi
+    push edi
+    push ecx
+    mov esi, fs_tmp_name                  ; its name (a window's title)
+    mov edi, app_name
+    mov ecx, FS_NAME_LEN + 1
+    cld
+    rep movsb
+    pop ecx
+    pop edi
+    pop esi
     pop eax
     mov edi, APP_BASE
     mov ecx, APP_MAX_FILE

@@ -194,6 +194,23 @@ mouse_isr:
     mov byte [mouse_packet_idx], 0
 
     mov al, [mouse_packet + 0]
+    mov ah, al                       ; the left button went down or up:
+    xor ah, [mouse_buttons]          ; queued, so a quick double click
+    test ah, 1                       ; isn't lost between two looks
+    jz .same_button
+    movzx ebx, byte [mouse_btn_head]
+    inc bl
+    and bl, MOUSE_BTN_QUEUE - 1
+    cmp bl, [mouse_btn_tail]
+    je .same_button                  ; (full)
+    movzx ebx, byte [mouse_btn_head]
+    mov ah, al
+    and ah, 1
+    mov [mouse_btn_queue + ebx], ah
+    inc bl
+    and bl, MOUSE_BTN_QUEUE - 1
+    mov [mouse_btn_head], bl
+.same_button:
     mov [mouse_buttons], al
 
     movsx eax, byte [mouse_packet + 1]
@@ -244,3 +261,7 @@ mouse_max_x dd 319
 mouse_max_y dd 199
 mouse_speed dd 1
 mouse_events dd 0
+MOUSE_BTN_QUEUE equ 16
+mouse_btn_queue times MOUSE_BTN_QUEUE db 0 ; the left button's changes (0/1)
+mouse_btn_head db 0
+mouse_btn_tail db 0

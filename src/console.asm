@@ -6,7 +6,7 @@
 ; on across all of them.
 ;
 ; Exports: console_init, console_safe_point, console_cmd_exit,
-;          console_prompt_prefix
+;          console_prompt_prefix, console_saved_addr, console_set_text_vram
 ;
 ; How: every console is a task (src/sched.asm) - console 1 is task 0,
 ; the kernel's own flow; the others are created by Alt+T. Only the
@@ -137,7 +137,12 @@ console_safe_point:
     movzx eax, byte [console_request]
     mov byte [console_request], 0
     cmp byte [vga_graphics_active], 0
-    jne .done                               ; not from a graphics program
+    je .screen_ok
+    cmp byte [dk_active], 0                 ; not from a graphics program -
+    je .done                                ; but the desktop's windows are
+    cmp byte [dk_suspended], 0              ; each a console's, so there
+    jne .done                               ; switching is fine
+.screen_ok:
     mov ecx, [sched_current]
     movzx ebx, byte [task_console + ecx]
     cmp bl, [console_fg]
@@ -258,8 +263,64 @@ console_after_switch:
     push eax
     mov al, [kbd_buf_head]
     mov [kbd_buf_tail], al
+    call console_set_text_vram
     call update_hw_cursor
     pop eax
+    ret
+
+; text_vram for the console on screen: the VGA's text memory - or, with
+; the desktop on, that console's buffer (its Terminal window's text)
+console_set_text_vram:
+    push eax
+    mov eax, VIDEO_MEM
+    cmp byte [dk_active], 0
+    je .set
+    movzx eax, byte [console_fg]
+    shl eax, 12
+    add eax, DESK_TEXT
+.set:
+    mov [text_vram], eax
+    pop eax
+    ret
+
+; eax = a console, ebx = an address in per-console memory -> ebx = where
+; that console keeps it: the live address if it's the one on screen,
+; else inside its save area. ebx = 0 if the address isn't per-console.
+console_saved_addr:
+    cmp al, [console_fg]
+    je .live
+    push eax
+    push ecx
+    push edx
+    push esi
+    imul esi, eax, CONSOLE_SAVE_SIZE
+    add esi, CONSOLE_SAVE_BASE            ; esi = where the region's copy starts
+    xor ecx, ecx
+.region:
+    cmp ecx, [console_region_count]
+    jae .none
+    mov eax, [console_regions + ecx*8]
+    mov edx, [console_regions + ecx*8 + 4]
+    cmp ebx, eax
+    jb .next
+    lea eax, [eax + edx]
+    cmp ebx, eax
+    jae .next
+    sub ebx, [console_regions + ecx*8]
+    add ebx, esi
+    jmp .done
+.next:
+    add esi, edx
+    inc ecx
+    jmp .region
+.none:
+    xor ebx, ebx
+.done:
+    pop esi
+    pop edx
+    pop ecx
+    pop eax
+.live:
     ret
 
 ; eax = console index: its per-console memory -> its save area
@@ -323,6 +384,7 @@ console_shell_start:
     mov byte [current_color], 0x07
     mov byte [app_active], 0
     mov byte [app_abort_request], 0
+    mov byte [app_gfx], 0                   ; (not the other console's window)
     call clear_screen
     mov esi, console_msg_banner1
     call basic_puts
@@ -391,6 +453,7 @@ console_prompt_prefix:
 ; Data (all shared - see console_shared)
 ; ============================================================
 console_fg         db 0
+text_vram          dd VIDEO_MEM       ; src/screen.asm writes the text here
 console_prev       db 0
 console_request    db 0               ; set by keyboard_isr: 1-9 or NEW
 console_used       times CONSOLE_MAX db 0
