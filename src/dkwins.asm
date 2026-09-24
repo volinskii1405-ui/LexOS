@@ -540,6 +540,28 @@ dk_copy_pixels:
     rep movsd
     jmp .next_row
 .scaled:
+    cmp dword [dk_cp_scale], 2            ; doubled (the usual): pairs
+    jne .any_scale
+    test ebx, 1
+    jnz .any_scale
+    shr ebx, 1
+    lea esi, [esi + ebx*4]
+    shr ecx, 1
+    jz .odd_tail
+.pair:
+    lodsd
+    stosd
+    stosd
+    loop .pair
+.odd_tail:
+    mov ecx, [dk_cp_c1]                   ; (an odd last one)
+    sub ecx, [dk_cp_c0]
+    test ecx, 1
+    jz .next_row
+    lodsd
+    stosd
+    jmp .next_row
+.any_scale:
     push edx
     mov eax, ebx                          ; the first source pixel, and how
     xor edx, edx                          ; far into its repeats
@@ -4453,7 +4475,29 @@ dk_app_blit:
     pushad
     cmp byte [dk_app_used + eax], 0
     je .done
+    ; its last frame not on the screen yet: wait for it (a few frames
+    ; at most) - no use making pictures faster than they're shown, and
+    ; the time goes to the other programs instead
+    mov ecx, [timer_ms]
+.unshown:
+    cmp byte [dk_app_unshown + eax], 0
+    je .shown
+    cmp byte [dk_suspended], 0
+    jne .shown
+    mov edx, [timer_ms]
+    sub edx, ecx
+    cmp edx, 50
+    ja .shown
+    push eax
+    mov eax, WAIT_MS
+    call task_wait
+    pop eax
+    cmp byte [dk_app_used + eax], 0
+    je .done
+    jmp .unshown
+.shown:
     mov [dk_ab_slot], eax
+    mov dword [dk_ab_y0], -1              ; (the rows that change)
     mov edi, eax
     shl edi, 21
     add edi, DK_APP_PIX
@@ -4477,39 +4521,68 @@ dk_app_blit:
     mov eax, [dk_ab_slot]
     shl eax, 10
     add eax, dk_app_pal
+    xor ebp, ebp                          ; (this row changed?)
 .px8:
     movzx edx, byte [esi]
     mov edx, [eax + edx*4]
+    cmp [edi], edx
+    je .same8
     mov [edi], edx
+    inc ebp
+.same8:
     inc esi
     add edi, 4
     loop .px8
     pop esi
-    jmp .next_row
+    jmp .row_seen
 .rgb:
     push esi
     lea esi, [esi + edx*4]
     cld
-    rep movsd
+    xor ebp, ebp
+    push esi
+    push edi
+    push ecx
+    repe cmpsd                            ; the same as it was?
+    pop ecx
+    pop edi
     pop esi
+    je .rgb_done
+    inc ebp
+    rep movsd
+.rgb_done:
+    pop esi
+.row_seen:
+    or ebp, ebp
+    jz .next_row
+    cmp dword [dk_ab_y0], -1
+    jne .y0
+    mov [dk_ab_y0], ebx
+.y0:
+    mov [dk_ab_y1], ebx
 .next_row:
     inc ebx
     jmp .row
 .rows_done:
-    ; that rectangle of the window, scaled, is dirty
+    ; the rows of that rectangle that changed, scaled, are dirty
+    cmp dword [dk_ab_y0], -1
+    je .done                              ; (nothing did)
     mov edx, [dk_ab_slot]
+    mov byte [dk_app_unshown + edx], 1
     mov eax, [dk_app_win + edx*4]
     call dk_client_origin                 ; -> eax, ebx
     mov ecx, [dk_app_scale + edx*4]
     mov esi, [app_rect_x]
     imul esi, ecx
     add eax, esi
-    mov esi, [app_rect_y]
+    mov esi, [dk_ab_y0]
     imul esi, ecx
     add ebx, esi
     mov esi, [app_rect_w]
     imul esi, ecx
-    mov edi, [app_rect_h]
+    mov edi, [dk_ab_y1]
+    sub edi, [dk_ab_y0]
+    inc edi
     imul edi, ecx
     mov ecx, esi
     mov edx, edi
@@ -4667,6 +4740,9 @@ dk_ao_h           dd 0
 dk_ab_slot        dd 0
 dk_ab_dest        dd 0
 dk_app_used       times DK_APPS db 0
+dk_app_unshown    times 4 db 0            ; a frame waiting to be shown
+dk_ab_y0          dd 0
+dk_ab_y1          dd 0
 dk_app_vga        times DK_APPS db 0      ; a kernel program's mode 13h
 dk_ao_title       dd 0                    ; dk_app_open's title, if not app_name
 dk_vga_title      times DK_TITLE_LEN db 0

@@ -43,6 +43,7 @@ DESK_H            equ 768
 DESK_STRIDE       equ DESK_W * 4
 DESK_BACK         equ 0x6000000           ; the picture (3MB)
 DESK_TEXT         equ 0x6310000           ; each console's text, 4KB apart
+DESK_FRONT        equ 0x7D00000           ; what's on the screen (3MB)
 DESK_SHOWN        equ 0x6320000           ; each window's text as last drawn
 DESK_FILES        equ 0x6330000           ; the Files window's list
 
@@ -209,6 +210,7 @@ dk_video_on:
     mov dword [mouse_x], DESK_W / 2
     mov dword [mouse_y], DESK_H / 2
     mov byte [dk_redraw_all], 1
+    call dk_front_forget
     call vga_sync_window                  ; (a program's window's picture)
     popad
     ret
@@ -362,6 +364,8 @@ desktop_task:
     jmp .rect
 .rects_done:
     call dk_move_pointer                  ; (erased and redrawn if needed)
+    mov dword [dk_app_unshown], 0         ; (their frames are on screen:
+                                          ; the next ones may come)
 .drawn:
     dec dword [sched_lock]
     call dk_shot_save                     ; (src/dkwins.asm: outside a frame)
@@ -2205,37 +2209,57 @@ dk_glyph:
     jge .done
     shl ecx, 5
     add ecx, vga_saved_font
-    mov ebp, 16
+    ; the visible columns as a mask (bit 7 = the leftmost)
+    push ecx
+    mov ecx, [dk_clip_x0]
+    sub ecx, eax                          ; columns cut on the left
+    jg .left
+    xor ecx, ecx
+.left:
+    mov esi, 0xFF
+    shr esi, cl
+    mov ecx, eax
+    add ecx, 8
+    sub ecx, [dk_clip_x1]                 ; columns cut on the right
+    jg .right
+    xor ecx, ecx
+.right:
+    mov edi, 0xFF
+    shl edi, cl
+    and esi, edi                          ; esi = the mask
+    pop ecx
+    ; the visible rows
+    mov ebp, ebx
+    add ebp, 16
+    cmp ebp, [dk_clip_y1]
+    jle .bottom
+    mov ebp, [dk_clip_y1]
+.bottom:
+    mov edi, [dk_clip_y0]
+    sub edi, ebx                          ; rows cut at the top
+    jle .top
+    add ecx, edi
+    add ebx, edi
+.top:
+    sub ebp, ebx                          ; ebp = rows to draw
+    imul edi, ebx, DESK_STRIDE
+    lea edi, [edi + eax*4 + DESK_BACK]
 .row:
-    cmp ebx, [dk_clip_y0]
-    jl .next_row
-    cmp ebx, [dk_clip_y1]
-    jge .done
-    mov edi, ebx
-    imul edi, DESK_STRIDE
-    add edi, DESK_BACK
-    mov dl, [ecx]                         ; (the color's low byte is kept
-    mov [dk_g_bits], dl                   ; aside - edx is rebuilt below)
-    mov edx, [esp + 20]                   ; the color again (pushad's edx)
-    xor esi, esi
+    mov eax, esi
+    and al, [ecx]
+    jz .next_row
+    push edi
 .px:
-    shl byte [dk_g_bits], 1
+    add al, al
     jnc .skip
-    push eax
-    add eax, esi
-    cmp eax, [dk_clip_x0]
-    jl .out
-    cmp eax, [dk_clip_x1]
-    jge .out
-    mov [edi + eax*4], edx
-.out:
-    pop eax
+    mov [edi], edx
 .skip:
-    inc esi
-    cmp esi, 8
-    jb .px
+    add edi, 4
+    or al, al
+    jnz .px
+    pop edi
 .next_row:
-    inc ebx
+    add edi, DESK_STRIDE
     inc ecx
     dec ebp
     jnz .row
@@ -2368,8 +2392,64 @@ dk_line:
 ; To the screen
 ; ============================================================
 
-; DESK_BACK's rectangle eax, ebx, ecx (w), edx (h) -> the screen
+; DESK_BACK's rectangle eax, ebx, ecx (w), edx (h) -> the screen - only
+; the pixels that differ from what's there already (DESK_FRONT: a copy
+; of the screen in RAM). Writing the video memory is the slow part (an
+; emulator watches every write to it); comparing RAM is cheap, and
+; most of a frame - a black background, a still half of a picture -
+; hasn't changed.
 dk_blit:
+    pushad
+    add ecx, eax
+    add edx, ebx
+    call dk_clip_screen
+    jc .done
+    sub ecx, eax
+    mov [dk_bl_w], ecx
+    sub edx, ebx
+    mov [dk_bl_rows], edx
+    mov esi, ebx
+    imul esi, DESK_STRIDE
+    lea esi, [esi + eax*4]
+    lea edi, [esi + DESK_FRONT]
+    add esi, DESK_BACK
+    mov ebp, [bga_lfb]                    ; ebp = the screen - the copy
+    sub ebp, DESK_FRONT
+    cld
+.row:
+    push esi
+    push edi
+    mov ecx, [dk_bl_w]
+.scan:
+    repe cmpsd                            ; the same: skipped
+    je .row_done
+    sub esi, 4                            ; (back to the first that isn't)
+    sub edi, 4
+    inc ecx
+.diff:
+    mov eax, [esi]
+    cmp eax, [edi]
+    je .scan
+    mov [edi], eax
+    mov [edi + ebp], eax
+    add esi, 4
+    add edi, 4
+    dec ecx
+    jnz .diff
+.row_done:
+    pop edi
+    pop esi
+    add esi, DESK_STRIDE
+    add edi, DESK_STRIDE
+    dec dword [dk_bl_rows]
+    jnz .row
+.done:
+    popad
+    ret
+
+; The same, every pixel of it (where the pointer was drawn straight
+; onto the screen, which DESK_FRONT doesn't know about)
+dk_blit_all:
     pushad
     add ecx, eax
     add edx, ebx
@@ -2398,6 +2478,18 @@ dk_blit:
     dec ebp
     jnz .row
 .done:
+    popad
+    ret
+
+; The screen's contents unknown (the mode just set): DESK_FRONT made to
+; match nothing, so the next frame writes every pixel
+dk_front_forget:
+    pushad
+    mov edi, DESK_FRONT
+    mov ecx, DESK_W * DESK_H
+    mov eax, 0xFF000000                   ; (no pixel of DESK_BACK is that)
+    cld
+    rep stosd
     popad
     ret
 
@@ -2437,7 +2529,7 @@ dk_move_pointer:
     call dk_ptr_rect                      ; where it was: from the back buffer
     sub ecx, eax
     sub edx, ebx
-    call dk_blit
+    call dk_blit_all
     call dk_draw_pointer
 .done:
     popad
@@ -2564,7 +2656,9 @@ dk_frame_n        dd 0                         ; this frame's copy
 dk_frame_rects    times DK_DIRTY_MAX * 4 dd 0
 dk_frame_ms       dd 0
 dk_bd_h           dd 0
-dk_frames         dd 0                         ; (counted, for testing)
+dk_frames         dd 0
+dk_bl_w           dd 0
+dk_bl_rows        dd 0
 dk_ptr_ghost      db 0                         ; the drawn pointer had an icon
 dk_clip_x0        dd 0
 dk_clip_y0        dd 0
@@ -2607,7 +2701,6 @@ dk_btn_step       dd 134
 dk_btn_top        dd 0
 dk_cx             dd 0                    ; the client area being drawn
 dk_cy             dd 0
-dk_g_bits         db 0
 dk_lx1            dd 0
 dk_ly1            dd 0
 dk_ldx            dd 0
