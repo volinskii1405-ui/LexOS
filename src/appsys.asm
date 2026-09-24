@@ -572,6 +572,7 @@ app_gfx_screen:
     xor eax, eax
     ret
 .vbe:
+    call console_wait_fg                  ; (the screen's the one on it's)
     cmp eax, 64
     jb .fail
     cmp eax, BGA_MAX_W
@@ -702,6 +703,14 @@ bga_find:
     shl edx, 22
     or edx, 0x83                          ; present, writable, 4MB, kernel only
     mov [PAGE_DIR + eax*4], edx
+    push ecx                              ; (every console's directory)
+    mov ecx, CONSOLE_MAX
+    mov edi, CONSOLE_PT_BASE
+.dirs:
+    mov [edi + eax*4], edx
+    add edi, 0x3000
+    loop .dirs
+    pop ecx
     inc eax
     loop .map
     mov eax, cr3
@@ -740,6 +749,15 @@ sys_blit:
 app_blit:
     cmp byte [app_gfx], 0
     je .done
+    cmp byte [app_gfx], 3                 ; a window, and the desktop's
+    jne .shown                            ; gone: the whole screen once
+    cmp byte [dk_active], 0               ; it's on it, till then nothing
+    jne .shown
+    mov al, [console_self]
+    cmp al, [console_fg]
+    jne .done
+    call app_unwindow
+.shown:
     mov eax, [app_gfx_w]                  ; the frame must be the program's
     imul eax, [app_gfx_h]
     imul eax, [app_gfx_bpp]
@@ -920,6 +938,9 @@ sys_keydown:
     xor eax, eax
     cmp ecx, 0x80
     jae .done
+    mov dl, [console_self]                ; (keys held are the console
+    cmp dl, [console_fg]                  ; on screen's)
+    jne .done
     mov al, [key_held + ecx]
 .done:
     ret

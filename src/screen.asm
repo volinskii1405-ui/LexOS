@@ -222,6 +222,9 @@ update_hw_cursor:
     push ebx
     push ecx
     push edx
+    mov al, [console_self]           ; (only the console on screen's -
+    cmp al, [console_fg]             ; the others run too, off screen)
+    jne .off_screen
 
     mov ax, [cursor_row]
     mov cx, SCREEN_COLS
@@ -243,6 +246,7 @@ update_hw_cursor:
     mov al, bl
     out dx, al
 
+.off_screen:
     pop edx
     pop ecx
     pop ebx

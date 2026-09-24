@@ -661,6 +661,12 @@ cmd_exit         db "exit", 0
 ; src/usermode.asm's, per console (src/console.asm swaps this file)
 app_active         db 0
 shell_at_prompt    db 0               ; reading a command line (main_loop)
+console_self       db 0               ; which console this is (src/console.asm)
+text_vram          dd VIDEO_MEM       ; src/screen.asm writes the text here
+kbd_buf_ascii      times 16 db 0      ; its keys (KBD_BUF_SIZE), put here by
+kbd_buf_scancode   times 16 db 0      ; keyboard_isr while it's on screen
+kbd_buf_head       db 0
+kbd_buf_tail       db 0
 vga_windowed       db 0               ; mode 13h shown in a desktop window
 vga_win_slot       dd 0               ; (its program window: src/dkwins.asm)
 prog_title         times 32 db 0      ; a text program's name for its Terminal

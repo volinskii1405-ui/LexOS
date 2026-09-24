@@ -622,25 +622,15 @@ dk_decode_bmp:
     stc
     ret
 
-; carry=0 if the console with the keyboard is waiting for a key, or its
-; program is running its own code (not in a system call) - a
-; moment the desktop may use the filesystem (its buffers are shared)
+; carry=0 if no console's task is inside the kernel (waiting, or running
+; ring-3 code) - a moment the desktop may use the filesystem (its
+; buffers are shared)
 dk_shell_idle:
-    push eax
-    movzx eax, byte [console_fg]
-    mov eax, [console_task + eax*4]
-    cmp byte [task_keywait + eax], 0      ; waiting for a key,
-    jne .idle
-    cmp byte [app_active], 0              ; or a program running in ring 3
-    je .busy                              ; - not inside a system call
-    cmp byte [task_insys + eax], 0
-    jne .busy
-.idle:
-    pop eax
+    cmp dword [bkl_owner], -1             ; no console's task in the kernel
+    jne .busy                             ; (src/sched.asm: the kernel lock)
     clc
     ret
 .busy:
-    pop eax
     stc
     ret
 

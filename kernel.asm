@@ -125,6 +125,7 @@ main_loop:
 %include "src/screen.asm"
 %include "src/input.asm"
 %include "src/shell.asm"
+align 4096, db 0
 shared_interrupts_start:
 %include "src/interrupts.asm"
 shared_interrupts_end:
@@ -147,13 +148,16 @@ shared_mouse_start:
 %include "src/serial.asm"
 %include "src/mouse.asm"
 shared_mouse_end:
+align 4096, db 0
 
 %include "src/filesystem.asm"
 %include "src/fs_extra.asm"
 %include "src/programs.asm"
+align 4096, db 0
 shared_vga_start:
 %include "src/vga.asm"
 shared_vga_end:
+align 4096, db 0
 %include "src/snake.asm"
 %include "src/paint.asm"
 %include "src/sweeper.asm"
@@ -163,14 +167,17 @@ shared_vga_end:
 %include "src/assembler.asm"
 %include "src/rtc.asm"
 %include "src/speaker.asm"
+align 4096, db 0
 shared_sound_start:
 %include "src/sound.asm"
 %include "src/mixer.asm"
 shared_sound_end:
+align 4096, db 0
 %include "src/chip8.asm"
 %include "src/turtle.asm"
 %include "src/hostfs.asm"
 %include "src/basic.asm"
+align 4096, db 0
 shared_net_start:
 %include "src/net.asm"
 %include "src/inet.asm"
@@ -187,6 +194,7 @@ shared_system_start:
 %include "src/desktop.asm"
 %include "src/dkwins.asm"
 shared_system_end:
+align 4096, db 0
 %include "src/grep.asm"
 %include "src/headtail.asm"
 %include "src/uranium.asm"
@@ -201,6 +209,7 @@ shared_system_end:
 ; already thin (see src/devices.asm) - so it goes where appending it
 ; can't push anything else past that mark, same reasoning as the
 ; *.hg save area and the ATA DMA state right below it.
+align 4096, db 0
 shared_tail_start:                ; (src/console.asm: from here to the end)
 %include "src/atadma.asm"
 

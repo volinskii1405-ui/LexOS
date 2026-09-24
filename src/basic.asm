@@ -2770,6 +2770,7 @@ basic_read_line:
 ; ESC anywhere in the keyboard queue stops a running program (with the
 ; queue flushed). Other keys stay queued for INKEY/INPUT.
 basic_check_break:
+    call console_safe_point           ; (other consoles get the kernel too)
     push eax
     push ebx
     movzx ebx, byte [kbd_buf_tail]

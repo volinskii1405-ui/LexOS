@@ -302,7 +302,7 @@ desktop_task:
     mov eax, [timer_ms]
     mov [dk_frame_ms], eax                ; (one time for the whole frame)
     inc dword [dk_frames]
-    call console_desktop_switch           ; (src/console.asm)
+    call console_do_request               ; (src/console.asm: a click's)
     call dk_sync_consoles
     call dk_mouse_events
     call dk_vga_frame                     ; (src/dkwins.asm: mode 13h windows)
@@ -2121,7 +2121,7 @@ dk_inject_key:
     mov ebx, [dk_inject_pos]
     cmp ebx, [dk_inject_len]
     jae .none
-    mov al, [console_fg]
+    mov al, [console_self]                ; (the console it's meant for)
     cmp al, [dk_inject_console]
     jne .none
     mov al, [dk_inject_buf + ebx]

@@ -298,9 +298,19 @@ keyboard_isr:
     jne .not_ctrl_c
     cmp byte [kbd_ctrl_held], 0
     je .not_ctrl_c
-    cmp byte [app_active], 0
-    je .not_ctrl_c
-    mov byte [app_abort_request], 1
+    push eax                       ; (the console on screen's program -
+    push ebx                       ; whichever task this interrupted)
+    movzx eax, byte [console_fg]
+    mov ebx, app_active
+    call console_saved_addr        ; (src/console.asm)
+    cmp byte [ebx], 0
+    je .no_program
+    mov ebx, app_abort_request
+    call console_saved_addr
+    mov byte [ebx], 1
+.no_program:
+    pop ebx
+    pop eax
     jmp .eoi
 .not_ctrl_c:
 
@@ -344,20 +354,29 @@ keyboard_isr:
     pop eax
     iret
 
-; --- Pushes a pair (al=ascii, ah=scancode) into the ring buffer ---
+; --- Pushes a pair (al=ascii, ah=scancode) into the ring buffer of
+; the console on screen - every console has its own (src/data.asm), so
+; only the one being typed at ever sees the keys, whoever else runs ---
 push_key_to_buffer:
-    push ebx
-    mov bl, [kbd_buf_head]
-    xor bh, bh
-    mov [kbd_buf_ascii + bx], al
-    mov [kbd_buf_scancode + bx], ah
-
-    inc byte [kbd_buf_head]
-    and byte [kbd_buf_head], KBD_BUF_SIZE - 1
+    pushad
+    mov ecx, eax
+    movzx eax, byte [console_fg]
+    mov ebx, kbd_buf_head
+    call console_saved_addr        ; (src/console.asm) -> its copy
+    mov edi, ebx
+    movzx edx, byte [edi]
+    mov ebx, kbd_buf_ascii
+    call console_saved_addr
+    mov [ebx + edx], cl
+    mov ebx, kbd_buf_scancode
+    call console_saved_addr
+    mov [ebx + edx], ch
+    inc dl
+    and dl, KBD_BUF_SIZE - 1
+    mov [edi], dl
     ; note: on buffer overflow, new keypresses will start overwriting
     ; unread old ones - acceptable for a simple single-line-input shell
-
-    pop ebx
+    popad
     ret
 
 ; ============================================================
@@ -484,10 +503,6 @@ scancode_upper:
 ; ============================================================
 ; Data
 ; ============================================================
-kbd_buf_ascii    times KBD_BUF_SIZE db 0
-kbd_buf_scancode times KBD_BUF_SIZE db 0
-kbd_buf_head db 0
-kbd_buf_tail db 0
 kbd_shift_held db 0
 kbd_ctrl_held db 0
 kbd_alt_held db 0
