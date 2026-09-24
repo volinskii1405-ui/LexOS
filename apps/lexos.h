@@ -159,6 +159,48 @@ static inline int atoi(const char *s)
     return neg ? -v : v;
 }
 
+/* --- floating point: float and double work (the x87 FPU; each
+ * program has its own registers, kept across task switches). The
+ * functions below are single x87 instructions or a few of them. --- */
+#define M_PI 3.14159265358979323846
+static inline double sqrt(double x)  { double r; __asm__("fsqrt" : "=t"(r) : "0"(x)); return r; }
+static inline double sin(double x)   { double r; __asm__("fsin" : "=t"(r) : "0"(x)); return r; }
+static inline double cos(double x)   { double r; __asm__("fcos" : "=t"(r) : "0"(x)); return r; }
+static inline double tan(double x)   { double r; __asm__("fptan; fstp %%st(0)" : "=t"(r) : "0"(x)); return r; }
+static inline double fabs(double x)  { double r; __asm__("fabs" : "=t"(r) : "0"(x)); return r; }
+static inline double atan2(double y, double x)
+{ double r; __asm__("fpatan" : "=t"(r) : "0"(x), "u"(y) : "st(1)"); return r; }
+static inline double atan(double x)  { return atan2(x, 1.0); }
+static inline double log(double x)   /* ln x = ln 2 * log2 x */
+{ double r; __asm__("fldln2; fxch; fyl2x" : "=t"(r) : "0"(x) : "st(1)"); return r; }
+static inline double exp(double x)   /* 2^(x * log2 e), split into integer and fraction */
+{
+    double r;
+    __asm__("fldl2e; fmulp; fld %%st(0); frndint; fsubr %%st, %%st(1); fxch;"
+            "f2xm1; fld1; faddp; fscale; fstp %%st(1)" : "=t"(r) : "0"(x));
+    return r;
+}
+static inline double pow(double x, double y) { return x > 0 ? exp(y * log(x)) : 0; }
+static inline double floor(double x) { double r = (double)(int)x; return r > x ? r - 1 : r; }
+static inline double ceil(double x)  { double r = (double)(int)x; return r < x ? r + 1 : r; }
+
+/* print_float(3.14159, 3) -> "3.142" */
+static inline void print_float(double v, int decimals)
+{
+    int i, whole;
+    double scale = 1;
+    for (i = 0; i < decimals; i++) scale *= 10;
+    if (v < 0) { putchar('-'); v = -v; }
+    v += 0.5 / scale;                                   /* round */
+    whole = (int)v;
+    print_int(whole);
+    if (decimals > 0) {
+        putchar('.');
+        v -= whole;
+        for (i = 0; i < decimals; i++) { v *= 10; putchar('0' + (int)v % 10); v -= (int)v; }
+    }
+}
+
 /* --- malloc/free: first fit over the memory from the program's end
  * (app.ld's _end) up to 256KB below the top, where the stack lives. --- */
 #define LX_HEAP_END 0xBC0000

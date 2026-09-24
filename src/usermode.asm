@@ -152,12 +152,116 @@ pm_init:
     cmp ecx, 20
     jb .exc
 
+    call fpu_init
+
     mov ax, USER_DATA_SEL
     mov ds, ax
     mov es, ax
     mov fs, ax
     mov gs, ax
     popad
+    ret
+
+; ============================================================
+; The FPU (and SSE, where the CPU has it) for programs. The kernel
+; itself never touches it, so its state belongs to whichever task last
+; used it (fpu_owner) and is only moved when another task does: every
+; task switch sets CR0.TS, the next FPU/SSE instruction then faults
+; (#NM, vector 7), and fpu_nm_isr saves the owner's registers into its
+; area (FXSAVE - or FNSAVE on a CPU without it), loads the new user's
+; (or gives a program that never used it yet a fresh FNINIT'd FPU)
+; and clears TS. So a program in one console keeps its floating-point
+; registers while another console's program computes.
+; ============================================================
+fpu_init:
+    pushad
+    mov eax, 1
+    cpuid
+    mov [fpu_cpuid_edx], edx
+    test edx, 1                           ; an FPU at all?
+    jz .none
+    mov eax, cr0
+    and eax, ~0x04                        ; EM off: execute FPU instructions
+    or eax, 0x22                          ; MP, NE: #NM on TS, #MF errors
+    mov cr0, eax
+    test edx, 1 << 24                     ; FXSAVE/FXRSTOR
+    jz .no_fxsr
+    mov byte [fpu_fxsr], 1
+    mov eax, cr4
+    or eax, 0x200                         ; OSFXSR
+    test edx, 1 << 25                     ; SSE: its exceptions too
+    jz .cr4
+    or eax, 0x400                         ; OSXMMEXCPT
+.cr4:
+    mov cr4, eax
+.no_fxsr:
+    fninit
+    mov edi, idt_table + 7 * 8
+    mov eax, fpu_nm_isr
+    call set_idt_entry_at_edi
+    mov byte [fpu_present], 1
+.none:
+    popad
+    ret
+
+fpu_nm_isr:
+    pushad
+    clts
+    mov eax, [sched_current]
+    inc eax                               ; task id + 1 (0 = nobody)
+    cmp eax, [fpu_owner]
+    je .done
+    mov ebx, [fpu_owner]
+    or ebx, ebx
+    jz .load
+    dec ebx                               ; save the owner's registers
+    shl ebx, 9
+    cmp byte [fpu_fxsr], 0
+    je .fnsave
+    fxsave [fpu_areas + ebx]
+    jmp .load
+.fnsave:
+    fnsave [fpu_areas + ebx]
+.load:
+    mov [fpu_owner], eax
+    dec eax
+    cmp byte [fpu_used + eax], 0
+    je .fresh
+    shl eax, 9
+    cmp byte [fpu_fxsr], 0
+    je .frstor
+    fxrstor [fpu_areas + eax]
+    jmp .done
+.frstor:
+    frstor [fpu_areas + eax]
+    jmp .done
+.fresh:
+    mov byte [fpu_used + eax], 1
+    fninit
+    test dword [fpu_cpuid_edx], 1 << 25
+    jz .done
+    push dword 0x1F80                     ; SSE's defaults: all exceptions
+    ldmxcsr [esp]                         ; masked, round to nearest
+    add esp, 4
+.done:
+    popad
+    iret
+
+; The current task's program starts (or ends): no FPU state of its own
+; to keep - the next FPU instruction gets a fresh one.
+fpu_forget_current:
+    push eax
+    mov eax, [sched_current]
+    mov byte [fpu_used + eax], 0
+    inc eax
+    cmp eax, [fpu_owner]
+    jne .ts
+    mov dword [fpu_owner], 0
+.ts:
+    mov eax, cr0                          ; so its next FPU instruction
+    or al, 0x08                           ; faults and gets it a fresh FPU
+    mov cr0, eax                          ; (and makes it the owner)
+    pop eax
     ret
 
 ; ============================================================
@@ -183,6 +287,7 @@ app_run:
 
     mov byte [app_abort_request], 0
     mov byte [app_active], 1
+    call fpu_forget_current               ; a clean FPU for it
     cli
     mov ecx, [sched_current]
     mov [task_app_esp + ecx*4], esp       ; where app_abort comes back to
@@ -225,6 +330,7 @@ app_abort:
     push eax
     call app_gfx_off                      ; src/appsys.asm
     call app_audio_off                    ; silence, if it was playing
+    call fpu_forget_current
     call fh_close_all                     ; saves what it wrote
     call speaker_off
     ; a fresh line, unless the program left the cursor at the start of one
@@ -692,6 +798,14 @@ task_app_esp       times SCHED_MAX dd 0   ; app_run's frame, per task
 task_kstack        times SCHED_MAX dd 0   ; esp0 while in ring 3, per task
 
 tss_block          times 104 db 0
+
+fpu_present        db 0
+fpu_fxsr           db 0
+fpu_cpuid_edx      dd 0
+fpu_owner          dd 0                   ; task id + 1 of the registers' owner
+fpu_used           times SCHED_MAX db 0   ; has this task's program used it yet?
+align 16
+fpu_areas          times SCHED_MAX * 512 db 0   ; FXSAVE areas, per task
 
 exc_names:
     dd exc_name_0, 0, 0, 0, 0, exc_name_5, exc_name_6, exc_name_7

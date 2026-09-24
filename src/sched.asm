@@ -189,6 +189,9 @@ sched_switch_to:
     jz .no_ring3                          ; interrupts from it land on
     mov [tss_block + 4], eax              ; its own kernel stack
 .no_ring3:
+    mov eax, cr0                          ; its FPU state: loaded on first
+    or al, 0x08                           ; use (TS -> #NM, fpu_nm_isr in
+    mov cr0, eax                          ; src/usermode.asm)
     mov esp, [task_esp + ecx*4]
     ret
 
@@ -334,6 +337,7 @@ sched_task_start:
 ; ============================================================
 task_exit:
     cli
+    call fpu_forget_current               ; (src/usermode.asm)
     mov edx, [sched_current]
     mov byte [task_state + edx], TASK_FREE
     mov dword [sched_lock], 0
@@ -350,6 +354,9 @@ task_exit:
     jz .no_ring3
     mov [tss_block + 4], eax
 .no_ring3:
+    mov eax, cr0                          ; (see sched_switch_to)
+    or al, 0x08
+    mov cr0, eax
     mov esp, [task_esp + ecx*4]
     ret                                   ; into its sched_resume
 

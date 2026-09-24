@@ -333,7 +333,12 @@ alex@/PROGRAMS$
   writing. Time: the system timer interrupts ~1000 times a second -
   `millis()` counts milliseconds since boot, `sleep_ms` is exact to the
   millisecond, and `sleep_until(next)` gives a game a steady 60 frames
-  a second (`next += 16`). The old ~18.2Hz tick everything else in the
+  a second (`next += 16`). Floating point: `float`/`double` work in
+  programs - the kernel turns the FPU (and SSE, where the CPU has it)
+  on and hands its registers from task to task lazily (CR0.TS, the
+  #NM fault, FXSAVE/FXRSTOR), so every program has its own; lexos.h
+  adds `sqrt`, `sin`, `cos`, `tan`, `atan2`, `exp`, `log`, `pow`,
+  `floor` and `print_float`, each a few x87 instructions. The old ~18.2Hz tick everything else in the
   kernel is paced by keeps going underneath, counted off the same
   interrupt.
   Examples (`make apps`, then `hostget` them): `WC.APP` (`run wc.app
@@ -341,11 +346,13 @@ alex@/PROGRAMS$
   buy milk` adds a line, `run note.app todo.txt` lists them),
   `FIRE.APP` (the demo-scene fire effect), `PONG.APP` (W/S or
   Up/Down against LexOS), `MANDEL.APP` (the Mandelbrot set in
-  800x600 true color: arrows move, +/- zoom) and `MODPLAY.APP`, a
+  800x600 true color: arrows move, +/- zoom), `MODPLAY.APP`, a
   ProTracker `.MOD` player mixing 4 channels in software (`hostget
   demo.mod`, then `run modplay.app demo.mod` - DEMO.MOD is built by
   `tools/makemod.py` from synthesized samples; any 4-channel .MOD
-  works).
+  works), `FTEST.APP` (the math functions, and a long sum - run it
+  in two consoles at once) and `CUBE.APP` (a spinning 3D wireframe in
+  640x480, arrows change the spin).
 - **Preemptive multitasking.** Kernel tasks with their own stacks,
   switched by the timer interrupt (src/sched.asm): equal-priority tasks
   take turns a timer tick (~55ms) at a time, a higher-priority one runs
