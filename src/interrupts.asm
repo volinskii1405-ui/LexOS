@@ -437,8 +437,12 @@ read_key:
     mov al, [kbd_buf_tail]
     cmp al, [kbd_buf_head]
     jne .have_key
+    mov eax, [sched_current]         ; (a safe point: src/desktop.asm
+    mov byte [task_keywait + eax], 1 ; may use the filesystem meanwhile)
     mov eax, WAIT_KEY                ; lets other tasks run meanwhile
     call task_wait                   ; (src/sched.asm)
+    mov eax, [sched_current]
+    mov byte [task_keywait + eax], 0
     jmp .wait
 .have_key:
     mov bl, [kbd_buf_tail]

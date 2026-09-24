@@ -47,6 +47,7 @@ APP_MAX_FILE    equ APP_SIZE - 0x10000 ; leaves room for the stack
 
 PAGE_DIR        equ 0x500000          ; 4KB, then the user page table
 PAGE_TABLE_APP  equ 0x501000
+FPU_AREAS       equ 0x6300000         ; FXSAVE areas, 512 bytes per task
 PAGING_4MB_PAGES equ 32               ; identity-map 128MB (QEMU's -m 128)
 
 SYS_EXIT        equ 0                 ; ebx = exit code
@@ -218,10 +219,10 @@ fpu_nm_isr:
     shl ebx, 9
     cmp byte [fpu_fxsr], 0
     je .fnsave
-    fxsave [fpu_areas + ebx]
+    fxsave [FPU_AREAS + ebx]
     jmp .load
 .fnsave:
-    fnsave [fpu_areas + ebx]
+    fnsave [FPU_AREAS + ebx]
 .load:
     mov [fpu_owner], eax
     dec eax
@@ -230,10 +231,10 @@ fpu_nm_isr:
     shl eax, 9
     cmp byte [fpu_fxsr], 0
     je .frstor
-    fxrstor [fpu_areas + eax]
+    fxrstor [FPU_AREAS + eax]
     jmp .done
 .frstor:
-    frstor [fpu_areas + eax]
+    frstor [FPU_AREAS + eax]
     jmp .done
 .fresh:
     mov byte [fpu_used + eax], 1
@@ -804,8 +805,7 @@ fpu_fxsr           db 0
 fpu_cpuid_edx      dd 0
 fpu_owner          dd 0                   ; task id + 1 of the registers' owner
 fpu_used           times SCHED_MAX db 0   ; has this task's program used it yet?
-align 16
-fpu_areas          times SCHED_MAX * 512 db 0   ; FXSAVE areas, per task
+
 
 exc_names:
     dd exc_name_0, 0, 0, 0, 0, exc_name_5, exc_name_6, exc_name_7

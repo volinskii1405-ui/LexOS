@@ -464,6 +464,7 @@ sys_gfx_mode:
     shr edx, 3
     mov [app_gfx_bpp], edx
     pushad
+    call desktop_suspend_hook             ; (src/desktop.asm)
     mov byte [vga_graphics_active], 1     ; (like vga_enter_mode13: keep the
     call vga_save_regs                    ; text screen, font and registers
     call vga_save_font                    ; to come back to)

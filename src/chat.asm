@@ -114,11 +114,12 @@ net_chat:
 chat_draw_frame:
     pushad
     call clear_screen
-    mov edi, VIDEO_MEM                    ; the title bar
+    mov edi, [text_vram]                    ; the title bar
     mov ecx, SCREEN_COLS
     mov ax, (CHAT_COLOR_TITLE << 8) | ' '
     rep stosw
-    mov edi, VIDEO_MEM + 2
+    mov edi, [text_vram]
+    add edi, 2
     mov esi, chat_msg_title
     mov ah, CHAT_COLOR_TITLE
     call chat_put_string
@@ -136,7 +137,8 @@ chat_draw_frame:
     call chat_put_string
     mov esi, chat_msg_title2
     call chat_put_string
-    mov edi, VIDEO_MEM + CHAT_SEP_ROW * SCREEN_COLS * 2
+    mov edi, [text_vram]
+    add edi, CHAT_SEP_ROW * SCREEN_COLS * 2
     mov ecx, SCREEN_COLS
     mov ax, (CHAT_COLOR_SEP << 8) | 0xC4  ; a line
     rep stosw
@@ -182,13 +184,16 @@ chat_add_line:
 .row:
     ; scroll rows CHAT_TOP+1..CHAT_BOTTOM up by one
     push esi
-    mov edi, VIDEO_MEM + CHAT_TOP * SCREEN_COLS * 2
-    mov esi, VIDEO_MEM + (CHAT_TOP + 1) * SCREEN_COLS * 2
+    mov edi, [text_vram]
+    add edi, CHAT_TOP * SCREEN_COLS * 2
+    mov esi, [text_vram]
+    add esi, (CHAT_TOP + 1) * SCREEN_COLS * 2
     mov ecx, (CHAT_BOTTOM - CHAT_TOP) * SCREEN_COLS
     cld
     rep movsw
     pop esi
-    mov edi, VIDEO_MEM + CHAT_BOTTOM * SCREEN_COLS * 2
+    mov edi, [text_vram]
+    add edi, CHAT_BOTTOM * SCREEN_COLS * 2
     mov ecx, SCREEN_COLS
     mov ah, bl
 .char:
@@ -210,7 +215,8 @@ chat_add_line:
 ; The input row: "> " and the end of what's being typed
 chat_draw_input:
     pushad
-    mov edi, VIDEO_MEM + CHAT_INPUT_ROW * SCREEN_COLS * 2
+    mov edi, [text_vram]
+    add edi, CHAT_INPUT_ROW * SCREEN_COLS * 2
     mov ah, 0x07
     mov al, '>'
     stosw
@@ -365,11 +371,12 @@ chat_key:
 
 chat_draw_frame_title:
     pushad
-    mov edi, VIDEO_MEM                    ; just the title row again
+    mov edi, [text_vram]                    ; just the title row again
     mov ecx, SCREEN_COLS
     mov ax, (CHAT_COLOR_TITLE << 8) | ' '
     rep stosw
-    mov edi, VIDEO_MEM + 2
+    mov edi, [text_vram]
+    add edi, 2
     mov esi, chat_msg_title
     mov ah, CHAT_COLOR_TITLE
     call chat_put_string

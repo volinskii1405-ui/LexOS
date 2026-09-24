@@ -353,6 +353,24 @@ alex@/PROGRAMS$
   works), `FTEST.APP` (the math functions, and a long sum - run it
   in two consoles at once) and `CUBE.APP` (a spinning 3D wireframe in
   640x480, arrows change the spin).
+- **Desktop.** `desktop` switches to a graphical desktop in 1024x768
+  true color: windows with title bars you drag with the mouse, that
+  come to the front when clicked and close with their [x], a taskbar
+  with a button per window and the time, and a start menu (Terminal,
+  Clock, Pictures, System, Exit desktop). The **Terminal** window is
+  the console itself - while the desktop is on, text output goes to a
+  buffer in RAM (`text_vram`, src/screen.asm) that the desktop draws
+  with the VGA's own font, so the shell, uranium, BASIC, chat and the
+  text of ring-3 programs all work in it, and the keyboard goes to it
+  as always. **Clock** is an analog clock in your time zone,
+  **Pictures** shows the .BMP files in the current folder (8-, 24- and
+  32-bit; click for the next one), **System** has uptime, memory,
+  tasks and the network address. Graphics programs - paint, Tetris,
+  chip8, `run pong.app`, `run mandel.app` - take over the screen and
+  hand it back when they end. It's a task of its own
+  (src/desktop.asm): a back buffer redrawn only when something changed,
+  just the changed rectangle copied to the screen, the mouse pointer
+  drawn on top. Type `desktop` again (or use the menu) to leave.
 - **Preemptive multitasking.** Kernel tasks with their own stacks,
   switched by the timer interrupt (src/sched.asm): equal-priority tasks
   take turns a timer tick (~55ms) at a time, a higher-priority one runs
@@ -574,6 +592,7 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `ping <host> [n]` | send n ICMP echo requests (default 4) to a name or address, ESC stops |
 | `nslookup <name>` | look a name up in DNS |
 | `wget <url> [name]` | download a file over HTTP into the current folder |
+| `desktop` | the graphical desktop (again to leave) |
 | `chat [nick]` | chat with every LexOS on the network (`make lan1` + `make lan2`) |
 | `httpd [port]` | serve this disk on the web (`make run`: http://localhost:8080/) |
 | `ntp [server]` | set the clock from a time server (default `pool.ntp.org`) |
@@ -741,6 +760,8 @@ src/
                        system calls.
   console.asm          virtual consoles: Alt+T / Alt+1..9 / exit, the
                        per-console memory swap.
+  desktop.asm          `desktop`: windows, taskbar, start menu, the
+                       console in a Terminal window, Clock, Pictures.
   sched.asm            the scheduler: tasks, priorities, task_wait,
                        ps/kill/clock.
   net.asm              RTL8139 driver (polled), ARP, IPv4, ICMP echo,

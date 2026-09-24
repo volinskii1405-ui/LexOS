@@ -51,6 +51,7 @@ VGA_FONT_SIZE   equ 8192      ; generous for a 256-char 8x16 font (4096 bytes)
 ; switch back first - see vga_leave_mode13.
 ; ============================================================
 vga_enter_mode13:
+    call desktop_suspend_hook          ; (src/desktop.asm: out of the way)
     mov byte [vga_graphics_active], 1  ; (for background tasks that draw
                                        ; on the text screen - the clock)
     call vga_save_regs
@@ -104,6 +105,7 @@ vga_leave_mode13:
     mov esi, vga_saved_regs
     call vga_apply_regs
     mov byte [vga_graphics_active], 0
+    call desktop_resume_hook           ; (src/desktop.asm: back, if it was on)
     ret
 
 ; ============================================================
