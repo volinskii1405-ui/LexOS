@@ -13,12 +13,14 @@
 
 </div>
 
-Its own 32-bit protected-mode kernel, a real ATA (PIO) disk driver, a
-folder-aware filesystem, a command shell with line editing and history, and
-a built-in hex/assembly editor for writing and running your own tiny
-programs. No libc, no bootloader framework, no BIOS calls once the kernel
-starts — every byte that touches the screen, keyboard, disk, clock, or
-speaker goes through hardware ports that this project drives itself.
+Its own 32-bit protected-mode kernel, a real ATA disk driver (PIO, or DMA
+where there's a Bus Master IDE controller), a folder-aware filesystem, a
+command shell with line editing and history, preemptive multitasking and
+virtual consoles, protected (ring 3) programs in C or assembly, a windowed
+desktop, networking, sound - and Lex, the cat it's named after. No libc,
+no bootloader framework, no BIOS calls once the kernel starts — every byte
+that touches the screen, keyboard, mouse, disk, clock, sound or network
+card goes through hardware ports that this project drives itself.
 
 ## Contents
 
@@ -101,28 +103,33 @@ All taken in QEMU (1024x768) - more in [docs/screenshots](docs/screenshots).
 
 Every screenshot, described in Russian: [docs/screenshots/README.md](docs/screenshots/README.md).
 
-**Straight into the console** — `ls`, `cd`, and `run`-ning a program from
-the `PROGRAMS` folder:
+**In a Terminal** (the taskbar's Terminal 1, or the whole screen without
+the desktop) — `ls`, `cd`, and `run`-ning a program from the `PROGRAMS`
+folder, on a fresh disk:
 
 ```
-======================================
-         LexOS (32-bit, PM)
-======================================
-
-Type help for commands
-
-Welcome, alex! (see USER.CFG)
-
-alex@/$ ls
-README
+tester@/$ ls
+APPS  <DIR>
+DEMOS  <DIR>
+DESKTOP  <DIR>
+SYSTEM  <DIR>
 PROGRAMS  <DIR>
 TMP  <DIR>
+README
 LICENSE
 USER.CFG
-alex@/$ cd programs
-alex@/PROGRAMS$ run test.bin
+tester@/$ cd programs
+tester@/PROGRAMS$ ls
+TEST.BIN
+CALC.BIN
+SNAKE.BIN
+SWEEPER.BIN
+TETRIS.BIN
+2048.BIN
+CONVERT.BIN
+tester@/PROGRAMS$ run test.bin
 Hello from executable file!
-alex@/PROGRAMS$
+tester@/PROGRAMS$
 ```
 
 ## Features
@@ -134,8 +141,10 @@ alex@/PROGRAMS$
 - Its own IDT with a remapped PIC (IRQ0-7 → vectors 32-39), so hardware
   interrupts don't collide with CPU exceptions.
 - Every exception vector is handled (including the ones that push an error
-  code) instead of only the two IRQs the kernel actually uses, so a bug
-  faults cleanly instead of triple-faulting the machine.
+  code), not just the interrupts the kernel uses (the timer, keyboard,
+  mouse, Sound Blaster), so a bug faults cleanly - a ring-3 program is
+  stopped, a kernel bug shows a panic screen - instead of triple-faulting
+  the machine.
 
 ### Filesystem
 - A simple folder-aware filesystem on top of the ATA driver — files and
@@ -191,7 +200,10 @@ alex@/PROGRAMS$
   inline area into chained extra sectors), a `PROGRAMS` folder holding
   `TEST.BIN`, `CALC.BIN`, `CONVERT.BIN`, `SNAKE.BIN`, `SWEEPER.BIN`,
   `TETRIS.BIN` and `2048.BIN` (see **Programs** below), and a `TMP`
-  folder for scratch files (see below).
+  folder for scratch files (see below). The build puts the rest on the
+  disk beforehand (`tools/mkdisk.py`, from the repo's `disk/`): `APPS`
+  (the ring-3 programs), `DEMOS` (scripts, music, BASIC, a CHIP-8 ROM),
+  `DESKTOP` (the desktop's icons) and `SYSTEM` (the translations).
 - `ls` prints folders in bright yellow so they stand out from regular
   files, which stay whatever color you've set with `color`.
 - `df` (or `free`) shows how many of the 1024 directory slots, 30000
@@ -217,8 +229,8 @@ alex@/PROGRAMS$
 - Real line editing: Left/Right/Home/End/Delete work anywhere in the line,
   not just Backspace at the end. Ctrl+L clears the screen, keeping the
   line typed so far.
-- Command history (Up/Down), case-insensitive filename lookup, and a
-  30+ command set (`help` lists them all, paginated). `history` lists
+- Command history (Up/Down), case-insensitive filename lookup, and some
+  70 commands (`help` lists them all, paginated). `history` lists
   every saved entry, numbered.
 - Tab completion: as you type the last word of the line, if it matches a
   file in the current directory, the rest of that name shows up in blue
@@ -258,7 +270,8 @@ alex@/PROGRAMS$
   `head`/`tail` can still read it like any other file.
 
 ### Drivers
-- Keyboard and PIT timer via IRQ1/IRQ0, not `int 0x16`/BIOS polling.
+- Keyboard, PIT timer and PS/2 mouse (with its wheel) via IRQ1, IRQ0 and
+  IRQ12, not `int 0x16`/BIOS polling.
 - ATA disk driver talking directly to ports `0x1F0-0x1F7`. At boot it
   walks PCI config space (ports `0xCF8`/`0xCFC`, no BIOS) looking for a
   Bus Master IDE controller; if one turns up, every sector transfer
@@ -418,7 +431,8 @@ alex@/PROGRAMS$
   volume, mixed by the IRQ handler - so a game's sound plays over
   `play music.wav &`, and `.WAV` files (now up to 8MB) play through it
   too. `mixer` lists what's playing; `mixer master 60`, `mixer 2 30`
-  set volumes; programs have `audio_volume()`. Time: the system timer interrupts ~1000 times a second -
+  set volumes; programs have `audio_volume()`. Time: the system timer
+  interrupts ~1000 times a second -
   `millis()` counts milliseconds since boot, `sleep_ms` is exact to the
   millisecond, and `sleep_until(next)` gives a game a steady 60 frames
   a second (`next += 16`). Floating point: `float`/`double` work in
@@ -426,7 +440,8 @@ alex@/PROGRAMS$
   on and hands its registers from task to task lazily (CR0.TS, the
   #NM fault, FXSAVE/FXRSTOR), so every program has its own; lexos.h
   adds `sqrt`, `sin`, `cos`, `tan`, `atan2`, `exp`, `log`, `pow`,
-  `floor` and `print_float`, each a few x87 instructions. The old ~18.2Hz tick everything else in the
+  `floor` and `print_float`, each a few x87 instructions. The old
+  ~18.2Hz tick everything else in the
   kernel is paced by keeps going underneath, counted off the same
   interrupt.
   Examples (in `/APPS`, built by `make apps`): `WC.APP` (`run wc.app
@@ -596,7 +611,8 @@ alex@/PROGRAMS$
   reentrant, so only the tasks written for it run in the background
   (the player loads its whole file first, with switching held off).
 - **Networking.** An RTL8139 driver (the card `make run` gives QEMU),
-  Ethernet, ARP, IPv4, ICMP echo, UDP, TCP, DHCP, DNS, NTP and HTTP. The first network
+  Ethernet, ARP, IPv4, ICMP echo, UDP, TCP, DHCP, DNS, NTP and HTTP. The
+  first network
   command gets LexOS an address by DHCP (`dhcp` asks again); `ifconfig`
   shows the card, MAC, address, gateway and DNS server; `nslookup
   <name>` resolves a name through that DNS server - real internet
@@ -637,7 +653,8 @@ alex@/PROGRAMS$
 - **Shared folder with the host.** `make run` attaches the repo's
   `shared/` folder (empty to begin with - the examples are on LexOS's
   own disk, in `/APPS` and `/DEMOS`: `tools/mkdisk.py` puts the repo's
-  `disk/` folder onto the image at build time) as a second disk (QEMU's vvfat presents a host
+  `disk/` folder onto the image at build time) as a second disk (QEMU's
+  vvfat presents a host
   directory as a whole FAT16 volume). `hostls` lists it and
   `hostget <n> [new]` copies a file from it into the current LexOS
   directory - drop a script, CHIP-8 ROM or `.WAV` into `shared/` on
@@ -653,7 +670,8 @@ alex@/PROGRAMS$
   can't reliably rewrite an existing host file (it ignores a changed
   size, and a shrinking file crashes QEMU outright).
   Try `hostput readme` - it appears in `shared/`.
-- `chip8 <name> [speed]` interprets a CHIP-8 / SUPER-CHIP ROM - not LexOS's own format
+- `chip8 <name> [speed]` interprets a CHIP-8 / SUPER-CHIP ROM - not
+  LexOS's own format
   (like `run <n>.com` below, but for a much older and simpler bytecode
   VM: the 35-opcode interpreted machine mid-70s COSMAC VIP calculators
   ran, the target of most public-domain "here's a tiny Pong/Tetris/
@@ -680,8 +698,9 @@ alex@/PROGRAMS$
   `HOME`, `CLEARSCREEN`, `COLOR <0-15>`, and a nestable
   `REPEAT n [ ... ]`. Same VGA mode 13h save-and-restore footing as
   SNAKE.BIN, shown until any key is pressed once the script finishes
-  (like `view <name>` for a saved picture). No FPU anywhere in this
-  kernel, so an arbitrary-angle FORWARD/BACKWARD leans on
+  (like `view <name>` for a saved picture). The kernel itself never
+  uses the FPU (it's the ring-3 programs'), so an arbitrary-angle
+  FORWARD/BACKWARD leans on
   turtle_sin_table - 360 entries, Q8 fixed point, computed once in
   Python and pasted in as data rather than derived at runtime; the
   turtle's own position is kept in that same fixed point across moves,
@@ -745,24 +764,27 @@ been tested in QEMU.
 
 ## Running the pre-built image
 
-Don't want to build it yourself? Grab `LexOS.img` from the project's
-releases/assets and boot it directly — no `nasm`, no toolchain, nothing to
-compile.
+Don't want to build it yourself? A pre-built disk image (`os-image.bin`,
+e.g. unzipped from `LexOS-image.zip`) boots directly — no `nasm`, no
+toolchain, nothing to compile.
 
 **QEMU** (quickest way to try it):
 
 ```sh
-qemu-system-i386 -drive format=raw,file=LexOS.img
+qemu-system-i386 -m 128 -drive format=raw,file=os-image.bin
 ```
 
-That's enough to try everything except `beep` — QEMU's default audio
-driver is `none`, so the PC speaker gets toggled correctly but nothing
-plays. To actually hear it, attach a real audio backend and route the PC
-speaker to it:
+That's enough for the setup, the desktop, the shell and the programs.
+For everything else, give QEMU the devices `make run` gives it (see the
+`Makefile`): the RTL8139 network card, an AdLib and a Sound Blaster 16,
+and a real audio backend (QEMU's default is `none`, so nothing would be
+heard, `beep` included):
 
 ```sh
-qemu-system-i386 -drive format=raw,file=LexOS.img \
-    -audiodev pa,id=snd0 -machine pcspk-audiodev=snd0
+qemu-system-i386 -m 128 -drive format=raw,file=os-image.bin \
+    -nic user,model=rtl8139 \
+    -audiodev pa,id=snd0 -machine pcspk-audiodev=snd0 \
+    -device adlib,audiodev=snd0,iobase=0x220 -device sb16,audiodev=snd0
 ```
 
 (swap `pa` for `alsa`/`coreaudio`/`dsound` depending on your host; run
@@ -770,20 +792,23 @@ qemu-system-i386 -drive format=raw,file=LexOS.img \
 supports.)
 
 **VirtualBox**: create a new VM (Type: Other, Version: Other/Unknown,
-no EFI), attach `LexOS.img` as an IDE hard disk (not as an optical
-drive), and boot it. Note that VirtualBox doesn't emulate the PC
-speaker at all — `beep` will be silent there no matter what, regardless
-of any audio settings.
+no EFI), attach the image as an IDE hard disk (not as an optical
+drive), and boot it. The graphical setup and the desktop need QEMU's
+standard VGA (Bochs VBE, found on PCI) - without it LexOS falls back to
+the text-mode setup and the shell. VirtualBox doesn't emulate the PC
+speaker at all — `beep` will be silent there no matter what.
 
 **A real USB stick** (⚠️ this overwrites everything on the target device
 — double-check `/dev/sdX` before running this):
 
 ```sh
-sudo dd if=LexOS.img of=/dev/sdX bs=4M status=progress && sync
+sudo dd if=os-image.bin of=/dev/sdX bs=4M status=progress && sync
 ```
 
-Either way you land straight at the `$` prompt described above — type
-`help` to see what LexOS can do.
+The first boot asks for a name, a password, the time zone, the
+keyboard's layouts and the system's language; then you're on the
+desktop. Open Terminal 1 on the taskbar and type `help` to see what
+LexOS can do.
 
 ## Command reference
 
@@ -882,24 +907,31 @@ and exits, `Esc` cancels.
 
 ```
 BIOS  →  boot.asm (16-bit real mode)
-            │  loads kernel.bin via FOUR LBA reads (int 13h/ah=42h) -
+            │  loads kernel.bin via FIVE LBA reads (int 13h/ah=42h) -
             │  a real-mode segment:offset BIOS read can't cross a 64 KB
             │  segment boundary, so the kernel is split at each one:
-            │  64 sectors into 0x0000:0x8000, then 128 + 128 + 128 into
-            │  0x1000/0x2000/0x3000:0000 - physically contiguous
+            │  64 sectors into 0x0000:0x8000, then 128 + 128 + 128 + 128
+            │  into 0x1000/0x2000/0x3000/0x4000:0000 - physically
+            │  contiguous, 576 sectors in all
             │  enables A20, builds a flat GDT, sets CR0.PE
             ▼
          kernel.asm (32-bit protected mode, ORG 0x8000)
-            │  idt_setup + PIC remap, device manager, banner
+            │  idt_setup + PIC remap, devices, the scheduler, the
+            │  filesystem; USER.CFG - or the first boot's setup
+            │  (welcome.asm); the letters and the translations
+            │  (lang.asm, langui.asm); AUTOEXEC.HG
+            ▼
+         welcome_boot: the login (if there's a password), the desktop
             ▼
          main_loop:  read_command_line → handle_command → repeat
+                     (Terminal 1's shell; every console runs its own)
 ```
 
 Everything below `0x10000` is the kernel itself — code and all working
 data — small enough that internal pointers still fit in 16 bits and most
 of the code reads like a real-mode program, even though the kernel image
 as a whole (padded to 576 sectors, split across the boot loader's five reads
-as described above) now extends past that boundary. Only things that live
+as described above) extends well past that boundary. Only things that live
 outside the kernel image need a full 32-bit linear address:
 
 | What | Address |
@@ -928,13 +960,16 @@ outside the kernel image need a full 32-bit linear address:
 | Script variables and levels | `0x280000` – `0x29FFFF` |
 | SB16 DMA buffer (the mixer's output) | `0x330000` |
 | Desktop picture pixels / its file (and a screenshot's) | `0x7700000` / `0x7A00000` |
+| Desktop: what's on each video page (2 x 3MB) | `0x7400000` / `0x7D00000` |
+| httpd's request / the desktop's sounds / the translations | `0x3F00000` / `0x3F10000` / `0x3F80000` |
 | RTL8139 receive ring / transmit buffers | `0x300000` / `0x304000` |
 | .COM program segment | `0x100000` |
 | Kernel code/data | `0x8000` – `0x4FFFF` (576 sectors) |
 | Boot sector | `0x7C00` |
 
 On disk, sectors are laid out as: boot sector, then the kernel (576
-sectors), then 1024 directory slots (one file/folder per 512-byte sector —
+sectors, one spare after it), then 1024 directory slots (one file/folder
+per 512-byte sector —
 name, type, parent pointer, a 32-bit size, up to 127 bytes of inline
 content; folders only ever take slots 0-254, so a parent pointer still
 fits in one byte), a 59-sector free-space map (one byte per extra
@@ -950,7 +985,9 @@ kernel.asm             32-bit kernel entry point; %includes everything below.
 apps/                  example ring-3 programs (`make apps`): lexos.inc for
                        assembly, lexos.h + crt0.asm + app.ld for C.
 disk/                  what LexOS's disk starts with: APPS/ (the built
-                       programs), DEMOS/ (scripts, music, a CHIP-8 ROM).
+                       programs), DEMOS/ (scripts, music, a CHIP-8 ROM),
+                       DESKTOP/ (the icons, STARTUP/), SYSTEM/ (LANG.DAT).
+docs/screenshots/      the screenshots, described in Russian in its README.
 tools/                 mkdisk.py (disk/ -> the image's filesystem),
                        mklang.py (the translations -> disk/SYSTEM/LANG.DAT),
                        makemod.py (DEMO.MOD).
@@ -1000,6 +1037,14 @@ src/
   turtle.asm           `turtle <name>`, a LOGO-style turtle graphics
                        script interpreter - same vga.asm mode switch
                        as snake.asm.
+  sweeper.asm          PROGRAMS/SWEEPER.BIN, Minesweeper (the mouse too).
+  paint.asm            `paint` (mouse drawing, saved as .BMP) and `view`.
+  mouse.asm            the PS/2 mouse (IRQ12), with the wheel.
+  sound.asm            `play`: AdLib (.IMF), the Sound Blaster 16 (.WAV).
+  mixer.asm            the SB16's mixer: 4 voices, each with its own rate
+                       and volume; `mixer`.
+  hostfs.asm           the host's shared folder (FAT16): hostls/hostget/
+                       hostput.
   usermode.asm         ring 3: paging, TSS, int 0x80 system calls,
                        exception handling, `run <n>.app`.
   appsys.asm           programs' files, command line and graphics
@@ -1053,9 +1098,9 @@ src/
   headtail.asm         `head`/`tail` commands.
   uranium.asm          full-screen text editor (`uranium`) and its
                        disk-writing counterpart to fs_load_content.
-  user.asm             first-boot nickname/timezone setup window, USER.CFG
-                       load/save/delete-protection, and the shell prompt's
-                       `nickname@/path$ `.
+  user.asm             the text-mode first-boot setup (without the BGA
+                       video), USER.CFG load/delete-protection, and the
+                       shell prompt's `nickname@/path$ `.
   tabcomplete.asm      Tab completion: matches the word being typed against
                        filenames in the current directory and shows the
                        rest as blue "ghost text" until Tab accepts it.
@@ -1089,8 +1134,9 @@ src/
   support - no header parsing, no segment relocation.
 - One file's inline metadata + content lives in a single 512-byte sector;
   content past that grows through a chain of extra sectors, but the pool
-  is fixed at 30000 sectors (~15MB) and file/folder names are capped at 8 characters
-  before the extension.
+  is fixed at 30000 sectors (~15MB), and file/folder names are at most 15
+  characters, the extension included (`hostput` wants a DOS 8.3 name for
+  the host's side).
 - `grep`, `head`, `tail`, and `uranium` all read a file through the same
   4 KB `content_buf` (see `fs_load_content` in `src/fs_extra.asm`), so
   only the first 4 KB of a larger file is visible to them - `uranium`
@@ -1110,14 +1156,21 @@ src/
   no memory operands (no `[bx]`, no `[label]`) and no 16-bit-register
   immediates (`add cx,5` doesn't work - only 8-bit registers take an
   immediate; `add cx,dx` works fine, since that's register-to-register).
-- Everything runs in ring 0 — there's no user/kernel privilege separation
-  or process isolation. `run` executes a file's bytes as one big function
-  call into the same address space as the kernel.
-- Single-tasking: one command runs to completion before the next is read.
-- The UTC timezone offset chosen during first boot only shifts what `time`
-  displays; `date` always shows the RTC's own (unshifted) date. The offset
-  itself isn't validated or clamped — an out-of-range value just wraps
-  through the 0-23 hour normalization in `cmd_show_time`.
+- Only `.APP` programs run in ring 3, each isolated by paging (its own
+  4MB, nothing else). The kernel, the shell and everything built in run
+  in ring 0 - and so do the PROGRAM-type files `run` starts (TEST.BIN,
+  SNAKE.BIN and the others: raw machine code, up to 127 bytes, called
+  like a kernel function in the kernel's own address space) and MS-DOS
+  `.com` programs (a 16-bit code segment, but still ring 0).
+- The kernel isn't reentrant: a console's task holds the one kernel lock
+  while it's inside the kernel, so the multitasking is between consoles,
+  the desktop and the background tasks written for it (`play &`,
+  `clock`) - a console busy in the kernel (a BASIC loop, a built-in
+  game) lets the others in only at its safe points.
+- `date` in the shell shows the RTC's own date - the time zone isn't
+  applied to it (it is to `time`, the clocks, and the desktop's calendar
+  and date). The text-mode setup doesn't check the offset it's given
+  (the graphical one keeps it to -12..+14).
 - Tab completion only works while the cursor sits at the end of the line,
   only offers the first on-disk match for the typed prefix (not the
   alphabetically-first one, and no cycling through other matches), and
