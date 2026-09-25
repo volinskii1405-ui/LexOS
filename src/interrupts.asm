@@ -366,6 +366,16 @@ keyboard_isr:
 
     ; extended key (arrows, etc) - push (al=0, ah=scancode),
     ; the same format read_key uses for special keys
+    cmp bl, 0x5B                   ; the Win keys, on the desktop: its
+    je .win_key                    ; start menu (src/dkextra.asm)
+    cmp bl, 0x5C
+    jne .not_win_key
+.win_key:
+    cmp byte [dk_active], 0
+    je .eoi
+    mov byte [dkx_win_req], 1
+    jmp .eoi
+.not_win_key:
     xor ax, ax
     mov ah, bl
     call push_key_to_buffer
@@ -516,6 +526,10 @@ read_key:
     pop ebx
     ret
 .real_keys:
+    cmp byte [wl_logout_pending], 0  ; logged out (src/dkextra.asm)?
+    je .no_logout
+    call dkx_relogin_check
+.no_logout:
     mov al, [kbd_buf_tail]
     cmp al, [kbd_buf_head]
     jne .have_key

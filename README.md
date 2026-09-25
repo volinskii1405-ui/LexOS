@@ -69,6 +69,14 @@ All taken in QEMU (1024x768) - more in [docs/screenshots](docs/screenshots).
 <td align="center" valign="top"><img src="docs/screenshots/19-cube.png" alt="CUBE.APP" width="400"><br><sub>CUBE.APP - float math in ring 3</sub></td>
 <td align="center" valign="top"><img src="docs/screenshots/20-mandelbrot.png" alt="MANDEL.APP" width="400"><br><sub>MANDEL.APP - 800x600 true color</sub></td>
 </tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/21-neofetch.png" alt="neofetch with Lex the cat" width="400"><br><sub><code>neofetch</code> with Lex the cat; the date over the clock</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/22-backdrop-sunset.png" alt="The Sunset backdrop" width="400"><br><sub>Backdrops: Sunset</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/23-logout.png" alt="Signing in again after Log out" width="400"><br><sub>Log out: back to the sign-in screen</sub></td>
+<td></td>
+</tr>
 </table>
 
 **Straight into the console** — `ls`, `cd`, and `run`-ning a program from
@@ -407,9 +415,14 @@ alex@/PROGRAMS$
   bottom-right corner; Alt+Tab brings the window at the back forward.
   A taskbar with a button per window and a tray - volume (click: the
   Mixer, wheel: the master volume), network (green once it's set up),
-  the time (click: this month's calendar) - and a start menu:
-  Programs (every .APP/.COM/.BIN on the disk), Terminal, Files, Clock,
-  Pictures, Tasks, Mixer, System, Exit. Typing while the menu's open
+  the time (click: this month's calendar, double-click: the Clock;
+  the pointer resting on it: today's date) - and a start menu (the
+  Win key opens it too): Programs (every .APP/.COM/.BIN on the disk),
+  Terminal, Files, Clock, Pictures, Tasks, Mixer, System, Log out (the
+  desktop goes, the sign-in screen comes back - Enter alone if there's
+  no password - then the desktop again), Exit. Turning the wheel over
+  the volume shows it ("Volume 70%") in a tooltip (src/dkextra.asm).
+  Typing while the menu's open
   searches: Programs shows what has the typed text in its name, Up /
   Down pick, Enter starts it, Esc closes the menu.
   - **Icons on the desktop**: whatever's in `/DESKTOP` (src/dkicons.asm).
@@ -417,8 +430,9 @@ alex@/PROGRAMS$
     (`/APPS/FIRE.APP`, a folder like `/DEMOS`). Double-click opens,
     drag moves (the places are remembered).
   - **Themes**: Classic, Dark, Light, Forest, Plum - System's buttons
-    (src/dkstyle.asm); with the sounds' switch they're kept in
-    `DESKTOP.CFG` in the root.
+    (src/dkstyle.asm); a **backdrop** - Night, Sunset, Ocean, Slate -
+    can replace the theme's own gradient. With the sounds' switch
+    they're kept in `DESKTOP.CFG` in the root.
   - **Sounds** (src/dksound.asm, through the Sound Blaster's mixer): a
     tune when the desktop starts, a click for the menu and buttons, a
     low tone for an error, a high one for news (a screenshot saved).
@@ -743,6 +757,8 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `ps` | list the running tasks (pid, state, priority, CPU time) |
 | `kill <pid>` | stop a background task |
 | `clock` | toggle a clock in the top-right corner (a background task) |
+| `uptime` | how long since boot, the consoles and tasks |
+| `neofetch` | the system at a glance, next to Lex the cat (ASCII, in color) |
 | `play <n.imf \| n.wav>` | play AdLib music or a WAV (Sound Blaster 16, or PC speaker) |
 | `play <n> &` | play it in the background |
 | `basic [n]` | Tiny BASIC; with a name, load and run that program first |
@@ -927,6 +943,9 @@ src/
   dkicons.asm          icons on the desktop (/DESKTOP, .LNK shortcuts).
   dkclip.asm           copy and paste between the Terminals.
   dkfind.asm           Files' search and order.
+  dkextra.asm          the tray's tooltips (date, volume), the Win
+                       key, Log out.
+  neofetch.asm         `neofetch` (with Lex the cat) and `uptime`.
   lang.asm             Russian: code page 866 letters, the layout.
   font866.inc          the Cyrillic glyphs (from CyrKoi-VGA16).
   welcome.asm          the graphical first boot, the login.

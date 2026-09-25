@@ -463,6 +463,18 @@ handle_command:
     je .do_ps
 
     mov si, buffer
+    mov di, cmd_uptime
+    call strcmp_eq
+    cmp ax, 1
+    je .do_uptime
+
+    mov si, buffer
+    mov di, cmd_neofetch
+    call strcmp_eq
+    cmp ax, 1
+    je .do_neofetch
+
+    mov si, buffer
     mov di, cmd_kill_prefix
     call strcmp_prefix
     cmp ax, 1
@@ -760,6 +772,14 @@ handle_command:
 
 .do_ps:
     call sched_cmd_ps
+    jmp .done
+
+.do_uptime:
+    call uptime_command        ; (src/neofetch.asm)
+    jmp .done
+
+.do_neofetch:
+    call neofetch_command
     jmp .done
 
 .do_exit:

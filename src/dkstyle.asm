@@ -6,7 +6,11 @@
 ; everything; the background's gradient comes from dk_bg_rows, a
 ; color per screen row worked out from the theme's top and bottom.
 ;
-; DESKTOP.CFG, in the root, keeps the choices ("theme=1", "sounds=0"):
+; A backdrop can take the place of the theme's gradient (dk_bg_mode: 0
+; the theme's own, else one of dk_backdrops' pairs of colors).
+;
+; DESKTOP.CFG, in the root, keeps the choices ("theme=1", "sounds=0",
+; "backdrop=2"):
 ; read when the desktop starts, written again (by the desktop's task,
 ; between frames, when no console is in the kernel) once one changes.
 ; Exports: dk_theme_set, dk_theme_apply, dk_settings_load,
@@ -19,6 +23,8 @@ DK_SYS_BTN_W   equ 64
 DK_SYS_BTN_GAP equ 4
 DK_SYS_BTN_H   equ 20
 DK_SYS_SND_Y   equ 180                    ; ...and the sounds' switch
+DK_SYS_BG_Y    equ 210                    ; ...and the backdrops
+DK_BACKDROPS   equ 5
 
 ; eax = a theme (0..DK_THEMES-1): the interface in its colors
 dk_theme_set:
@@ -43,6 +49,16 @@ dk_theme_apply:
     mov ecx, TH_SIZE / 4
     cld
     rep movsd
+    mov eax, [dk_bg_mode]                 ; a backdrop instead of its colors?
+    or eax, eax
+    jz .gradient
+    cmp eax, DK_BACKDROPS
+    jae .gradient
+    mov edx, [dk_backdrops + eax*8]
+    mov [dk_th + TH_BG_TOP], edx
+    mov edx, [dk_backdrops + eax*8 + 4]
+    mov [dk_th + TH_BG_BOTTOM], edx
+.gradient:
     xor ebx, ebx                          ; each row: top + (bottom - top)
 .row:                                     ; * row / (DESK_H - 1), a channel
     xor edi, edi                          ; at a time
@@ -76,8 +92,21 @@ dk_theme_apply:
     popad
     ret
 
+; eax = a backdrop (0: the theme's own gradient)
+dk_backdrop_set:
+    pushad
+    cmp eax, DK_BACKDROPS
+    jae .done
+    mov [dk_bg_mode], eax
+    call dk_theme_apply
+    mov byte [dk_redraw_all], 1
+    mov byte [dk_cfg_dirty], 1
+.done:
+    popad
+    ret
+
 ; ============================================================
-; System: a button per theme, and the sounds' switch
+; System: a button per theme, the sounds' switch, the backdrops
 ; ============================================================
 dk_sys_extras:
     pushad
@@ -123,6 +152,27 @@ dk_sys_extras:
     cmp byte [snd_ui_on], 0
     sete cl
     call dk_sys_button
+    mov eax, [dk_cx]                      ; Backdrop: [Theme] [Night] ...
+    add eax, 12
+    mov ebx, [dk_cy]
+    add ebx, DK_SYS_BG_Y + 2
+    mov esi, dk_msg_backdrop
+    mov edx, COL_TEXT
+    call dk_text
+    xor ebp, ebp
+.backdrop:
+    imul eax, ebp, DK_SYS_BTN_W + DK_SYS_BTN_GAP
+    add eax, [dk_cx]
+    add eax, DK_SYS_BTN_X
+    mov ebx, [dk_cy]
+    add ebx, DK_SYS_BG_Y - 2
+    mov esi, [dk_backdrop_names + ebp*4]
+    cmp ebp, [dk_bg_mode]
+    sete cl
+    call dk_sys_button
+    inc ebp
+    cmp ebp, DK_BACKDROPS
+    jb .backdrop
     popad
     ret
 
@@ -170,7 +220,15 @@ dk_system_click:
     cmp ebx, DK_SYS_SND_Y - 2
     jl .done
     cmp ebx, DK_SYS_SND_Y - 2 + DK_SYS_BTN_H
+    jl .sounds
+    cmp ebx, DK_SYS_BG_Y - 2
+    jl .done
+    cmp ebx, DK_SYS_BG_Y - 2 + DK_SYS_BTN_H
     jge .done
+    call dk_backdrop_set
+    call snd_click
+    jmp .done
+.sounds:
     cmp eax, 2                            ; the sounds: on / off
     jae .done
     xor al, 1
@@ -217,8 +275,15 @@ dk_settings_load:
 .sounds:
     mov esi, dk_cfg_sounds                ; "sounds=N"
     call dk_cfg_value
-    jc .apply
+    jc .backdrop
     mov [snd_ui_on], al
+.backdrop:
+    mov esi, dk_cfg_backdrop              ; "backdrop=N"
+    call dk_cfg_value
+    jc .apply
+    cmp eax, DK_BACKDROPS
+    jae .apply
+    mov [dk_bg_mode], eax
 .apply:
     cmp dword [dk_theme], DK_THEMES
     jb .theme_ok
@@ -297,6 +362,13 @@ dk_settings_work:
     stosb
     mov ax, 0x0A0D
     stosw
+    mov esi, dk_cfg_backdrop
+    call wget_append
+    mov al, [dk_bg_mode]
+    add al, '0'
+    stosb
+    mov ax, 0x0A0D
+    stosw
     call dki_save                         ; (src/dkicons.asm: where they are)
     sub edi, dk_cfg_buf
     mov [fs_stream_size], edi
@@ -330,6 +402,21 @@ dk_cfg_dirty   db 0
 dk_cfg_name    db "DESKTOP.CFG", 0
 dk_cfg_theme   db "theme=", 0
 dk_cfg_sounds  db "sounds=", 0
+dk_cfg_backdrop db "backdrop=", 0
+dk_bg_mode     dd 0
+dk_msg_backdrop db "Backdrop", 0
+dk_backdrop_names dd dk_bd_theme, dk_bd_night, dk_bd_sunset, dk_bd_ocean
+                  dd dk_bd_slate
+dk_bd_theme    db "Theme", 0
+dk_bd_night    db "Night", 0
+dk_bd_sunset   db "Sunset", 0
+dk_bd_ocean    db "Ocean", 0
+dk_bd_slate    db "Slate", 0
+dk_backdrops   dd 0, 0                    ; (top, bottom; 0: the theme's)
+               dd 0x0B1026, 0x33427A      ; Night
+               dd 0x2A1B4D, 0xE8795A      ; Sunset
+               dd 0x023047, 0x2A9D8F      ; Ocean
+               dd 0x1E1E1E, 0x4A4A4A      ; Slate
 dk_cfg_buf     times DK_CFG_MAX db 0
 dk_msg_theme   db "Theme:", 0
 dk_msg_sounds  db "Sounds:", 0

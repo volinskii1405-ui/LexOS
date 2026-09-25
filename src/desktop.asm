@@ -55,7 +55,7 @@ DK_MAX_WIN        equ 16
 DK_TITLE_LEN      equ 32
 DK_MENU_W         equ 170
 DK_MENU_ITEM_H    equ 24
-DK_MENU_ITEMS     equ 9
+DK_MENU_ITEMS     equ 10
 DK_TRAY_W         equ 160                 ; the taskbar's right end: volume,
                                           ; network, the time
 DK_CAL_W          equ 244                 ; the calendar
@@ -356,6 +356,8 @@ desktop_task:
     call dk_menu_keys_work                ; (src/dkwins.asm: the menu's search)
     call dkc_work                         ; (src/dkclip.asm: copy, paste)
     call dk_fm_keys_work                  ; (src/dkfind.asm: Files' search)
+    call dkt_work                         ; (src/dkextra.asm: the tooltip,
+    call dkx_win_key                      ;  the Win key)
     call dk_alt_tab_work
     call dk_shot_capture                  ; (src/dkwins.asm)
     call dk_toast_work
@@ -1281,7 +1283,14 @@ dk_click:
     cmp ebx, DESK_H - DK_TASKBAR_H
     jb .done
     cmp eax, DESK_W - 64
-    jae .done
+    jb .no_cal
+    mov eax, [timer_ms]                   ; the time again, soon: a double
+    sub eax, [dk_time_click_ms]           ; click opens the Clock
+    cmp eax, 450
+    ja .done
+    mov eax, K_CLOCK
+    call dk_win_single
+    jmp .done
 .no_cal:
     ; the start menu first, if it's open
     cmp byte [dk_menu_open], 0
@@ -1735,6 +1744,8 @@ dk_menu_choose:
     ret
 .not_terminal:
     cmp eax, 7
+    je .logout
+    cmp eax, 8
     je .exit
     movzx eax, byte [dk_menu_kinds + eax]
     cmp eax, K_PICS
@@ -1751,6 +1762,8 @@ dk_menu_choose:
 .exit:
     mov byte [dk_quit], 1
     ret
+.logout:
+    jmp dkx_logout                        ; (src/dkextra.asm)
 
 dk_mark_menu:
     pushad
@@ -1844,6 +1857,7 @@ dk_render:
     call dk_draw_ctx                      ; (src/dkwins.asm)
 .no_ctx:
     call dk_draw_toast
+    call dkt_draw                         ; (src/dkextra.asm: the tooltip)
 .done:
     popad
     ret
@@ -2903,13 +2917,14 @@ dk_zcount         dd 0
 dk_def_x          dd 30,   800,  240,  560,  60,   250,  420,  200
 dk_def_y          dd 24,   30,   120,  320,  90,   90,   260,  60
 dk_def_w          dd 640,  200,  320,  420,  560,  520,  400,  320
-dk_def_h          dd 400,  214,  200,  210,  380,  400,  210,  200
+dk_def_h          dd 400,  214,  200,  244,  380,  400,  210,  200
 dk_kind_names     dd dk_title_terminal, dk_title_clock, dk_title_pictures, dk_title_system
                   dd dk_title_files, dk_title_tasks, dk_title_mixer, dk_title_program
 dk_menu_labels    dd dk_menu_programs
                   dd dk_title_terminal, dk_title_files, dk_title_clock, dk_title_pictures
-                  dd dk_title_tasks, dk_title_mixer, dk_title_system, dk_menu_exit
-dk_menu_kinds     db K_TERM, K_FILES, K_CLOCK, K_PICS, K_TASKS, K_MIXER, K_SYSTEM, K_NONE
+                  dd dk_title_tasks, dk_title_mixer, dk_title_system, dk_menu_logout
+                  dd dk_menu_exit
+dk_menu_kinds     db K_TERM, K_FILES, K_CLOCK, K_PICS, K_TASKS, K_MIXER, K_SYSTEM, K_NONE, K_NONE
 
 ; the arrow, 12x19: bit n = column n
 dk_ptr_outline dw 0x001, 0x003, 0x005, 0x009, 0x011, 0x021, 0x041, 0x081, 0x101, 0x201
@@ -2926,6 +2941,7 @@ dk_title_files      db "Files", 0
 dk_title_tasks      db "Tasks", 0
 dk_title_mixer      db "Mixer", 0
 dk_title_program    db "Program", 0
+dk_menu_logout      db "Log out", 0
 dk_menu_exit        db "Exit desktop", 0
 dk_menu_programs    db "Programs", 0
 dk_msg_more         db ">", 0
