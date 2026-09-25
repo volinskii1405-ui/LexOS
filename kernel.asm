@@ -57,6 +57,7 @@ kernel_start:
     call print_banner
     mov si, welcome_msg
     call print_string
+    call jnl_boot_note       ; (src/fsjournal.asm: a write finished at boot?)
 
     call fs_ensure_readme    ; creates README.TXT in the root if it doesn't exist yet
 
@@ -205,6 +206,7 @@ shared_system_start:
 %include "src/neofetch.asm"
 %include "src/langui.asm"
 %include "src/dkcat.asm"
+%include "src/fsjournal.asm"
 shared_system_end:
 align 4096, db 0
 %include "src/grep.asm"

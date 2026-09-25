@@ -481,6 +481,36 @@ handle_command:
     je .do_lex_text
 
     mov si, buffer
+    mov di, cmd_ls_l
+    call strcmp_eq
+    cmp ax, 1
+    je .do_ls_l
+
+    mov si, buffer
+    mov di, cmd_attrib_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_attrib
+
+    mov si, buffer
+    mov di, cmd_attrib
+    call strcmp_eq
+    cmp ax, 1
+    je .do_attrib
+
+    mov si, buffer
+    mov di, cmd_fsck
+    call strcmp_eq
+    cmp ax, 1
+    je .do_fsck
+
+    mov si, buffer
+    mov di, cmd_fsck_fix
+    call strcmp_eq
+    cmp ax, 1
+    je .do_fsck_fix
+
+    mov si, buffer
     mov di, cmd_neofetch
     call strcmp_eq
     cmp ax, 1
@@ -830,6 +860,25 @@ handle_command:
     call neofetch_command
     jmp .done
 
+.do_ls_l:
+    call fs_list_long          ; (src/fsjournal.asm)
+    jmp .done
+
+.do_attrib:
+    mov esi, buffer + 6        ; (what follows "attrib")
+    call fs_attrib
+    jmp .done
+
+.do_fsck:
+    xor esi, esi
+    call fs_fsck
+    jmp .done
+
+.do_fsck_fix:
+    mov esi, buffer + 5        ; "fix"
+    call fs_fsck
+    jmp .done
+
 .do_exit:
     call console_cmd_exit      ; (doesn't come back if it closed one)
     jmp .done
@@ -1089,6 +1138,7 @@ show_help:
 ; System shutdown (ACPI shutdown via the QEMU/Bochs port 0x604)
 ; ============================================================
 do_shutdown:
+    call jnl_commit                ; (nothing left half written)
     mov ax, 0x2000
     mov dx, 0x604                  ; QEMU
     out dx, ax
@@ -1106,6 +1156,7 @@ do_shutdown:
 ; reset line. Widely supported, including by QEMU.
 ; ============================================================
 do_reboot:
+    call jnl_commit
     cli
 .wait_kbd:
     in al, 0x64

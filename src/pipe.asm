@@ -14,8 +14,8 @@
 ; when the line's done. Scripts' lines go through here too.
 ; Exports: shell_run_line, pipe_catch
 
-PIPE_BUF       equ 0x3FC0000              ; (past the translations: 9 x 28KB)
-PIPE_EACH      equ 0x7000
+PIPE_BUF       equ 0x3FC0000              ; (past the translations: 9 x 20KB,
+PIPE_EACH      equ 0x5000                 ;  then src/fsjournal.asm's)
 PIPE_LINE      equ 64                     ; (BUFFER_MAX + 1)
 
 ; A command line (buffer) carried out - through its pipes, if it has any

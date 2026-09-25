@@ -15,8 +15,14 @@ stay: a file that's there by that name is left alone, except in /APPS
 and /SYSTEM (the programs, the translations - brought up to date if they
 changed). A folder takes the
 first free slot from 0, a file from 255, as fs_find_free_dir /
-fs_find_free do."""
-import os, sys
+fs_find_free do.
+
+First, like LexOS at boot (src/fsjournal.asm's jnl_replay), it finishes
+a journal commit that was cut short, so what it adds goes onto the
+filesystem as it really is. What it writes gets the time it's written
+(the slot's bytes 148..152).
+"""
+import os, sys, time
 
 FS_START_SECTOR = 578
 FS_FILE_COUNT = 1024
@@ -32,12 +38,38 @@ TYPE_FREE, TYPE_FILE, TYPE_DIR = 0, 1, 2
 ROOT = 0xFF
 NO_CHAIN = 0xFFFF
 UPDATED = ('APPS', 'SYSTEM')       # folders whose files follow disk/
+JNL_LBA = FS_EXTRA_START + FS_EXTRA_COUNT   # src/fsjournal.asm
+JNL_MAX = 120
 
 image_path, top = sys.argv[1], sys.argv[2]
 img = bytearray(open(image_path, 'rb').read())
 need = (FS_EXTRA_START + FS_EXTRA_COUNT) * 512
 if len(img) < need:
     img += bytes(need - len(img))
+
+
+def replay():
+    """a journal commit cut short after its header: finished, cleared"""
+    if len(img) < (JNL_LBA + 1 + JNL_MAX) * 512:
+        return
+    h = img[JNL_LBA * 512:(JNL_LBA + 1) * 512]
+    n = int.from_bytes(h[4:8], 'little')
+    if h[0:4] != b'LXJN' or not n:
+        return
+    if n <= JNL_MAX:
+        secs = [img[(JNL_LBA + 1 + k) * 512:(JNL_LBA + 2 + k) * 512] for k in range(n)]
+        total = sum(int.from_bytes(sc[j:j + 4], 'little') for sc in secs
+                    for j in range(0, 512, 4)) & 0xFFFFFFFF
+        if total == int.from_bytes(h[8:12], 'little'):
+            for k in range(n):
+                lba = int.from_bytes(h[16 + 2 * k:18 + 2 * k], 'little')
+                if FS_START_SECTOR <= lba < FS_EXTRA_START:
+                    img[lba * 512:(lba + 1) * 512] = secs[k]
+            print('mkdisk: finished a journal commit (%d sectors)' % n)
+    img[JNL_LBA * 512:(JNL_LBA + 1) * 512] = bytes(512)
+
+
+replay()
 start = FS_BITMAP_SECTOR * 512
 bitmap = bytearray(img[start:start + FS_BITMAP_SECTORS * 512])
 added = updated = kept = 0
@@ -109,6 +141,8 @@ def write_slot(index, name, kind, parent, content=b'', size=0, chain=NO_CHAIN):
     s[146:148] = (size >> 16).to_bytes(2, 'little')
     s[508:510] = (size & 0xFFFF).to_bytes(2, 'little')
     s[510:512] = chain.to_bytes(2, 'little')
+    t = time.gmtime()                  # when (as the RTC: UTC)
+    s[148:153] = bytes([t.tm_year % 100, t.tm_mon, t.tm_mday, t.tm_hour, t.tm_min])
     put_sector(FS_START_SECTOR + index, s)
 
 

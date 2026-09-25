@@ -418,6 +418,7 @@ desktop_task:
     dec dword [sched_lock]
     call dk_shot_save                     ; (src/dkwins.asm: outside a frame)
     call dk_settings_work                 ; (src/dkstyle.asm: DESKTOP.CFG)
+    call jnl_idle                         ; (src/fsjournal.asm)
     call snd_work                         ; (src/dksound.asm: its sounds)
     jmp .sleep
 .suspended:

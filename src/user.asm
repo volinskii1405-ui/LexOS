@@ -57,7 +57,12 @@ fs_reject_if_user_cfg:
     jmp .end
 
 .allowed:
+    call jnl_ro_check           ; read-only? (src/fsjournal.asm)
+    jc .read_only
     xor ax, ax
+    jmp .end
+.read_only:
+    mov ax, 1
 
 .end:
     pop si

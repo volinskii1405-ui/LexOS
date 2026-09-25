@@ -68,6 +68,7 @@ fs_scratch_write_word:
 ; ============================================================
 fs_cache_init:
     pushad
+    call jnl_replay                       ; (a commit cut short: finished)
     mov edi, FS_SLOT_VALID
     mov ecx, FS_FILE_COUNT / 32
     xor eax, eax
@@ -89,6 +90,7 @@ fs_cache_init:
     jmp .sector
 .done:
     mov dword [fs_extra_hint], 0
+    call jnl_start                        ; (from now on, journaled)
     popad
     ret
 
@@ -154,6 +156,11 @@ fs_extra_free:
     cmp eax, FS_EXTRA_COUNT
     jae .done
     mov byte [FS_BITMAP_CACHE + eax], 0
+    cmp byte [jnl_on], 0                  ; (journaled: free once the
+    je .write                             ;  change counts - src/fsjournal.asm)
+    mov byte [FS_BITMAP_CACHE + eax], BMP_FREED
+    mov byte [jnl_freed], 1
+.write:
     call fs_bitmap_writeback
 .done:
     pop eax
@@ -177,7 +184,7 @@ fs_bitmap_writeback:
     mov ecx, 128
     rep movsd
     lea eax, [ebx + FS_BITMAP_SECTOR]
-    call ata_write_sector
+    call jnl_write_sector                 ; (through the journal)
     setc [fs_bitmap_carry]
     mov esi, FS_SCRATCH_SAVE              ; and put it back
     mov edi, SCRATCH_ADDR
