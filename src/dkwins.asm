@@ -311,6 +311,12 @@ dk_wheel_work:
     je .not_window
     cmp byte [dkw_kind + esi], K_TERM
     je .terminal
+    cmp byte [dkw_kind + esi], K_APP      ; a program's: its to take
+    jne .not_app                          ; (sys_mouse, src/appsys.asm)
+    mov eax, [dkw_param + esi*4]
+    add [dk_app_wheel + eax*4], ebp
+    jmp .done
+.not_app:
     cmp byte [dkw_kind + esi], K_FILES
     jne .done
     mov eax, [dk_fm_page]                 ; Files: a page per notch
@@ -5634,6 +5640,7 @@ dk_app_win        times DK_APPS dd 0
 dk_app_w          times DK_APPS dd 0
 dk_app_h          times DK_APPS dd 0
 dk_app_scale      times DK_APPS dd 1
+dk_app_wheel      times DK_APPS dd 0      ; its wheel's turns, not yet taken
 dk_app_pal        times DK_APPS * 256 dd 0
 
 dk_cube_levels    db 0, 51, 102, 153, 204, 255

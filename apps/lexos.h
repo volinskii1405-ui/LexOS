@@ -53,6 +53,7 @@ static inline void beep(int hz, int ms)       { lx_syscall(10, hz, ms); }
 #define O_WRITE  1
 #define O_APPEND 2
 #define O_UPDATE 3
+/* A name can have a path before it: "/DEMOS/SITE/INDEX.HTM", "SITE/A.HTM". */
 static inline int open(const char *name, int mode)       { return lx_syscall(11, (int)name, mode); }
 static inline int read(int fd, void *buf, int n)          { return lx_syscall3(12, fd, (int)buf, n); }
 static inline int fwrite(int fd, const void *buf, int n)  { return lx_syscall3(13, fd, (int)buf, n); }
@@ -96,6 +97,26 @@ static inline int audio_open(int rate, int channels)     { return lx_syscall(23,
 static inline int audio_write(const short *s, int bytes) { return lx_syscall(24, (int)s, bytes); }
 static inline int audio_close(void)                       { return lx_syscall(25, 0, 0); }
 static inline int audio_volume(int percent)               { return lx_syscall(28, percent, 0); }
+
+/* --- the mouse ---
+ * mouse(m): m[0], m[1] = where the pointer is in the program's picture
+ * (on the desktop: in its window; -1 if it can't tell), m[2] = the
+ * buttons held (1 left, 2 right, 4 middle - only while it's over the
+ * picture), m[3] = the wheel's turns since the last call (+: towards
+ * you). Returns 1 if the pointer's over the picture. */
+static inline int mouse(int m[4])                         { return lx_syscall(29, (int)m, 0); }
+
+/* --- the network ---
+ * fetch("http://host[:port]/path", buf, size): the page (its body,
+ * without the HTTP headers) into buf -> its length; -1 it couldn't be
+ * fetched, -2 the server said no (404...), -3 it's moved: the new
+ * address is in buf. As `wget`, but nothing's saved or shown. */
+static inline int fetch(const char *url, void *buf, int n) { return lx_syscall3(30, (int)url, (int)buf, n); }
+
+/* font(buf): the system's 8x16 font, 4096 bytes - 256 glyphs, 16 rows
+ * each, bit 7 the leftmost pixel (code page 866: Russian letters at
+ * 0x80-0xAF and 0xE0-0xF1; Spanish ones at 0xF2-0xF7, 0xFC, 0xFD...). */
+static inline void font(void *buf)                        { lx_syscall(31, (int)buf, 0); }
 
 /* keydown(scancode): 1 while that key is held - for games. */
 static inline int keydown(int scancode)                   { return lx_syscall(20, scancode, 0); }

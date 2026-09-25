@@ -1,0 +1,27 @@
+<html><head><title>About LexOS Web</title></head><body>
+<h1>About LexOS Web</h1>
+<p>LexOS Web is <b>apps/browser.c</b> - one C file, built into
+<b>/APPS/BROWSER.APP</b>. It runs like every other LexOS program: in its
+own 4MB, in ring 3, asking the kernel for what it needs through
+<b>int 0x80</b>:</p>
+<ul>
+<li><b>open/read</b> - pages and pictures on this disk (with a path: <i>/DEMOS/SITE/LEX.BMP</i>)</li>
+<li><b>fetch</b> - pages from the web: the kernel's own TCP/IP and HTTP, the same as <b>wget</b></li>
+<li><b>mouse</b> - where the pointer is in its window, the buttons, the wheel</li>
+<li><b>font</b> - the system's 8x16 font, Russian and Spanish letters included</li>
+<li><b>gfx_mode_ex / gfx_blit</b> - an 800x600 picture in a window on the desktop</li>
+</ul>
+<h2>What it understands</h2>
+<ol>
+<li>Headings <b>h1</b>-<b>h6</b>, paragraphs, <b>br</b>, <b>hr</b></li>
+<li><b>Bold</b>, <i>italic</i>, <u>underlined</u>, <font color="#C03030">colored</font> text</li>
+<li>Links (relative ones too: <a href="../SITE/./INDEX.HTM">../SITE/./INDEX.HTM</a>)</li>
+<li>Lists, nested:
+  <ul><li>bullets</li><li>and numbers</li></ul></li>
+<li>Pictures: <b>img</b> with a .BMP (8, 24 or 32 bits)</li>
+<li>&lt;pre&gt;, &lt;blockquote&gt;, &lt;center&gt;, tables as rows</li>
+<li>Entities: &amp;amp; &copy; &laquo;quotes&raquo; &mdash; and UTF-8</li>
+</ol>
+<p>Scripts and styles are skipped: this is the web as it was in 1995.</p>
+<p><a href="INDEX.HTM">&larr; Home</a></p>
+</body></html>

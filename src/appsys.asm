@@ -120,6 +120,105 @@ fh_lookup:
 ; SYS_OPEN: ebx = name, ecx = mode (FH_MODE_*) -> eax = handle, or -1
 ; ============================================================
 sys_open:
+    push word [fs_current_dir]            ; "a/b/NAME": opened in a/b
+    push dword [ebp + 16]
+    mov eax, [ebp + 16]
+    call app_split_path                   ; -> eax = the name, carry=1 bad
+    jc .no_path
+    mov [ebp + 16], eax
+    call sys_open_here
+    jmp .back
+.no_path:
+    mov eax, -1
+.back:
+    pop dword [ebp + 16]
+    pop word [fs_current_dir]
+    ret
+
+; eax = a program's "path/NAME": the path's folder made the current one
+; (for this call) -> eax = NAME. carry=1 if the path's not there.
+app_split_path:
+    push ecx
+    push esi
+    push edi
+    mov esi, eax
+    xor edi, edi                          ; the last '/'
+    xor ecx, ecx
+.scan:
+    cmp esi, APP_BASE
+    jb .bad
+    cmp esi, APP_STACK_TOP
+    jae .bad
+    cmp byte [esi], 0
+    je .scanned
+    cmp byte [esi], '/'
+    jne .next
+    mov edi, esi
+.next:
+    inc esi
+    inc ecx
+    cmp ecx, BUFFER_MAX
+    jb .scan
+    jmp .bad
+.scanned:
+    or edi, edi
+    jz .done                              ; (no path: here)
+    push eax                              ; the folder part -> buffer
+    mov esi, eax
+    mov ecx, edi
+    sub ecx, eax
+    mov edi, buffer
+    cld
+    rep movsb
+    mov byte [edi], 0
+    cmp edi, buffer                       ; ("/NAME": the root)
+    jne .resolve
+    mov word [buffer], '/'
+.resolve:
+    push ebx
+    push edx
+    mov si, buffer
+    call fs_resolve_path                  ; -> ax, or -1
+    pop edx
+    pop ebx
+    cmp ax, -1
+    je .bad_pop
+    movzx eax, al
+    cmp al, FS_ROOT_BYTE
+    jne .dir
+    mov eax, FS_ROOT
+.dir:
+    mov [fs_current_dir], ax
+    pop eax
+    push eax                              ; the name: past the last '/'
+.to_name:
+    cmp byte [eax], 0
+    je .named
+    inc eax
+    jmp .to_name
+.named:
+    cmp byte [eax - 1], '/'
+    je .name_found
+    dec eax
+    jmp .named
+.name_found:
+    add esp, 4
+.done:
+    pop edi
+    pop esi
+    pop ecx
+    clc
+    ret
+.bad_pop:
+    pop eax
+.bad:
+    pop edi
+    pop esi
+    pop ecx
+    stc
+    ret
+
+sys_open_here:
     mov eax, [ebp + 16]
     call app_copy_name
     jc .fail
@@ -933,6 +1032,174 @@ sys_palette:
     ret
 
 ; SYS_KEYDOWN: ebx = a scancode -> eax = 1 while that key is held down
+; ============================================================
+; SYS_MOUSE: ebx = int[4] <- x, y (in the program's picture), buttons
+; (bit 0 left, 1 right, 2 middle) and the wheel's turns since the last
+; call (+: towards you). eax = 1 if the pointer's over the picture.
+; ============================================================
+sys_mouse:
+    push ebp
+    mov eax, [ebp + 16]
+    mov ecx, 16
+    call app_check_buf
+    mov edi, eax
+    mov dword [edi], -1
+    mov dword [edi + 4], -1
+    mov dword [edi + 8], 0
+    mov dword [edi + 12], 0
+    cmp byte [dk_active], 0
+    jne .desktop
+    mov eax, [mouse_x]                    ; the whole screen's
+    mov [edi], eax
+    mov eax, [mouse_y]
+    mov [edi + 4], eax
+    movzx eax, byte [mouse_buttons]
+    and eax, 7
+    mov [edi + 8], eax
+    xor eax, eax
+    xchg eax, [mouse_wheel]
+    mov [edi + 12], eax
+    mov eax, 1
+    pop ebp
+    ret
+.desktop:                                 ; its window's
+    movzx ebx, byte [console_self]
+    call dk_app_window_of                 ; -> eax, or -1
+    cmp eax, -1
+    je .outside
+    mov esi, eax                          ; esi = the window
+    mov ebp, [dkw_param + eax*4]          ; ebp = its slot
+    xor eax, eax
+    xchg eax, [dk_app_wheel + ebp*4]
+    mov [edi + 12], eax
+    mov eax, esi
+    call dk_client_origin                 ; -> eax, ebx
+    mov ecx, [dk_app_scale + ebp*4]
+    push eax
+    mov eax, [dk_mx]
+    sub eax, [esp]
+    cdq
+    idiv ecx
+    mov [edi], eax
+    mov eax, [dk_my]
+    sub eax, ebx
+    cdq
+    idiv ecx
+    mov [edi + 4], eax
+    pop eax
+    mov eax, [edi]                        ; over its picture?
+    cmp eax, [dk_app_w + ebp*4]
+    jae .outside
+    mov eax, [edi + 4]
+    cmp eax, [dk_app_h + ebp*4]
+    jae .outside
+    push esi
+    mov eax, [dk_mx]
+    mov ebx, [dk_my]
+    call dk_window_at                     ; (nothing over it there) -> esi
+    pop eax
+    cmp eax, esi
+    jne .outside
+    mov al, [console_self]
+    cmp al, [console_fg]                  ; (and it has the keyboard)
+    jne .over
+    movzx eax, byte [mouse_buttons]
+    and eax, 7
+    mov [edi + 8], eax
+.over:
+    mov eax, 1
+    pop ebp
+    ret
+.outside:
+    xor eax, eax
+    pop ebp
+    ret
+
+; ============================================================
+; SYS_FETCH: ebx = an http:// address, ecx = a buffer, edx = its size
+; -> eax = the bytes of the page put there; -1 it couldn't be fetched,
+; -2 the server said no (404...), -3 it moved: the new address is in
+; the buffer. As `wget`, but nothing's saved or shown.
+; ============================================================
+sys_fetch:
+    mov eax, [ebp + 24]
+    mov ecx, [ebp + 20]
+    call app_check_buf
+    mov [wget_app_buf], eax
+    mov [wget_app_max], ecx
+    mov esi, [ebp + 16]                   ; the address -> fetch_url
+    mov edi, fetch_url
+    mov ecx, FETCH_URL_MAX - 1
+.copy:
+    cmp esi, APP_BASE
+    jb .bad
+    cmp esi, APP_STACK_TOP
+    jae .bad
+    lodsb
+    cmp al, ' '                           ; (one word: no file name after)
+    je .copied
+    stosb
+    or al, al
+    jz .copied
+    loop .copy
+.copied:
+    mov byte [edi], 0
+    mov dword [wget_app_len], -1
+    mov byte [wget_to_app], 1
+    movzx ebx, byte [console_self]        ; (quietly: src/pipe.asm)
+    mov al, [pipe_on + ebx]
+    push eax
+    mov byte [pipe_on + ebx], 2
+    mov esi, fetch_url
+    call net_wget_body
+    pop eax
+    movzx ebx, byte [console_self]
+    mov [pipe_on + ebx], al
+    mov byte [wget_to_app], 0
+    mov eax, [wget_app_len]
+    ret
+.bad:
+    mov eax, -1
+    ret
+
+; ============================================================
+; SYS_FONT: ebx = 4096 bytes <- the system's 8x16 font (256 glyphs, 16
+; rows each, bit 7 the leftmost pixel) - with the letters the system's
+; languages need (src/lang.asm)
+; ============================================================
+sys_font:
+    mov eax, [ebp + 16]
+    mov ecx, 4096
+    call app_check_buf
+    mov edi, eax
+    mov esi, vga_saved_font
+    mov edx, 256
+    cld
+.glyph:
+    mov ecx, 4
+    rep movsd
+    add esi, 16
+    dec edx
+    jnz .glyph
+    cmp byte [lang_patched], 0            ; (the Russian letters: there
+    jne .done                             ;  even if the system's font
+    xor ebx, ebx                          ;  hasn't them - src/lang.asm)
+.letter:
+    movzx edi, byte [lang_codes + ebx]
+    shl edi, 4
+    add edi, [ebp + 16]
+    mov esi, ebx
+    shl esi, 4
+    add esi, font866_glyphs
+    mov ecx, 4
+    rep movsd
+    inc ebx
+    cmp ebx, LANG_GLYPHS
+    jb .letter
+.done:
+    xor eax, eax
+    ret
+
 sys_keydown:
     mov ecx, [ebp + 16]
     xor eax, eax
@@ -1115,3 +1382,10 @@ fh_cur_slot  dw 0
 fh_src_ptr   dd 0
 bga_lfb      dd 0
 app_audio_until dd 0
+
+FETCH_URL_MAX    equ 256
+fetch_url        times FETCH_URL_MAX db 0
+wget_to_app      db 0                     ; (src/inet.asm: into a program's buffer)
+wget_app_buf     dd 0
+wget_app_max     dd 0
+wget_app_len     dd 0

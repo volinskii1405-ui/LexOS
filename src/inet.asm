@@ -790,6 +790,10 @@ WGET_IDLE_TICKS   equ 182                 ; 10s without a byte: give up
 net_wget:
     pushad
     movzx esi, si
+    jmp net_wget_go
+net_wget_body:                            ; (the same, esi 32-bit: sys_fetch)
+    pushad
+net_wget_go:
     call basic_skip
     cmp byte [esi], 0
     jne .have_url
@@ -1191,6 +1195,11 @@ wget_save:
 .code:
     cmp dword [edi], ' 200'
     je .ok
+    cmp byte [wget_to_app], 0             ; (for a program: -2, or -3 and
+    je .say_status                        ;  where it moved to)
+    call wget_app_moved
+    jmp .done
+.say_status:
     mov esi, wget_msg_status
     call basic_puts
     lea esi, [edi + 1]
@@ -1228,6 +1237,21 @@ wget_save:
 .ok:
     mov eax, [tcp_rx_len]
     sub eax, [wget_body]
+    cmp byte [wget_to_app], 0             ; for a program: into its buffer
+    je .to_file
+    mov ecx, eax
+    cmp ecx, [wget_app_max]
+    jbe .fits
+    mov ecx, [wget_app_max]
+.fits:
+    mov [wget_app_len], ecx
+    mov esi, WGET_BUF
+    add esi, [wget_body]
+    mov edi, [wget_app_buf]
+    cld
+    rep movsb
+    jmp .done
+.to_file:
     mov [fs_stream_size], eax
     call fs_stream_prepare                ; (says why not itself)
     jc .done
@@ -1258,6 +1282,54 @@ wget_save:
 .garbled:
     mov esi, wget_msg_not_http
     call basic_puts
+.done:
+    popad
+    ret
+
+; sys_fetch's answer wasn't 200: -2, or (a redirect) -3 with the new
+; address in the program's buffer
+wget_app_moved:
+    pushad
+    mov dword [wget_app_len], -2
+    mov esi, WGET_BUF
+    mov edx, WGET_BUF
+    add edx, [wget_body]
+.find:
+    cmp esi, edx
+    jae .done
+    cmp byte [esi], 10
+    jne .next
+    mov eax, [esi + 1]
+    or eax, 0x20202020
+    cmp eax, 'loca'
+    jne .next
+    mov eax, [esi + 5]
+    or eax, 0x20202020
+    cmp eax, 'tion'
+    jne .next
+    cmp byte [esi + 9], ':'
+    jne .next
+    add esi, 10
+    call basic_skip
+    mov edi, [wget_app_buf]
+    mov ecx, [wget_app_max]
+    dec ecx
+    jle .done
+.copy:
+    lodsb
+    cmp al, 13
+    je .copied
+    cmp al, 10
+    je .copied
+    stosb
+    loop .copy
+.copied:
+    mov byte [edi], 0
+    mov dword [wget_app_len], -3
+    jmp .done
+.next:
+    inc esi
+    jmp .find
 .done:
     popad
     ret

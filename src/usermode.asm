@@ -81,7 +81,7 @@ SYS_AUDIO_CLOSE equ 25
 SYS_MILLIS      equ 26                ; -> eax = milliseconds since boot
 SYS_SLEEP_UNTIL equ 27                ; ebx = a SYS_MILLIS value to wait for
 SYS_AUDIO_VOLUME equ 28               ; ebx = 0-100
-SYS_COUNT       equ 29                ; (files/graphics: src/appsys.asm)
+SYS_COUNT       equ 32                ; (files/graphics: src/appsys.asm)
 
 ; ============================================================
 ; Paging, the TSS, the ring-3 entry points into the kernel (int 0x80,
@@ -439,7 +439,7 @@ syscall_table:
     dd sys_seek, sys_fsize, sys_gfx, sys_blit, sys_palette
     dd sys_keydown, sys_gfx_mode, sys_blit_rect, sys_audio_open
     dd sys_audio_write, sys_audio_close, sys_millis, sys_sleep_until
-    dd sys_audio_volume
+    dd sys_audio_volume, sys_mouse, sys_fetch, sys_font
 
 sys_exit:
     mov eax, [ebp + 16]
