@@ -1936,6 +1936,7 @@ dk_render:
     jmp .win
 .wins_done:
     call dk_draw_taskbar
+    call dkx_cat_draw                     ; (src/dkcat.asm: Lex, under the menus)
     cmp byte [dk_menu_open], 0
     je .no_menu
     call dk_draw_menu
@@ -1950,7 +1951,6 @@ dk_render:
 .no_ctx:
     call dk_snap_draw                     ; (src/dkextra.asm: an edge's outline)
     call dk_draw_toast
-    call dkx_cat_draw                     ; (src/dkcat.asm: Lex)
     call dkt_draw                         ; (src/dkextra.asm: the tooltip)
     call dkx_bye_draw                     ; (and the goodbye, powering off)
 .done:

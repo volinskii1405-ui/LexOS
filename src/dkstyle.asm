@@ -283,6 +283,7 @@ dk_settings_load:
     jc .no_cat
     mov [cat_on], al
 .no_cat:
+    call cat_cfg_load                     ; "lexstat=" (his food, joy...)
     mov esi, dk_cfg_backdrop              ; "backdrop=N"
     call dk_cfg_value
     jc .apply
@@ -375,6 +376,7 @@ dk_settings_work:
     stosb
     mov ax, 0x0A0D
     stosw
+    call cat_cfg_save
     mov esi, dk_cfg_backdrop
     call wget_append
     mov al, [dk_bg_mode]

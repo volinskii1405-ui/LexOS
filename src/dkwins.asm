@@ -3478,6 +3478,10 @@ DKC_FCUT     equ 22
 DKC_FPASTE   equ 23
 DKC_CATHIDE  equ 24
 DKC_CATSHOW  equ 25
+DKC_CATFEED  equ 26                   ; (Lex's own: src/dkcat.asm)
+DKC_CATPET   equ 27
+DKC_CATPLAY  equ 28
+DKC_CATHOW   equ 29
 DK_CTX_W    equ 160
 DK_CTX_ITEM equ 22
 
@@ -5490,6 +5494,7 @@ dk_ctx_labels     dd dk_ctx_l_open, dk_ctx_l_rename, dk_ctx_l_copy, dk_ctx_l_del
                   dd dkx_l_system, dkx_l_arrange, dkx_l_backdrop
                   dd dkx_l_fcopy, dkx_l_fcut, dkx_l_fpaste
                   dd dkx_l_cathide, dkx_l_catshow
+                  dd dkx_l_catfeed, dkx_l_catpet, dkx_l_catplay, dkx_l_cathow
 dk_ctx_l_open     db "Open", 0
 dk_ctx_l_rename   db "Rename...", 0
 dk_ctx_l_copy     db "Copy to...", 0

@@ -18,7 +18,9 @@ SND_START      equ 1
 SND_ERROR      equ 2
 SND_NOTIFY     equ 3
 SND_MEOW       equ 4                      ; (Lex: src/dkcat.asm)
-SND_COUNT      equ 5
+SND_PURR       equ 5
+SND_NOM        equ 6
+SND_COUNT      equ 7                      ; (up to TR_BASE: 7 at most)
 SND_BASE       equ 0x3F10000              ; 64KB each (past HTTPD_REQ)
 SND_SLOT       equ 0x10000
 
@@ -232,3 +234,6 @@ snd_notes:
     dw 1319, 80, 8000, 1760, 170, 8000, 0                         ; news
     dw 620, 35, 7000, 760, 35, 8000, 900, 45, 9000, 980, 60, 9000 ; meow: up...
     dw 900, 60, 8500, 780, 70, 8000, 660, 90, 7000, 560, 110, 6000, 0 ; ...and down
+    dw 70, 140, 9000, 1, 40, 0, 62, 180, 8000, 1, 40, 0          ; purr
+    dw 70, 140, 9000, 1, 40, 0, 62, 180, 8000, 0
+    dw 520, 45, 6000, 1, 45, 0, 520, 45, 6000, 1, 45, 0, 660, 70, 6000, 0 ; nom nom

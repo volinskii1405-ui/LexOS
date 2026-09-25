@@ -600,6 +600,21 @@ dkx_ctx_items:
     call dk_ctx_add
     jmp .some
 .desktop:
+    mov ebx, [dk_my]                      ; on Lex: his own
+    call dkx_cat_hit
+    jc .desk_items
+    mov al, DKC_CATFEED
+    call dk_ctx_add
+    mov al, DKC_CATPET
+    call dk_ctx_add
+    mov al, DKC_CATPLAY
+    call dk_ctx_add
+    mov al, DKC_CATHOW
+    call dk_ctx_add
+    mov al, DKC_CATHIDE
+    call dk_ctx_add
+    jmp .some
+.desk_items:
     mov al, DKC_NEWTERM
     call dk_ctx_add
     mov al, DKC_FILES
@@ -665,6 +680,11 @@ dkx_ctx_do:
     call dk_win_x
     jmp .done
 .not_close:
+    cmp eax, DKC_CATFEED                  ; Lex: fed, petted...
+    jb .not_lex
+    call dkx_cat_act
+    jmp .done
+.not_lex:
     cmp eax, DKC_CATHIDE                  ; Lex: hidden / shown
     jb .not_cat
     call dkx_cat_toggle
