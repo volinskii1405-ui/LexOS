@@ -6,7 +6,10 @@
 ; src/fs_extra.asm) as its own working buffer - loads the existing
 ; content into it via fs_load_content, edits in place
 ; (insertion/deletion shift bytes within content_buf), and on Ctrl+B/Ctrl+H
-; writes it back to disk via fs_save_content below.
+; writes it back to disk via fs_save_content below. It asks only twice:
+; Ctrl+B (save and exit - sure?), and ESC with changes not saved yet
+; (uranium_dirty: exit without them, save them, or back to editing);
+; Ctrl+H just saves, ESC with nothing new just leaves.
 ;
 ; Screen layout: row 0-1 - header bar (file name, size) on a solid green
 ; background (screen_fill_bar_row, src/screen.asm), rows 2..23 - content
@@ -154,6 +157,7 @@ uranium_editor:
     mov word [uranium_cursor_pos], 0
     mov word [uranium_view_line], 0
     mov byte [uranium_flash_active], 0
+    mov byte [uranium_dirty], 0
 
 .editor_loop:
     call uranium_redraw
@@ -166,9 +170,9 @@ uranium_editor:
     cmp al, 'B'
     je .confirm_save_and_exit
     cmp al, 'h'
-    je .confirm_save_only
+    je .save_only
     cmp al, 'H'
-    je .confirm_save_only
+    je .save_only
     cmp al, 'f'
     je .do_search
     cmp al, 'F'
@@ -290,28 +294,34 @@ uranium_editor:
     jmp .editor_loop
 
 .confirm_save_and_exit:
+    mov si, msg_uranium_confirm
     call uranium_confirm_prompt
     cmp ax, 1
     jne .editor_loop
+.save_and_exit:
     mov ax, [fs_tmp_slot]
     call fs_save_content
     call clear_screen
     jmp .end
 
-.confirm_save_only:
-    call uranium_confirm_prompt
-    cmp ax, 1
-    jne .editor_loop
+.save_only:                        ; Ctrl+H: saved, no questions
     mov ax, [fs_tmp_slot]
     call fs_save_content
+    mov byte [uranium_dirty], 0
     mov word [uranium_flash_text], msg_uranium_saved_flash
     mov byte [uranium_flash_active], 1
     jmp .editor_loop
 
-.confirm_discard_exit:
-    call uranium_confirm_prompt
+.confirm_discard_exit:             ; ESC: nothing new - just leave
+    cmp byte [uranium_dirty], 0
+    je .leave
+    mov si, msg_uranium_unsaved    ; changes not saved: leave them, save
+    call uranium_confirm_prompt    ; them, or back to editing
+    cmp ax, 2
+    je .save_and_exit
     cmp ax, 1
     jne .editor_loop
+.leave:
     call clear_screen
     jmp .end
 
@@ -331,6 +341,7 @@ uranium_tmp_line_start dw 0
 uranium_target_row   dw 0
 uranium_target_col   dw 0
 uranium_have_target  dw 0
+uranium_dirty        db 0                   ; changed since loaded / saved
 uranium_flash_active db 0                   ; show a one-shot message in the
                                              ; footer on the next redraw
 uranium_flash_text   dw msg_uranium_saved_flash  ; which message (see above)
@@ -343,14 +354,16 @@ uranium_flash_text   dw msg_uranium_saved_flash  ; which message (see above)
 ; press arrives with. (Only 'y'/'n' as ASCII used to count, so an ESC
 ; or Enter - the keys a dialog invites - did nothing at all, and it
 ; looked stuck.)
-; Output: ax = 1 if confirmed, 0 if cancelled.
+; Input: si = the question. Output: ax = 1 if confirmed, 0 if
+; cancelled, 2 for S (save - the unsaved-changes question offers it).
 ; ============================================================
 uranium_confirm_prompt:
     call clear_screen
-    mov si, msg_uranium_confirm
     call print_string
 .wait:
     call read_key
+    cmp ah, 0x1F                    ; S
+    je .save
     cmp ah, 0x15                    ; Y
     je .yes
     cmp ah, 0x1C                    ; Enter
@@ -365,6 +378,11 @@ uranium_confirm_prompt:
     ret
 .no:
     xor ax, ax
+    ret
+.save:
+    cmp si, msg_uranium_unsaved     ; (only where it's offered)
+    jne .wait
+    mov ax, 2
     ret
 
 ; ============================================================
@@ -546,6 +564,10 @@ uranium_redraw:
     mov ax, [content_buf_len]
     call print_dec_word
     mov si, msg_uranium_header3
+    cmp byte [uranium_dirty], 0
+    je .header_end
+    mov si, msg_uranium_header3m          ; (changes not saved yet)
+.header_end:
     call print_string
 
     mov al, [screen_bar_saved_color]
@@ -731,6 +753,7 @@ uranium_insert_char:
 .shift_done:
     mov bx, [uranium_cursor_pos]
     mov [content_buf + bx], dl
+    mov byte [uranium_dirty], 1
     inc word [content_buf_len]
     inc word [uranium_cursor_pos]
 .full:
@@ -760,6 +783,7 @@ uranium_delete_at_cursor:
     jmp .shift_loop
 .last_copied:
     dec word [content_buf_len]
+    mov byte [uranium_dirty], 1
 .done:
     pop bx
     pop ax

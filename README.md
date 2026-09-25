@@ -251,8 +251,10 @@ alex@/PROGRAMS$
 - `uranium` is a full-screen, nano-style text editor: arrow keys move the
   cursor (with line wrapping and scrolling for content taller than the
   screen), typing inserts, Backspace/Delete remove. `Ctrl+B` saves and
-  exits, `Ctrl+H` saves without exiting, and `Esc` exits without saving —
-  all three ask `Are you sure? Y/N` first. `Ctrl+F` prompts for text on the
+  exits (after a `Save and exit? Y/N`), `Ctrl+H` just saves, and `Esc`
+  just leaves - unless there are changes not saved yet (the header then
+  says "not saved"): it asks first - `Y` leave them, `S` save them and
+  exit, `N` back to editing. `Ctrl+F` prompts for text on the
   footer row and jumps the cursor to the next case-sensitive match,
   wrapping around to the start of the file if needed; pressing Enter on an
   empty prompt repeats the last search, and a footer flash reads
@@ -819,9 +821,10 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 
 Inside the `uranium` text editor: arrow keys, Home/End and Delete move
 around and edit like any text editor, Enter inserts a real line break.
-`Ctrl+B` saves and exits, `Ctrl+H` saves without exiting (flashes
-`Saved.` in the status line), and `Esc` exits without saving. All three
-first ask `Are you sure? Y/N` — `N` cancels back into the editor.
+`Ctrl+B` saves and exits (it asks `Save and exit? Y/N` first), `Ctrl+H`
+saves without exiting and without asking (flashes `Saved.` in the status
+line), and `Esc` exits - asking only if there are changes not saved yet:
+`Y` exit without them, `S` save them and exit, `N` back to editing.
 
 Inside the hex editor: arrow keys move the cursor, hex digits edit the
 byte under it a nibble at a time, `S` opens the one-line mini-assembler

@@ -725,8 +725,14 @@ dk_sync_consoles:
     movzx ebx, byte [console_fg]
     cmp bl, [dk_last_fg]
     je .done
+    movzx ecx, byte [dk_last_fg]
     mov [dk_last_fg], bl
     mov byte [dk_redraw_all], 1           ; (the "kbd" marks, the cursor)
+    cmp ecx, CONSOLE_MAX                  ; it moved because the console that
+    jae .chosen                           ; had it ended (a program closed):
+    cmp byte [console_used + ecx], 0      ; not asked for - a minimized
+    je .done                              ; window stays where it is
+.chosen:
     call dk_app_window_of                 ; (src/dkwins.asm) -> eax / -1
     cmp eax, -1
     jne .raise

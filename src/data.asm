@@ -394,7 +394,12 @@ msg_uranium_footer   db "Ctrl+B=Save&Exit  Ctrl+H=Save  Ctrl+F=Find  ESC=Exit", 
 msg_uranium_saved_flash db "Saved.", 0
 msg_uranium_notfound_flash db "Not found.", 0
 msg_uranium_search_prompt db "Find: ", 0
-msg_uranium_confirm  db "Are you sure?", 13, 10, 13, 10, "Y / Enter - YES.         N / Esc - NO, back to editing.", 0
+msg_uranium_confirm  db "Save and exit?", 13, 10, 13, 10, "Y / Enter - YES.         N / Esc - NO, back to editing.", 0
+msg_uranium_unsaved  db "There are changes that aren't saved.", 13, 10, 13, 10
+                     db "Y / Enter - exit WITHOUT saving them.", 13, 10
+                     db "S         - save them and exit.", 13, 10
+                     db "N / Esc   - back to editing.", 0
+msg_uranium_header3m db " bytes, not saved)", 13, 10, 13, 10, 0
 
 msg_user_setup_title  db "LexOS - First Boot Setup", 0
 msg_user_nick_label   db "Nickname:", 0
