@@ -125,6 +125,7 @@ lang_layout     db 0                      ; 1: the Russian keys
 lang_patched    db 0
 lang_alt_held   db 0                      ; (the keyboard's, shared by all)
 lang_shift_held db 0
+lang_ctrl_held  db 0
 lang_codes:                               ; font866_glyphs' characters
 %assign c 0x80
 %rep 0x30

@@ -140,6 +140,7 @@ desktop_command:
     jne .done
     call dk_settings_load                 ; (src/dkstyle.asm: DESKTOP.CFG)
     call dki_forget                       ; (src/dkicons.asm: read them anew)
+    call dkc_forget                       ; (src/dkclip.asm: no selection)
     ; no windows yet: Clock, and a Terminal per console (made below)
     xor eax, eax
 .clear:
@@ -353,6 +354,7 @@ desktop_task:
     call dk_sync_consoles
     call dk_mouse_events
     call dk_menu_keys_work                ; (src/dkwins.asm: the menu's search)
+    call dkc_work                         ; (src/dkclip.asm: copy, paste)
     call dk_alt_tab_work
     call dk_shot_capture                  ; (src/dkwins.asm)
     call dk_toast_work
@@ -1238,6 +1240,11 @@ dk_mouse_event:
     jmp .done
 
 .not_dragging:
+    cmp byte [dkc_drag], 0                ; a Terminal's text being selected
+    je .no_select                         ; (src/dkclip.asm)
+    call dkc_move
+    jmp .done
+.no_select:
     cmp dword [dki_drag], -1              ; a desktop icon being carried
     je .no_icon_drag                      ; (src/dkicons.asm)
     call dki_drag_move
@@ -2869,7 +2876,8 @@ dk_lsx            dd 0
 dk_lsy            dd 0
 dk_clock_text     times 12 db 0
 DK_KEY_END        equ 1                        ; (in dk_inject_buf: End)
-dk_inject_buf     times 256 db 0
+DK_INJECT_MAX     equ 2048
+dk_inject_buf     times DK_INJECT_MAX + 16 db 0
 dk_inject_len     dd 0
 dk_inject_pos     dd 0
 dk_inject_console db 0

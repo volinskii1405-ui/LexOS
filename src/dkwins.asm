@@ -81,6 +81,8 @@ dk_draw_terminal:
     mov [dk_term_rowp], eax
     xor edi, edi                          ; the column
 .cell:
+    call dkc_selected                     ; (src/dkclip.asm: selected?)
+    setnz [dk_term_sel]
     lea eax, [edi*2]
     add eax, [dk_term_rowp]
     movzx ecx, byte [eax]                 ; the character
@@ -93,6 +95,10 @@ dk_draw_terminal:
     shr esi, 4
     and esi, 0x07
     mov esi, [dk_ega + esi*4]             ; background
+    cmp byte [dk_term_sel], 0             ; (selected: the colors swapped)
+    je .colors
+    xchg edx, esi
+.colors:
     mov eax, edi
     shl eax, 3
     add eax, [dk_cx]
@@ -4273,6 +4279,11 @@ dk_files_refresh:
 dk_win_click:
     pushad
     movzx edx, byte [dkw_kind + eax]
+    cmp edx, K_TERM                       ; a Terminal: a selection begins
+    jne .not_term                         ; (src/dkclip.asm)
+    call dkc_press
+    jmp .done
+.not_term:
     cmp edx, K_PICS
     jne .not_pics
     mov byte [dk_pic_state], 1            ; the next picture
@@ -5236,6 +5247,7 @@ dk_app_blit:
 ; ============================================================
 dk_term_src       dd 0
 dk_term_on        db 0
+dk_term_sel       db 0
 dk_ccx            dd 0                    ; the clock's center
 dk_ccy            dd 0
 dk_h_now          db 0

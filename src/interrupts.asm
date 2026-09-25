@@ -258,9 +258,11 @@ keyboard_isr:
     jmp .eoi
 .ctrl_down:
     mov byte [kbd_ctrl_held], 1
+    mov byte [lang_ctrl_held], 1   ; (shared - src/lang.asm)
     jmp .eoi
 .ctrl_up:
     mov byte [kbd_ctrl_held], 0
+    mov byte [lang_ctrl_held], 0
     jmp .eoi
 
 .shift_down:
@@ -321,10 +323,26 @@ keyboard_isr:
 .not_alt:
 
     ; Ctrl+C while a program (src/usermode.asm) runs: ask to stop it
+    cmp al, 0x2F                   ; Ctrl+V on the desktop: paste
+    jne .not_ctrl_v                ; (src/dkclip.asm)
+    cmp byte [lang_ctrl_held], 0
+    je .not_ctrl_v
+    cmp byte [dk_active], 0
+    je .not_ctrl_v
+    mov byte [dk_paste_req], 1
+    jmp .eoi
+.not_ctrl_v:
     cmp al, 0x2E                   ; C
     jne .not_ctrl_c
-    cmp byte [kbd_ctrl_held], 0
+    cmp byte [lang_ctrl_held], 0
     je .not_ctrl_c
+    cmp byte [dk_active], 0        ; (on the desktop, text selected in a
+    je .ctrl_c_stop                ;  Terminal: that's copied instead)
+    cmp dword [dkc_win], -1
+    je .ctrl_c_stop
+    mov byte [dk_copy_req], 1
+    jmp .eoi
+.ctrl_c_stop:
     push eax                       ; (the console on screen's program -
     push ebx                       ; whichever task this interrupted)
     movzx eax, byte [console_fg]
