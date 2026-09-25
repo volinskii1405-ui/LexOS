@@ -2785,11 +2785,34 @@ dk_launch_text:
 ; time (a calendar)
 ; ============================================================
 DK_TRAY_VOL_X equ DESK_W - 118
+DK_TRAY_LANG_X equ DESK_W - 152
 DK_TRAY_NET_X equ DESK_W - 92
 
 dk_draw_tray:
     pushad
     mov ebp, DESK_H - DK_TASKBAR_H + 7    ; (the icons' top)
+    cmp byte [lang_ru_enabled], 0         ; the keyboard's language (src/lang.asm)
+    je .no_lang
+    mov eax, DK_TRAY_LANG_X
+    lea ebx, [ebp - 2]
+    mov ecx, 24
+    mov edx, 18
+    mov esi, COL_TASKBTN
+    cmp byte [lang_layout], 0
+    je .lang_box
+    mov esi, 0x2E7D32                     ; (Russian: green)
+.lang_box:
+    call dk_fill
+    add eax, 4
+    inc ebx
+    mov esi, dk_msg_en
+    cmp byte [lang_layout], 0
+    je .lang_text
+    mov esi, dk_msg_ru
+.lang_text:
+    mov edx, COL_BARTEXT
+    call dk_text
+.no_lang:
     ; the volume: a speaker, and waves as loud as it is
     mov eax, DK_TRAY_VOL_X
     lea ebx, [ebp + 5]
@@ -2865,6 +2888,11 @@ dk_line_c:
 ; eax = x of a click on the tray
 dk_tray_click:
     pushad
+    cmp eax, DK_TRAY_VOL_X - 6            ; EN / RU: the other one
+    jae .not_lang
+    call lang_toggle
+    jmp .done
+.not_lang:
     cmp eax, DK_TRAY_NET_X - 4
     jae .not_volume
     mov eax, K_MIXER
@@ -5313,6 +5341,8 @@ dk_mkeys          times 16 dw 0           ; keys typed at the menu
 dk_mkey_head      db 0
 dk_mkey_tail      db 0
 dk_msg_find       db "Find:", 0
+dk_msg_en         db "EN", 0
+dk_msg_ru         db "RU", 0
 dk_msg_find_hint  db "Type to search", 0
 dk_fm_cols        dd 6                    ; Files: the grid the window has
 dk_fm_rows        dd 4                    ; room for (dk_fm_layout)

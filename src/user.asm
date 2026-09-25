@@ -26,9 +26,12 @@ fs_ensure_user_cfg:
     mov [fs_tmp_slot], ax
     call fs_load_content
     call user_parse_cfg_content
+    call welcome_parse_extra         ; the password, the language (src/welcome.asm)
     jmp .end
 
 .run_wizard:
+    call welcome_setup               ; in graphics (src/welcome.asm) -
+    jnc .end                         ; or, without the video for it, in text
     call user_run_setup_wizard
 
 .end:

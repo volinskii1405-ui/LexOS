@@ -110,7 +110,9 @@ kernel_start:
 
     call fs_ensure_license   ; creates LICENSE in the root if it doesn't exist yet
     call fs_ensure_user_cfg  ; loads USER.CFG, or runs first-boot setup to create it
+    call lang_apply          ; Russian: the Cyrillic letters (src/lang.asm)
     call script_autoexec     ; AUTOEXEC.HG in the root, if there is one (src/script.asm)
+    call welcome_boot        ; the password, then the desktop (src/welcome.asm)
 
     call fs_print_prompt
 
@@ -196,12 +198,14 @@ shared_system_start:
 %include "src/dkstyle.asm"
 %include "src/dksound.asm"
 %include "src/dkicons.asm"
+%include "src/lang.asm"
 shared_system_end:
 align 4096, db 0
 %include "src/grep.asm"
 %include "src/headtail.asm"
 %include "src/uranium.asm"
 %include "src/user.asm"
+%include "src/welcome.asm"
 %include "src/tabcomplete.asm"
 %include "src/script.asm"
 

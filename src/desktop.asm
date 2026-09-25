@@ -56,7 +56,7 @@ DK_TITLE_LEN      equ 32
 DK_MENU_W         equ 170
 DK_MENU_ITEM_H    equ 24
 DK_MENU_ITEMS     equ 9
-DK_TRAY_W         equ 124                 ; the taskbar's right end: volume,
+DK_TRAY_W         equ 160                 ; the taskbar's right end: volume,
                                           ; network, the time
 DK_CAL_W          equ 244                 ; the calendar
 DK_CAL_H          equ 196
@@ -1342,6 +1342,7 @@ dk_click:
     cmp eax, -1
     je .done
     mov byte [dkw_hidden + eax], 0
+    call dk_mark_window                   ; (all of it: it was away)
     call dk_raise
     call dk_focus_console
     jmp .done

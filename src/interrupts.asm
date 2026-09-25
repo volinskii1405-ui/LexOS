@@ -247,9 +247,14 @@ keyboard_isr:
 
 .alt_down:
     mov byte [kbd_alt_held], 1
+    mov byte [lang_alt_held], 1    ; (shared: whichever task was interrupted)
+    cmp byte [lang_shift_held], 0  ; Alt+Shift: English <-> Russian
+    je .eoi                        ; (src/lang.asm)
+    call lang_toggle
     jmp .eoi
 .alt_up:
     mov byte [kbd_alt_held], 0
+    mov byte [lang_alt_held], 0
     jmp .eoi
 .ctrl_down:
     mov byte [kbd_ctrl_held], 1
@@ -260,9 +265,14 @@ keyboard_isr:
 
 .shift_down:
     mov byte [kbd_shift_held], 1
+    mov byte [lang_shift_held], 1
+    cmp byte [lang_alt_held], 0
+    je .eoi
+    call lang_toggle
     jmp .eoi
 .shift_up:
     mov byte [kbd_shift_held], 0
+    mov byte [lang_shift_held], 0
     jmp .eoi
 
 .check_release:
@@ -345,7 +355,7 @@ keyboard_isr:
 
 .normal_key:
     xor bh, bh                     ; bx = scancode, index into the table
-    cmp byte [kbd_shift_held], 0
+    cmp byte [lang_shift_held], 0  ; (the shared one: src/lang.asm)
     je .use_lower
     mov al, [scancode_upper + bx]
     jmp .have_ascii
@@ -354,6 +364,7 @@ keyboard_isr:
 .have_ascii:
     cmp al, 0
     je .eoi                         ; no ASCII value for this key (Ctrl/Alt/CapsLock) - ignore
+    call lang_map                   ; (the Russian layout, if it's on)
     mov ah, bl
     call push_key_to_buffer
 
