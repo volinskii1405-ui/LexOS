@@ -194,6 +194,7 @@ help_l61 db "  bld <n>       - create a new empty file n", 13, 10, 0
 help_l15 db "  cd <n>        - enter folder n", 13, 10, 0
 help_l16 db "  cd ..         - go to parent folder", 13, 10, 0
 help_l17 db "  cd /a/b       - enter folder by path (cd, cd /, cd // = root)", 13, 10, 0
+help_l71 db "  cd - / !!     - back to the folder before / the last command again", 13, 10, 0
 help_l18 db "  mv <n> <path> - move file n into folder (or *.ext for many)", 13, 10, 0
 help_l19 db "  cp <n> <new>  - copy file n to new (*.ext copies into folder <new>)", 13, 10, 0
 help_l20 db "  pwd           - show current folder path", 13, 10, 0
@@ -249,7 +250,7 @@ help_lines:
     dw help_l01, help_l02, help_l03, help_l04, help_l05
     dw help_l06, help_l08, help_l10, help_l11, help_l12
     dw help_l14, help_l61, help_l15, help_l16, help_l17, help_l18
-    dw help_l19, help_l20, help_l21, help_l22, help_l23
+    dw help_l71, help_l19, help_l20, help_l21, help_l22, help_l23
     dw help_l24, help_l25, help_l26, help_l27, help_l28
     dw help_l29, help_l30, help_l31, help_l32, help_l33
     dw help_l34, help_l35, help_l38, help_l65, help_l39, help_l40
@@ -281,6 +282,9 @@ msg_df_free        db " free", 13, 10, 0
 
 msg_fs_full       db "No free file slots.", 13, 10, 0
 msg_fs_notfound   db "Not found.", 13, 10, 0
+msg_cd_no_prev    db "No folder to go back to yet.", 13, 10, 0
+cmd_bang_bang     db "!!", 0
+msg_bang_none     db "No command before this one.", 13, 10, 0
 msg_fs_removed    db "Removed.", 13, 10, 0
 msg_rm_dash_a         db "-a", 0
 msg_rm_removed_suffix db " removed.", 13, 10, 0
@@ -391,6 +395,8 @@ msg_uranium_header1  db "LexOS Editor - ", 0
 msg_uranium_header2  db "  (", 0
 msg_uranium_header3  db " bytes)", 13, 10, 13, 10, 0
 msg_uranium_footer   db "Ctrl+B=Save&Exit  Ctrl+H=Save  Ctrl+F=Find  ESC=Exit", 0
+msg_uranium_ln       db "Ln ", 0
+msg_uranium_col      db ", Col ", 0
 msg_uranium_saved_flash db "Saved.", 0
 msg_uranium_notfound_flash db "Not found.", 0
 msg_uranium_search_prompt db "Find: ", 0
@@ -801,4 +807,5 @@ fs_list_type db 0
 fs_tree_depth db 0
 
 fs_current_dir dw FS_ROOT
+fs_prev_dir    dw 0xFFFE        ; before the last cd (`cd -`); 0xFFFE: none yet
 fs_apps_dir_name db "APPS", 0

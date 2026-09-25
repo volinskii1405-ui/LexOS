@@ -657,14 +657,40 @@ handle_command:
     jmp .done
 
 .do_cd_arg:
+    cmp word [buffer + 3], '-'  ; "cd -": back to the folder before
+    je .do_cd_back
     mov si, buffer
     add si, 3                  ; skip "cd "
+.cd_to:
+    mov ax, [fs_current_dir]   ; (where it was: for `cd -`)
     call fs_cd
+    cmp ax, [fs_current_dir]
+    je .done
+    mov [fs_prev_dir], ax
     jmp .done
 
 .do_cd_root:
     mov si, empty_string
-    call fs_cd
+    jmp .cd_to
+
+.do_cd_back:
+    mov ax, [fs_prev_dir]
+    cmp ax, 0xFFFE
+    je .cd_no_prev
+    cmp ax, FS_ROOT            ; (still a folder? it may have gone)
+    je .cd_swap
+    call fs_read_slot
+    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
+    jne .cd_no_prev
+    mov ax, [fs_prev_dir]
+.cd_swap:
+    xchg ax, [fs_current_dir]
+    mov [fs_prev_dir], ax
+    jmp .done
+.cd_no_prev:
+    mov word [fs_prev_dir], 0xFFFE
+    mov si, msg_cd_no_prev
+    call print_string
     jmp .done
 
 .do_cp:

@@ -249,6 +249,17 @@ dk_term_extra:
     jbe .kept
     mov eax, [dk_sb_count + ebx*4]
 .kept:
+    push eax                              ; a full-screen text program
+    mov eax, ebx                          ; (uranium: it names itself) -
+    mov ebx, prog_title                   ; its screen alone, at the top
+    call console_saved_addr
+    pop eax
+    or ebx, ebx
+    jz .own
+    cmp byte [ebx], 0
+    je .own
+    xor eax, eax
+.own:
     pop ebx
 .done:
     ret

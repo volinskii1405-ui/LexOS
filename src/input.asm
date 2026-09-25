@@ -170,6 +170,7 @@ read_command_line:
     add di, bx
     mov byte [di], 0
 
+    call history_bang              ; "!!": the command before, again
     call history_save
 
     mov word [buf_len], 0
@@ -396,6 +397,44 @@ cmd_show_history:
     pop cx
     pop bx
     pop ax
+    ret
+
+; --- "!!" typed: buffer becomes the last command in the history, shown
+;     on its own line first (as bash does); none yet - said so, and the
+;     line's emptied ---
+history_bang:
+    pusha
+    mov si, buffer
+    mov di, cmd_bang_bang
+    call strcmp_eq
+    cmp ax, 1
+    jne .done
+    cmp word [history_count], 0
+    je .none
+    mov ax, [history_next_slot]    ; the newest: the slot before the next
+    dec ax
+    jns .slot
+    mov ax, HISTORY_SIZE - 1
+.slot:
+    mov bx, BUFFER_MAX + 1
+    mul bx
+    mov si, history_buf
+    add si, ax
+    mov di, buffer
+    call strcpy
+    mov si, buffer
+    call print_string
+    mov al, 0x0D
+    call print_char
+    mov al, 0x0A
+    call print_char
+    jmp .done
+.none:
+    mov si, msg_bang_none
+    call print_string
+    mov byte [buffer], 0
+.done:
+    popa
     ret
 
 ; --- Saves buffer as a new history entry (empty ones are not saved) ---

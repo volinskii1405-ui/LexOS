@@ -791,6 +791,7 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `basic [n]` | Tiny BASIC; with a name, load and run that program first |
 | `reboot` / `shutdown` | restart / power off |
 | `history` | list previously run commands, numbered oldest first |
+| `!!` | run the last command again (it's shown first) |
 | `df` / `free` | show directory slot / extra sector usage |
 | **Filesystem** | |
 | `ls` | list files and folders in the current directory (folders in yellow) |
@@ -799,6 +800,7 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `cd <name>` | enter a folder |
 | `cd ..` | go to the parent folder |
 | `cd /a/b` | enter a folder by path (`cd`, `cd /`, `cd //` all go to root) |
+| `cd -` | back to the folder you were in before the last `cd` |
 | `mkdir <name>` | create a folder |
 | `bld <name>` | create a new empty file |
 | `cat <n>` | print a file's contents |
@@ -821,6 +823,9 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 
 Inside the `uranium` text editor: arrow keys, Home/End and Delete move
 around and edit like any text editor, Enter inserts a real line break.
+Ctrl+A / Ctrl+E go to the line's start / end, Ctrl+Home / Ctrl+End to
+the file's, Tab puts in four spaces, and the status line shows where
+the cursor is (`Ln 3, Col 12`).
 `Ctrl+B` saves and exits (it asks `Save and exit? Y/N` first), `Ctrl+H`
 saves without exiting and without asking (flashes `Saved.` in the status
 line), and `Esc` exits - asking only if there are changes not saved yet:

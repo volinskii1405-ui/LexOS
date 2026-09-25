@@ -177,6 +177,20 @@ uranium_editor:
     je .do_search
     cmp al, 'F'
     je .do_search
+    cmp al, 'a'                    ; Ctrl+A / Ctrl+E: the line's start / end
+    je .move_home
+    cmp al, 'A'
+    je .move_home
+    cmp al, 'e'
+    je .move_end
+    cmp al, 'E'
+    je .move_end
+    cmp al, 0                      ; Ctrl+Home / Ctrl+End: the file's
+    jne .editor_loop
+    cmp ah, 0x47
+    je .move_top
+    cmp ah, 0x4F
+    je .move_bottom
     jmp .editor_loop
 .not_ctrl:
 
@@ -206,6 +220,8 @@ uranium_editor:
     je .do_enter
     cmp al, 0x08
     je .do_backspace
+    cmp al, 0x09                   ; Tab: four spaces
+    je .do_tab
 
     cmp al, 32
     jb .editor_loop
@@ -224,6 +240,23 @@ uranium_editor:
     cmp ax, [content_buf_len]
     jae .editor_loop
     inc word [uranium_cursor_pos]
+    jmp .editor_loop
+
+.move_top:
+    mov word [uranium_cursor_pos], 0
+    jmp .editor_loop
+
+.move_bottom:
+    mov ax, [content_buf_len]
+    mov [uranium_cursor_pos], ax
+    jmp .editor_loop
+
+.do_tab:
+    mov ecx, 4
+.tab_space:
+    mov dl, ' '
+    call uranium_insert_char
+    loop .tab_space
     jmp .editor_loop
 
 .move_home:
@@ -638,6 +671,18 @@ uranium_redraw:
     mov si, msg_uranium_footer
     call print_string
 .footer_done:
+    mov word [cursor_col], 64             ; where the cursor is: "Ln 3, Col 12"
+    call uranium_cursor_line_col          ; (ax = line, bx = column, from 0)
+    push bx
+    mov si, msg_uranium_ln
+    call print_string
+    inc ax
+    call print_dec_word
+    mov si, msg_uranium_col
+    call print_string
+    pop ax
+    inc ax
+    call print_dec_word
     mov al, [screen_bar_saved_color]
     mov [current_color], al
 
