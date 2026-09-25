@@ -15,7 +15,7 @@
 DK_THEMES      equ 5
 DK_SYS_ROW_Y   equ 150                    ; System: the theme buttons
 DK_SYS_BTN_X   equ 80
-DK_SYS_BTN_W   equ 64
+DK_SYS_BTN_W   equ 60
 DK_SYS_BTN_H   equ 20
 DK_SYS_SND_Y   equ 180                    ; ...and the sounds' switch
 
