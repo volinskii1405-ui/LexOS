@@ -241,6 +241,7 @@ help_l69 db "  mixer [voice|master] [0-100] - what's playing, and volumes", 13, 
 help_l63 db "  ntp [server] - set the clock from a time server (default pool.ntp.org)", 13, 10, 0
 help_l58 db "  ps / kill <pid> - list tasks / stop one; <cmd> & runs play in the background", 13, 10, 0
 help_l59 db "  clock        - toggle a clock in the top-right corner (a background task)", 13, 10, 0
+help_l70 db "  neofetch / uptime - the system at a glance (with Lex the cat) / time since boot", 13, 10, 0
 help_l60 db "  Alt+T / Alt+1..9 / exit - new console / switch console / close this one", 13, 10, 0
 help_l54 db "  basic [n]    - Tiny BASIC (optionally load and run program n)", 13, 10, 0
 
@@ -255,7 +256,7 @@ help_lines:
     dw help_l41, help_l42, help_l43, help_l44, help_l45, help_l62
     dw help_l46, help_l47, help_l48, help_l49, help_l50, help_l51
     dw help_l52, help_l53, help_l55, help_l54, help_l56, help_l57, help_l63, help_l64, help_l66, help_l67, help_l68, help_l69
-    dw help_l58, help_l59, help_l60
+    dw help_l58, help_l59, help_l70, help_l60
 help_lines_end:
 
 HELP_LINE_COUNT equ (help_lines_end - help_lines) / 2
@@ -657,6 +658,8 @@ cmd_hostget_prefix db "hostget ", 0
 cmd_hostput_prefix db "hostput ", 0
 cmd_basic        db "basic", 0
 cmd_ps           db "ps", 0
+cmd_uptime       db "uptime", 0
+cmd_neofetch     db "neofetch", 0
 cmd_exit         db "exit", 0
 ; src/usermode.asm's, per console (src/console.asm swaps this file)
 app_active         db 0

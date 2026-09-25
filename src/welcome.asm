@@ -180,6 +180,28 @@ welcome_boot:
     jne .desktop
     cmp dword [user_pass_hash], 0
     je .desktop
+    call wl_login
+.desktop:
+    call wl_desktop
+.done:
+    popad
+    ret
+
+; Logged out (the start menu, src/dkextra.asm): the login again - Enter
+; alone without a password - then the desktop
+welcome_relogin:
+    pushad
+    call bga_find
+    jc .done
+    call wl_login
+    call wl_desktop
+.done:
+    popad
+    ret
+
+; The login screen, until the password's right
+wl_login:
+    pushad
     call wl_begin
     mov byte [wl_pass_len], 0
     mov dword [wl_wrong], 0
@@ -188,6 +210,8 @@ welcome_boot:
     call read_key
     cmp al, 13
     je .check
+    cmp dword [user_pass_hash], 0         ; (none: nothing to type)
+    je .ask
     mov edi, wl_pass
     movzx ecx, byte [wl_pass_len]
     mov ebx, WL_PASS_MAX
@@ -195,6 +219,8 @@ welcome_boot:
     mov [wl_pass_len], cl
     jmp .ask
 .check:
+    cmp dword [user_pass_hash], 0
+    je .in
     movzx ecx, byte [wl_pass_len]
     mov esi, wl_pass
     call wl_hash
@@ -208,9 +234,16 @@ welcome_boot:
     call wl_shake
     jmp .ask
 .in:
+    mov byte [wl_pass_len], 0
+    mov byte [wl_pass], 0
     mov dword [wl_wrong], 0
     call wl_end
-.desktop:
+    popad
+    ret
+
+; The desktop, Terminal 1 on its taskbar only
+wl_desktop:
+    pushad
     call desktop_command                  ; (src/desktop.asm)
     cmp byte [dk_active], 0
     je .done
@@ -942,6 +975,25 @@ wl_draw_login:
     mov edx, WL_INK
     mov ecx, 2
     call wl_card_text
+    cmp dword [user_pass_hash], 0         ; no password: a button, and
+    jne .password                         ; Enter alone
+    mov eax, WL_CARD_X + WL_CARD_W / 2 - 110
+    add eax, [wl_shift]
+    mov ebx, WL_CARD_Y + 184
+    mov ecx, 220
+    mov edx, 52
+    mov esi, WL_GREEN
+    call dk_fill
+    mov esi, wl_msg_sign_in
+    mov eax, WL_CARD_W / 2 - 7 * 8
+    mov ebx, 194
+    mov edx, 0xFFFFFF
+    mov ecx, 2
+    call wl_card_text
+    mov esi, wl_msg_enter
+    mov edx, WL_MUTED
+    jmp .say
+.password:
     call wl_stars                         ; the password
     push esi
     push ecx
@@ -1252,6 +1304,8 @@ wl_msg_starting  db "Your desktop is on its way...", 0
 wl_msg_back      db "Welcome back, ", 0
 wl_msg_login     db "Your password, then Enter", 0
 wl_msg_wrong     db "That's not it - try again", 0
+wl_msg_enter     db "No password - press Enter", 0
+wl_msg_sign_in   db "Sign in", 0
 wl_arrow_left    db 17, 0                 ; (the VGA font's triangles)
 wl_arrow_right   db 16, 0
 wl_tick          db 251, 0                ; (a check mark in code page 437)

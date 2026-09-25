@@ -2932,6 +2932,8 @@ dk_tray_click:
     call dk_win_single
     jmp .done
 .time:
+    mov eax, [timer_ms]                   ; (again soon: the Clock, dk_click)
+    mov [dk_time_click_ms], eax
     mov byte [dk_cal_open], 1
     call dk_mark_calendar
 .done:
@@ -2958,6 +2960,22 @@ dk_tray_wheel:
     mov eax, 100
 .high_ok:
     mov [mix_master], eax
+    mov edi, dkt_vol_buf                  ; "Volume 70%" above it
+    mov esi, dkt_msg_muted
+    or eax, eax
+    jz .say
+    mov esi, dkt_msg_volume
+    call wget_append
+    mov eax, [mix_master]
+    call wget_append_num
+    mov al, '%'
+    stosb
+    mov byte [edi], 0
+    mov esi, dkt_vol_buf
+.say:
+    mov eax, DK_TRAY_VOL_X + 8
+    mov ecx, 1500
+    call dkt_show                         ; (src/dkextra.asm)
     mov eax, DESK_W - DK_TRAY_W           ; the icon, the Mixer: redrawn
     mov ebx, DESK_H - DK_TASKBAR_H
     mov ecx, DK_TRAY_W
@@ -2971,35 +2989,9 @@ dk_tray_wheel:
 
 ; ============================================================
 ; The calendar: this month, today marked
-; ============================================================
-DK_CAL_X equ DESK_W - DK_CAL_W - 4
-DK_CAL_Y equ DESK_H - DK_TASKBAR_H - DK_CAL_H - 4
-
-dk_mark_calendar:
+; -> dk_cal_day, dk_cal_month, dk_cal_year: today, in the user's time zone
+dk_cal_today:
     pushad
-    mov eax, DK_CAL_X
-    mov ebx, DK_CAL_Y
-    mov ecx, DK_CAL_W
-    mov edx, DK_CAL_H
-    call dk_mark
-    popad
-    ret
-
-dk_draw_calendar:
-    pushad
-    mov eax, DK_CAL_X
-    mov ebx, DK_CAL_Y
-    mov ecx, DK_CAL_W
-    mov edx, DK_CAL_H
-    mov esi, COL_FRAME
-    call dk_fill
-    inc eax
-    inc ebx
-    sub ecx, 2
-    sub edx, 2
-    mov esi, COL_POPUP
-    call dk_fill
-    ; today, in the user's time zone
     call rtc_read_date                    ; bh:bl:cl = day:month:year
     movzx eax, bh
     mov [dk_cal_day], eax
@@ -3038,6 +3030,38 @@ dk_draw_calendar:
     mov dword [dk_cal_month], 1
     inc dword [dk_cal_year]
 .dated:
+    popad
+    ret
+
+; ============================================================
+DK_CAL_X equ DESK_W - DK_CAL_W - 4
+DK_CAL_Y equ DESK_H - DK_TASKBAR_H - DK_CAL_H - 4
+
+dk_mark_calendar:
+    pushad
+    mov eax, DK_CAL_X
+    mov ebx, DK_CAL_Y
+    mov ecx, DK_CAL_W
+    mov edx, DK_CAL_H
+    call dk_mark
+    popad
+    ret
+
+dk_draw_calendar:
+    pushad
+    mov eax, DK_CAL_X
+    mov ebx, DK_CAL_Y
+    mov ecx, DK_CAL_W
+    mov edx, DK_CAL_H
+    mov esi, COL_FRAME
+    call dk_fill
+    inc eax
+    inc ebx
+    sub ecx, 2
+    sub edx, 2
+    mov esi, COL_POPUP
+    call dk_fill
+    call dk_cal_today                     ; today, in the user's time zone
     ; "September 2026"
     mov edi, dk_sys_buf
     mov eax, [dk_cal_month]
@@ -5378,6 +5402,7 @@ dk_mkey_head      db 0
 dk_mkey_tail      db 0
 dk_msg_find       db "Find:", 0
 dk_msg_en         db "EN", 0
+dk_time_click_ms  dd 0
 dk_msg_ru         db "RU", 0
 dk_msg_find_hint  db "Type to search", 0
 dk_fm_cols        dd 6                    ; Files: the grid the window has
