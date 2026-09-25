@@ -9,6 +9,8 @@
 [![Emulator](https://img.shields.io/badge/tested%20on-QEMU-orange?style=flat-square)](https://www.qemu.org/)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 
+<img src="docs/screenshots/09-fire-cube-maze.png" alt="The LexOS desktop: Fire, Cube and Maze running side by side in windows" width="720">
+
 </div>
 
 Its own 32-bit protected-mode kernel, a real ATA (PIO) disk driver, a
@@ -32,26 +34,42 @@ speaker goes through hardware ports that this project drives itself.
 
 ## Screenshots
 
-**First boot** — in graphics, on a green screen: a card asks, one step at
-a time, for a nickname, a password (or none), the time zone (Left/Right
-through the world, with its cities) and the language - English, or
-English and Russian. Then the desktop, straight away; every later boot
-asks for the password on the same screen first (src/welcome.asm).
+All taken in QEMU (1024x768) - more in [docs/screenshots](docs/screenshots).
 
-```
-                              L e x O S
-               a hobby operating system, written in assembly
-        ┌────────────────────────────────────────────────────────┐
-        │  ━━━━━━━━━━━━  ━━━━━━━━━━━━  ━━━━━━━━━━━━  ────────────  │
-        │  Your time zone                                          │
-        │  Where are you? The clocks will show your time.          │
-        │  ┌────────────────────────────────────────────────────┐  │
-        │  │ ◄                    UTC+3                       ► │  │
-        │  └────────────────────────────────────────────────────┘  │
-        │                Moscow, Istanbul, Minsk                   │
-        │  Left / Right: the time zone   Enter: next   Esc: back   │
-        └────────────────────────────────────────────────────────┘
-```
+<table>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/01-setup-name.png" alt="First boot: your name" width="400"><br><sub>First boot, in graphics: your name</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/03-setup-timezone.png" alt="First boot: the time zone" width="400"><br><sub>The time zone, with its cities</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/04-setup-language.png" alt="First boot: the language" width="400"><br><sub>English, or English + Russian</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/06-login.png" alt="The login screen" width="400"><br><sub>Every later boot: the password</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/07-desktop.png" alt="The desktop" width="400"><br><sub>Straight into the desktop - icons from /DESKTOP</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/08-start-menu-search.png" alt="The start menu's search" width="400"><br><sub>The start menu searches as you type</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/10-maze-maximized.png" alt="MAZE.APP" width="400"><br><sub>MAZE.APP - a raycaster, Wolfenstein-style</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/11-tasks.png" alt="Tasks" width="400"><br><sub>Tasks: CPU and memory graphs, priorities</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/12-files-search.png" alt="Files" width="400"><br><sub>Files: search and sort</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/13-terminal-russian.png" alt="A Terminal in Russian" width="400"><br><sub>Russian letters and keys; select, Ctrl+C / Ctrl+V</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/15-theme-dark.png" alt="The Dark theme" width="400"><br><sub>Themes: Dark</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/16-theme-light.png" alt="The Light theme" width="400"><br><sub>Light</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/17-theme-forest.png" alt="The Forest theme" width="400"><br><sub>Forest</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/18-theme-plum.png" alt="The Plum theme" width="400"><br><sub>Plum</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/19-cube.png" alt="CUBE.APP" width="400"><br><sub>CUBE.APP - float math in ring 3</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/20-mandelbrot.png" alt="MANDEL.APP" width="400"><br><sub>MANDEL.APP - 800x600 true color</sub></td>
+</tr>
+</table>
 
 **Straight into the console** — `ls`, `cd`, and `run`-ning a program from
 the `PROGRAMS` folder:
