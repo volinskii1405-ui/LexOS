@@ -200,6 +200,7 @@ shared_system_start:
 %include "src/dkicons.asm"
 %include "src/lang.asm"
 %include "src/dkclip.asm"
+%include "src/dkfind.asm"
 shared_system_end:
 align 4096, db 0
 %include "src/grep.asm"

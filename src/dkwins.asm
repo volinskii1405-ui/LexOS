@@ -24,6 +24,11 @@ DK_VGA_LAST       equ 0x5710000           ; mode 13h windows: the picture
 DK_APP_MAX_PIX    equ 0x200000 / 4
 FM_MAX            equ 250                 ; Files: entries in a folder
 FM_ENTRY          equ 32                  ; name 0-16, kind 17, slot 20, size 24
+FM_FIND_X         equ 224                 ; the toolbar's search box
+FM_FIND_W         equ 168
+FM_SORT_X         equ 398                 ; ...and its order button
+FM_SORT_W         equ 94
+FM_FIND_MAX       equ 14
 FM_CELL_W         equ 90
 FM_CELL_H         equ 80
 FM_TOP            equ 32
@@ -1468,9 +1473,10 @@ dk_draw_files:
     add eax, 56
     mov esi, dk_fm_path
     push edi
-    mov edi, 50
+    mov edi, (FM_FIND_X - 64) / 8
     call dk_text_n
     pop edi
+    call dk_fm_draw_tools                 ; the search, the order
     mov eax, [dk_cx]                      ; paging
     add eax, [dkw_w + ebp*4]
     sub eax, 62
@@ -1850,6 +1856,19 @@ dk_files_click:
     call dk_files_up
     ret
 .paging:
+    cmp ecx, FM_SORT_X                    ; [Sort: ...]: the next order
+    jb .done
+    cmp ecx, FM_SORT_X + FM_SORT_W
+    jae .not_sort
+    inc dword [dk_fm_sort]
+    cmp dword [dk_fm_sort], 3
+    jb .sorted
+    mov dword [dk_fm_sort], 0
+.sorted:
+    mov byte [dk_fm_refresh], 1
+    call snd_click
+    jmp .redraw
+.not_sort:
     mov edx, [dkw_w + eax*4]
     sub edx, 62
     cmp ecx, edx
@@ -2165,6 +2184,8 @@ dk_files_open:
     mov dword [dk_fm_page], 0
     mov dword [dk_fm_sel], -1
     mov byte [dk_fm_refresh], 1
+    mov dword [dk_fm_find_len], 0         ; (another folder: no search)
+    mov byte [dk_fm_find], 0
     jmp .done
 .file:
     cmp ecx, IC_IMAGE                     ; a picture: into Pictures
@@ -4022,6 +4043,8 @@ dk_open_command:
 ; Up to the parent folder
 dk_files_up:
     pushad
+    mov dword [dk_fm_find_len], 0         ; (another folder: no search)
+    mov byte [dk_fm_find], 0
     cmp byte [dk_fm_dir], FS_ROOT_BYTE
     je .done
     call dk_shell_idle
@@ -4256,6 +4279,7 @@ dk_files_refresh:
     cmp byte [dk_fm_pass], 2
     jb .scan_pass
 .listed:
+    call dk_fm_arrange                    ; (the search, the order: edx)
     mov [dk_fm_count], edx
     mov eax, [dk_fm_page]                 ; (a page that's gone: back to one)
     imul eax, [dk_fm_page_n]

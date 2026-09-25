@@ -405,11 +405,15 @@ keyboard_isr:
 ; only the one being typed at ever sees the keys, whoever else runs ---
 push_key_to_buffer:
     cmp byte [dk_active], 0        ; the desktop's start menu open: typing
-    je .console                    ; is its search (src/dkwins.asm)
-    cmp byte [dk_menu_open], 0
-    je .console
-    cmp byte [dk_suspended], 0
+    je .console                    ; is its search (src/dkwins.asm); Files
+    cmp byte [dk_suspended], 0     ; in front: its search (src/dkfind.asm)
     jne .console
+    cmp byte [dk_menu_open], 0
+    jne .menu
+    cmp byte [dk_fm_typing], 0
+    je .console
+    jmp dk_fm_key_in
+.menu:
     jmp dk_menu_key_in
 .console:
     pushad

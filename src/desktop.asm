@@ -355,6 +355,7 @@ desktop_task:
     call dk_mouse_events
     call dk_menu_keys_work                ; (src/dkwins.asm: the menu's search)
     call dkc_work                         ; (src/dkclip.asm: copy, paste)
+    call dk_fm_keys_work                  ; (src/dkfind.asm: Files' search)
     call dk_alt_tab_work
     call dk_shot_capture                  ; (src/dkwins.asm)
     call dk_toast_work
