@@ -32,21 +32,25 @@ speaker goes through hardware ports that this project drives itself.
 
 ## Screenshots
 
-**First boot** — a green backdrop and a centered window ask for a nickname
-and a UTC offset, then saves both to `USER.CFG`:
+**First boot** — in graphics, on a green screen: a card asks, one step at
+a time, for a nickname, a password (or none), the time zone (Left/Right
+through the world, with its cities) and the language - English, or
+English and Russian. Then the desktop, straight away; every later boot
+asks for the password on the same screen first (src/welcome.asm).
 
 ```
-            ┌──────────────────────────────────────────────────────┐
-            │               LexOS - First Boot Setup                │
-            │                                                        │
-            │  Nickname:                                             │
-            │  > alex                                                │
-            │                                                        │
-            │  UTC timezone offset (e.g. +3, -5, 0):                 │
-            │  > +3                                                  │
-            │                                                        │
-            │       Saved to USER.CFG - shown in your prompt.        │
-            └──────────────────────────────────────────────────────┘
+                              L e x O S
+               a hobby operating system, written in assembly
+        ┌────────────────────────────────────────────────────────┐
+        │  ━━━━━━━━━━━━  ━━━━━━━━━━━━  ━━━━━━━━━━━━  ────────────  │
+        │  Your time zone                                          │
+        │  Where are you? The clocks will show your time.          │
+        │  ┌────────────────────────────────────────────────────┐  │
+        │  │ ◄                    UTC+3                       ► │  │
+        │  └────────────────────────────────────────────────────┘  │
+        │                Moscow, Istanbul, Minsk                   │
+        │  Left / Right: the time zone   Enter: next   Esc: back   │
+        └────────────────────────────────────────────────────────┘
 ```
 
 **Straight into the console** — `ls`, `cd`, and `run`-ning a program from
@@ -176,11 +180,18 @@ alex@/PROGRAMS$
   not command names, and picks the first match on disk rather than an
   alphabetical one. Turned off during the first-boot nickname/timezone
   prompts below, where completing against filenames wouldn't make sense.
-- The very first boot shows a centered setup window (on a green backdrop)
-  asking for a nickname and a UTC timezone offset, then drops you into the
-  console. Both are saved to `USER.CFG` (a plain two-line text file). The
-  nickname shows up in every prompt as `nickname@/path$ `, and the offset
-  shifts what `time` displays.
+- The very first boot is a graphical setup (src/welcome.asm): nickname,
+  password, time zone, language. `USER.CFG` keeps them - the nickname, the
+  UTC offset, the password's FNV-1a hash (empty: none) and `en` or `ru`,
+  a line each (a two-line one from before still works). The nickname shows
+  up in every prompt as `nickname@/path$ `, the offset in every clock.
+  After that every boot goes straight to the desktop (Terminal 1 waits on
+  the taskbar), through a login screen if there's a password. Without the
+  BGA video it's the old text setup, and the shell.
+- **Russian** (src/lang.asm), if chosen: the Cyrillic letters of code page
+  866 in the VGA font - the text screen, the desktop and the programs all
+  show them - and the ЙЦУКЕН layout: Alt+Shift, or the tray's EN/RU,
+  switches.
 - `USER.CFG` itself is protected: `rm`, `ren`, `mv`, and `uranium` all
   refuse to touch it (with an explanatory message), though `cat`/`grep`/
   `head`/`tail` can still read it like any other file.
@@ -444,6 +455,12 @@ alex@/PROGRAMS$
     Delete moves into /TRASH (Delete forever, Empty trash in there);
     Rename, Copy and New folder type the command into a Terminal and
     leave the new name to you.
+    While Files is in front, typing searches: only names with the text
+    show (Esc clears, Enter opens the first); Sort: Name / Size / Type
+    orders them (src/dkfind.asm).
+  - **Copy and paste**: drag over a Terminal's text to select it,
+    Ctrl+C copies (without a selection it stops a program, as ever),
+    Ctrl+V types it into the console with the keyboard (src/dkclip.asm).
   - **Tasks** is a task manager: the CPU use and the memory in use
     over the last minute, every task with its state, priority, its
     program's memory (the used pages of its 4MB) and CPU time;
@@ -890,6 +907,11 @@ src/
   dkstyle.asm          the desktop's themes, DESKTOP.CFG.
   dksound.asm          the desktop's own sounds.
   dkicons.asm          icons on the desktop (/DESKTOP, .LNK shortcuts).
+  dkclip.asm           copy and paste between the Terminals.
+  dkfind.asm           Files' search and order.
+  lang.asm             Russian: code page 866 letters, the layout.
+  font866.inc          the Cyrillic glyphs (from CyrKoi-VGA16).
+  welcome.asm          the graphical first boot, the login.
   sched.asm            the scheduler: tasks, priorities, task_wait,
                        ps/kill/clock.
   net.asm              RTL8139 driver (polled), ARP, IPv4, ICMP echo,
