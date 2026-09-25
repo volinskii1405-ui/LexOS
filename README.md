@@ -42,7 +42,7 @@ All taken in QEMU (1024x768) - more in [docs/screenshots](docs/screenshots).
 <td align="center" valign="top"><img src="docs/screenshots/03-setup-timezone.png" alt="First boot: the time zone" width="400"><br><sub>The time zone, with its cities</sub></td>
 </tr>
 <tr>
-<td align="center" valign="top"><img src="docs/screenshots/04-setup-language.png" alt="First boot: the language" width="400"><br><sub>English, or English + Russian</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/04-setup-keyboard.png" alt="First boot: the keyboard layouts" width="400"><br><sub>Layouts: English always, Russian and Spanish ticked on</sub></td>
 <td align="center" valign="top"><img src="docs/screenshots/06-login.png" alt="The login screen" width="400"><br><sub>Every later boot: the password</sub></td>
 </tr>
 <tr>
@@ -75,9 +75,31 @@ All taken in QEMU (1024x768) - more in [docs/screenshots](docs/screenshots).
 </tr>
 <tr>
 <td align="center" valign="top"><img src="docs/screenshots/23-logout.png" alt="Signing in again after Log out" width="400"><br><sub>Log out: back to the sign-in screen</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/24-snap.png" alt="Dragging a window to the left edge" width="400"><br><sub>Drag to an edge: an outline, then half the screen</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/25-desktop-menu.png" alt="The desktop's right-click menu" width="400"><br><sub>Right-click on the desktop</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/26-recent-programs.png" alt="Recent programs first in the start menu" width="400"><br><sub>Recent programs come first in Programs</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/27-terminal-maximized.png" alt="A maximized Terminal" width="400"><br><sub>A maximized Terminal shows its history above</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/28-setup-language.png" alt="First boot: the system's language" width="400"><br><sub>The system's language: English, Russian or Spanish</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/29-russian-help.png" alt="help in Russian" width="400"><br><sub>In Russian: help, menus, windows</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/30-spanish-desktop.png" alt="The desktop in Spanish" width="400"><br><sub>In Spanish: the start menu, neofetch</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/31-lex.png" alt="lex, and Lex asleep on the taskbar" width="400"><br><sub><code>lex</code> - and Lex himself, asleep on the taskbar</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/33-files-paste.png" alt="Files: copy and paste" width="400"><br><sub>Files: Ctrl+C, Ctrl+V - a taken name gets _2</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/32-shutdown.png" alt="Shutting down" width="400"><br><sub>Shut down / Restart from the start menu</sub></td>
 <td></td>
 </tr>
 </table>
+
+Every screenshot, described in Russian: [docs/screenshots/README.md](docs/screenshots/README.md).
 
 **Straight into the console** — `ls`, `cd`, and `run`-ning a program from
 the `PROGRAMS` folder:
@@ -193,7 +215,8 @@ alex@/PROGRAMS$
 
 ### Shell
 - Real line editing: Left/Right/Home/End/Delete work anywhere in the line,
-  not just Backspace at the end.
+  not just Backspace at the end. Ctrl+L clears the screen, keeping the
+  line typed so far.
 - Command history (Up/Down), case-insensitive filename lookup, and a
   30+ command set (`help` lists them all, paginated). `history` lists
   every saved entry, numbered.
@@ -207,17 +230,29 @@ alex@/PROGRAMS$
   alphabetical one. Turned off during the first-boot nickname/timezone
   prompts below, where completing against filenames wouldn't make sense.
 - The very first boot is a graphical setup (src/welcome.asm): nickname,
-  password, time zone, language. `USER.CFG` keeps them - the nickname, the
-  UTC offset, the password's FNV-1a hash (empty: none) and `en` or `ru`,
-  a line each (a two-line one from before still works). The nickname shows
+  password, time zone, the keyboard's layouts (English always; Russian
+  and Spanish ticked on with Space) and the system's language (English,
+  Russian or Spanish). `USER.CFG` keeps them - the nickname, the UTC
+  offset, the password's FNV-1a hash (empty: none), the layouts (`en`,
+  `ru`, `es`, `ru,es`) and the language (`en`, `ru`, `es`), a line each
+  (older two- and four-line ones still work). The nickname shows
   up in every prompt as `nickname@/path$ `, the offset in every clock.
   After that every boot goes straight to the desktop (Terminal 1 waits on
   the taskbar), through a login screen if there's a password. Without the
   BGA video it's the old text setup, and the shell.
-- **Russian** (src/lang.asm), if chosen: the Cyrillic letters of code page
-  866 in the VGA font - the text screen, the desktop and the programs all
-  show them - and the ЙЦУКЕН layout: Alt+Shift, or the tray's EN/RU,
-  switches.
+- **Russian and Spanish layouts** (src/lang.asm), if chosen: the
+  Cyrillic letters of code page 866 in the VGA font - the text screen,
+  the desktop and the programs all show them - and the ЙЦУКЕН layout;
+  Spanish with ñ, ¡ ¿, ç and the accents through a dead key (' then a =
+  á, " then u = ü) - its letters get places of their own in the font,
+  beside the Cyrillic ones. Alt+Shift, or the tray's EN/RU/ES, goes round
+  the chosen layouts.
+- **The system's language** (src/langui.asm): with Russian or Spanish
+  chosen, help, the shell's messages, the desktop's menus, windows,
+  tooltips, the login - everything printed or drawn - comes out in it.
+  The translations live on the disk, `/SYSTEM/LANG.DAT`, made by
+  `tools/mklang.py` from its UTF-8 table (the kernel has no room for
+  them): an English string is found by its FNV-1a hash.
 - `USER.CFG` itself is protected: `rm`, `ren`, `mv`, and `uranium` all
   refuse to touch it (with an explanatory message), though `cat`/`grep`/
   `head`/`tail` can still read it like any other file.
@@ -243,8 +278,10 @@ alex@/PROGRAMS$
 - `uranium` is a full-screen, nano-style text editor: arrow keys move the
   cursor (with line wrapping and scrolling for content taller than the
   screen), typing inserts, Backspace/Delete remove. `Ctrl+B` saves and
-  exits, `Ctrl+H` saves without exiting, and `Esc` exits without saving —
-  all three ask `Are you sure? Y/N` first. `Ctrl+F` prompts for text on the
+  exits (after a `Save and exit? Y/N`), `Ctrl+H` just saves, and `Esc`
+  just leaves - unless there are changes not saved yet (the header then
+  says "not saved"): it asks first - `Y` leave them, `S` save them and
+  exit, `N` back to editing. `Ctrl+F` prompts for text on the
   footer row and jumps the cursor to the next case-sensitive match,
   wrapping around to the start of the file if needed; pressing Enter on an
   empty prompt repeats the last search, and a footer flash reads
@@ -410,9 +447,22 @@ alex@/PROGRAMS$
 - **Desktop.** `desktop` switches to a graphical desktop in 1024x768
   true color: windows with title bars you drag with the mouse, that
   come to the front when clicked and close with their [x], minimize
-  with [_] (to the taskbar) and - Files and programs - maximize with
-  the box or a double click on the title; Files resizes by its
-  bottom-right corner; Alt+Tab brings the window at the back forward.
+  with [_] (to the taskbar) and - Files, programs and Terminals -
+  maximize with the box or a double click on the title (a Terminal
+  then shows the lines that scrolled off above its 25); Files resizes
+  by its bottom-right corner; Alt+Tab brings the window at the back
+  forward. Dragged to the screen's left or right edge a window takes
+  that half (Files, programs - the others just go to that side), to
+  its top the whole screen; an outline shows where while it's held
+  there, and pulling a maximized one away gives it its own size back.
+  Keys: **Alt+F4** closes the window in front, **Win+D** (or the thin
+  strip at the taskbar's right end) shows the desktop and brings the
+  windows back, **Win+E** opens Files, **Win+L** logs out,
+  **Ctrl+Shift+Esc** opens Tasks. Right-click a taskbar button:
+  Minimize / Restore, Maximize, Close; right-click the desktop: New
+  Terminal, Files, Tasks, System, Arrange icons, Next backdrop.
+  **Caps Lock** works (with its light), an "A" in the tray while it's
+  on.
   A taskbar with a button per window and a tray - volume (click: the
   Mixer, wheel: the master volume), network (green once it's set up),
   the time (click: this month's calendar, double-click: the Clock;
@@ -420,15 +470,26 @@ alex@/PROGRAMS$
   Win key opens it too): Programs (every .APP/.COM/.BIN on the disk),
   Terminal, Files, Clock, Pictures, Tasks, Mixer, System, Log out (the
   desktop goes, the sign-in screen comes back - Enter alone if there's
-  no password - then the desktop again), Exit. Turning the wheel over
+  no password - then the desktop again), Restart, Shut down (a goodbye
+  from Lex, then off), Exit. Turning the wheel over
   the volume shows it ("Volume 70%") in a tooltip (src/dkextra.asm).
   Typing while the menu's open
   searches: Programs shows what has the typed text in its name, Up /
-  Down pick, Enter starts it, Esc closes the menu.
+  Down pick, Enter starts it, Esc closes the menu. The last 4 programs
+  started from the desktop come first in Programs, marked (kept in
+  `DESKTOP.CFG`).
+  - **Lex**, the cat LexOS is named after (src/dkcat.asm), lives on the
+    taskbar: he walks along it, sits, curls up and sleeps (Zzz); click
+    him and he meows. The desktop's right-click menu hides him or calls
+    him back.
+  - A double click on the empty desktop opens a Terminal; Esc closes a
+    Clock, System, Tasks, Mixer or Pictures window in front.
   - **Icons on the desktop**: whatever's in `/DESKTOP` (src/dkicons.asm).
     A `.LNK` file there is a shortcut - its text is the path it opens
     (`/APPS/FIRE.APP`, a folder like `/DEMOS`). Double-click opens,
-    drag moves (the places are remembered).
+    drag moves (the places are remembered). Whatever program (or
+    `.LNK` to one) is in `/DESKTOP/STARTUP` starts by itself with the
+    desktop.
   - **Themes**: Classic, Dark, Light, Forest, Plum - System's buttons
     (src/dkstyle.asm); a **backdrop** - Night, Sunset, Ocean, Slate -
     can replace the theme's own gradient. With the sounds' switch
@@ -488,8 +549,12 @@ alex@/PROGRAMS$
     Rename, Copy and New folder type the command into a Terminal and
     leave the new name to you.
     While Files is in front, typing searches: only names with the text
-    show (Esc clears, Enter opens the first); Sort: Name / Size / Type
-    orders them (src/dkfind.asm).
+    show (Esc clears - and with nothing typed closes Files, Enter opens
+    the first, Backspace with nothing typed goes up a folder); Sort: Name /
+    Size / Type orders them (src/dkfind.asm). Ctrl+C / Ctrl+X (or Copy /
+    Cut on the right-click menu) and then Ctrl+V (Paste) in another
+    folder copy or move the selected files; a copy onto a name that's
+    taken gets `_2`, `_3`... (src/dkextra.asm).
   - **Copy and paste**: drag over a Terminal's text to select it,
     Ctrl+C copies (without a selection it stops a program, as ever),
     Ctrl+V types it into the console with the keyboard (src/dkclip.asm).
@@ -759,11 +824,13 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `clock` | toggle a clock in the top-right corner (a background task) |
 | `uptime` | how long since boot, the consoles and tasks |
 | `neofetch` | the system at a glance, next to Lex the cat (ASCII, in color) |
+| `lex [text]` | Lex the cat says something in a speech bubble (or your text) |
 | `play <n.imf \| n.wav>` | play AdLib music or a WAV (Sound Blaster 16, or PC speaker) |
 | `play <n> &` | play it in the background |
 | `basic [n]` | Tiny BASIC; with a name, load and run that program first |
 | `reboot` / `shutdown` | restart / power off |
 | `history` | list previously run commands, numbered oldest first |
+| `!!` | run the last command again (it's shown first) |
 | `df` / `free` | show directory slot / extra sector usage |
 | **Filesystem** | |
 | `ls` | list files and folders in the current directory (folders in yellow) |
@@ -772,6 +839,7 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `cd <name>` | enter a folder |
 | `cd ..` | go to the parent folder |
 | `cd /a/b` | enter a folder by path (`cd`, `cd /`, `cd //` all go to root) |
+| `cd -` | back to the folder you were in before the last `cd` |
 | `mkdir <name>` | create a folder |
 | `bld <name>` | create a new empty file |
 | `cat <n>` | print a file's contents |
@@ -794,9 +862,13 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 
 Inside the `uranium` text editor: arrow keys, Home/End and Delete move
 around and edit like any text editor, Enter inserts a real line break.
-`Ctrl+B` saves and exits, `Ctrl+H` saves without exiting (flashes
-`Saved.` in the status line), and `Esc` exits without saving. All three
-first ask `Are you sure? Y/N` — `N` cancels back into the editor.
+Ctrl+A / Ctrl+E go to the line's start / end, Ctrl+Home / Ctrl+End to
+the file's, Tab puts in four spaces, and the status line shows where
+the cursor is (`Ln 3, Col 12`).
+`Ctrl+B` saves and exits (it asks `Save and exit? Y/N` first), `Ctrl+H`
+saves without exiting and without asking (flashes `Saved.` in the status
+line), and `Esc` exits - asking only if there are changes not saved yet:
+`Y` exit without them, `S` save them and exit, `N` back to editing.
 
 Inside the hex editor: arrow keys move the cursor, hex digits edit the
 byte under it a nibble at a time, `S` opens the one-line mini-assembler
@@ -880,6 +952,7 @@ apps/                  example ring-3 programs (`make apps`): lexos.inc for
 disk/                  what LexOS's disk starts with: APPS/ (the built
                        programs), DEMOS/ (scripts, music, a CHIP-8 ROM).
 tools/                 mkdisk.py (disk/ -> the image's filesystem),
+                       mklang.py (the translations -> disk/SYSTEM/LANG.DAT),
                        makemod.py (DEMO.MOD).
 src/
   data.asm             constants, messages, working variables.
@@ -944,9 +1017,13 @@ src/
   dkclip.asm           copy and paste between the Terminals.
   dkfind.asm           Files' search and order.
   dkextra.asm          the tray's tooltips (date, volume), the Win
-                       key, Log out.
-  neofetch.asm         `neofetch` (with Lex the cat) and `uptime`.
-  lang.asm             Russian: code page 866 letters, the layout.
+                       key and other shortcuts, Log out, snapping,
+                       the taskbar's and desktop's menus, recent
+                       programs, Caps Lock, /DESKTOP/STARTUP.
+  neofetch.asm         `neofetch` (with Lex the cat), `uptime`, `lex`.
+  dkcat.asm            Lex on the taskbar.
+  langui.asm           the system's language: /SYSTEM/LANG.DAT, tr_lookup.
+  lang.asm             the Russian and Spanish letters and layouts.
   font866.inc          the Cyrillic glyphs (from CyrKoi-VGA16).
   welcome.asm          the graphical first boot, the login.
   sched.asm            the scheduler: tasks, priorities, task_wait,

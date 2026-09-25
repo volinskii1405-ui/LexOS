@@ -4,15 +4,16 @@
     python3 tools/mkdisk.py build/os-image.bin disk
 
 Every file in disk/ goes into the root of LexOS's filesystem, every
-folder in it becomes a folder there (one level: disk/APPS/FIRE.APP ->
-/APPS/FIRE.APP). The layout is src/data.asm's (FS_*): one 512-byte
+folder in it becomes a folder there, and so on down (disk/APPS/FIRE.APP
+-> /APPS/FIRE.APP, disk/DESKTOP/STARTUP/ -> /DESKTOP/STARTUP). The layout is src/data.asm's (FS_*): one 512-byte
 sector per file or folder - its name, type, parent folder and the first
 127 bytes - and the rest of a file in a chain of extra sectors from a
 pool, with a byte per pool sector in the bitmap before it.
 
 It adds to what's on the disk already - the files you made in LexOS
 stay: a file that's there by that name is left alone, except in /APPS
-(the programs - brought up to date if they changed). A folder takes the
+and /SYSTEM (the programs, the translations - brought up to date if they
+changed). A folder takes the
 first free slot from 0, a file from 255, as fs_find_free_dir /
 fs_find_free do."""
 import os, sys
@@ -30,7 +31,7 @@ FS_EXTRA_START = FS_BITMAP_SECTOR + FS_BITMAP_SECTORS
 TYPE_FREE, TYPE_FILE, TYPE_DIR = 0, 1, 2
 ROOT = 0xFF
 NO_CHAIN = 0xFFFF
-UPDATED = ('APPS',)                 # folders whose files follow disk/
+UPDATED = ('APPS', 'SYSTEM')       # folders whose files follow disk/
 
 image_path, top = sys.argv[1], sys.argv[2]
 img = bytearray(open(image_path, 'rb').read())
@@ -145,24 +146,27 @@ def add_file(path, parent, folder):
     added += 1
 
 
-for entry in sorted(os.listdir(top)):
-    path = os.path.join(top, entry)
-    if entry.startswith('.'):
-        continue
-    if os.path.isdir(path):
-        name = fs_name(entry)
-        folder = find(name, ROOT)
-        if folder < 0:
-            folder = free_slot(0, FS_DIR_SLOT_LIMIT)
-            write_slot(folder, name, TYPE_DIR, ROOT)
-        elif slot_data(folder)[16] != TYPE_DIR:
-            print('mkdisk: /%s is a file there - its folder left out' % entry)
+def add_folder(path, parent, where):
+    """disk/<where>'s files and folders -> into LexOS's folder `parent`"""
+    for entry in sorted(os.listdir(path)):
+        full = os.path.join(path, entry)
+        if entry.startswith('.'):
             continue
-        for f in sorted(os.listdir(path)):
-            if not f.startswith('.') and os.path.isfile(os.path.join(path, f)):
-                add_file(os.path.join(path, f), folder, entry.upper())
-    else:
-        add_file(path, ROOT, '')
+        if os.path.isdir(full):
+            name = fs_name(entry)
+            folder = find(name, parent)
+            if folder < 0:
+                folder = free_slot(0, FS_DIR_SLOT_LIMIT)
+                write_slot(folder, name, TYPE_DIR, parent)
+            elif slot_data(folder)[16] != TYPE_DIR:
+                print('mkdisk: %s/%s is a file there - its folder left out' % (where, entry))
+                continue
+            add_folder(full, folder, where + '/' + entry.upper())
+        else:
+            add_file(full, parent, where.lstrip('/'))
+
+
+add_folder(top, ROOT, '')
 
 for i in range(FS_BITMAP_SECTORS):
     put_sector(FS_BITMAP_SECTOR + i, bitmap[i * 512:(i + 1) * 512])

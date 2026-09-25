@@ -203,6 +203,8 @@ shared_system_start:
 %include "src/dkfind.asm"
 %include "src/dkextra.asm"
 %include "src/neofetch.asm"
+%include "src/langui.asm"
+%include "src/dkcat.asm"
 shared_system_end:
 align 4096, db 0
 %include "src/grep.asm"

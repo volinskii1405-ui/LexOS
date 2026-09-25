@@ -247,8 +247,12 @@ dk_fm_ext:
 ; window)
 dk_fm_draw_tools:
     pushad
+    mov eax, ebp
+    call dk_fm_shift                      ; (narrow: all a bit to the left)
+    mov edi, edx
     mov eax, [dk_cx]                      ; the box
     add eax, FM_FIND_X
+    sub eax, edi
     mov ebx, [dk_cy]
     add ebx, 4
     mov ecx, FM_FIND_W
@@ -258,8 +262,10 @@ dk_fm_draw_tools:
     push eax
     mov eax, [dk_cx]
     add eax, FM_FIND_X
+    sub eax, edi
     cmp [esp], ebp                        ; (in front: typing goes here)
-    pop edi
+    pop esi
+    mov esi, COL_BUTTON
     jne .frame
     mov esi, COL_TITLE_ON
 .frame:
@@ -291,8 +297,11 @@ dk_fm_draw_tools:
     mov esi, COL_TEXT
     call dk_fill
 .sort:
+    mov eax, ebp
+    call dk_fm_shift
     mov eax, [dk_cx]                      ; [Sort: Name]
     add eax, FM_SORT_X
+    sub eax, edx
     mov ebx, [dk_cy]
     add ebx, 4
     mov ecx, FM_SORT_W
@@ -306,6 +315,20 @@ dk_fm_draw_tools:
     mov edx, COL_TEXT
     call dk_text
     popad
+    ret
+
+; eax = a Files window -> edx = how far left its search and order go
+; (a narrow one - half the screen: the page buttons stay clear)
+dk_fm_shift:
+    mov edx, FM_SORT_X + FM_SORT_W + 68
+    sub edx, [dkw_w + eax*4]
+    jns .some
+    xor edx, edx
+.some:
+    cmp edx, 120
+    jbe .done
+    mov edx, 120
+.done:
     ret
 
 ; ============================================================
@@ -347,8 +370,8 @@ dk_fm_keys_work:
     and bl, 15
     mov [dk_fm_ktail], bl
     mov ecx, [dk_fm_find_len]
-    cmp al, 27                            ; Esc: none
-    je .clear
+    cmp al, 27                            ; Esc: none - or, with nothing
+    je .esc                               ; typed, Files closes
     cmp al, 8
     je .back
     cmp al, 13                            ; Enter: the first shown
@@ -368,11 +391,26 @@ dk_fm_keys_work:
     inc dword [dk_fm_find_len]
     jmp .changed
 .back:
-    jecxz .keys
+    or ecx, ecx                           ; (nothing typed: up a folder)
+    jz .up
     dec ecx
     mov [dk_fm_find_len], ecx
     mov byte [dk_fm_find + ecx], 0
     jmp .changed
+.up:
+    call snd_click
+    call dk_files_up                      ; (src/dkwins.asm)
+    mov eax, K_FILES
+    call dk_mark_kind
+    jmp .keys
+.esc:
+    or ecx, ecx
+    jnz .clear
+    call dk_top_window                    ; (Files, in front)
+    cmp eax, -1
+    je .keys
+    call dk_win_x
+    jmp .keys
 .clear:
     mov dword [dk_fm_find_len], 0
     mov byte [dk_fm_find], 0

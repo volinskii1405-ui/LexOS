@@ -1,6 +1,6 @@
 ASM = nasm
 BUILD_DIR = build
-SRC_FILES = kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/serial.asm src/mouse.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/vga.asm src/snake.asm src/paint.asm src/sweeper.asm src/tetris.asm src/game2048.asm src/convert.asm src/assembler.asm src/rtc.asm src/speaker.asm src/sound.asm src/mixer.asm src/chip8.asm src/turtle.asm src/hostfs.asm src/basic.asm src/net.asm src/inet.asm src/httpd.asm src/chat.asm src/sched.asm src/usermode.asm src/appsys.asm src/console.asm src/desktop.asm src/dkwins.asm src/dkstyle.asm src/dksound.asm src/dkicons.asm src/lang.asm src/font866.inc src/dkclip.asm src/dkfind.asm src/dkextra.asm src/neofetch.asm src/grep.asm src/headtail.asm src/uranium.asm src/user.asm src/welcome.asm src/tabcomplete.asm src/script.asm
+SRC_FILES = kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/serial.asm src/mouse.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/vga.asm src/snake.asm src/paint.asm src/sweeper.asm src/tetris.asm src/game2048.asm src/convert.asm src/assembler.asm src/rtc.asm src/speaker.asm src/sound.asm src/mixer.asm src/chip8.asm src/turtle.asm src/hostfs.asm src/basic.asm src/net.asm src/inet.asm src/httpd.asm src/chat.asm src/sched.asm src/usermode.asm src/appsys.asm src/console.asm src/desktop.asm src/dkwins.asm src/dkstyle.asm src/dksound.asm src/dkicons.asm src/lang.asm src/font866.inc src/dkclip.asm src/dkfind.asm src/dkextra.asm src/neofetch.asm src/langui.asm src/dkcat.asm src/grep.asm src/headtail.asm src/uranium.asm src/user.asm src/welcome.asm src/tabcomplete.asm src/script.asm
 
 .PHONY: all run run-serial lan1 lan2 clean apps fresh-disk
 
@@ -17,7 +17,11 @@ $(BUILD_DIR)/kernel.bin: $(SRC_FILES) | $(BUILD_DIR)
 
 # The files LexOS's own disk starts with (tools/mkdisk.py): disk/APPS -
 # the example programs, disk/DEMOS - scripts, music, a CHIP-8 ROM...
-DISK_FILES = $(wildcard disk/* disk/*/*)
+DISK_FILES = $(wildcard disk/* disk/*/* disk/*/*/*) disk/SYSTEM/LANG.DAT
+
+# The translations (src/langui.asm): made from tools/mklang.py's table
+disk/SYSTEM/LANG.DAT: tools/mklang.py $(wildcard src/*.asm)
+	python3 tools/mklang.py
 
 # The disk image: the bootloader and kernel at its start, LexOS's own
 # filesystem after them. Made once; after that a build only writes the

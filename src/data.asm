@@ -194,6 +194,7 @@ help_l61 db "  bld <n>       - create a new empty file n", 13, 10, 0
 help_l15 db "  cd <n>        - enter folder n", 13, 10, 0
 help_l16 db "  cd ..         - go to parent folder", 13, 10, 0
 help_l17 db "  cd /a/b       - enter folder by path (cd, cd /, cd // = root)", 13, 10, 0
+help_l71 db "  cd - / !!     - back to the folder before / the last command again", 13, 10, 0
 help_l18 db "  mv <n> <path> - move file n into folder (or *.ext for many)", 13, 10, 0
 help_l19 db "  cp <n> <new>  - copy file n to new (*.ext copies into folder <new>)", 13, 10, 0
 help_l20 db "  pwd           - show current folder path", 13, 10, 0
@@ -241,7 +242,8 @@ help_l69 db "  mixer [voice|master] [0-100] - what's playing, and volumes", 13, 
 help_l63 db "  ntp [server] - set the clock from a time server (default pool.ntp.org)", 13, 10, 0
 help_l58 db "  ps / kill <pid> - list tasks / stop one; <cmd> & runs play in the background", 13, 10, 0
 help_l59 db "  clock        - toggle a clock in the top-right corner (a background task)", 13, 10, 0
-help_l70 db "  neofetch / uptime - the system at a glance (with Lex the cat) / time since boot", 13, 10, 0
+help_l70 db "  neofetch / uptime - the system at a glance (with Lex) / time since boot", 13, 10, 0
+help_l72 db "  lex [text]   - Lex the cat says something (or what you type)", 13, 10, 0
 help_l60 db "  Alt+T / Alt+1..9 / exit - new console / switch console / close this one", 13, 10, 0
 help_l54 db "  basic [n]    - Tiny BASIC (optionally load and run program n)", 13, 10, 0
 
@@ -249,14 +251,14 @@ help_lines:
     dw help_l01, help_l02, help_l03, help_l04, help_l05
     dw help_l06, help_l08, help_l10, help_l11, help_l12
     dw help_l14, help_l61, help_l15, help_l16, help_l17, help_l18
-    dw help_l19, help_l20, help_l21, help_l22, help_l23
+    dw help_l71, help_l19, help_l20, help_l21, help_l22, help_l23
     dw help_l24, help_l25, help_l26, help_l27, help_l28
     dw help_l29, help_l30, help_l31, help_l32, help_l33
     dw help_l34, help_l35, help_l38, help_l65, help_l39, help_l40
     dw help_l41, help_l42, help_l43, help_l44, help_l45, help_l62
     dw help_l46, help_l47, help_l48, help_l49, help_l50, help_l51
     dw help_l52, help_l53, help_l55, help_l54, help_l56, help_l57, help_l63, help_l64, help_l66, help_l67, help_l68, help_l69
-    dw help_l58, help_l59, help_l70, help_l60
+    dw help_l58, help_l59, help_l70, help_l72, help_l60
 help_lines_end:
 
 HELP_LINE_COUNT equ (help_lines_end - help_lines) / 2
@@ -281,6 +283,9 @@ msg_df_free        db " free", 13, 10, 0
 
 msg_fs_full       db "No free file slots.", 13, 10, 0
 msg_fs_notfound   db "Not found.", 13, 10, 0
+msg_cd_no_prev    db "No folder to go back to yet.", 13, 10, 0
+cmd_bang_bang     db "!!", 0
+msg_bang_none     db "No command before this one.", 13, 10, 0
 msg_fs_removed    db "Removed.", 13, 10, 0
 msg_rm_dash_a         db "-a", 0
 msg_rm_removed_suffix db " removed.", 13, 10, 0
@@ -391,10 +396,17 @@ msg_uranium_header1  db "LexOS Editor - ", 0
 msg_uranium_header2  db "  (", 0
 msg_uranium_header3  db " bytes)", 13, 10, 13, 10, 0
 msg_uranium_footer   db "Ctrl+B=Save&Exit  Ctrl+H=Save  Ctrl+F=Find  ESC=Exit", 0
+msg_uranium_ln       db "Ln ", 0
+msg_uranium_col      db ", Col ", 0
 msg_uranium_saved_flash db "Saved.", 0
 msg_uranium_notfound_flash db "Not found.", 0
 msg_uranium_search_prompt db "Find: ", 0
-msg_uranium_confirm  db "Are you sure?", 13, 10, 13, 10, "Y / Enter - YES.         N / Esc - NO, back to editing.", 0
+msg_uranium_confirm  db "Save and exit?", 13, 10, 13, 10, "Y / Enter - YES.         N / Esc - NO, back to editing.", 0
+msg_uranium_unsaved  db "There are changes that aren't saved.", 13, 10, 13, 10
+                     db "Y / Enter - exit WITHOUT saving them.", 13, 10
+                     db "S         - save them and exit.", 13, 10
+                     db "N / Esc   - back to editing.", 0
+msg_uranium_header3m db " bytes, not saved)", 13, 10, 13, 10, 0
 
 msg_user_setup_title  db "LexOS - First Boot Setup", 0
 msg_user_nick_label   db "Nickname:", 0
@@ -660,6 +672,8 @@ cmd_basic        db "basic", 0
 cmd_ps           db "ps", 0
 cmd_uptime       db "uptime", 0
 cmd_neofetch     db "neofetch", 0
+cmd_lex          db "lex", 0
+cmd_lex_prefix   db "lex ", 0
 cmd_exit         db "exit", 0
 ; src/usermode.asm's, per console (src/console.asm swaps this file)
 app_active         db 0
@@ -796,4 +810,5 @@ fs_list_type db 0
 fs_tree_depth db 0
 
 fs_current_dir dw FS_ROOT
+fs_prev_dir    dw 0xFFFE        ; before the last cd (`cd -`); 0xFFFE: none yet
 fs_apps_dir_name db "APPS", 0

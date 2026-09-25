@@ -278,6 +278,11 @@ dk_settings_load:
     jc .backdrop
     mov [snd_ui_on], al
 .backdrop:
+    mov esi, dkx_cfg_cat                  ; "cat=N" (src/dkcat.asm)
+    call dk_cfg_value
+    jc .no_cat
+    mov [cat_on], al
+.no_cat:
     mov esi, dk_cfg_backdrop              ; "backdrop=N"
     call dk_cfg_value
     jc .apply
@@ -285,6 +290,7 @@ dk_settings_load:
     jae .apply
     mov [dk_bg_mode], eax
 .apply:
+    call dkx_recent_load                  ; (src/dkextra.asm)
     cmp dword [dk_theme], DK_THEMES
     jb .theme_ok
     mov dword [dk_theme], 0
@@ -362,6 +368,13 @@ dk_settings_work:
     stosb
     mov ax, 0x0A0D
     stosw
+    mov esi, dkx_cfg_cat
+    call wget_append
+    mov al, [cat_on]
+    add al, '0'
+    stosb
+    mov ax, 0x0A0D
+    stosw
     mov esi, dk_cfg_backdrop
     call wget_append
     mov al, [dk_bg_mode]
@@ -369,6 +382,7 @@ dk_settings_work:
     stosb
     mov ax, 0x0A0D
     stosw
+    call dkx_recent_save                  ; (src/dkextra.asm: recent programs)
     call dki_save                         ; (src/dkicons.asm: where they are)
     sub edi, dk_cfg_buf
     mov [fs_stream_size], edi

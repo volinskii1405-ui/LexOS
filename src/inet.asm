@@ -1121,11 +1121,13 @@ wget_build_request:
 
 ; the 0-terminated esi -> edi, edi left at the end
 wget_append:
+    call tr_lookup                 ; (the system's language: src/langui.asm)
+.copy:
     lodsb
     or al, al
     jz .done
     stosb
-    jmp wget_append
+    jmp .copy
 .done:
     ret
 

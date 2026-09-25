@@ -47,6 +47,14 @@ read_command_line:
     cmp al, 0x08       ; Backspace?
     je .backspace
 
+    cmp byte [lang_ctrl_held], 0   ; Ctrl+L at the shell's prompt: a clean
+    je .not_ctrl_l                 ; screen, the line typed so far kept
+    cmp byte [shell_at_prompt], 0
+    je .not_ctrl_l
+    cmp ah, 0x26                   ; (L, by its key: any layout)
+    je .ctrl_l
+.not_ctrl_l:
+
     cmp al, 0x0D       ; Enter?
     je .enter
 
@@ -69,6 +77,24 @@ read_command_line:
 
 .tab_key:
     call tab_try_complete
+    jmp .loop
+
+.ctrl_l:
+    call tab_clear_suggestion
+    call clear_screen
+    call fs_print_prompt
+    xor ebx, ebx
+.ctrl_l_char:
+    cmp bx, [buf_len]
+    jae .ctrl_l_done
+    mov al, [buffer + ebx]
+    call print_char
+    inc ebx
+    jmp .ctrl_l_char
+.ctrl_l_done:
+    mov ax, [buf_len]
+    mov [buf_cursor], ax
+    call tab_update_suggestion
     jmp .loop
 
 .history_up:
@@ -170,6 +196,7 @@ read_command_line:
     add di, bx
     mov byte [di], 0
 
+    call history_bang              ; "!!": the command before, again
     call history_save
 
     mov word [buf_len], 0
@@ -396,6 +423,44 @@ cmd_show_history:
     pop cx
     pop bx
     pop ax
+    ret
+
+; --- "!!" typed: buffer becomes the last command in the history, shown
+;     on its own line first (as bash does); none yet - said so, and the
+;     line's emptied ---
+history_bang:
+    pusha
+    mov si, buffer
+    mov di, cmd_bang_bang
+    call strcmp_eq
+    cmp ax, 1
+    jne .done
+    cmp word [history_count], 0
+    je .none
+    mov ax, [history_next_slot]    ; the newest: the slot before the next
+    dec ax
+    jns .slot
+    mov ax, HISTORY_SIZE - 1
+.slot:
+    mov bx, BUFFER_MAX + 1
+    mul bx
+    mov si, history_buf
+    add si, ax
+    mov di, buffer
+    call strcpy
+    mov si, buffer
+    call print_string
+    mov al, 0x0D
+    call print_char
+    mov al, 0x0A
+    call print_char
+    jmp .done
+.none:
+    mov si, msg_bang_none
+    call print_string
+    mov byte [buffer], 0
+.done:
+    popa
     ret
 
 ; --- Saves buffer as a new history entry (empty ones are not saved) ---

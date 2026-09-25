@@ -70,9 +70,13 @@ dk_draw_terminal:
     or eax, ebx
     mov [dkw_cursor + ebp*4], eax
 
-    xor edx, edx                          ; the row
+    call dk_term_extra                    ; (maximized: history above)
+    mov [dk_term_xrows], eax
+    xor edx, edx                          ; the row shown
 .row:
-    cmp edx, SCREEN_ROWS
+    mov eax, [dk_term_xrows]
+    add eax, SCREEN_ROWS
+    cmp edx, eax
     jae .cursor
     mov ebx, edx                          ; (rows outside the clip: skip)
     shl ebx, 4
@@ -82,6 +86,8 @@ dk_draw_terminal:
     jle .next_row
     cmp ebx, [dk_clip_y1]
     jge .cursor
+    push edx
+    sub edx, [dk_term_xrows]              ; -> the console's row (< 0: history)
     call dk_term_row_src                  ; (scrolled back: an older line)
     mov [dk_term_rowp], eax
     xor edi, edi                          ; the column
@@ -113,10 +119,33 @@ dk_draw_terminal:
     inc edi
     cmp edi, SCREEN_COLS
     jb .cell
+    pop edx
 .next_row:
     inc edx
     jmp .row
 .cursor:
+    cmp byte [dkw_max + ebp], 0           ; maximized: black around the text
+    je .no_margin
+    mov eax, [dk_cx]
+    add eax, SCREEN_COLS * 8
+    mov ebx, [dk_cy]
+    mov ecx, [dkw_w + ebp*4]
+    sub ecx, SCREEN_COLS * 8
+    mov edx, [dkw_h + ebp*4]
+    xor esi, esi
+    call dk_fill
+    mov eax, [dk_term_xrows]
+    add eax, SCREEN_ROWS
+    shl eax, 4
+    mov edx, [dkw_h + ebp*4]
+    sub edx, eax
+    jle .no_margin
+    add eax, [dk_cy]
+    mov ebx, eax
+    mov eax, [dk_cx]
+    mov ecx, SCREEN_COLS * 8
+    call dk_fill
+.no_margin:
     cmp dword [dkw_scroll + ebp*4], 0     ; scrolled back: no cursor, a tag
     je .no_tag
     mov eax, [dk_cx]
@@ -144,6 +173,7 @@ dk_draw_terminal:
     movzx ebx, word [dkw_cursor + ebp*4 + 2]  ; row
     cmp ebx, SCREEN_ROWS
     jae dk_contents_done
+    add ebx, [dk_term_xrows]
     shl ebx, 4
     add ebx, [dk_cy]
     add ebx, 13
@@ -161,7 +191,10 @@ dk_term_row_src:
     push edx
     mov ecx, [dkw_scroll + ebp*4]
     or ecx, ecx
-    jz .screen
+    jnz .back
+    or edx, edx                           ; (a row above the screen: from
+    jns .screen                           ;  the history, maximized)
+.back:
     mov ebx, [dkw_param + ebp*4]          ; its console
     cmp ecx, [dk_sb_count + ebx*4]
     jbe .scroll_ok
@@ -170,6 +203,7 @@ dk_term_row_src:
     mov eax, [dk_sb_count + ebx*4]        ; L = count - scroll + row
     sub eax, ecx
     add eax, edx
+    js .blank                             ; (older than what's kept)
     cmp eax, [dk_sb_count + ebx*4]
     jae .below
     add eax, [dk_sb_head + ebx*4]         ; its place in the ring
@@ -182,6 +216,9 @@ dk_term_row_src:
     add eax, ebx
     add eax, DK_SB_BASE
     jmp .done
+.blank:
+    mov eax, dk_term_blank
+    jmp .done
 .below:
     sub eax, [dk_sb_count + ebx*4]
     mov edx, eax
@@ -192,6 +229,39 @@ dk_term_row_src:
     pop edx
     pop ecx
     pop ebx
+    ret
+
+; ebp = a Terminal -> eax = the rows shown above its screen's 25: none,
+; or - maximized - as many more as fit (older lines, from its history)
+dk_term_extra:
+    xor eax, eax
+    cmp byte [dkw_max + ebp], 0
+    je .done
+    mov eax, [dkw_h + ebp*4]
+    sub eax, SCREEN_ROWS * 16
+    jns .rows
+    xor eax, eax
+.rows:
+    shr eax, 4
+    push ebx                              ; (no more than there is of it:
+    mov ebx, [dkw_param + ebp*4]          ;  the screen at the top, else)
+    cmp eax, [dk_sb_count + ebx*4]
+    jbe .kept
+    mov eax, [dk_sb_count + ebx*4]
+.kept:
+    push eax                              ; a full-screen text program
+    mov eax, ebx                          ; (uranium: it names itself) -
+    mov ebx, prog_title                   ; its screen alone, at the top
+    call console_saved_addr
+    pop eax
+    or ebx, ebx
+    jz .own
+    cmp byte [ebx], 0
+    je .own
+    xor eax, eax
+.own:
+    pop ebx
+.done:
     ret
 
 ; A console's line about to scroll off the top of its screen
@@ -1473,7 +1543,13 @@ dk_draw_files:
     add eax, 56
     mov esi, dk_fm_path
     push edi
-    mov edi, (FM_FIND_X - 64) / 8
+    push eax
+    mov eax, ebp
+    call dk_fm_shift                      ; (src/dkfind.asm)
+    mov edi, FM_FIND_X - 64
+    sub edi, edx
+    shr edi, 3
+    pop eax
     call dk_text_n
     pop edi
     call dk_fm_draw_tools                 ; the search, the order
@@ -1856,10 +1932,14 @@ dk_files_click:
     call dk_files_up
     ret
 .paging:
+    push edx
+    call dk_fm_shift                      ; (narrow: it's further left)
+    add ecx, edx
+    pop edx
     cmp ecx, FM_SORT_X                    ; [Sort: ...]: the next order
     jb .done
     cmp ecx, FM_SORT_X + FM_SORT_W
-    jae .not_sort
+    jae .not_sort_back
     inc dword [dk_fm_sort]
     cmp dword [dk_fm_sort], 3
     jb .sorted
@@ -1868,6 +1948,11 @@ dk_files_click:
     mov byte [dk_fm_refresh], 1
     call snd_click
     jmp .redraw
+.not_sort_back:
+    push edx
+    call dk_fm_shift
+    sub ecx, edx
+    pop edx
 .not_sort:
     mov edx, [dkw_w + eax*4]
     sub edx, 62
@@ -2331,6 +2416,7 @@ dk_prog_filter:
     jmp .prog
 .filtered:
     mov [dk_prog_vn], edx
+    call dkx_recent_order                 ; (src/dkextra.asm: recent ones first)
     mov dword [dk_prog_sel], -1
     cmp byte [dk_search], 0
     je .rows
@@ -2625,6 +2711,7 @@ dk_draw_programs:
     call dk_text_n
     pop edi
     pop ebx
+    call dkx_recent_mark                  ; (a recent one: marked)
     inc ecx
     jmp .item
 .done:
@@ -2660,6 +2747,7 @@ dk_prog_run:
 ; esi = a program's name, edi = the folder it's in ("/A/B")
 dk_launch:
     pushad
+    call dkx_recent_add                   ; (src/dkextra.asm: the menu's recent)
     mov ebx, 1                            ; a free console
 .free:
     cmp ebx, CONSOLE_MAX
@@ -2813,13 +2901,29 @@ dk_launch_text:
 ; ============================================================
 DK_TRAY_VOL_X equ DESK_W - 118
 DK_TRAY_LANG_X equ DESK_W - 152
+DK_TRAY_CAPS_X equ DESK_W - 182
 DK_TRAY_NET_X equ DESK_W - 92
 
 dk_draw_tray:
     pushad
     mov ebp, DESK_H - DK_TASKBAR_H + 7    ; (the icons' top)
-    cmp byte [lang_ru_enabled], 0         ; the keyboard's language (src/lang.asm)
-    je .no_lang
+    cmp byte [kbd_caps_on], 0             ; Caps Lock on: an "A" lit
+    je .no_caps
+    mov eax, DK_TRAY_CAPS_X
+    lea ebx, [ebp - 2]
+    mov ecx, 24
+    mov edx, 18
+    mov esi, COL_TITLE_ON
+    call dk_fill
+    add eax, 4
+    inc ebx
+    mov esi, dk_msg_caps
+    mov edx, COL_WHITE
+    call dk_text
+.no_caps:
+    mov al, [lang_ru_enabled]             ; the keyboard's language (src/lang.asm)
+    or al, [lang_es_enabled]
+    jz .no_lang
     mov eax, DK_TRAY_LANG_X
     lea ebx, [ebp - 2]
     mov ecx, 24
@@ -2827,16 +2931,13 @@ dk_draw_tray:
     mov esi, COL_TASKBTN
     cmp byte [lang_layout], 0
     je .lang_box
-    mov esi, 0x2E7D32                     ; (Russian: green)
+    mov esi, 0x2E7D32                     ; (Russian, Spanish: green)
 .lang_box:
     call dk_fill
     add eax, 4
     inc ebx
-    mov esi, dk_msg_en
-    cmp byte [lang_layout], 0
-    je .lang_text
-    mov esi, dk_msg_ru
-.lang_text:
+    movzx esi, byte [lang_layout]
+    mov esi, [dk_lang_msgs + esi*4]
     mov edx, COL_BARTEXT
     call dk_text
 .no_lang:
@@ -2915,6 +3016,11 @@ dk_line_c:
 ; eax = x of a click on the tray
 dk_tray_click:
     pushad
+    cmp eax, DK_TRAY_LANG_X - 4           ; Caps Lock's place: it toggles
+    jae .not_caps
+    call kbd_caps_toggle                  ; (src/dkextra.asm)
+    jmp .done
+.not_caps:
     cmp eax, DK_TRAY_VOL_X - 6            ; EN / RU: the other one
     jae .not_lang
     call lang_toggle
@@ -3356,6 +3462,22 @@ DKC_NEWDIR  equ 6
 DKC_SELALL  equ 7
 DKC_FOREVER equ 8
 DKC_EMPTY   equ 9
+DKC_MINIMIZE equ 10                   ; (src/dkextra.asm's, from here)
+DKC_RESTORE  equ 11
+DKC_MAXIMIZE equ 12
+DKC_UNMAX    equ 13
+DKC_CLOSE    equ 14
+DKC_NEWTERM  equ 15
+DKC_FILES    equ 16
+DKC_TASKS    equ 17
+DKC_SYSTEM   equ 18
+DKC_ARRANGE  equ 19
+DKC_BACKDROP equ 20
+DKC_FCOPY    equ 21
+DKC_FCUT     equ 22
+DKC_FPASTE   equ 23
+DKC_CATHIDE  equ 24
+DKC_CATSHOW  equ 25
 DK_CTX_W    equ 160
 DK_CTX_ITEM equ 22
 
@@ -3376,7 +3498,11 @@ dk_right_click:
     mov ebx, [dk_my]
     call dk_window_at                     ; -> esi
     cmp esi, -1
-    je .done
+    jne .window
+    call dkx_ctx_items                    ; the taskbar's buttons, the desktop
+    jc .done                              ; (src/dkextra.asm)
+    jmp .show
+.window:
     cmp byte [dkw_kind + esi], K_FILES
     jne .done
     mov eax, esi
@@ -3407,6 +3533,10 @@ dk_right_click:
     jne .trash_item
     mov al, DKC_OPEN
     call dk_ctx_add
+    mov al, DKC_FCOPY                     ; (src/dkextra.asm)
+    call dk_ctx_add
+    mov al, DKC_FCUT
+    call dk_ctx_add
     mov al, DKC_RENAME
     call dk_ctx_add
     mov al, DKC_COPY
@@ -3429,6 +3559,11 @@ dk_right_click:
     jne .trash_space
     mov al, DKC_NEWDIR
     call dk_ctx_add
+    cmp dword [dkx_fc_n], 0               ; (something to paste)
+    je .no_paste
+    mov al, DKC_FPASTE
+    call dk_ctx_add
+.no_paste:
     mov al, DKC_SELALL
     call dk_ctx_add
     jmp .show
@@ -3550,6 +3685,12 @@ dk_ctx_click:
 ; eax = a context menu item (DKC_*): done
 dk_ctx_do:
     pushad
+    cmp eax, DKC_MINIMIZE                 ; (the taskbar's and the desktop's:
+    jb .files_item                        ;  src/dkextra.asm)
+    call dkx_ctx_do
+    popad
+    ret
+.files_item:
     mov dword [dk_fm_msg], 0
     cmp eax, DKC_OPEN
     jne .not_open
@@ -5344,6 +5485,11 @@ dk_ctx_ids        times 8 db 0
 dk_ctx_labels     dd dk_ctx_l_open, dk_ctx_l_rename, dk_ctx_l_copy, dk_ctx_l_delete
                   dd dk_ctx_l_props, dk_ctx_l_newdir, dk_ctx_l_selall
                   dd dk_ctx_l_forever, dk_ctx_l_empty
+                  dd dkx_l_minimize, dkx_l_restore, dkx_l_maximize, dkx_l_unmax
+                  dd dkx_l_close, dkx_l_newterm, dkx_l_files, dkx_l_tasks
+                  dd dkx_l_system, dkx_l_arrange, dkx_l_backdrop
+                  dd dkx_l_fcopy, dkx_l_fcut, dkx_l_fpaste
+                  dd dkx_l_cathide, dkx_l_catshow
 dk_ctx_l_open     db "Open", 0
 dk_ctx_l_rename   db "Rename...", 0
 dk_ctx_l_copy     db "Copy to...", 0
@@ -5383,6 +5529,8 @@ dk_m10 db "October", 0
 dk_m11 db "November", 0
 dk_m12 db "December", 0
 dk_term_rowp      dd 0
+dk_term_xrows     dd 0
+dk_term_blank     times SCREEN_COLS dw 0x0720
 dk_sb_head        times CONSOLE_MAX dd 0  ; the scrollback rings (DK_SB_BASE)
 dk_sb_count       times CONSOLE_MAX dd 0
 dk_msg_scrolled   db "scrolled back", 0
@@ -5402,6 +5550,9 @@ dk_mkey_head      db 0
 dk_mkey_tail      db 0
 dk_msg_find       db "Find:", 0
 dk_msg_en         db "EN", 0
+dk_msg_es         db "ES", 0
+dk_lang_msgs      dd dk_msg_en, dk_msg_ru, dk_msg_es
+dk_msg_caps       db "A", 24, 0
 dk_time_click_ms  dd 0
 dk_msg_ru         db "RU", 0
 dk_msg_find_hint  db "Type to search", 0

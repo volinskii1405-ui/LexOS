@@ -42,6 +42,10 @@ dkc_cell:
     push eax
     push ebx
     push ecx
+    push ebp
+    mov ebp, [dkc_win]
+    call dk_term_extra                    ; (maximized: history rows above)
+    pop ebp
     sar ecx, 3
     jns .x0
     xor ecx, ecx
@@ -51,6 +55,7 @@ dkc_cell:
     mov ecx, SCREEN_COLS - 1
 .x1:
     sar ebx, 4
+    sub ebx, eax
     jns .y0
     xor ebx, ebx
 .y0:
@@ -167,6 +172,10 @@ dkc_copy:
 .ordered:
     mov [dkc_lo], eax
     mov [dkc_hi], ebx
+    mov ecx, ebp                          ; (its rows, as it shows them)
+    shl ecx, 12
+    add ecx, DESK_SHOWN
+    mov [dk_term_src], ecx
     mov edi, dkc_text
     xor edx, edx
     div dword [dkc_cols]                  ; eax = the first row
