@@ -1,8 +1,8 @@
 ASM = nasm
 BUILD_DIR = build
-SRC_FILES = kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/serial.asm src/mouse.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/vga.asm src/snake.asm src/paint.asm src/sweeper.asm src/tetris.asm src/game2048.asm src/convert.asm src/assembler.asm src/rtc.asm src/speaker.asm src/sound.asm src/mixer.asm src/chip8.asm src/turtle.asm src/hostfs.asm src/basic.asm src/net.asm src/inet.asm src/httpd.asm src/chat.asm src/sched.asm src/usermode.asm src/appsys.asm src/console.asm src/desktop.asm src/dkwins.asm src/grep.asm src/headtail.asm src/uranium.asm src/user.asm src/tabcomplete.asm src/script.asm
+SRC_FILES = kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/serial.asm src/mouse.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/vga.asm src/snake.asm src/paint.asm src/sweeper.asm src/tetris.asm src/game2048.asm src/convert.asm src/assembler.asm src/rtc.asm src/speaker.asm src/sound.asm src/mixer.asm src/chip8.asm src/turtle.asm src/hostfs.asm src/basic.asm src/net.asm src/inet.asm src/httpd.asm src/chat.asm src/sched.asm src/usermode.asm src/appsys.asm src/console.asm src/desktop.asm src/dkwins.asm src/dkstyle.asm src/dksound.asm src/dkicons.asm src/lang.asm src/font866.inc src/dkclip.asm src/dkfind.asm src/grep.asm src/headtail.asm src/uranium.asm src/user.asm src/welcome.asm src/tabcomplete.asm src/script.asm
 
-.PHONY: all run run-serial lan1 lan2 clean apps
+.PHONY: all run run-serial lan1 lan2 clean apps fresh-disk
 
 all: $(BUILD_DIR)/os-image.bin
 
@@ -15,16 +15,39 @@ $(BUILD_DIR)/boot.bin: boot.asm | $(BUILD_DIR)
 $(BUILD_DIR)/kernel.bin: $(SRC_FILES) | $(BUILD_DIR)
 	$(ASM) -f bin -i. kernel.asm -o $@
 
-$(BUILD_DIR)/os-image.bin: $(BUILD_DIR)/boot.bin $(BUILD_DIR)/kernel.bin
+# The files LexOS's own disk starts with (tools/mkdisk.py): disk/APPS -
+# the example programs, disk/DEMOS - scripts, music, a CHIP-8 ROM...
+DISK_FILES = $(wildcard disk/* disk/*/*)
+
+# The disk image: the bootloader and kernel at its start, LexOS's own
+# filesystem after them. Made once; after that a build only writes the
+# new bootloader and kernel over the start, so what you made in LexOS
+# stays - and mkdisk.py adds whatever's new in disk/ (see its header).
+# `make fresh-disk` starts the disk over, as it was.
+$(BUILD_DIR)/system.bin: $(BUILD_DIR)/boot.bin $(BUILD_DIR)/kernel.bin
 	cat $(BUILD_DIR)/boot.bin $(BUILD_DIR)/kernel.bin > $@
 	@actual=$$(stat -c%s $@); \
-	if [ $$actual -gt 229888 ]; then \
-		echo "ERROR: boot+kernel already larger than the filesystem area start (229888 bytes = 449 sectors)."; \
-		echo "Increase KERNEL_SECTORS_1..4 in boot.asm and FS_START_SECTOR in src/data.asm if needed."; \
+	if [ $$actual -gt 295424 ]; then \
+		echo "ERROR: boot+kernel already larger than the filesystem area start (295424 bytes = 577 sectors)."; \
+		echo "Increase KERNEL_SECTORS_1..5 in boot.asm and FS_START_SECTOR in src/data.asm if needed."; \
 		rm -f $@; \
 		exit 1; \
 	fi
-	truncate -s 16M $@
+
+$(BUILD_DIR)/os-image.bin: $(BUILD_DIR)/system.bin $(DISK_FILES) tools/mkdisk.py
+	@if [ -f $@ ]; then \
+		echo "updating the kernel in $@ (its files stay)"; \
+		dd if=$(BUILD_DIR)/system.bin of=$@ conv=notrunc 2>/dev/null; \
+	else \
+		cp $(BUILD_DIR)/system.bin $@; \
+	fi
+	truncate -s '>16M' $@
+	python3 tools/mkdisk.py $@ disk
+	@touch $@
+
+fresh-disk: $(BUILD_DIR)/system.bin
+	rm -f $(BUILD_DIR)/os-image.bin
+	$(MAKE) $(BUILD_DIR)/os-image.bin
 
 # Audio backend for `beep` (see README > Running the pre-built image).
 # Override if the default doesn't work for you, e.g.: make run AUDIODEV=alsa
@@ -88,29 +111,29 @@ lan2: $(BUILD_DIR)/os-image.bin
 	$(LAN_QEMU) -drive format=raw,file=$(BUILD_DIR)/os-image-2.bin,if=ide,index=0 \
 		-nic socket,model=rtl8139,connect=127.0.0.1:$(LAN_PORT),mac=52:54:00:4c:58:16
 
-# Example ring-3 programs (src/usermode.asm), built into shared/ so
-# LexOS can fetch them: hostget hello.app, then run hello.app. The
+# Example ring-3 programs (src/usermode.asm), built into disk/APPS, so
+# they're on LexOS's disk from the start: run hello.app. The
 # assembly ones need only nasm; the C one also a 32-bit-capable gcc
 # and ld (on Debian/Ubuntu: gcc-multilib). The built .APP files are
 # committed, so plain `make` / `make run` never needs any of this.
 APP_CFLAGS = -m32 -ffreestanding -fno-pic -fno-pie -fno-stack-protector \
 	-fno-asynchronous-unwind-tables -nostdlib -O2 -Wall
-C_APPS = guess wc note fire pong mandel modplay ftest cube
+C_APPS = guess wc note fire pong mandel modplay ftest cube maze
 upper = $(shell echo $(1) | tr a-z A-Z)
-apps: shared/HELLO.APP shared/CRASH.APP $(foreach a,$(C_APPS),shared/$(call upper,$(a)).APP)
+apps: disk/APPS/HELLO.APP disk/APPS/CRASH.APP $(foreach a,$(C_APPS),disk/APPS/$(call upper,$(a)).APP)
 
-shared/HELLO.APP: apps/hello.asm apps/lexos.inc
+disk/APPS/HELLO.APP: apps/hello.asm apps/lexos.inc
 	$(ASM) -f bin -i apps/ $< -o $@
 
-shared/CRASH.APP: apps/crash.asm apps/lexos.inc
+disk/APPS/CRASH.APP: apps/crash.asm apps/lexos.inc
 	$(ASM) -f bin -i apps/ $< -o $@
 
 $(BUILD_DIR)/crt0.o: apps/crt0.asm | $(BUILD_DIR)
 	$(ASM) -f elf32 $< -o $@
 
-# one C program per file: apps/guess.c -> shared/GUESS.APP, and so on
+# one C program per file: apps/guess.c -> disk/APPS/GUESS.APP, and so on
 define C_APP_RULE
-shared/$(call upper,$(1)).APP: apps/$(1).c apps/lexos.h apps/app.ld $(BUILD_DIR)/crt0.o
+disk/APPS/$(call upper,$(1)).APP: apps/$(1).c apps/lexos.h apps/app.ld $(BUILD_DIR)/crt0.o
 	gcc $$(APP_CFLAGS) -c apps/$(1).c -o $(BUILD_DIR)/$(1).o
 	ld -m elf_i386 -T apps/app.ld --oformat binary -o $$@ $(BUILD_DIR)/crt0.o $(BUILD_DIR)/$(1).o
 endef

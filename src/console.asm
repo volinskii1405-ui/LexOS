@@ -9,24 +9,26 @@
 ;          console_prompt_prefix, console_saved_addr, console_set_text_vram
 ;
 ; How: every console is a task (src/sched.asm) - console 1 is task 0,
-; the kernel's own flow; the others are created by Alt+T. Only the
-; console on screen ever runs; the others are PAUSED - never
-; scheduled, whatever happens - until switched back to.
+; the kernel's own flow; the others are created by Alt+T - and they all
+; run at once: a program in one carries on while you type in another.
 ;
 ; The kernel itself isn't reentrant: its code keeps a session's state
 ; in ordinary global variables (the command line in `buffer`,
-; fs_current_dir, current_color, BASIC's program, uranium's text...).
-; So a switch saves those and brings in the other console's -
+; fs_current_dir, current_color, BASIC's program, uranium's text, the
+; keyboard queue...). So every console has its own copy of all that -
 ; everything in the kernel image EXCEPT the shared parts (interrupts,
-; drivers, the scheduler, sound, network, the TMP files kept in RAM:
-; console_shared below), plus BASIC's memory, the ring-3 program's 4MB
-; and text video memory - into a per-console save area above 16MB.
-; A few MB of copying, only when you press Alt+something.
+; drivers, the scheduler, sound, network, the desktop: console_shared
+; below), plus BASIC's and the scripts' memory, the ring-3 program's
+; 4MB and the text screen - in its own 5MB above 16MB, and its own page
+; tables (paging, src/usermode.asm) that show it those at the usual
+; addresses. A task runs with its console's tables (other tasks: the
+; console on screen's); a switch only says which console is on screen,
+; and moves the text screen.
 ;
-; And it only happens at a safe point: when the console on screen is
-; waiting for a key (read_key, and a ring-3 program's key system
-; calls) - never in the middle of a disk write or a VGA mode switch.
-; keyboard_isr just records the request; console_safe_point acts on it.
+; Shared parts of the kernel (the filesystem, the disk...) are kept to
+; one console at a time by the kernel lock (bkl_*, src/sched.asm): a
+; console's task holds it whenever it's in the kernel, and lets go
+; while it waits or runs ring-3 code.
 ; ============================================================
 
 CONSOLE_MAX        equ 9
@@ -34,6 +36,12 @@ CONSOLE_SAVE_BASE  equ 0x1000000       ; 16MB
 CONSOLE_SAVE_SIZE  equ 0x500000        ; 5MB each (a program's 4MB + the rest)
 CONSOLE_REQ_NEW    equ 0x80
 CONSOLE_REGIONS_MAX equ 32
+CONSOLE_PT_BASE    equ 0x510000        ; per console: directory, the first
+                                       ; 4MB's table, the program's table
+CONSOLE_LOW_MAX    equ 250             ; its own pages in the first 4MB
+CONSOLE_TEXT_PAGE  equ 255             ; (its text screen, off screen)
+CONSOLE_TEXT_ALIAS equ 0xBF000         ; the VGA's text memory, from any
+                                       ; console's tables
 
 ; ============================================================
 ; Works out which memory is per-console (console_regions): the kernel
@@ -117,46 +125,193 @@ console_init:
     mov dword [console_regions + edx*8], APP_BASE
     mov dword [console_regions + edx*8 + 4], APP_SIZE
     inc edx
-    mov dword [console_regions + edx*8], VIDEO_MEM
-    mov dword [console_regions + edx*8 + 4], SCREEN_COLS * SCREEN_ROWS * 2
-    inc edx
     mov [console_region_count], edx
+
+    ; which pages of the first 4MB those are (whole pages: the shared
+    ; parts are page-aligned in kernel.asm)
+    xor ecx, ecx                            ; the region
+    xor edi, edi                            ; pages so far
+.region:
+    cmp ecx, [console_region_count]
+    jae .paged
+    mov eax, [console_regions + ecx*8]
+    mov ebx, [console_regions + ecx*8 + 4]
+    add ebx, eax
+    add eax, 4095
+    shr eax, 12                             ; the first whole page
+    shr ebx, 12                             ; past the last
+    cmp ebx, 0x400000 >> 12
+    jbe .page
+    mov ebx, 0x400000 >> 12
+.page:
+    cmp eax, ebx
+    jae .region_next
+    cmp edi, CONSOLE_LOW_MAX
+    jae .region_next
+    mov [console_low_pages + edi*2], ax
+    inc edi
+    inc eax
+    jmp .page
+.region_next:
+    inc ecx
+    jmp .region
+.paged:
+    mov [console_low_count], edi
+
+    ; console 1's tables, its pages copied in from where they are now
+    xor eax, eax
+    call console_build
+    cli
+    xor ebx, ebx                            ; (base of console 0's memory)
+    call console_base
+    lea edi, [ebx + APP_SIZE]
+    xor ecx, ecx
+.copy:
+    cmp ecx, [console_low_count]
+    jae .copied
+    movzx esi, word [console_low_pages + ecx*2]
+    shl esi, 12
+    push ecx
+    mov ecx, 1024
+    cld
+    rep movsd
+    pop ecx
+    inc ecx
+    jmp .copy
+.copied:
+    mov eax, CONSOLE_PT_BASE + 0x1000       ; on screen: the VGA's text
+    mov dword [eax + (VIDEO_MEM >> 12) * 4], VIDEO_MEM | 0x03
+    mov eax, [console_cr3]
+    mov cr3, eax
+    mov byte [console_paging], 1
+    mov dword [bkl_owner], 0                ; (task 0 is in the kernel)
+    sti
+    popad
+    ret
+
+; ebx = a console -> ebx = where its own memory starts (above 16MB)
+console_base:
+    imul ebx, ebx, CONSOLE_SAVE_SIZE
+    add ebx, CONSOLE_SAVE_BASE
+    ret
+
+; eax = a console: its page tables (console_cr3) - the kernel's, but
+; its own pages of the first 4MB, its program's 4MB and its text screen
+; in its own memory. (Not on screen yet.)
+console_build:
+    pushad
+    mov ebp, eax
+    mov ebx, eax
+    call console_base                       ; ebx = its memory
+    imul edx, ebp, 0x3000
+    add edx, CONSOLE_PT_BASE                ; edx = its directory
+    mov [console_cr3 + ebp*4], edx
+    mov esi, PAGE_DIR                       ; the directory: the kernel's
+    mov edi, edx
+    mov ecx, 1024
+    cld
+    rep movsd
+    lea eax, [edx + 0x1000]
+    or eax, 0x03
+    mov [edx], eax                          ; the first 4MB: its table
+    lea eax, [edx + 0x2000]
+    or eax, 0x07
+    mov [edx + (APP_BASE >> 22) * 4], eax   ; the program's 4MB: its table
+    lea edi, [edx + 0x1000]                 ; the first 4MB: 1:1...
+    xor ecx, ecx
+.low:
+    mov eax, ecx
+    shl eax, 12
+    or eax, 0x03
+    mov [edi + ecx*4], eax
+    inc ecx
+    cmp ecx, 1024
+    jb .low
+    xor ecx, ecx                            ; ...but its own pages
+.own:
+    cmp ecx, [console_low_count]
+    jae .own_done
+    movzx esi, word [console_low_pages + ecx*2]
+    mov eax, ecx
+    shl eax, 12
+    add eax, ebx
+    add eax, APP_SIZE
+    or eax, 0x03
+    mov [edi + esi*4], eax
+    inc ecx
+    jmp .own
+.own_done:
+    lea eax, [ebx + APP_SIZE + CONSOLE_TEXT_PAGE * 4096]
+    or eax, 0x03
+    mov [edi + (VIDEO_MEM >> 12) * 4], eax  ; its text screen, off screen
+    mov dword [edi + (CONSOLE_TEXT_ALIAS >> 12) * 4], VIDEO_MEM | 0x03
+    lea edi, [edx + 0x2000]                 ; the program's 4MB
+    mov eax, ebx
+    or eax, 0x07                            ; (user)
+    xor ecx, ecx
+.app:
+    mov [edi + ecx*4], eax
+    add eax, 4096
+    inc ecx
+    cmp ecx, APP_SIZE / 4096
+    jb .app
     popad
     ret
 
 ; ============================================================
-; Called wherever the console on screen waits for a key. Acts on an
-; Alt+T / Alt+digit that keyboard_isr recorded.
+; Called by a console's task at moments nothing of the kernel's is half
+; done (waiting for a key, a game's frame, a BASIC statement...):
+; carries out a console switch someone asked for, lets another console
+; waiting for the kernel lock in, and moves this console's program onto
+; the whole screen if the desktop went away under its window.
 ; ============================================================
 console_safe_point:
     cmp byte [console_request], 0
-    jne .go
+    je .no_request
+    call console_do_request
+.no_request:
+    cmp dword [bkl_waiters], 0
+    je .no_waiters
+    call bkl_yield                          ; (src/sched.asm)
+.no_waiters:
+    cmp byte [dk_active], 0
+    jne .done
+    cmp byte [vga_windowed], 0
+    jne .unwindow
+    cmp byte [app_gfx], 3
+    jne .done
+.unwindow:
+    push eax
+    mov al, [console_self]
+    cmp al, [console_fg]
+    pop eax
+    jne .done                               ; (when it's on screen)
+    call console_unwindow
+.done:
     ret
-.go:
+
+; Acts on console_request (Alt+T / Alt+digit, a click on the desktop) -
+; from any task
+console_do_request:
     pushad
+    pushfd
+    cli
     movzx eax, byte [console_request]
     mov byte [console_request], 0
+    popfd
+    or eax, eax
+    jz .done
+    cmp byte [dk_active], 0                 ; not away from a program that
+    jne .ok                                 ; has the whole screen
     cmp byte [vga_graphics_active], 0
-    je .screen_ok
-    cmp byte [dk_active], 0                 ; not from a graphics program -
-    je .done                                ; but the desktop's windows are
-    cmp byte [dk_suspended], 0              ; each a console's, so there
-    jne .done                               ; switching is fine
-.screen_ok:
-    mov ecx, [sched_current]
-    movzx ebx, byte [task_console + ecx]
-    cmp bl, [console_fg]
-    jne .done                               ; (only the one on screen)
+    jne .done
+.ok:
     cmp eax, CONSOLE_REQ_NEW
     je .new
-    dec eax                                 ; Alt+1 = console index 0
+    dec eax
     cmp eax, CONSOLE_MAX
     jae .done
-    cmp al, [console_fg]
-    je .done
-    cmp byte [console_used + eax], 0
-    je .done
-    call console_switch
+    call console_switch_to
     jmp .done
 .new:
     call console_open
@@ -165,29 +320,90 @@ console_safe_point:
     ret
 
 ; ============================================================
-; Switches from the console on screen (the caller's) to console eax,
-; and returns once this one is switched back to.
+; eax = a console: puts it on screen - its text onto the VGA (and the
+; one that was there into its own page), the keyboard to it. Its task
+; and everyone else's carry on as they were. From any task.
 ; ============================================================
-console_switch:
+console_switch_to:
     pushad
-    inc dword [sched_lock]                  ; nobody else runs meanwhile
+    pushfd
+    cli
     movzx ebx, byte [console_fg]
+    cmp eax, ebx
+    je .done
+    cmp eax, CONSOLE_MAX
+    jae .done
+    cmp byte [console_used + eax], 0
+    je .done
     mov [console_prev], bl
-    push eax
-    mov eax, ebx
-    call console_save
-    pop eax
-    call console_restore
+    ; the text screen: the one on it back into its own page...
+    push ebx
+    call console_base
+    lea edi, [ebx + APP_SIZE + CONSOLE_TEXT_PAGE * 4096]
+    pop ebx
+    mov esi, CONSOLE_TEXT_ALIAS
+    mov ecx, 1024
+    cld
+    rep movsd
+    imul edx, ebx, 0x3000
+    add edx, CONSOLE_PT_BASE + 0x1000
+    sub edi, 4096
+    or edi, 0x03
+    mov [edx + (VIDEO_MEM >> 12) * 4], edi
+    ; ...and the new one's onto it
+    mov ebx, eax
+    call console_base
+    lea esi, [ebx + APP_SIZE + CONSOLE_TEXT_PAGE * 4096]
+    mov edi, CONSOLE_TEXT_ALIAS
+    mov ecx, 1024
+    rep movsd
+    imul edx, eax, 0x3000
+    add edx, CONSOLE_PT_BASE + 0x1000
+    mov dword [edx + (VIDEO_MEM >> 12) * 4], VIDEO_MEM | 0x03
+    invlpg [VIDEO_MEM]
     mov [console_fg], al
-    call console_after_switch
-    mov ecx, [console_task + eax*4]
-    call console_hand_over                  ; (returns when we're back)
+    mov ecx, [sched_current]                ; a task of no console's (the
+    cmp byte [task_console + ecx], 0xFF     ; desktop) sees the one on
+    jne .cursor                             ; screen's memory
+    mov edx, [console_cr3 + eax*4]
+    mov cr3, edx
+.cursor:
+    call console_fg_cursor
+.done:
+    popfd
     popad
     ret
 
-; Opens a new console (the first free one) and switches to it. Its
-; session starts as a copy of this one - then console_shell_start
-; resets what should be fresh.
+; The VGA's cursor where the console on screen has it
+console_fg_cursor:
+    pushad
+    movzx eax, byte [console_fg]
+    mov ebx, cursor_row
+    call console_saved_addr
+    movzx ecx, word [ebx]
+    mov ebx, cursor_col
+    call console_saved_addr
+    movzx ebx, word [ebx]
+    imul ecx, SCREEN_COLS
+    add ebx, ecx
+    mov dx, 0x3D4
+    mov al, 14
+    out dx, al
+    mov dx, 0x3D5
+    mov al, bh
+    out dx, al
+    mov dx, 0x3D4
+    mov al, 15
+    out dx, al
+    mov dx, 0x3D5
+    mov al, bl
+    out dx, al
+    popad
+    ret
+
+; Opens a new console (the first free one) and puts it on screen. Its
+; session starts as a copy of the one on screen's - then
+; console_shell_start resets what should be fresh. From any task.
 console_open:
     pushad
     xor eax, eax
@@ -208,6 +424,22 @@ console_open:
     ret
 .found:
     mov edx, eax                            ; edx = the new index
+    inc dword [sched_lock]
+    call console_build
+    movzx ebx, byte [console_fg]            ; its pages: the on-screen one's
+    call console_base
+    lea esi, [ebx + APP_SIZE]
+    mov ebx, edx
+    call console_base
+    lea edi, [ebx + APP_SIZE]
+    mov ecx, [console_low_count]
+    shl ecx, 10
+    cld
+    rep movsd
+    mov eax, edx                            ; it knows which it is
+    mov ebx, console_self
+    call console_saved_addr
+    mov [ebx], dl
     ; the task's name, "console N"
     mov esi, console_name_prefix
     mov edi, console_task_name
@@ -216,37 +448,18 @@ console_open:
     lea eax, [edx + '1']
     mov [console_task_name + 8], al
     mov byte [console_task_name + 9], 0
-
-    inc dword [sched_lock]
     mov eax, console_shell_start
     mov esi, console_task_name
     mov bl, SCHED_PRIO_NORMAL
     call task_create
     cmp eax, -1
     je .no_task
-    mov ecx, eax                            ; ecx = its task
-    mov [console_task + edx*4], ecx
+    mov [console_task + edx*4], eax
+    mov [task_console + eax], dl
     mov byte [console_used + edx], 1
-    mov [task_console + ecx], dl
-    movzx ebx, byte [console_fg]
-    mov [console_prev], bl
-    mov eax, ebx
-    call console_save
-    mov [console_fg], dl
-    call console_after_switch
-    cmp byte [console_open_desk], 0
-    jne .for_desktop
-    call console_hand_over
-    popad
-    ret
-.for_desktop:                               ; (console_desktop_switch)
-    pushfd
-    cli
-    mov eax, [console_task + ebx*4]         ; the one that was on screen
-    mov byte [task_state + eax], TASK_PAUSED ; waits; the new one runs
-    mov byte [task_state + ecx], TASK_READY
     dec dword [sched_lock]
-    popfd
+    mov eax, edx
+    call console_switch_to
     popad
     ret
 .no_task:
@@ -256,198 +469,92 @@ console_open:
     popad
     ret
 
-; ============================================================
-; From the desktop's task, each frame (sched_lock held): a switch asked
-; for (a click on another console's window) while the console on screen
-; is running a program's own code in ring 3 - which never gets to
-; console_safe_point if it doesn't read keys. That's as safe a moment
-; as a key wait: nothing of the kernel's is half done. Its task is
-; paused where it is, like the others.
-; ============================================================
-console_desktop_switch:
-    pushad
-    movzx eax, byte [console_request]
-    or eax, eax
-    jz .done
-    movzx ebx, byte [console_fg]
-    mov ecx, [console_task + ebx*4]
-    cmp byte [app_active], 0                ; a program, in its own code
-    je .done
-    cmp byte [task_insys + ecx], 0
-    jne .done
-    cmp byte [task_keywait + ecx], 0        ; (else it does it itself)
-    jne .done
-    cmp byte [task_state + ecx], TASK_READY
-    jne .done
-    mov byte [console_request], 0
-    cmp eax, CONSOLE_REQ_NEW
-    je .new
-    dec eax
-    cmp eax, CONSOLE_MAX
-    jae .done
-    cmp al, bl
-    je .done
-    cmp byte [console_used + eax], 0
-    je .done
-    mov [console_prev], bl
+; Waits until this console is the one on screen (a program that wants
+; the whole screen)
+console_wait_fg:
     push eax
-    mov eax, ebx
-    call console_save
-    pop eax
-    call console_restore
-    mov [console_fg], al
-    call console_after_switch
-    mov edx, [console_task + eax*4]
-    pushfd
-    cli
-    mov byte [task_state + ecx], TASK_PAUSED
-    mov byte [task_state + edx], TASK_READY
-    popfd
-    jmp .done
-.new:
-    mov byte [console_open_desk], 1
-    call console_open
-    mov byte [console_open_desk], 0
+.check:
+    mov al, [console_self]
+    cmp al, [console_fg]
+    je .done
+    mov eax, WAIT_TICK
+    call task_wait
+    jmp .check
 .done:
-    popad
-    ret
-
-; With sched_lock held: pauses the calling console's task and runs task
-; ecx (another console) instead. Returns when this task is resumed.
-console_hand_over:
-    pushfd
-    cli
-    mov edx, [sched_current]
-    mov byte [task_state + edx], TASK_PAUSED
-    mov byte [task_state + ecx], TASK_READY
-    dec dword [sched_lock]
-    call sched_yield_to
-    popfd
-    ret
-
-; Screen and keyboard, after the memory swap: the new console's cursor,
-; and none of the old one's type-ahead.
-console_after_switch:
-    push eax
-    mov al, [kbd_buf_head]
-    mov [kbd_buf_tail], al
-    call console_set_text_vram
-    call vga_sync_window                    ; (its mode 13h window's picture)
-    call update_hw_cursor
-    cmp byte [dk_active], 0
-    jne .windows
-    call console_unwindow                   ; (no desktop to show them)
-.windows:
     pop eax
     ret
 
-; A program of the console on screen still drawing in a desktop window
-; that's gone: onto the whole screen
+; A program of this console still drawing in a desktop window that's
+; gone: onto the whole screen
 console_unwindow:
     call vga_unwindow                       ; (src/vga.asm)
     call app_unwindow                       ; (src/appsys.asm)
     ret
 
-; text_vram for the console on screen: the VGA's text memory - or, with
-; the desktop on, that console's buffer (its Terminal window's text)
+; Every console's text_vram: the VGA's text memory (its own page, when
+; it's not on screen) - or, with the desktop on, its buffer there (its
+; Terminal window's text)
 console_set_text_vram:
-    push eax
-    mov eax, VIDEO_MEM
+    pushad
+    xor eax, eax
+.console:
+    cmp byte [console_used + eax], 0
+    je .next
+    mov ecx, VIDEO_MEM
     cmp byte [dk_active], 0
     je .set
-    movzx eax, byte [console_fg]
-    shl eax, 12
-    add eax, DESK_TEXT
+    mov ecx, eax
+    shl ecx, 12
+    add ecx, DESK_TEXT
 .set:
-    mov [text_vram], eax
-    pop eax
-    ret
-
-; eax = a console, ebx = an address in per-console memory -> ebx = where
-; that console keeps it: the live address if it's the one on screen,
-; else inside its save area. ebx = 0 if the address isn't per-console.
-console_saved_addr:
-    cmp al, [console_fg]
-    je .live
-    push eax
-    push ecx
-    push edx
-    push esi
-    imul esi, eax, CONSOLE_SAVE_SIZE
-    add esi, CONSOLE_SAVE_BASE            ; esi = where the region's copy starts
-    xor ecx, ecx
-.region:
-    cmp ecx, [console_region_count]
-    jae .none
-    mov eax, [console_regions + ecx*8]
-    mov edx, [console_regions + ecx*8 + 4]
-    cmp ebx, eax
-    jb .next
-    lea eax, [eax + edx]
-    cmp ebx, eax
-    jae .next
-    sub ebx, [console_regions + ecx*8]
-    add ebx, esi
-    jmp .done
+    mov ebx, text_vram
+    call console_saved_addr
+    mov [ebx], ecx
 .next:
-    add esi, edx
-    inc ecx
-    jmp .region
-.none:
-    xor ebx, ebx
-.done:
-    pop esi
-    pop edx
-    pop ecx
+    inc eax
+    cmp eax, CONSOLE_MAX
+    jb .console
+    popad
+    ret
+
+; eax = a console, ebx = an address -> ebx = where that console's copy
+; of it is, reachable from any task (its own memory is above 16MB; its
+; text screen, when on screen, through CONSOLE_TEXT_ALIAS). Shared
+; memory: the address itself.
+console_saved_addr:
+    cmp byte [console_paging], 0
+    je .same
+    cmp ebx, APP_BASE
+    jb .low
+    cmp ebx, APP_BASE + APP_SIZE
+    jae .same
+    push eax                                ; its program's memory
+    xchg eax, ebx
+    call console_base
+    sub eax, APP_BASE
+    add ebx, eax
     pop eax
-.live:
     ret
-
-; eax = console index: its per-console memory -> its save area
-console_save:
-    pushad
-    imul edi, eax, CONSOLE_SAVE_SIZE
-    add edi, CONSOLE_SAVE_BASE
-    xor ebx, ebx
-.region:
-    cmp ebx, [console_region_count]
-    jae .done
-    mov esi, [console_regions + ebx*8]
-    mov ecx, [console_regions + ebx*8 + 4]
-    call console_copy
-    inc ebx
-    jmp .region
-.done:
-    popad
-    ret
-
-; eax = console index: its save area -> the live memory
-console_restore:
-    pushad
-    imul esi, eax, CONSOLE_SAVE_SIZE
-    add esi, CONSOLE_SAVE_BASE
-    xor ebx, ebx
-.region:
-    cmp ebx, [console_region_count]
-    jae .done
-    mov edi, [console_regions + ebx*8]
-    mov ecx, [console_regions + ebx*8 + 4]
-    call console_copy
-    inc ebx
-    jmp .region
-.done:
-    popad
-    ret
-
-; ecx bytes esi -> edi (both advanced)
-console_copy:
-    push ecx
-    cld
-    shr ecx, 2
-    rep movsd
-    pop ecx
-    and ecx, 3
-    rep movsb
+.low:
+    cmp ebx, 0x400000
+    jae .same
+    push eax
+    push edx
+    imul edx, eax, 0x3000
+    add edx, CONSOLE_PT_BASE + 0x1000
+    mov eax, ebx
+    shr eax, 12
+    mov eax, [edx + eax*4]
+    and eax, 0xFFFFF000
+    cmp eax, VIDEO_MEM
+    jne .page
+    mov eax, CONSOLE_TEXT_ALIAS
+.page:
+    and ebx, 0xFFF
+    or ebx, eax
+    pop edx
+    pop eax
+.same:
     ret
 
 ; ============================================================
@@ -456,6 +563,11 @@ console_copy:
 ; ordinary shell loop (kernel.asm's main_loop), forever.
 ; ============================================================
 console_shell_start:
+    call bkl_take                           ; (src/sched.asm)
+    movzx eax, byte [console_self]          ; (no scrollback of the one
+    mov dword [dk_sb_count + eax*4], 0      ; that was here before)
+    mov byte [kbd_buf_head], 0              ; (none of the other's keys)
+    mov byte [kbd_buf_tail], 0
     mov word [buf_len], 0
     mov word [buf_cursor], 0
     mov byte [buffer], 0
@@ -467,11 +579,19 @@ console_shell_start:
     mov byte [app_gfx], 0                   ; (not the other console's window)
     mov byte [vga_windowed], 0
     mov byte [prog_title], 0
+    mov dword [text_vram], VIDEO_MEM
+    cmp byte [dk_active], 0
+    je .text_set
+    movzx eax, byte [console_self]
+    shl eax, 12
+    add eax, DESK_TEXT
+    mov [text_vram], eax
+.text_set:
     call vga_sync_window
     call clear_screen
     mov esi, console_msg_banner1
     call basic_puts
-    movzx eax, byte [console_fg]
+    movzx eax, byte [console_self]
     inc eax
     call basic_print_num
     mov esi, console_msg_banner2
@@ -484,16 +604,14 @@ console_shell_start:
 ; one you came from.
 ; ============================================================
 console_cmd_exit:
-    cmp byte [console_fg], 0
+    cmp byte [console_self], 0
     jne .close
     mov si, msg_console_first
     call print_string
     ret
 .close:
-    cli
-    inc dword [sched_lock]
-    movzx edx, byte [console_fg]
-    movzx eax, byte [console_prev]
+    movzx edx, byte [console_self]
+    movzx eax, byte [console_prev]          ; back to the one you came from
     cmp eax, edx
     je .to_first
     cmp byte [console_used + eax], 0
@@ -501,27 +619,25 @@ console_cmd_exit:
 .to_first:
     xor eax, eax
 .have_target:
-    sti
-    call console_restore
+    cmp dl, [console_fg]
+    jne .off_screen
+    call console_switch_to
+.off_screen:
     cli
-    mov [console_fg], al
     mov byte [console_used + edx], 0
     mov ecx, [sched_current]
     mov byte [task_console + ecx], 0xFF
-    call console_after_switch
-    mov ecx, [console_task + eax*4]
-    mov byte [task_state + ecx], TASK_READY
-    mov dword [sched_lock], 0
+    call bkl_drop
     jmp task_exit                           ; (this console's task ends)
 
 ; "[N] " before the prompt, in consoles 2-9
 console_prompt_prefix:
-    cmp byte [console_fg], 0
+    cmp byte [console_self], 0
     je .none
     push eax
     mov al, '['
     call print_char
-    mov al, [console_fg]
+    mov al, [console_self]
     add al, '1'
     call print_char
     mov al, ']'
@@ -535,10 +651,12 @@ console_prompt_prefix:
 ; ============================================================
 ; Data (all shared - see console_shared)
 ; ============================================================
-console_fg         db 0
-text_vram          dd VIDEO_MEM       ; src/screen.asm writes the text here
+console_fg         db 0               ; the one on screen
 console_prev       db 0
-console_open_desk  db 0               ; console_open from the desktop
+console_paging     db 0               ; its page tables are in use
+console_cr3        times CONSOLE_MAX dd PAGE_DIR
+console_low_count  dd 0
+console_low_pages  times CONSOLE_LOW_MAX dw 0   ; page numbers
 console_request    db 0               ; set by keyboard_isr: 1-9 or NEW
 console_used       times CONSOLE_MAX db 0
 console_task       times CONSOLE_MAX dd 0

@@ -60,8 +60,9 @@ WAIT_TICK          equ 2            ; timer tick (~18.2Hz)
 WAIT_AUDIO         equ 4            ; audio_fast_tick_isr
 WAIT_MS            equ 8            ; every timer interrupt (~1000Hz)
 
-SCHED_PRIO_NORMAL  equ 1
-SCHED_PRIO_HIGH    equ 2
+SCHED_PRIO_LOW     equ 1            ; (runs only when nothing else will)
+SCHED_PRIO_NORMAL  equ 2
+SCHED_PRIO_HIGH    equ 3
 
 TASK_NAME_LEN      equ 20
 
@@ -164,10 +165,17 @@ sched_best_prio:
 sched_find_other:
     push eax
     mov eax, [sched_current]
-    mov ecx, SCHED_MAX - 1
+    cmp [task_prio + eax], bl             ; a higher-priority task stepping
+    je .round                             ; aside: first the one it had
+    mov eax, [sched_interrupted]          ; interrupted (else a busy one
+    dec eax                               ; next in line would get every
+.round:                                   ; turn after it)
+    mov ecx, SCHED_MAX
 .loop:
     inc eax
     and eax, SCHED_MAX - 1
+    cmp eax, [sched_current]
+    je .next
     cmp byte [task_state + eax], TASK_READY
     jne .next
     cmp [task_prio + eax], bl
@@ -192,7 +200,15 @@ sched_switch_to:
     mov byte [sched_idle], 0              ; (the next one isn't halting)
     mov eax, [sched_current]
     mov [task_esp + eax*4], esp
+    push edx
+    mov dl, [task_prio + ecx]             ; a higher priority taking over:
+    cmp dl, [task_prio + eax]             ; remember who was running
+    jbe .not_higher
+    mov [sched_interrupted], eax
+.not_higher:
+    pop edx
     mov [sched_current], ecx
+    call sched_load_cr3
     mov eax, [task_kstack + ecx*4]        ; a task that's running a ring-3
     or eax, eax                           ; program (src/usermode.asm):
     jz .no_ring3                          ; interrupts from it land on
@@ -202,6 +218,89 @@ sched_switch_to:
     or al, 0x08                           ; use (TS -> #NM, fpu_nm_isr in
     mov cr0, eax                          ; src/usermode.asm)
     mov esp, [task_esp + ecx*4]
+    ret
+
+; ecx = the task about to run: its console's page tables (src/console.asm)
+; - a task of no console's gets the one on screen's
+sched_load_cr3:
+    push eax
+    push edx
+    movzx eax, byte [task_console + ecx]
+    cmp al, 0xFF
+    jne .console
+    mov al, [console_fg]
+.console:
+    mov eax, [console_cr3 + eax*4]
+    mov edx, cr3
+    cmp eax, edx
+    je .same
+    mov cr3, eax
+.same:
+    pop edx
+    pop eax
+    ret
+
+; ============================================================
+; The kernel lock: whether a console's task may be in the kernel. The
+; kernel's code isn't reentrant, and the consoles all run at once - so
+; a console's task holds this whenever it runs kernel code, and lets go
+; while it waits (task_wait) or runs its ring-3 program. Tasks of no
+; console (the desktop, the clock, music) don't take it - they were
+; written to run alongside a console. The filesystem, the disk... never
+; wait halfway, so they're never shared halfway.
+; ============================================================
+
+; Takes it for the calling task (waits while another console has it)
+bkl_take:
+    pushfd
+    push eax
+    push ecx
+    mov ecx, [sched_current]
+    cmp byte [task_console + ecx], 0xFF
+    je .done
+.try:
+    cli
+    mov eax, [bkl_owner]
+    cmp eax, -1
+    je .mine
+    cmp eax, ecx
+    je .done
+    inc dword [bkl_waiters]
+    mov eax, WAIT_MS
+    call task_wait_raw
+    dec dword [bkl_waiters]
+    jmp .try
+.mine:
+    mov [bkl_owner], ecx
+.done:
+    pop ecx
+    pop eax
+    popfd
+    ret
+
+; Lets go of it, if the calling task has it
+bkl_drop:
+    push eax
+    mov eax, [sched_current]
+    cmp [bkl_owner], eax
+    jne .done
+    mov dword [bkl_owner], -1
+.done:
+    pop eax
+    ret
+
+; Someone's waiting for it: let them have a turn
+bkl_yield:
+    push eax
+    mov eax, [sched_current]
+    cmp [bkl_owner], eax
+    jne .done
+    call bkl_drop
+    mov eax, WAIT_MS
+    call task_wait_raw
+    call bkl_take
+.done:
+    pop eax
     ret
 
 ; The same, from ordinary code rather than an interrupt: builds the
@@ -226,6 +325,23 @@ sched_resume:
 ; re-checks whatever it was waiting for and calls again if needed.
 ; ============================================================
 task_wait:
+    push ebx                              ; (the kernel lock: let go meanwhile)
+    push eax
+    mov ebx, [sched_current]
+    cmp [bkl_owner], ebx
+    pop eax
+    jne .not_held
+    mov dword [bkl_owner], -1
+    call task_wait_raw
+    call bkl_take
+    pop ebx
+    ret
+.not_held:
+    call task_wait_raw
+    pop ebx
+    ret
+
+task_wait_raw:
     pushfd
     cli
     pushad
@@ -347,6 +463,7 @@ sched_task_start:
 task_exit:
     cli
     call fpu_forget_current               ; (src/usermode.asm)
+    call bkl_drop
     mov edx, [sched_current]
     mov byte [task_state + edx], TASK_FREE
     mov dword [sched_lock], 0
@@ -358,6 +475,7 @@ task_exit:
     mov byte [task_state], TASK_READY     ; wait loop just waits again
 .go:
     mov [sched_current], ecx
+    call sched_load_cr3
     mov eax, [task_kstack + ecx*4]
     or eax, eax
     jz .no_ring3
@@ -387,6 +505,10 @@ task_kill:
     pushfd
     cli
     mov byte [task_state + eax], TASK_FREE
+    cmp [bkl_owner], eax                  ; (it can't let go of it now)
+    jne .not_holding
+    mov dword [bkl_owner], -1
+.not_holding:
     popfd
     push eax
     mov eax, [task_kill_hook + eax*4]
@@ -441,8 +563,12 @@ sched_cmd_ps:
     call basic_puts
     mov esi, sched_msg_normal
     cmp byte [task_prio + ecx], SCHED_PRIO_HIGH
-    jne .prio
+    jne .not_high
     mov esi, sched_msg_high
+.not_high:
+    cmp byte [task_prio + ecx], SCHED_PRIO_LOW
+    jne .prio
+    mov esi, sched_msg_low
 .prio:
     call basic_puts
     ; CPU time in seconds, one decimal: ticks * 10 / 182
@@ -632,6 +758,9 @@ sched_current      dd 0
 sched_lock         dd 0             ; >0: no switching (see the header)
 sched_idle         db 0             ; task_wait is halting, nothing to run
 task_keywait       times SCHED_MAX db 0 ; waiting in read_key (a safe point)
+sched_interrupted  dd 0                ; (see sched_find_other)
+bkl_owner          dd -1                ; the task in the kernel (a console's)
+bkl_waiters        dd 0
 task_insys         times SCHED_MAX db 0 ; inside a program's system call
 sched_cs           dd 0x08
 task_state         times SCHED_MAX db 0
@@ -654,4 +783,5 @@ sched_msg_waiting  db "waiting   ", 0
 sched_msg_paused   db "paused    ", 0
 sched_msg_normal   db "normal  ", 0
 sched_msg_high     db "high    ", 0
+sched_msg_low      db "low     ", 0
 sched_msg_gap      db "   ", 0

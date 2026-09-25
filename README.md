@@ -32,21 +32,25 @@ speaker goes through hardware ports that this project drives itself.
 
 ## Screenshots
 
-**First boot** — a green backdrop and a centered window ask for a nickname
-and a UTC offset, then saves both to `USER.CFG`:
+**First boot** — in graphics, on a green screen: a card asks, one step at
+a time, for a nickname, a password (or none), the time zone (Left/Right
+through the world, with its cities) and the language - English, or
+English and Russian. Then the desktop, straight away; every later boot
+asks for the password on the same screen first (src/welcome.asm).
 
 ```
-            ┌──────────────────────────────────────────────────────┐
-            │               LexOS - First Boot Setup                │
-            │                                                        │
-            │  Nickname:                                             │
-            │  > alex                                                │
-            │                                                        │
-            │  UTC timezone offset (e.g. +3, -5, 0):                 │
-            │  > +3                                                  │
-            │                                                        │
-            │       Saved to USER.CFG - shown in your prompt.        │
-            └──────────────────────────────────────────────────────┘
+                              L e x O S
+               a hobby operating system, written in assembly
+        ┌────────────────────────────────────────────────────────┐
+        │  ━━━━━━━━━━━━  ━━━━━━━━━━━━  ━━━━━━━━━━━━  ────────────  │
+        │  Your time zone                                          │
+        │  Where are you? The clocks will show your time.          │
+        │  ┌────────────────────────────────────────────────────┐  │
+        │  │ ◄                    UTC+3                       ► │  │
+        │  └────────────────────────────────────────────────────┘  │
+        │                Moscow, Istanbul, Minsk                   │
+        │  Left / Right: the time zone   Enter: next   Esc: back   │
+        └────────────────────────────────────────────────────────┘
 ```
 
 **Straight into the console** — `ls`, `cd`, and `run`-ning a program from
@@ -117,7 +121,7 @@ alex@/PROGRAMS$
   loop. `set`, `unset`, `vars`, `input` and `sleep` also work at the
   prompt, which expands `$variables` too (unknown ones stay as typed).
   `AUTOEXEC.HG` in the root folder runs at every boot. Try
-  `hostget quiz.hg`, then `quiz.hg` - a times-table quiz.
+  `cd /demos`, then `quiz.hg` - a times-table quiz.
 - `cp`/`mv` also support wildcards: `cp *.txt <folder>` copies every match
   into `<folder>` under its own name, and `mv *.txt <folder>` moves them
   the same way; both skip `USER.CFG` and any name already taken in the
@@ -176,11 +180,18 @@ alex@/PROGRAMS$
   not command names, and picks the first match on disk rather than an
   alphabetical one. Turned off during the first-boot nickname/timezone
   prompts below, where completing against filenames wouldn't make sense.
-- The very first boot shows a centered setup window (on a green backdrop)
-  asking for a nickname and a UTC timezone offset, then drops you into the
-  console. Both are saved to `USER.CFG` (a plain two-line text file). The
-  nickname shows up in every prompt as `nickname@/path$ `, and the offset
-  shifts what `time` displays.
+- The very first boot is a graphical setup (src/welcome.asm): nickname,
+  password, time zone, language. `USER.CFG` keeps them - the nickname, the
+  UTC offset, the password's FNV-1a hash (empty: none) and `en` or `ru`,
+  a line each (a two-line one from before still works). The nickname shows
+  up in every prompt as `nickname@/path$ `, the offset in every clock.
+  After that every boot goes straight to the desktop (Terminal 1 waits on
+  the taskbar), through a login screen if there's a password. Without the
+  BGA video it's the old text setup, and the shell.
+- **Russian** (src/lang.asm), if chosen: the Cyrillic letters of code page
+  866 in the VGA font - the text screen, the desktop and the programs all
+  show them - and the ЙЦУКЕН layout: Alt+Shift, or the tray's EN/RU,
+  switches.
 - `USER.CFG` itself is protected: `rm`, `ren`, `mv`, and `uranium` all
   refuse to touch it (with an explanatory message), though `cat`/`grep`/
   `head`/`tail` can still read it like any other file.
@@ -269,8 +280,8 @@ alex@/PROGRAMS$
   program, and errors come out the classic way (`?SYNTAX ERROR IN 30`).
   Lines are interpreted straight from their text, Tiny BASIC style; the
   program, strings and arrays live above the 1MB mark, so a program can
-  be up to 64KB. Try `shared/GUESS.BAS` (guess the number) and
-  `shared/CATCH.BAS` (catch falling stars with A/D or the arrows).
+  be up to 64KB. Try `/DEMOS/GUESS.BAS` (guess the number) and
+  `/DEMOS/CATCH.BAS` (catch falling stars with A/D or the arrows).
 - **Sound.** `play <n.imf>` plays AdLib music (OPL2, Type-0 IMF at
   560Hz); `play <n.wav>` plays uncompressed PCM - 8- or 16-bit, mono or
   stereo, any rate - through a **Sound Blaster 16**: the DSP is found
@@ -285,15 +296,21 @@ alex@/PROGRAMS$
   you're in; the prompt says which you're in (`[2] test@/$`). Each is
   a whole separate session - its own screen, command line and
   history, current directory, colors, BASIC program, uranium file, even
-  a ring-3 program left waiting for input - while background tasks
-  (the clock, music) carry on across all of them. Every console is a
-  task; only the one on screen runs, the rest are paused. Since the
-  kernel keeps session state in ordinary globals, a switch swaps them:
-  the kernel image except its shared parts (interrupts, drivers, the
-  scheduler, sound, network, RAM-backed TMP files), plus BASIC's
-  memory, the program's 4MB and the text screen, into a 5MB save area
-  per console - only ever at a safe point, while the console on screen
-  is waiting for a key.
+  a ring-3 program - and they all run at once: a program computing in
+  one carries on while you type in another, background tasks (the
+  clock, music) across all of them. Every console is a task with its
+  own page tables (src/console.asm): the kernel keeps session state in
+  ordinary globals, so each console has its own copy of the kernel
+  image except its shared parts (interrupts, drivers, the scheduler,
+  sound, network, the desktop - page-aligned in kernel.asm for this),
+  plus BASIC's and the scripts' memory, its program's 4MB, its text
+  screen and its keyboard queue, in 5MB of its own - shown at the usual
+  addresses to its task. A switch copies nothing: it says which
+  console's on screen (and moves the text screen). The kernel isn't
+  reentrant, so a console's task holds the kernel lock (src/sched.asm)
+  while it's in the kernel, and lets go while it waits or runs ring-3
+  code; games, BASIC and the network let others in at safe points. The
+  keys go only to the console on screen.
 - **Protected programs (ring 3).** `run <name>.app` runs a program in
   user mode, the way real operating systems do: paging maps it its own
   4MB and nothing else, so it can't touch the kernel, the screen or
@@ -307,9 +324,12 @@ alex@/PROGRAMS$
   LexOS itself now shows a kernel panic screen (which exception,
   where) instead of silently hanging. Programs can be written in
   assembly (`apps/lexos.inc`) or C (`apps/lexos.h`, built with
-  `gcc -m32`): `make apps` builds the examples into `shared/` -
-  `HELLO.APP`, `CRASH.APP` (a menu of forbidden things to try) and
-  `GUESS.APP` (in C). Try `hostget crash.app`, then `run crash.app`.
+  `gcc -m32`): `make apps` builds the examples into `disk/APPS/`, and
+  they're on LexOS's disk from the start, in `/APPS` - `HELLO.APP`,
+  `CRASH.APP` (a menu of forbidden things to try) and `GUESS.APP` (in
+  C). Try `run crash.app`: `run` looks in `/APPS` when the program
+  isn't in the current folder (which stays the program's current
+  folder, so `run wc.app readme` counts the README where you are).
 - **Files, arguments, memory and graphics for programs**
   (src/appsys.asm). `run <name>.app arg1 arg2` passes the rest of the
   line to the program - `main(argc, argv)` in C, `ebx` points to it
@@ -346,23 +366,46 @@ alex@/PROGRAMS$
   `floor` and `print_float`, each a few x87 instructions. The old ~18.2Hz tick everything else in the
   kernel is paced by keeps going underneath, counted off the same
   interrupt.
-  Examples (`make apps`, then `hostget` them): `WC.APP` (`run wc.app
+  Examples (in `/APPS`, built by `make apps`): `WC.APP` (`run wc.app
   LICENSE` - lines, words, bytes), `NOTE.APP` (`run note.app todo.txt
   buy milk` adds a line, `run note.app todo.txt` lists them),
   `FIRE.APP` (the demo-scene fire effect), `PONG.APP` (W/S or
   Up/Down against LexOS), `MANDEL.APP` (the Mandelbrot set in
   800x600 true color: arrows move, +/- zoom), `MODPLAY.APP`, a
-  ProTracker `.MOD` player mixing 4 channels in software (`hostget
-  demo.mod`, then `run modplay.app demo.mod` - DEMO.MOD is built by
+  ProTracker `.MOD` player mixing 4 channels in software (`cd /demos`,
+  then `run modplay.app demo.mod` - DEMO.MOD is built by
   `tools/makemod.py` from synthesized samples; any 4-channel .MOD
   works), `FTEST.APP` (the math functions, and a long sum - run it
-  in two consoles at once) and `CUBE.APP` (a spinning 3D wireframe in
-  640x480, arrows change the spin).
+  in two consoles at once), `CUBE.APP` (a spinning 3D wireframe in
+  640x480, arrows change the spin) and `MAZE.APP` - find the way out
+  of a maze in 3D, Wolfenstein-style: a raycaster with textured walls,
+  a tiled floor and ceiling, fog and a map (M); arrows / WASD, each
+  level a new, bigger maze.
 - **Desktop.** `desktop` switches to a graphical desktop in 1024x768
   true color: windows with title bars you drag with the mouse, that
-  come to the front when clicked and close with their [x], a taskbar
-  with a button per window and the time, and a start menu (Terminal,
-  Files, Clock, Pictures, Tasks, Mixer, System, Exit desktop).
+  come to the front when clicked and close with their [x], minimize
+  with [_] (to the taskbar) and - Files and programs - maximize with
+  the box or a double click on the title; Files resizes by its
+  bottom-right corner; Alt+Tab brings the window at the back forward.
+  A taskbar with a button per window and a tray - volume (click: the
+  Mixer, wheel: the master volume), network (green once it's set up),
+  the time (click: this month's calendar) - and a start menu:
+  Programs (every .APP/.COM/.BIN on the disk), Terminal, Files, Clock,
+  Pictures, Tasks, Mixer, System, Exit. Typing while the menu's open
+  searches: Programs shows what has the typed text in its name, Up /
+  Down pick, Enter starts it, Esc closes the menu.
+  - **Icons on the desktop**: whatever's in `/DESKTOP` (src/dkicons.asm).
+    A `.LNK` file there is a shortcut - its text is the path it opens
+    (`/APPS/FIRE.APP`, a folder like `/DEMOS`). Double-click opens,
+    drag moves (the places are remembered).
+  - **Themes**: Classic, Dark, Light, Forest, Plum - System's buttons
+    (src/dkstyle.asm); with the sounds' switch they're kept in
+    `DESKTOP.CFG` in the root.
+  - **Sounds** (src/dksound.asm, through the Sound Blaster's mixer): a
+    tune when the desktop starts, a click for the menu and buttons, a
+    low tone for an error, a high one for news (a screenshot saved).
+  PrintScreen saves the desktop as PICS/SHOTnn.BMP. The mouse wheel
+  works too (the IntelliMouse protocol).
   - **Terminals.** Every console has its own **Terminal** window -
     while the desktop is on, each console's text goes to a buffer in
     RAM (`text_vram`, src/screen.asm) that the desktop draws with the
@@ -371,14 +414,15 @@ alex@/PROGRAMS$
     console; clicking a window gives the keyboard to its console (the
     focused ones have a yellow "kbd" in the title), Alt+1..9 too - even
     while a program there is busy computing: one running its own code
-    in ring 3 is paused right where it is.
+    in ring 3 is paused right where it is. The wheel over a Terminal
+    scrolls back through the last 200 lines that went off its top.
   - **Programs in windows.** A ring-3 program that asks for graphics
     (`run fire.app`, `run cube.app`, `run pong.app`, `run
     mandel.app`...) gets a window instead of the whole screen - small
     modes are shown doubled - titled with its name, up to 3 at once;
-    its [x] stops it. Start one in each Terminal to have several side
-    by side (only the console with the keyboard runs; the others wait
-    where they are). The built-in 320x200 graphics programs - Snake,
+    its [x] stops it, maximizing blows its picture up as far as it
+    fits. Start one in each Terminal to have several running side by
+    side. The built-in 320x200 graphics programs - Snake,
     Tetris, Sweeper, 2048 (PROGRAMS/*.BIN), paint, chip8, turtle - get
     a window too: their 0xA0000 is remapped by paging to that
     console's own 64KB of RAM (src/vga.asm), which the desktop shows,
@@ -394,15 +438,35 @@ alex@/PROGRAMS$
     end, so its window just goes - the menu's Terminal brings it back.
   - **Files** shows the current folder as icons (folders, programs,
     pictures, sounds, text...), Up and page buttons. Double-click a
-    folder to go in, a .BMP opens in Pictures, anything else is typed
-    into the focused Terminal (or a new one, if that's busy with a
-    program or half a command): `run` for .APP/.COM/.BIN, `play` for
+    folder to go in, a .BMP opens in Pictures, a program (.APP, .COM,
+    .BIN, .CH8 - from Files or the start menu's Programs) just starts:
+    in a console of its own with no Terminal shown, only the program's
+    window. A program for the text screen gets its Terminal, named
+    after it, once it writes something; the console closes by itself
+    when the program ends (one that left text to read stays open).
+    Anything else is typed into the focused Terminal (or a new one, if
+    that's busy with a program or half a command): `play` for
     .WAV/.IMF, `run modplay.app` for .MOD, `basic` for .BAS, `turtle`,
     `chip8`, a .HG script by its name, anything else in `uranium`.
-    Drag an icon onto a folder (or "..") to move it there.
-  - **Tasks** is a task manager: a CPU-use graph for the last minute,
-    every task with its state and CPU time, and End task for the
-    selected one (not consoles or the desktop).
+    Drag an icon onto a folder (or "..") to move it there; a rubber
+    band on empty space or Ctrl+click selects several, and dragging one
+    of them moves them all. Right-click: Open, Rename..., Copy to...,
+    Delete, Properties - or New folder..., Select all on empty space.
+    Delete moves into /TRASH (Delete forever, Empty trash in there);
+    Rename, Copy and New folder type the command into a Terminal and
+    leave the new name to you.
+    While Files is in front, typing searches: only names with the text
+    show (Esc clears, Enter opens the first); Sort: Name / Size / Type
+    orders them (src/dkfind.asm).
+  - **Copy and paste**: drag over a Terminal's text to select it,
+    Ctrl+C copies (without a selection it stops a program, as ever),
+    Ctrl+V types it into the console with the keyboard (src/dkclip.asm).
+  - **Tasks** is a task manager: the CPU use and the memory in use
+    over the last minute, every task with its state, priority, its
+    program's memory (the used pages of its 4MB) and CPU time;
+    Low / Normal / High set the selected one's priority (a low task
+    runs only when nothing else will), End task stops it (not
+    consoles or the desktop).
   - **Mixer** lists what's playing (see the mixer below), with a
     volume slider and a level meter each, and the master volume.
   - **Clock** is an analog clock in your time zone, **Pictures** shows
@@ -474,7 +538,9 @@ alex@/PROGRAMS$
   no DHCP server on that cable each takes an address from its MAC, or
   `ifconfig <a.b.c.d>` sets one.
 - **Shared folder with the host.** `make run` attaches the repo's
-  `shared/` folder as a second disk (QEMU's vvfat presents a host
+  `shared/` folder (empty to begin with - the examples are on LexOS's
+  own disk, in `/APPS` and `/DEMOS`: `tools/mkdisk.py` puts the repo's
+  `disk/` folder onto the image at build time) as a second disk (QEMU's vvfat presents a host
   directory as a whole FAT16 volume). `hostls` lists it and
   `hostget <n> [new]` copies a file from it into the current LexOS
   directory - drop a script, CHIP-8 ROM or `.WAV` into `shared/` on
@@ -489,7 +555,7 @@ alex@/PROGRAMS$
   new files and refuses a name that's already there: QEMU's vvfat
   can't reliably rewrite an existing host file (it ignores a changed
   size, and a shrinking file crashes QEMU outright).
-  Try `hostget star.trg` then `turtle star.trg`.
+  Try `hostput readme` - it appears in `shared/`.
 - `chip8 <name> [speed]` interprets a CHIP-8 / SUPER-CHIP ROM - not LexOS's own format
   (like `run <n>.com` below, but for a much older and simpler bytecode
   VM: the 35-opcode interpreted machine mid-70s COSMAC VIP calculators
@@ -508,8 +574,8 @@ alex@/PROGRAMS$
   Timendus' chip8-test-suite (flags, quirks, scrolling). An optional
   second argument sets the speed in instructions per frame
   (`chip8 game.ch8 20`); by default it's 10, and 30 once a ROM
-  switches to high-res. `shared/BOUNCE.CH8` is a small high-res demo:
-  `hostget bounce.ch8` then `chip8 bounce.ch8`.
+  switches to high-res. `/DEMOS/BOUNCE.CH8` is a small high-res demo:
+  `cd /demos` then `chip8 bounce.ch8`.
 - `turtle <name>` runs a LOGO-style turtle graphics script - one
   command per line (or several per line; the parser only cares about
   tokens, whitespace and newlines are equivalent) like `FORWARD 10` /
@@ -565,8 +631,15 @@ project is developed and tested against.
 make             # assembles boot.asm + kernel.asm into build/os-image.bin
 make run         # builds, then boots it in QEMU
 make run-serial  # same, but also exposes COM1 on localhost:4444 for `recv`
-make clean       # remove build/
+make fresh-disk  # start LexOS's disk over (your files in it are gone)
+make clean       # remove build/ - the disk with it
 ```
+
+The disk image is made once: after that `make` only writes the new
+bootloader and kernel over its start, so the files you made in LexOS
+survive a rebuild, and `tools/mkdisk.py` adds what's new in `disk/`
+(the programs in `/APPS` are brought up to date; anything else that's
+there already is left alone).
 
 `os-image.bin` is a raw disk image: `dd` it to a USB stick, or point any
 BIOS-based emulator (QEMU, Bochs, VirtualBox in legacy-BIOS mode, ...) at
@@ -719,7 +792,7 @@ BIOS  →  boot.asm (16-bit real mode)
 Everything below `0x10000` is the kernel itself — code and all working
 data — small enough that internal pointers still fit in 16 bits and most
 of the code reads like a real-mode program, even though the kernel image
-as a whole (padded to 448 sectors, split across the boot loader's four reads
+as a whole (padded to 576 sectors, split across the boot loader's five reads
 as described above) now extends past that boundary. Only things that live
 outside the kernel image need a full 32-bit linear address:
 
@@ -733,8 +806,9 @@ outside the kernel image need a full 32-bit linear address:
 | IMF song buffer (`play`) | `0x310000` |
 | Task stacks (64KB each, 16 tasks) | `0x400000` – `0x4FFFFF` |
 | Page directory / user page table / first 4MB's table | `0x500000` / `0x501000` / `0x502000` |
+| Consoles' page tables (directory, first 4MB, program: 12KB each) | `0x510000` – `0x52AFFF` |
 | A ring-3 program's own 4MB | `0x800000` – `0xBFFFFF` |
-| Console save areas (5MB each) | `0x1000000` – `0x3CFFFFF` |
+| Consoles' own memory (5MB each: program, kernel pages, text screen) | `0x1000000` – `0x3CFFFFF` |
 | Programs' open-file buffers (4 x 4MB) | `0x4000000` – `0x4FFFFFF` |
 | Program windows' pixels (3 x 2MB) | `0x5000000` – `0x55FFFFF` |
 | Mixer voice queues (4 x 64KB) + scratch | `0x5600000` – `0x5647FFF` |
@@ -744,15 +818,16 @@ outside the kernel image need a full 32-bit linear address:
 | Desktop back buffer (1024x768x4) | `0x6000000` – `0x62FFFFF` |
 | FPU save areas / consoles' desktop text | `0x6300000` / `0x6310000` |
 | Desktop: shown text / Files list | `0x6320000` / `0x6330000` |
+| Terminals' scrollback (200 lines per console) | `0x6340000` – `0x6387FFF` |
 | Script variables and levels | `0x280000` – `0x29FFFF` |
 | SB16 DMA buffer (the mixer's output) | `0x330000` |
-| Desktop picture file / pixels | `0x7500000` / `0x7700000` |
+| Desktop picture pixels / its file (and a screenshot's) | `0x7700000` / `0x7A00000` |
 | RTL8139 receive ring / transmit buffers | `0x300000` / `0x304000` |
 | .COM program segment | `0x100000` |
-| Kernel code/data | `0x8000` – `0x3FFFF` (448 sectors) |
+| Kernel code/data | `0x8000` – `0x4FFFF` (576 sectors) |
 | Boot sector | `0x7C00` |
 
-On disk, sectors are laid out as: boot sector, then the kernel (448
+On disk, sectors are laid out as: boot sector, then the kernel (576
 sectors), then 1024 directory slots (one file/folder per 512-byte sector —
 name, type, parent pointer, a 32-bit size, up to 127 bytes of inline
 content; folders only ever take slots 0-254, so a parent pointer still
@@ -768,6 +843,10 @@ boot.asm              16-bit boot sector: loads the kernel, enables A20,
 kernel.asm             32-bit kernel entry point; %includes everything below.
 apps/                  example ring-3 programs (`make apps`): lexos.inc for
                        assembly, lexos.h + crt0.asm + app.ld for C.
+disk/                  what LexOS's disk starts with: APPS/ (the built
+                       programs), DEMOS/ (scripts, music, a CHIP-8 ROM).
+tools/                 mkdisk.py (disk/ -> the image's filesystem),
+                       makemod.py (DEMO.MOD).
 src/
   data.asm             constants, messages, working variables.
   screen.asm           VGA text output, hardware cursor.
@@ -825,6 +904,14 @@ src/
   dkwins.asm           the windows' contents: Terminal, Clock,
                        Pictures, System, Files, Tasks, Mixer, and
                        programs' windows (their graphics calls).
+  dkstyle.asm          the desktop's themes, DESKTOP.CFG.
+  dksound.asm          the desktop's own sounds.
+  dkicons.asm          icons on the desktop (/DESKTOP, .LNK shortcuts).
+  dkclip.asm           copy and paste between the Terminals.
+  dkfind.asm           Files' search and order.
+  lang.asm             Russian: code page 866 letters, the layout.
+  font866.inc          the Cyrillic glyphs (from CyrKoi-VGA16).
+  welcome.asm          the graphical first boot, the login.
   sched.asm            the scheduler: tasks, priorities, task_wait,
                        ps/kill/clock.
   net.asm              RTL8139 driver (polled), ARP, IPv4, ICMP echo,

@@ -110,7 +110,9 @@ kernel_start:
 
     call fs_ensure_license   ; creates LICENSE in the root if it doesn't exist yet
     call fs_ensure_user_cfg  ; loads USER.CFG, or runs first-boot setup to create it
+    call lang_apply          ; Russian: the Cyrillic letters (src/lang.asm)
     call script_autoexec     ; AUTOEXEC.HG in the root, if there is one (src/script.asm)
+    call welcome_boot        ; the password, then the desktop (src/welcome.asm)
 
     call fs_print_prompt
 
@@ -125,6 +127,7 @@ main_loop:
 %include "src/screen.asm"
 %include "src/input.asm"
 %include "src/shell.asm"
+align 4096, db 0
 shared_interrupts_start:
 %include "src/interrupts.asm"
 shared_interrupts_end:
@@ -147,13 +150,16 @@ shared_mouse_start:
 %include "src/serial.asm"
 %include "src/mouse.asm"
 shared_mouse_end:
+align 4096, db 0
 
 %include "src/filesystem.asm"
 %include "src/fs_extra.asm"
 %include "src/programs.asm"
+align 4096, db 0
 shared_vga_start:
 %include "src/vga.asm"
 shared_vga_end:
+align 4096, db 0
 %include "src/snake.asm"
 %include "src/paint.asm"
 %include "src/sweeper.asm"
@@ -163,14 +169,17 @@ shared_vga_end:
 %include "src/assembler.asm"
 %include "src/rtc.asm"
 %include "src/speaker.asm"
+align 4096, db 0
 shared_sound_start:
 %include "src/sound.asm"
 %include "src/mixer.asm"
 shared_sound_end:
+align 4096, db 0
 %include "src/chip8.asm"
 %include "src/turtle.asm"
 %include "src/hostfs.asm"
 %include "src/basic.asm"
+align 4096, db 0
 shared_net_start:
 %include "src/net.asm"
 %include "src/inet.asm"
@@ -186,11 +195,19 @@ shared_system_start:
 %include "src/console.asm"
 %include "src/desktop.asm"
 %include "src/dkwins.asm"
+%include "src/dkstyle.asm"
+%include "src/dksound.asm"
+%include "src/dkicons.asm"
+%include "src/lang.asm"
+%include "src/dkclip.asm"
+%include "src/dkfind.asm"
 shared_system_end:
+align 4096, db 0
 %include "src/grep.asm"
 %include "src/headtail.asm"
 %include "src/uranium.asm"
 %include "src/user.asm"
+%include "src/welcome.asm"
 %include "src/tabcomplete.asm"
 %include "src/script.asm"
 
@@ -201,6 +218,7 @@ shared_system_end:
 ; already thin (see src/devices.asm) - so it goes where appending it
 ; can't push anything else past that mark, same reasoning as the
 ; *.hg save area and the ATA DMA state right below it.
+align 4096, db 0
 shared_tail_start:                ; (src/console.asm: from here to the end)
 %include "src/atadma.asm"
 
@@ -458,7 +476,7 @@ com_saved_idt21    times 8 db 0
 com_shift_held     db 0     ; com_poll_key's own Shift-key tracking
 
 ; Pad the remaining space within the sectors the bootloader reads,
-; so the file size is a multiple of 512 bytes (see KERNEL_SECTORS_1..4 in boot.asm: 64+128+128+128 = 448).
+; so the file size is a multiple of 512 bytes (see KERNEL_SECTORS_1..5 in boot.asm: 64+128+128+128+128 = 576).
 kernel_image_end:
 KERNEL_IMAGE_START equ 0x8000
-times (512*448)-($-$$) db 0
+times (512*576)-($-$$) db 0

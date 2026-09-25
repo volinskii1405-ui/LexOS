@@ -163,9 +163,8 @@ chip8_run:
     call fs_load_content
 
     mov si, msg_chip8_intro
-    call print_string
     mov ecx, 800
-    call speaker_delay_ms
+    call game_intro            ; (src/dkwins.asm)
 
     call chip8_reset
 
@@ -794,6 +793,11 @@ chip8_op_E:
     movzx eax, byte [chip8_v + ebx]
     movzx eax, byte [chip8_key_scancode + eax]
     movzx eax, byte [key_held + eax]
+    mov bl, [console_self]              ; (the keys of the console on
+    cmp bl, [console_fg]                ; screen only)
+    je .mine
+    xor eax, eax
+.mine:
 
     mov bl, [chip8_nn]
     cmp bl, 0x9E

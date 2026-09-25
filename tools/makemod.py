@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""makemod.py - builds shared/DEMO.MOD, a small ProTracker module for
+"""makemod.py - builds disk/DEMOS/DEMO.MOD, a small ProTracker module for
 LexOS's MODPLAY.APP, from samples synthesized right here (no sample
 files needed): a square-wave lead, a saw bass, a kick and a hi-hat.
 Usage: python3 tools/makemod.py [out.mod]"""
@@ -54,6 +54,6 @@ for name, data, vol, ls, ll in samples + [("", [], 0, 0, 0)] * (31 - len(samples
 out += bytes([len(order), 127]) + bytes(order).ljust(128, b'\0') + b'M.K.'
 for p in pats: out += p
 for _, data, *_ in samples: out += bytes((v & 0xFF) for v in data)
-path = sys.argv[1] if len(sys.argv) > 1 else 'shared/DEMO.MOD'
+path = sys.argv[1] if len(sys.argv) > 1 else 'disk/DEMOS/DEMO.MOD'
 open(path, 'wb').write(out)
 print(path, len(out), 'bytes')

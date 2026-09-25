@@ -49,9 +49,8 @@ g2048_run:
     pusha
 
     mov si, msg_g2048_intro
-    call print_string
     mov ecx, 1500
-    call speaker_delay_ms
+    call game_intro            ; (src/dkwins.asm)
 
     call g2048_load_highscore
 

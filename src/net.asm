@@ -337,6 +337,7 @@ net_ping:
 ; carry=1 if ESC is waiting in the keyboard queue (then flushed);
 ; other keys are left alone, so typing ahead during a ping isn't lost.
 net_check_esc:
+    call console_safe_point
     push eax
     push ebx
     movzx ebx, byte [kbd_buf_tail]

@@ -17,16 +17,15 @@
 ; 64 sectors (32 KB, exactly up to the 0x10000 boundary); every call
 ; after that starts at offset 0 of its own segment, so each can carry
 ; up to the full 128 sectors before hitting that same 64 KB ceiling
-; again. The kernel needs more than 64+128+128 sectors by now, so it's
-; loaded in FOUR calls back to back: 64 sectors into 0x0000:0x8000
-; (physically 0x8000..0xFFFF), then 128 into 0x1000:0x0000 (physically
-; 0x10000..0x1FFFF), then 128 into 0x2000:0x0000 (physically
-; 0x20000..0x2FFFF), then the rest into 0x3000:0x0000 (physically
-; 0x30000..). The physical addresses are contiguous across all four
-; (each segment's base picks up exactly where the previous call's
-; transfer ended), so for the kernel itself (assembled as a single
-; flat binary with ORG 0x8000) none of these boundaries exist - it has
-; no idea it was loaded by four separate BIOS calls.
+; again. The kernel needs more than 64+128+128+128 sectors by now, so
+; it's loaded in FIVE calls back to back (a loop over the packets at
+; dap..dap5): 64 sectors into 0x0000:0x8000 (physically 0x8000..0xFFFF),
+; then 128 each into 0x1000:0, 0x2000:0, 0x3000:0 and 0x4000:0
+; (physically 0x10000.. up to 0x4FFFF). The physical addresses are
+; contiguous across all five (each segment's base picks up exactly
+; where the previous call's transfer ended), so for the kernel itself
+; (assembled as a single flat binary with ORG 0x8000) none of these
+; boundaries exist - it has no idea it was loaded by five BIOS calls.
 
 [BITS 16]
 [ORG 0x7C00]
@@ -44,6 +43,9 @@ KERNEL_LOAD_OFF3 equ 0x0000
 KERNEL_SECTORS_4 equ 128        ; part 4: another full 64 KB
 KERNEL_LOAD_SEG4 equ 0x3000     ; = physical 0x30000, continuation of part 3
 KERNEL_LOAD_OFF4 equ 0x0000
+KERNEL_SECTORS_5 equ 128        ; part 5: and another
+KERNEL_LOAD_SEG5 equ 0x4000     ; = physical 0x40000
+KERNEL_LOAD_OFF5 equ 0x0000
 
 start:
     cli
@@ -59,30 +61,18 @@ start:
     mov si, msg_booting
     call print_string_16
 
-    ; --- read the kernel with three calls (LBA extended read, see comment above) ---
-    mov dl, [boot_drive]
+    ; --- read the kernel, a part per call (LBA extended read, see above) ---
     mov si, dap
-    mov ah, 0x42
-    int 0x13
-    jc disk_error
-
+    mov cx, 5
+.part:
+    push cx
     mov dl, [boot_drive]
-    mov si, dap2
     mov ah, 0x42
     int 0x13
+    pop cx
     jc disk_error
-
-    mov dl, [boot_drive]
-    mov si, dap3
-    mov ah, 0x42
-    int 0x13
-    jc disk_error
-
-    mov dl, [boot_drive]
-    mov si, dap4
-    mov ah, 0x42
-    int 0x13
-    jc disk_error
+    add si, 16                  ; (the packets follow each other)
+    loop .part
 
     mov si, msg_loaded
     call print_string_16
@@ -163,6 +153,14 @@ dap4:
     dw KERNEL_LOAD_OFF4
     dw KERNEL_LOAD_SEG4
     dq 1 + KERNEL_SECTORS_1 + KERNEL_SECTORS_2 + KERNEL_SECTORS_3
+
+dap5:
+    db 0x10
+    db 0
+    dw KERNEL_SECTORS_5
+    dw KERNEL_LOAD_OFF5
+    dw KERNEL_LOAD_SEG5
+    dq 1 + KERNEL_SECTORS_1 + KERNEL_SECTORS_2 + KERNEL_SECTORS_3 + KERNEL_SECTORS_4
 
 boot_drive     db 0
 msg_booting    db "Booting LexOS (32-bit)...", 13, 10, 0

@@ -1918,6 +1918,10 @@ app_gfx_w            dd 320
 app_gfx_h            dd 200
 app_gfx_bpp          dd 1                 ; bytes per pixel
 app_win_slot         dd 0                 ; (app_gfx 3: src/dkwins.asm's slot)
+app_rect_x           dd 0                 ; the rectangle being blitted - per
+app_rect_y           dd 0                 ; console too: a blit may wait for
+app_rect_w           dd 0                 ; the desktop, and another console's
+app_rect_h           dd 0                 ; program blits meanwhile
 app_name             times FS_NAME_LEN + 1 db 0
 
 script_depth         db 0

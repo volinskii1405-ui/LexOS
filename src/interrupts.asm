@@ -217,6 +217,16 @@ keyboard_isr:
     mov bh, [kbd_extended_flag]
     mov byte [kbd_extended_flag], 0
 
+    cmp bh, 0                    ; PrintScreen (E0 37) on the desktop: a
+    je .not_prtsc                ; screenshot (src/dkwins.asm)
+    cmp al, 0x37
+    jne .not_prtsc
+    cmp byte [dk_active], 0
+    je .not_prtsc
+    mov byte [dk_shot_req], 1
+    jmp .eoi
+.not_prtsc:
+
     cmp al, 0x2A                 ; Left Shift (press)
     je .shift_down
     cmp al, 0x36                 ; Right Shift (press)
@@ -237,22 +247,34 @@ keyboard_isr:
 
 .alt_down:
     mov byte [kbd_alt_held], 1
+    mov byte [lang_alt_held], 1    ; (shared: whichever task was interrupted)
+    cmp byte [lang_shift_held], 0  ; Alt+Shift: English <-> Russian
+    je .eoi                        ; (src/lang.asm)
+    call lang_toggle
     jmp .eoi
 .alt_up:
     mov byte [kbd_alt_held], 0
+    mov byte [lang_alt_held], 0
     jmp .eoi
 .ctrl_down:
     mov byte [kbd_ctrl_held], 1
+    mov byte [lang_ctrl_held], 1   ; (shared - src/lang.asm)
     jmp .eoi
 .ctrl_up:
     mov byte [kbd_ctrl_held], 0
+    mov byte [lang_ctrl_held], 0
     jmp .eoi
 
 .shift_down:
     mov byte [kbd_shift_held], 1
+    mov byte [lang_shift_held], 1
+    cmp byte [lang_alt_held], 0
+    je .eoi
+    call lang_toggle
     jmp .eoi
 .shift_up:
     mov byte [kbd_shift_held], 0
+    mov byte [lang_shift_held], 0
     jmp .eoi
 
 .check_release:
@@ -279,6 +301,13 @@ keyboard_isr:
     ; recorded here, acted on at the next safe point
     cmp byte [kbd_alt_held], 0
     je .not_alt
+    cmp al, 0x0F                   ; Tab, on the desktop: the next window
+    jne .not_alt_tab               ; (src/desktop.asm)
+    cmp byte [dk_active], 0
+    je .not_alt_tab
+    inc byte [dk_alt_tab]
+    jmp .eoi
+.not_alt_tab:
     cmp al, 0x14                   ; T
     jne .not_alt_t
     mov byte [console_request], CONSOLE_REQ_NEW
@@ -294,13 +323,39 @@ keyboard_isr:
 .not_alt:
 
     ; Ctrl+C while a program (src/usermode.asm) runs: ask to stop it
+    cmp al, 0x2F                   ; Ctrl+V on the desktop: paste
+    jne .not_ctrl_v                ; (src/dkclip.asm)
+    cmp byte [lang_ctrl_held], 0
+    je .not_ctrl_v
+    cmp byte [dk_active], 0
+    je .not_ctrl_v
+    mov byte [dk_paste_req], 1
+    jmp .eoi
+.not_ctrl_v:
     cmp al, 0x2E                   ; C
     jne .not_ctrl_c
-    cmp byte [kbd_ctrl_held], 0
+    cmp byte [lang_ctrl_held], 0
     je .not_ctrl_c
-    cmp byte [app_active], 0
-    je .not_ctrl_c
-    mov byte [app_abort_request], 1
+    cmp byte [dk_active], 0        ; (on the desktop, text selected in a
+    je .ctrl_c_stop                ;  Terminal: that's copied instead)
+    cmp dword [dkc_win], -1
+    je .ctrl_c_stop
+    mov byte [dk_copy_req], 1
+    jmp .eoi
+.ctrl_c_stop:
+    push eax                       ; (the console on screen's program -
+    push ebx                       ; whichever task this interrupted)
+    movzx eax, byte [console_fg]
+    mov ebx, app_active
+    call console_saved_addr        ; (src/console.asm)
+    cmp byte [ebx], 0
+    je .no_program
+    mov ebx, app_abort_request
+    call console_saved_addr
+    mov byte [ebx], 1
+.no_program:
+    pop ebx
+    pop eax
     jmp .eoi
 .not_ctrl_c:
 
@@ -318,7 +373,7 @@ keyboard_isr:
 
 .normal_key:
     xor bh, bh                     ; bx = scancode, index into the table
-    cmp byte [kbd_shift_held], 0
+    cmp byte [lang_shift_held], 0  ; (the shared one: src/lang.asm)
     je .use_lower
     mov al, [scancode_upper + bx]
     jmp .have_ascii
@@ -327,6 +382,7 @@ keyboard_isr:
 .have_ascii:
     cmp al, 0
     je .eoi                         ; no ASCII value for this key (Ctrl/Alt/CapsLock) - ignore
+    call lang_map                   ; (the Russian layout, if it's on)
     mov ah, bl
     call push_key_to_buffer
 
@@ -344,20 +400,41 @@ keyboard_isr:
     pop eax
     iret
 
-; --- Pushes a pair (al=ascii, ah=scancode) into the ring buffer ---
+; --- Pushes a pair (al=ascii, ah=scancode) into the ring buffer of
+; the console on screen - every console has its own (src/data.asm), so
+; only the one being typed at ever sees the keys, whoever else runs ---
 push_key_to_buffer:
-    push ebx
-    mov bl, [kbd_buf_head]
-    xor bh, bh
-    mov [kbd_buf_ascii + bx], al
-    mov [kbd_buf_scancode + bx], ah
-
-    inc byte [kbd_buf_head]
-    and byte [kbd_buf_head], KBD_BUF_SIZE - 1
+    cmp byte [dk_active], 0        ; the desktop's start menu open: typing
+    je .console                    ; is its search (src/dkwins.asm); Files
+    cmp byte [dk_suspended], 0     ; in front: its search (src/dkfind.asm)
+    jne .console
+    cmp byte [dk_menu_open], 0
+    jne .menu
+    cmp byte [dk_fm_typing], 0
+    je .console
+    jmp dk_fm_key_in
+.menu:
+    jmp dk_menu_key_in
+.console:
+    pushad
+    mov ecx, eax
+    movzx eax, byte [console_fg]
+    mov ebx, kbd_buf_head
+    call console_saved_addr        ; (src/console.asm) -> its copy
+    mov edi, ebx
+    movzx edx, byte [edi]
+    mov ebx, kbd_buf_ascii
+    call console_saved_addr
+    mov [ebx + edx], cl
+    mov ebx, kbd_buf_scancode
+    call console_saved_addr
+    mov [ebx + edx], ch
+    inc dl
+    and dl, KBD_BUF_SIZE - 1
+    mov [edi], dl
     ; note: on buffer overflow, new keypresses will start overwriting
     ; unread old ones - acceptable for a simple single-line-input shell
-
-    pop ebx
+    popad
     ret
 
 ; ============================================================
@@ -484,10 +561,6 @@ scancode_upper:
 ; ============================================================
 ; Data
 ; ============================================================
-kbd_buf_ascii    times KBD_BUF_SIZE db 0
-kbd_buf_scancode times KBD_BUF_SIZE db 0
-kbd_buf_head db 0
-kbd_buf_tail db 0
 kbd_shift_held db 0
 kbd_ctrl_held db 0
 kbd_alt_held db 0

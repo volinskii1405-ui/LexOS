@@ -69,6 +69,7 @@ handle_command:
     call play_spawn
     jmp .done
 .foreground:
+    call dk_launch_start       ; (src/dkwins.asm: a clicked program's console)
 
     mov si, buffer
     mov di, cmd_shutdown
@@ -517,6 +518,13 @@ handle_command:
     jmp .done
 
 .truly_unknown:
+    cmp byte [dk_active], 0    ; (on the desktop: its error sound)
+    je .no_sound
+    push eax
+    mov eax, SND_ERROR
+    call snd_play
+    pop eax
+.no_sound:
     mov si, msg_unknown
     call print_string
     mov si, buffer
@@ -896,6 +904,7 @@ handle_command:
     call fs_df
 
 .done:
+    call dk_launch_end         ; (and it ended: its console may close)
     popa
     ret
 

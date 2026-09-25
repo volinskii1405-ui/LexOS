@@ -62,9 +62,11 @@ speaker_delay_ms:
 .have_ticks:
 
     add eax, [timer_ticks]             ; eax = target value for timer_ticks
+    mov edx, eax
 .wait:
-    hlt
-    cmp [timer_ticks], eax
+    mov eax, WAIT_TICK                 ; (others run meanwhile - other
+    call task_wait                     ; consoles too: src/sched.asm)
+    cmp [timer_ticks], edx
     jb .wait
 
     pop edx

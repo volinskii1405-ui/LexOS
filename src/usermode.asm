@@ -332,6 +332,7 @@ app_run:
     xor edi, edi
     xor ebp, ebp
     mov ebx, APP_ARGS                     ; the command line (crt0.asm)
+    call bkl_drop                         ; (ring 3 needs no kernel lock)
     iretd
 
 .empty:
@@ -384,6 +385,8 @@ APP_EXIT_CRASHED equ 0x80000000
 
 ; Ctrl+C, acted on by timer_isr (src/interrupts.asm) while in ring 3.
 app_ctrl_c:
+    sti
+    call bkl_take                         ; (from ring 3: back in the kernel)
     call app_gfx_off
     mov esi, app_msg_ctrl_c
     call basic_puts
@@ -407,6 +410,7 @@ syscall_isr:
     mov eax, [sched_current]              ; (inside the kernel: see
     inc byte [task_insys + eax]           ; dk_shell_idle, src/dkwins.asm)
     sti
+    call bkl_take                         ; (src/sched.asm)
     mov ebp, esp                          ; the caller's registers:
     mov eax, [ebp + 28]                   ; eax +28, ecx +24, ebx +16
     cmp eax, SYS_COUNT
@@ -416,6 +420,7 @@ syscall_isr:
     cli
     mov eax, [sched_current]
     dec byte [task_insys + eax]
+    call bkl_drop
     popad
     iretd
 .bad:
@@ -423,6 +428,7 @@ syscall_isr:
     cli
     mov eax, [sched_current]
     dec byte [task_insys + eax]
+    call bkl_drop
     popad
     iretd
 
@@ -708,6 +714,7 @@ exc_common:
     mov ds, ax
     mov es, ax
     sti
+    call bkl_take                         ; (from ring 3: back in the kernel)
     call app_gfx_off                      ; so the message can be read
     mov esi, app_msg_crashed
     call basic_puts

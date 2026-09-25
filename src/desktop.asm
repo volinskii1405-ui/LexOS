@@ -43,6 +43,8 @@ DESK_H            equ 768
 DESK_STRIDE       equ DESK_W * 4
 DESK_BACK         equ 0x6000000           ; the picture (3MB)
 DESK_TEXT         equ 0x6310000           ; each console's text, 4KB apart
+DESK_FRONT0       equ 0x7D00000           ; what's on each video page (3MB)
+DESK_FRONT1       equ 0x7400000
 DESK_SHOWN        equ 0x6320000           ; each window's text as last drawn
 DESK_FILES        equ 0x6330000           ; the Files window's list
 
@@ -53,7 +55,13 @@ DK_MAX_WIN        equ 16
 DK_TITLE_LEN      equ 32
 DK_MENU_W         equ 170
 DK_MENU_ITEM_H    equ 24
-DK_MENU_ITEMS     equ 8
+DK_MENU_ITEMS     equ 9
+DK_TRAY_W         equ 160                 ; the taskbar's right end: volume,
+                                          ; network, the time
+DK_CAL_W          equ 244                 ; the calendar
+DK_CAL_H          equ 196
+DK_PROG_W         equ 230                 ; the Programs submenu
+DK_PROG_MAX       equ 22
 
 K_TERM            equ 0                   ; window kinds (param: the console)
 K_CLOCK           equ 1
@@ -65,17 +73,47 @@ K_MIXER           equ 6
 K_APP             equ 7                   ; (param: the app window slot)
 K_NONE            equ 0xFF
 
-COL_TITLE_ON      equ 0x1E5AA8
-COL_TITLE_OFF     equ 0x6E7B8B
-COL_FRAME         equ 0xC8CCD4
-COL_TASKBAR       equ 0x1C2331
-COL_TASKBTN       equ 0x33405A
-COL_TASKBTN_ON    equ 0x4A6A9E
-COL_MENU          equ 0xE8EAF0
+; The interface's colors: the current theme's (src/dkstyle.asm)
+TH_TITLE_ON       equ 0
+TH_TITLE_OFF      equ 4
+TH_FRAME          equ 8
+TH_TASKBAR        equ 12
+TH_TASKBTN        equ 16
+TH_TASKBTN_ON     equ 20
+TH_TASKMIN        equ 24
+TH_MENU           equ 28
+TH_SUBMENU        equ 32
+TH_TEXT           equ 36
+TH_MUTED          equ 40
+TH_PANEL          equ 44
+TH_BUTTON         equ 48
+TH_POPUP          equ 52
+TH_TBTN           equ 56
+TH_BG_TOP         equ 60
+TH_BG_BOTTOM      equ 64
+TH_WATERMARK      equ 68
+TH_BARTEXT        equ 72
+TH_NAME           equ 76
+TH_SIZE           equ 80
+%define COL_TITLE_ON   dword [dk_th + TH_TITLE_ON]
+%define COL_TITLE_OFF  dword [dk_th + TH_TITLE_OFF]
+%define COL_FRAME      dword [dk_th + TH_FRAME]
+%define COL_TASKBAR    dword [dk_th + TH_TASKBAR]
+%define COL_TASKBTN    dword [dk_th + TH_TASKBTN]
+%define COL_TASKBTN_ON dword [dk_th + TH_TASKBTN_ON]
+%define COL_TASKMIN    dword [dk_th + TH_TASKMIN]
+%define COL_MENU       dword [dk_th + TH_MENU]
+%define COL_SUBMENU    dword [dk_th + TH_SUBMENU]
+%define COL_TEXT       dword [dk_th + TH_TEXT]
+%define COL_MUTED      dword [dk_th + TH_MUTED]
+%define COL_PANEL      dword [dk_th + TH_PANEL]
+%define COL_BUTTON     dword [dk_th + TH_BUTTON]
+%define COL_POPUP      dword [dk_th + TH_POPUP]
+%define COL_TBTN       dword [dk_th + TH_TBTN]
+%define COL_WATERMARK  dword [dk_th + TH_WATERMARK]
+%define COL_BARTEXT    dword [dk_th + TH_BARTEXT]
 COL_WHITE         equ 0xFFFFFF
 COL_BLACK         equ 0x000000
-COL_TEXT          equ 0x10141C
-COL_PANEL         equ 0xF4F5F8
 
 ; ============================================================
 ; `desktop`: on (or off again, if it's already on)
@@ -100,6 +138,9 @@ desktop_command:
 .have_video:
     cmp byte [vga_graphics_active], 0     ; (not from inside a graphics program)
     jne .done
+    call dk_settings_load                 ; (src/dkstyle.asm: DESKTOP.CFG)
+    call dki_forget                       ; (src/dkicons.asm: read them anew)
+    call dkc_forget                       ; (src/dkclip.asm: no selection)
     ; no windows yet: Clock, and a Terminal per console (made below)
     xor eax, eax
 .clear:
@@ -203,6 +244,11 @@ dk_video_on:
     mov dword [mouse_x], DESK_W / 2
     mov dword [mouse_y], DESK_H / 2
     mov byte [dk_redraw_all], 1
+    mov dword [dk_page], 0                ; (the mode set: page 0 shown)
+    mov dword [dk_prev_n], 0
+    mov byte [dk_pg_ptr_on], 0
+    mov byte [dk_pg_ptr_on + 1], 0
+    call dk_front_forget
     call vga_sync_window                  ; (a program's window's picture)
     popad
     ret
@@ -291,6 +337,8 @@ desktop_resume_hook:
 ; The desktop's task
 ; ============================================================
 desktop_task:
+    mov eax, SND_START                    ; (src/dksound.asm: a tune)
+    call snd_play
     mov eax, [timer_ms]
     mov [dk_next_frame], eax
 .frame:
@@ -302,11 +350,19 @@ desktop_task:
     mov eax, [timer_ms]
     mov [dk_frame_ms], eax                ; (one time for the whole frame)
     inc dword [dk_frames]
-    call console_desktop_switch           ; (src/console.asm)
+    call console_do_request               ; (src/console.asm: a click's)
     call dk_sync_consoles
     call dk_mouse_events
+    call dk_menu_keys_work                ; (src/dkwins.asm: the menu's search)
+    call dkc_work                         ; (src/dkclip.asm: copy, paste)
+    call dk_fm_keys_work                  ; (src/dkfind.asm: Files' search)
+    call dk_alt_tab_work
+    call dk_shot_capture                  ; (src/dkwins.asm)
+    call dk_toast_work
+    call dk_wheel_work                    ; (src/dkwins.asm)
     call dk_vga_frame                     ; (src/dkwins.asm: mode 13h windows)
     call dk_check_changes
+    call dki_work                         ; (src/dkicons.asm: /DESKTOP)
     pushfd
     cli                                   ; (dk_mark from programs' blits)
     mov al, [dk_redraw_all]
@@ -345,15 +401,17 @@ desktop_task:
     mov edx, [dk_frame_rects + esi + 12]
     mov [dk_clip_y1], edx
     call dk_render
-    sub ecx, eax
-    sub edx, ebx
-    call dk_blit
     inc ebp
     jmp .rect
 .rects_done:
-    call dk_move_pointer                  ; (erased and redrawn if needed)
+    call dk_present                       ; -> the hidden page, then shown
+    mov dword [dk_app_unshown], 0         ; (their frames are on screen:
+                                          ; the next ones may come)
 .drawn:
     dec dword [sched_lock]
+    call dk_shot_save                     ; (src/dkwins.asm: outside a frame)
+    call dk_settings_work                 ; (src/dkstyle.asm: DESKTOP.CFG)
+    call snd_work                         ; (src/dksound.asm: its sounds)
     jmp .sleep
 .suspended:
     mov eax, [timer_ms]
@@ -384,6 +442,7 @@ desktop_task:
     jmp .wait
 
 .quit:
+    call snd_stop
     call dk_apps_close_all                ; programs' windows: back to text
     cmp byte [dk_suspended], 0
     jne .text_back
@@ -419,6 +478,8 @@ dk_win_open:
     mov [dkw_kind + ecx], al
     mov [dkw_param + ecx*4], ebx
     mov byte [dkw_hidden + ecx], 0
+    mov dword [dkw_scroll + ecx*4], 0
+    mov byte [dkw_max + ecx], 0
     ; its size and place: from the kind's defaults
     mov edx, [dk_def_x + eax*4]
     mov [dkw_x + ecx*4], edx
@@ -593,14 +654,65 @@ dk_sync_consoles:
     cmp byte [console_used + ebx], 0
     je .unused
     cmp eax, -1
-    jne .next
+    jne .have
     mov eax, K_TERM                       ; a new console: its window
     call dk_win_open
+    cmp eax, -1
+    je .next
+    cmp byte [dk_launch_state + ebx], 0
+    je .next
+    mov byte [dkw_hidden + eax], 2        ; a program's: not shown, and
+    mov esi, ebx                          ; named after the program
+    shl esi, 4
+    add esi, dk_launch_name
+    imul edi, eax, DK_TITLE_LEN
+    add edi, dkw_title
+.title:
+    lodsb
+    stosb
+    or al, al
+    jnz .title
     jmp .next
 .unused:
+    mov byte [dk_launch_state + ebx], 0
     cmp eax, -1
     je .next
     call dk_win_close                     ; it exited
+    jmp .next
+.have:                                    ; a launched program's Terminal:
+    cmp byte [dkw_hidden + eax], 2        ; shown once it writes text
+    jne .next                             ; (or it ended leaving some)
+    cmp byte [dk_launch_show + ebx], 0
+    jne .show
+    cmp byte [dk_launch_state + ebx], 2
+    jne .next
+    call dk_launch_text                   ; text on its screen for a while
+    jnc .no_text                          ; (not just a line before its
+    push eax                              ; own window opens), and no
+    call dk_app_window_of                 ; window of its own
+    cmp eax, -1
+    pop eax
+    jne .no_text
+    mov ecx, [dk_launch_seen + ebx*4]
+    jecxz .first_seen
+    mov edx, [timer_ms]
+    sub edx, ecx
+    cmp edx, 400
+    jb .next
+    jmp .show
+.first_seen:
+    mov ecx, [timer_ms]
+    or ecx, 1
+    mov [dk_launch_seen + ebx*4], ecx
+    jmp .next
+.no_text:
+    mov dword [dk_launch_seen + ebx*4], 0
+    jmp .next
+.show:
+    mov byte [dk_launch_show + ebx], 0
+    mov byte [dkw_hidden + eax], 0
+    call dk_raise
+    mov byte [dk_redraw_all], 1
 .next:
     inc ebx
     cmp ebx, CONSOLE_MAX
@@ -618,6 +730,10 @@ dk_sync_consoles:
     call dk_win_find
     cmp eax, -1
     je .done
+    cmp byte [dkw_hidden + eax], 2        ; (a launched program's, not
+    jne .raise                            ; shown yet: stays that way)
+    cmp byte [dk_launch_state + ebx], 0
+    jne .done
 .raise:
     mov byte [dkw_hidden + eax], 0
     call dk_raise
@@ -684,6 +800,12 @@ dk_check_changes:
     pop edi
     pop esi
     je .same
+    cmp dword [dkw_scroll + ebp*4], 0     ; (scrolled back: to the bottom
+    je .not_scrolled                      ; again, it's all new)
+    mov dword [dkw_scroll + ebp*4], 0
+    mov eax, ebp
+    call dk_mark_window_client
+.not_scrolled:
     mov eax, ebp                          ; that row, dirty
     call dk_client_origin                 ; -> eax, ebx
     push edx
@@ -730,9 +852,9 @@ dk_check_changes:
     call dk_mark_kind
     mov eax, K_TASKS
     call dk_mark_kind
-    mov eax, DESK_W - 70
+    mov eax, DESK_W - DK_TRAY_W
     mov ebx, DESK_H - DK_TASKBAR_H
-    mov ecx, 70
+    mov ecx, DK_TRAY_W
     mov edx, DK_TASKBAR_H
     call dk_mark
 .fast:
@@ -983,7 +1105,7 @@ dk_mouse_events:
     cmp al, [mouse_btn_head]
     je .live
     mov cl, [mouse_btn_queue + eax]
-    mov [dk_btn_now], cl
+    mov [dk_btn_now], cl                  ; (both buttons: dk_mouse_event)
     mov ecx, [mouse_btn_x + eax*4]
     mov [dk_ev_x], ecx
     mov ecx, [mouse_btn_y + eax*4]
@@ -995,7 +1117,7 @@ dk_mouse_events:
     jmp .queued
 .live:
     mov cl, [mouse_buttons]               ; then the moves
-    and cl, 1
+    and cl, 3
     mov [dk_btn_now], cl
     mov ecx, [mouse_x]
     mov [dk_ev_x], ecx
@@ -1011,11 +1133,71 @@ dk_mouse_event:
     mov eax, [dk_ev_x]
     mov ebx, [dk_ev_y]
     mov cl, [dk_btn_now]
+    shr cl, 1                             ; the right button pressed: a
+    mov ch, [dk_last_right]               ; context menu
+    mov [dk_last_right], cl
+    cmp cl, ch
+    je .no_right
+    or cl, cl
+    jz .no_right
+    mov [dk_mx], eax
+    mov [dk_my], ebx
+    call dk_right_click                   ; (src/dkwins.asm)
+.no_right:
+    mov cl, [dk_btn_now]
+    and cl, 1                             ; (from here on: the left one)
     mov [dk_mx], eax
     mov [dk_my], ebx
     mov ch, [dk_last_buttons]
     mov [dk_last_buttons], cl
 
+    cmp byte [dk_resizing], 0
+    je .not_resizing
+    or cl, cl                             ; let go: that's its size
+    jnz .resize
+    mov byte [dk_resizing], 0
+.resize:
+    mov esi, [dk_drag_win]
+    sub eax, [dkw_x + esi*4]              ; the client's new size
+    sub eax, DK_BORDER * 2
+    cmp eax, 220
+    jge .rw_ok
+    mov eax, 220
+.rw_ok:
+    mov edx, DESK_W - DK_BORDER * 2
+    sub edx, [dkw_x + esi*4]
+    cmp eax, edx
+    jle .rw_fits
+    mov eax, edx
+.rw_fits:
+    sub ebx, [dkw_y + esi*4]
+    sub ebx, DK_TITLE_H + DK_BORDER * 2
+    cmp ebx, 150
+    jge .rh_ok
+    mov ebx, 150
+.rh_ok:
+    mov edx, DESK_H - DK_TASKBAR_H - DK_TITLE_H - DK_BORDER * 2
+    sub edx, [dkw_y + esi*4]
+    cmp ebx, edx
+    jle .rh_fits
+    mov ebx, edx
+.rh_fits:
+    cmp eax, [dkw_w + esi*4]
+    jne .resized
+    cmp ebx, [dkw_h + esi*4]
+    je .done
+.resized:
+    push eax
+    mov eax, esi
+    call dk_mark_window                   ; where it was...
+    pop eax
+    mov [dkw_w + esi*4], eax
+    mov [dkw_h + esi*4], ebx
+    mov eax, esi
+    call dk_mark_window                   ; ...and what it is
+    call dk_fm_layout                     ; (src/dkwins.asm: Files' grid)
+    jmp .done
+.not_resizing:
     cmp byte [dk_dragging], 0
     je .not_dragging
     or cl, cl                             ; let go: this is where it stays
@@ -1059,6 +1241,16 @@ dk_mouse_event:
     jmp .done
 
 .not_dragging:
+    cmp byte [dkc_drag], 0                ; a Terminal's text being selected
+    je .no_select                         ; (src/dkclip.asm)
+    call dkc_move
+    jmp .done
+.no_select:
+    cmp dword [dki_drag], -1              ; a desktop icon being carried
+    je .no_icon_drag                      ; (src/dkicons.asm)
+    call dki_drag_move
+    jmp .done
+.no_icon_drag:
     ; a window's own drag (Files: an icon) gets the moves and the release
     cmp byte [dk_fm_state], 2
     jb .clicks
@@ -1077,11 +1269,48 @@ dk_mouse_event:
 ; A left press at eax, ebx
 dk_click:
     pushad
+    cmp byte [dk_ctx_open], 0             ; a context menu: an item, or
+    je .no_ctx                            ; away it goes
+    call dk_ctx_click                     ; (src/dkwins.asm)
+    jmp .done
+.no_ctx:
+    cmp byte [dk_cal_open], 0             ; the calendar: any click closes
+    je .no_cal                            ; it (the time's own: see the
+    call dk_mark_calendar                 ; tray, it toggles)
+    mov byte [dk_cal_open], 0
+    cmp ebx, DESK_H - DK_TASKBAR_H
+    jb .done
+    cmp eax, DESK_W - 64
+    jae .done
+.no_cal:
     ; the start menu first, if it's open
     cmp byte [dk_menu_open], 0
     je .no_menu
-    mov byte [dk_menu_open], 0
     call dk_mark_menu
+    mov byte [dk_menu_open], 0
+    cmp byte [dk_prog_open], 0            ; its Programs submenu?
+    je .no_sub
+    mov byte [dk_prog_open], 0
+    cmp eax, DK_MENU_W
+    jb .no_sub
+    cmp eax, DK_MENU_W + DK_PROG_W
+    jae .no_sub
+    mov ecx, [dk_prog_shown]
+    imul ecx, DK_MENU_ITEM_H
+    neg ecx
+    add ecx, DESK_H - DK_TASKBAR_H
+    cmp ebx, ecx
+    jb .no_sub
+    cmp ebx, DESK_H - DK_TASKBAR_H
+    jae .no_sub
+    sub ebx, ecx
+    mov eax, ebx
+    xor edx, edx
+    mov ecx, DK_MENU_ITEM_H
+    div ecx
+    call dk_prog_run                      ; (src/dkwins.asm)
+    jmp .done
+.no_sub:
     cmp eax, DK_MENU_W
     jae .no_menu
     mov ecx, DESK_H - DK_TASKBAR_H - DK_MENU_ITEMS * DK_MENU_ITEM_H
@@ -1103,9 +1332,16 @@ dk_click:
     cmp eax, 90
     jae .task_buttons
     mov byte [dk_menu_open], 1            ; the start button
+    call snd_click                        ; (src/dksound.asm)
+    call dk_search_clear                  ; (src/dkwins.asm: typing searches)
     call dk_mark_menu
     jmp .done
 .task_buttons:
+    cmp eax, DESK_W - DK_TRAY_W           ; the tray: volume, network, time
+    jb .not_tray
+    call dk_tray_click                    ; (src/dkwins.asm)
+    jmp .done
+.not_tray:
     sub eax, 96
     js .done
     xor edx, edx
@@ -1114,13 +1350,14 @@ dk_click:
     cmp eax, -1
     je .done
     mov byte [dkw_hidden + eax], 0
+    call dk_mark_window                   ; (all of it: it was away)
     call dk_raise
     call dk_focus_console
     jmp .done
 .windows:
     call dk_window_at                     ; -> esi = the window, or -1
     cmp esi, -1
-    je .done
+    je .background
     mov eax, esi
     call dk_raise
     call dk_focus_console
@@ -1135,6 +1372,34 @@ dk_click:
     add edx, DK_BORDER - 20               ; the [x]: the last 20px
     cmp eax, edx
     jge .close
+    push eax
+    mov eax, esi
+    call dk_can_max
+    pop eax
+    jc .no_max_box
+    sub edx, 20                           ; the maximize box
+    cmp eax, edx
+    jge .maximize
+.no_max_box:
+    sub edx, 20                           ; [_]
+    cmp eax, edx
+    jge .minimize
+    mov edx, [timer_ms]                   ; a double click: maximize
+    sub edx, [dk_title_click_ms]
+    cmp edx, 450
+    ja .first_click
+    cmp esi, [dk_title_click_win]
+    jne .first_click
+    mov dword [dk_title_click_win], -1
+    push eax
+    mov eax, esi
+    call dk_can_max
+    pop eax
+    jnc .maximize
+.first_click:
+    mov edx, [timer_ms]
+    mov [dk_title_click_ms], edx
+    mov [dk_title_click_win], esi
     mov byte [dk_dragging], 1
     mov [dk_drag_win], esi
     mov edx, eax
@@ -1148,7 +1413,38 @@ dk_click:
     mov eax, esi
     call dk_win_x                         ; (src/dkwins.asm: by kind)
     jmp .done
+.background:
+    call dki_press                        ; (src/dkicons.asm: an icon?)
+    jmp .done
+.maximize:
+    mov eax, esi
+    call dk_win_maximize
+    jmp .done
+.minimize:
+    mov byte [dkw_hidden + esi], 1
+    mov byte [dk_redraw_all], 1
+    jmp .done
 .client:
+    push eax                              ; the bottom-right corner of one
+    mov eax, esi                          ; that can be resized: a resize
+    call dk_can_resize
+    pop eax
+    jc .not_corner
+    mov ecx, [dkw_x + esi*4]
+    add ecx, [dkw_w + esi*4]
+    add ecx, DK_BORDER * 2 - 14
+    cmp eax, ecx
+    jl .not_corner
+    mov ecx, edx
+    add ecx, [dkw_h + esi*4]
+    add ecx, DK_BORDER - 14
+    cmp ebx, ecx
+    jl .not_corner
+    mov byte [dk_resizing], 1
+    mov [dk_drag_win], esi
+    mov byte [dkw_max + esi], 0
+    jmp .done
+.not_corner:
     mov eax, esi                          ; the window's own click:
     sub ebx, edx                          ; client coordinates
     mov ecx, [dkw_x + esi*4]
@@ -1223,6 +1519,144 @@ dk_taskbar_window:
     pop ecx
     ret
 
+; eax = a window -> eax = where its [_] is, from its right edge
+dk_min_offset:
+    call dk_can_max
+    mov eax, 39
+    jc .done
+    mov eax, 59
+.done:
+    ret
+
+; eax = a window -> carry=0 if it can be maximized (Files, programs)
+dk_can_max:
+    cmp byte [dkw_kind + eax], K_FILES
+    je .yes
+    cmp byte [dkw_kind + eax], K_APP
+    je .yes
+    stc
+    ret
+.yes:
+    clc
+    ret
+
+; eax = a window -> carry=0 if it can be resized by its corner (Files)
+dk_can_resize:
+    cmp byte [dkw_kind + eax], K_FILES
+    je .yes
+    stc
+    ret
+.yes:
+    clc
+    ret
+
+; eax = a window: maximized - Files as big as the screen, a program's
+; picture blown up as much as fits - or back as it was
+dk_win_maximize:
+    pushad
+    mov ebp, eax
+    mov byte [dk_redraw_all], 1
+    cmp byte [dkw_max + ebp], 0
+    je .maximize
+    mov byte [dkw_max + ebp], 0           ; back
+    mov eax, [dkw_sx + ebp*4]
+    mov [dkw_x + ebp*4], eax
+    mov eax, [dkw_sy + ebp*4]
+    mov [dkw_y + ebp*4], eax
+    mov eax, [dkw_sw + ebp*4]
+    mov [dkw_w + ebp*4], eax
+    mov eax, [dkw_sh + ebp*4]
+    mov [dkw_h + ebp*4], eax
+    cmp byte [dkw_kind + ebp], K_APP
+    jne .laid_out
+    mov ecx, [dkw_param + ebp*4]
+    mov eax, [dkw_sscale + ebp*4]
+    mov [dk_app_scale + ecx*4], eax
+    jmp .laid_out
+.maximize:
+    mov byte [dkw_max + ebp], 1
+    mov eax, [dkw_x + ebp*4]
+    mov [dkw_sx + ebp*4], eax
+    mov eax, [dkw_y + ebp*4]
+    mov [dkw_sy + ebp*4], eax
+    mov eax, [dkw_w + ebp*4]
+    mov [dkw_sw + ebp*4], eax
+    mov eax, [dkw_h + ebp*4]
+    mov [dkw_sh + ebp*4], eax
+    mov dword [dkw_x + ebp*4], 0
+    mov dword [dkw_y + ebp*4], 0
+    mov dword [dkw_w + ebp*4], DESK_W - DK_BORDER * 2
+    mov dword [dkw_h + ebp*4], DESK_H - DK_TASKBAR_H - DK_TITLE_H - DK_BORDER * 2
+    cmp byte [dkw_kind + ebp], K_APP
+    jne .laid_out
+    mov ecx, [dkw_param + ebp*4]          ; a program: the biggest whole
+    mov eax, [dk_app_scale + ecx*4]       ; scale that fits
+    mov [dkw_sscale + ebp*4], eax
+    mov eax, DESK_W - DK_BORDER * 2
+    xor edx, edx
+    div dword [dk_app_w + ecx*4]
+    mov ebx, eax
+    mov eax, DESK_H - DK_TASKBAR_H - DK_TITLE_H - DK_BORDER * 2
+    xor edx, edx
+    div dword [dk_app_h + ecx*4]
+    cmp eax, ebx
+    jbe .scale
+    mov eax, ebx
+.scale:
+    cmp eax, 1
+    jae .scale_ok
+    mov eax, 1
+.scale_ok:
+    mov [dk_app_scale + ecx*4], eax
+    mov ebx, [dk_app_w + ecx*4]
+    imul ebx, eax
+    mov [dkw_w + ebp*4], ebx
+    mov edx, [dk_app_h + ecx*4]
+    imul edx, eax
+    mov [dkw_h + ebp*4], edx
+    mov eax, DESK_W - DK_BORDER * 2       ; centered
+    sub eax, ebx
+    sar eax, 1
+    mov [dkw_x + ebp*4], eax
+    mov eax, DESK_H - DK_TASKBAR_H - DK_TITLE_H - DK_BORDER * 2
+    sub eax, edx
+    sar eax, 1
+    mov [dkw_y + ebp*4], eax
+.laid_out:
+    call dk_fm_layout
+    popad
+    ret
+
+; Alt+Tab (keyboard_isr counts them): the window at the back comes to
+; the front - round they go
+dk_alt_tab_work:
+    pushad
+.more:
+    cmp byte [dk_alt_tab], 0
+    je .done
+    dec byte [dk_alt_tab]
+    xor ecx, ecx
+.bottom:
+    cmp ecx, [dk_zcount]
+    jae .done
+    movzx eax, byte [dk_zorder + ecx]
+    push ecx
+    mov ecx, eax
+    call dk_on_taskbar
+    pop ecx
+    jnc .found
+    inc ecx
+    jmp .bottom
+.found:
+    mov byte [dkw_hidden + eax], 0
+    call dk_raise
+    call dk_focus_console
+    mov byte [dk_redraw_all], 1
+    jmp .more
+.done:
+    popad
+    ret
+
 ; ecx = a window -> esi = its title: a Terminal running a text program
 ; that named itself (prog_title: uranium) shows that name instead
 dk_win_title:
@@ -1251,10 +1685,8 @@ dk_win_title:
 dk_on_taskbar:
     cmp byte [dkw_kind + ecx], K_NONE
     je .no
-    cmp byte [dkw_kind + ecx], K_TERM
-    jne .yes
-    cmp byte [dkw_hidden + ecx], 0
-    jne .no
+    cmp byte [dkw_hidden + ecx], 2        ; (minimized ones: 1, and there)
+    je .no
 .yes:
     clc
     ret
@@ -1264,6 +1696,16 @@ dk_on_taskbar:
 
 ; The start menu's item eax
 dk_menu_choose:
+    call snd_click
+    or eax, eax                           ; Programs: its submenu
+    jnz .not_programs
+    mov byte [dk_menu_open], 1
+    mov byte [dk_prog_open], 1
+    call dk_prog_scan                     ; (src/dkwins.asm)
+    call dk_mark_menu
+    ret
+.not_programs:
+    dec eax
     cmp eax, 0
     jne .not_terminal
     push ecx                              ; a closed Terminal 1: back
@@ -1271,8 +1713,11 @@ dk_menu_choose:
 .hidden:
     cmp byte [dkw_kind + ecx], K_TERM
     jne .hidden_next
-    cmp byte [dkw_hidden + ecx], 0
-    jne .unhide
+    cmp byte [dkw_hidden + ecx], 2
+    jne .hidden_next
+    mov eax, [dkw_param + ecx*4]
+    cmp byte [dk_launch_state + eax], 0
+    je .unhide
 .hidden_next:
     inc ecx
     cmp ecx, DK_MAX_WIN
@@ -1310,9 +1755,9 @@ dk_menu_choose:
 dk_mark_menu:
     pushad
     xor eax, eax
-    mov ebx, DESK_H - DK_TASKBAR_H - DK_MENU_ITEMS * DK_MENU_ITEM_H
-    mov ecx, DK_MENU_W
-    mov edx, DK_MENU_ITEMS * DK_MENU_ITEM_H + DK_TASKBAR_H
+    mov ebx, DESK_H - DK_TASKBAR_H - DK_PROG_MAX * DK_MENU_ITEM_H
+    mov ecx, DK_MENU_W + DK_PROG_W
+    mov edx, DK_PROG_MAX * DK_MENU_ITEM_H + DK_TASKBAR_H
     call dk_mark
     popad
     ret
@@ -1353,16 +1798,7 @@ dk_render:
     jae .bg_done
     cmp ebx, DESK_H - DK_TASKBAR_H
     jae .bg_done
-    mov eax, ebx                          ; 0..92 down the screen
-    shr eax, 4
-    mov edx, eax                          ; blue: 0x50 -> 0x9E
-    add edx, 0x50
-    mov ecx, eax                          ; green: 0x30 -> 0x7E
-    add ecx, 0x30
-    shl ecx, 8
-    or edx, ecx
-    or edx, 0x0C0000                      ; a little red
-    mov eax, edx
+    mov eax, [dk_bg_rows + ebx*4]         ; (the theme's gradient)
     mov edi, ebx
     imul edi, DESK_STRIDE
     mov ecx, [dk_clip_x0]
@@ -1377,8 +1813,9 @@ dk_render:
     mov eax, DESK_W - 200                 ; the name, faintly, in the corner
     mov ebx, DESK_H - DK_TASKBAR_H - 40
     mov esi, dk_msg_watermark
-    mov edx, 0x6FA8C8
+    mov edx, COL_WATERMARK
     call dk_text
+    call dki_draw                         ; (src/dkicons.asm: the icons)
 
     ; the windows, back to front
     xor ecx, ecx
@@ -1395,8 +1832,18 @@ dk_render:
 .wins_done:
     call dk_draw_taskbar
     cmp byte [dk_menu_open], 0
-    je .done
+    je .no_menu
     call dk_draw_menu
+.no_menu:
+    cmp byte [dk_cal_open], 0
+    je .no_cal
+    call dk_draw_calendar                 ; (src/dkwins.asm)
+.no_cal:
+    cmp byte [dk_ctx_open], 0
+    je .no_ctx
+    call dk_draw_ctx                      ; (src/dkwins.asm)
+.no_ctx:
+    call dk_draw_toast
 .done:
     popad
     ret
@@ -1431,6 +1878,7 @@ dk_draw_window:
     add eax, ecx
     add ebx, 3
     mov ecx, 2
+    dec edx                               ; (inside what dk_mark_window marks)
     mov esi, 0x08101C
     call dk_fill
     pop edx
@@ -1442,6 +1890,7 @@ dk_draw_window:
     push ecx
     add ebx, edx
     add eax, 3
+    dec ecx
     mov edx, 2
     mov esi, 0x08101C
     call dk_fill
@@ -1472,14 +1921,21 @@ dk_draw_window:
     pop ecx
     mov edx, COL_WHITE
     push edi
-    mov edi, [dkw_w + ebp*4]              ; (clear of "kbd" and the [x])
-    sub edi, 60
+    mov eax, ebp
+    call dk_min_offset                    ; (clear of "kbd" and the buttons)
+    mov edi, [dkw_w + ebp*4]
+    sub edi, eax
+    sub edi, 40
+    js .no_room
     shr edi, 3
+    mov eax, [esp + 8]
+    add eax, 6
     call dk_text_n
+.no_room:
     pop edi
     pop ebx
     pop eax
-    ; the keyboard's console: a mark before the [x]
+    ; the keyboard's console: a mark before the buttons
     push eax
     mov eax, ebp
     call dk_win_console
@@ -1487,10 +1943,13 @@ dk_draw_window:
     je .no_kbd
     cmp al, [console_fg]
     jne .no_kbd
-    mov eax, [esp]
+    mov eax, ebp
+    call dk_min_offset
+    neg eax
+    add eax, [esp]
     push ebx
     add eax, [dkw_w + ebp*4]
-    sub eax, 44
+    sub eax, 28
     add ebx, 3
     mov esi, dk_msg_keyboard
     mov edx, 0xFFE066
@@ -1512,6 +1971,55 @@ dk_draw_window:
     mov esi, dk_msg_x
     mov edx, COL_WHITE
     call dk_text
+    pop ebx
+    pop eax
+    ; [_] and, if it can be, the maximize box
+    push eax
+    push ebx
+    mov ecx, eax
+    mov eax, ebp
+    call dk_min_offset
+    neg eax
+    add eax, ecx
+    add eax, [dkw_w + ebp*4]
+    add ebx, 3
+    mov ecx, 16
+    mov edx, 16
+    mov esi, COL_TBTN
+    call dk_fill                          ; [_]
+    push eax
+    push ebx
+    add eax, 4
+    add ebx, 11
+    mov ecx, 8
+    mov edx, 2
+    mov esi, COL_WHITE
+    call dk_fill
+    pop ebx
+    pop eax
+    push eax
+    mov eax, ebp
+    call dk_can_max
+    pop eax
+    jc .buttons_done
+    add eax, 20                           ; the maximize box
+    mov ecx, 16
+    mov edx, 16
+    mov esi, COL_TBTN
+    call dk_fill
+    add eax, 4
+    add ebx, 4
+    mov ecx, 8
+    mov edx, 8
+    mov esi, COL_WHITE
+    call dk_fill
+    add eax, 1
+    add ebx, 2
+    mov ecx, 6
+    mov edx, 5
+    mov esi, COL_TBTN
+    call dk_fill
+.buttons_done:
     pop ebx
     pop eax
     ; the client area, then its kind's drawing
@@ -1598,7 +2106,7 @@ dk_draw_taskbar:
     mov eax, 134
     or edx, edx
     jz .step_ok
-    mov eax, DESK_W - 96 - 70
+    mov eax, DESK_W - 96 - DK_TRAY_W
     push edx
     mov ecx, edx
     xor edx, edx
@@ -1629,7 +2137,7 @@ dk_draw_taskbar:
 .plain:
     cmp byte [dkw_hidden + ecx], 0
     je .shown
-    mov esi, 0x252C3A                     ; minimized: darker
+    mov esi, COL_TASKMIN                  ; minimized: darker
 .shown:
     push ecx
     mov ecx, [dk_btn_step]
@@ -1642,7 +2150,7 @@ dk_draw_taskbar:
     mov edi, [dk_btn_step]
     sub edi, 12
     shr edi, 3
-    mov edx, COL_WHITE
+    mov edx, COL_BARTEXT
     call dk_text_n
     pop ecx
     pop eax
@@ -1665,8 +2173,9 @@ dk_draw_taskbar:
     mov eax, DESK_W - 60
     mov ebx, DESK_H - DK_TASKBAR_H + 7
     mov esi, dk_clock_text
-    mov edx, COL_WHITE
+    mov edx, COL_BARTEXT
     call dk_text
+    call dk_draw_tray                     ; (src/dkwins.asm)
     popad
     ret
 
@@ -1708,6 +2217,16 @@ dk_draw_menu:
     inc ecx
     jmp .item
 .done:
+    mov eax, DK_MENU_W - 20               ; Programs has more: ">"
+    mov ebx, DESK_H - DK_TASKBAR_H - DK_MENU_ITEMS * DK_MENU_ITEM_H + 4
+    mov esi, dk_msg_more
+    mov edx, COL_TEXT
+    call dk_text
+    cmp byte [dk_prog_open], 0
+    je .no_sub
+    call dk_draw_programs                 ; (src/dkwins.asm)
+.no_sub:
+    call dk_draw_search
     popad
     ret
 
@@ -1804,37 +2323,57 @@ dk_glyph:
     jge .done
     shl ecx, 5
     add ecx, vga_saved_font
-    mov ebp, 16
+    ; the visible columns as a mask (bit 7 = the leftmost)
+    push ecx
+    mov ecx, [dk_clip_x0]
+    sub ecx, eax                          ; columns cut on the left
+    jg .left
+    xor ecx, ecx
+.left:
+    mov esi, 0xFF
+    shr esi, cl
+    mov ecx, eax
+    add ecx, 8
+    sub ecx, [dk_clip_x1]                 ; columns cut on the right
+    jg .right
+    xor ecx, ecx
+.right:
+    mov edi, 0xFF
+    shl edi, cl
+    and esi, edi                          ; esi = the mask
+    pop ecx
+    ; the visible rows
+    mov ebp, ebx
+    add ebp, 16
+    cmp ebp, [dk_clip_y1]
+    jle .bottom
+    mov ebp, [dk_clip_y1]
+.bottom:
+    mov edi, [dk_clip_y0]
+    sub edi, ebx                          ; rows cut at the top
+    jle .top
+    add ecx, edi
+    add ebx, edi
+.top:
+    sub ebp, ebx                          ; ebp = rows to draw
+    imul edi, ebx, DESK_STRIDE
+    lea edi, [edi + eax*4 + DESK_BACK]
 .row:
-    cmp ebx, [dk_clip_y0]
-    jl .next_row
-    cmp ebx, [dk_clip_y1]
-    jge .done
-    mov edi, ebx
-    imul edi, DESK_STRIDE
-    add edi, DESK_BACK
-    mov dl, [ecx]                         ; (the color's low byte is kept
-    mov [dk_g_bits], dl                   ; aside - edx is rebuilt below)
-    mov edx, [esp + 20]                   ; the color again (pushad's edx)
-    xor esi, esi
+    mov eax, esi
+    and al, [ecx]
+    jz .next_row
+    push edi
 .px:
-    shl byte [dk_g_bits], 1
+    add al, al
     jnc .skip
-    push eax
-    add eax, esi
-    cmp eax, [dk_clip_x0]
-    jl .out
-    cmp eax, [dk_clip_x1]
-    jge .out
-    mov [edi + eax*4], edx
-.out:
-    pop eax
+    mov [edi], edx
 .skip:
-    inc esi
-    cmp esi, 8
-    jb .px
+    add edi, 4
+    or al, al
+    jnz .px
+    pop edi
 .next_row:
-    inc ebx
+    add edi, DESK_STRIDE
     inc ecx
     dec ebp
     jnz .row
@@ -1967,7 +2506,12 @@ dk_line:
 ; To the screen
 ; ============================================================
 
-; DESK_BACK's rectangle eax, ebx, ecx (w), edx (h) -> the screen
+; DESK_BACK's rectangle eax, ebx, ecx (w), edx (h) -> the page being
+; drawn (dk_page_lfb) - only the pixels that differ from what's there
+; already (dk_page_front: a copy of that page in RAM). The video memory
+; is the slow part (an emulator watches it); comparing RAM is cheap, and
+; most of a frame - a black background, a still half of a picture -
+; hasn't changed.
 dk_blit:
     pushad
     add ecx, eax
@@ -1975,69 +2519,178 @@ dk_blit:
     call dk_clip_screen
     jc .done
     sub ecx, eax
-    mov ebp, edx
-    sub ebp, ebx
+    mov [dk_bl_w], ecx
+    sub edx, ebx
+    mov [dk_bl_rows], edx
     mov esi, ebx
     imul esi, DESK_STRIDE
     lea esi, [esi + eax*4]
     mov edi, esi
+    add edi, [dk_page_front]
     add esi, DESK_BACK
-    add edi, [bga_lfb]
-    mov edx, ecx
+    mov ebp, [dk_page_lfb]                ; ebp = the page - its copy
+    sub ebp, [dk_page_front]
     cld
 .row:
     push esi
     push edi
-    mov ecx, edx
-    rep movsd
+    mov ecx, [dk_bl_w]
+.scan:
+    repe cmpsd                            ; the same: skipped
+    je .row_done
+    sub esi, 4                            ; (back to the first that isn't)
+    sub edi, 4
+    inc ecx
+.diff:
+    mov eax, [esi]
+    cmp eax, [edi]
+    je .scan
+    mov [edi], eax
+    mov [edi + ebp], eax
+    add esi, 4
+    add edi, 4
+    dec ecx
+    jnz .diff
+.row_done:
     pop edi
     pop esi
     add esi, DESK_STRIDE
     add edi, DESK_STRIDE
-    dec ebp
+    dec dword [dk_bl_rows]
     jnz .row
 .done:
     popad
     ret
 
-; After a frame: if the pointer moved, or something was just copied
-; over where it is, repaint where it was and draw it where it is.
-dk_move_pointer:
+; The frame onto the screen. There are two pages of video memory: one
+; shown, and one drawn into while it isn't, then shown in one step (the
+; BGA's Y offset) - so the screen never shows a frame half drawn. The
+; hidden page last got the frame before the one just shown, so it takes
+; this frame's rectangles and the last frame's, and the pointer: rubbed
+; out where it was drawn on this page, drawn where it is.
+dk_present:
     pushad
-    mov eax, [dk_mx]
+    cmp dword [dk_frame_n], 0
+    jne .go
+    cmp dword [dk_prev_n], 0
+    jne .go
+    mov eax, [dk_mx]                      ; nothing drawn: the pointer?
     cmp eax, [dk_ptr_x]
-    jne .redraw
+    jne .go
     mov eax, [dk_my]
     cmp eax, [dk_ptr_y]
-    jne .redraw
+    jne .go
     cmp byte [dk_fm_state], 3             ; (a dragged icon follows too)
-    je .redraw
+    je .go
     cmp byte [dk_ptr_ghost], 0            ; (just dropped: the icon goes)
-    jne .redraw
-    call dk_ptr_rect                      ; drawn over?
-    xor esi, esi
-.over:
-    cmp esi, [dk_frame_n]
-    jae .done
-    mov edi, esi
-    shl edi, 4
-    cmp eax, [dk_frame_rects + edi + 8]
-    jge .next
-    cmp ecx, [dk_frame_rects + edi]
-    jle .next
-    cmp ebx, [dk_frame_rects + edi + 12]
-    jge .next
-    cmp edx, [dk_frame_rects + edi + 4]
-    jg .redraw
-.next:
-    inc esi
-    jmp .over
-.redraw:
-    call dk_ptr_rect                      ; where it was: from the back buffer
+    jne .go
+    jmp .done
+.go:
+    mov ebp, [dk_page]
+    xor ebp, 1                            ; ebp = the hidden page
+    imul eax, ebp, DESK_H * DESK_STRIDE
+    add eax, [bga_lfb]
+    mov [dk_page_lfb], eax
+    mov eax, [dk_fronts + ebp*4]
+    mov [dk_page_front], eax
+    mov esi, dk_frame_rects               ; this frame's
+    mov ecx, [dk_frame_n]
+    call .rects
+    mov esi, dk_prev_rects                ; the last one's
+    mov ecx, [dk_prev_n]
+    call .rects
+    cmp byte [dk_pg_ptr_on + ebp], 0      ; the pointer as drawn here
+    je .no_old
+    mov esi, ebp
+    shl esi, 4
+    add esi, dk_pg_ptr
+    mov ecx, 1
+    call .rects
+.no_old:
+    call dk_draw_pointer
+    call dk_ptr_rect
+    mov esi, ebp
+    shl esi, 4
+    mov [dk_pg_ptr + esi], eax
+    mov [dk_pg_ptr + esi + 4], ebx
+    mov [dk_pg_ptr + esi + 8], ecx
+    mov [dk_pg_ptr + esi + 12], edx
+    mov byte [dk_pg_ptr_on + ebp], 1
+    call dk_front_poison                  ; (its copy doesn't have it)
+    mov ax, BGA_Y_OFFSET                  ; shown
+    imul edx, ebp, DESK_H
+    call bga_write
+    mov [dk_page], ebp
+    mov esi, dk_frame_rects               ; (the other page lacks these now)
+    mov edi, dk_prev_rects
+    mov ecx, [dk_frame_n]
+    mov [dk_prev_n], ecx
+    shl ecx, 2
+    cld
+    rep movsd
+.done:
+    popad
+    ret
+; esi = ecx rectangles (x0, y0, x1, y1) -> the hidden page
+.rects:
+    jecxz .rects_done
+    push esi
+    push ecx
+.rect:
+    push ecx
+    mov eax, [esi]
+    mov ebx, [esi + 4]
+    mov ecx, [esi + 8]
+    mov edx, [esi + 12]
     sub ecx, eax
     sub edx, ebx
     call dk_blit
-    call dk_draw_pointer
+    add esi, 16
+    pop ecx
+    loop .rect
+    pop ecx
+    pop esi
+.rects_done:
+    ret
+
+; The video pages' contents unknown (the mode just set): their copies
+; made to match nothing, so the next frames write every pixel
+dk_front_forget:
+    pushad
+    mov eax, 0xFF000000                   ; (no pixel of DESK_BACK is that)
+    mov edi, DESK_FRONT0
+    mov ecx, DESK_W * DESK_H
+    cld
+    rep stosd
+    mov edi, DESK_FRONT1
+    mov ecx, DESK_W * DESK_H
+    rep stosd
+    popad
+    ret
+
+; eax, ebx, ecx, edx = x0, y0, x1, y1 drawn straight onto the page:
+; its copy made to match nothing there, so that it's all written again
+dk_front_poison:
+    pushad
+    call dk_clip_screen
+    jc .done
+    sub ecx, eax
+    sub edx, ebx
+    mov edi, ebx
+    imul edi, DESK_STRIDE
+    lea edi, [edi + eax*4]
+    add edi, [dk_page_front]
+    mov eax, 0xFF000000
+    mov ebx, ecx
+    cld
+.row:
+    push edi
+    mov ecx, ebx
+    rep stosd
+    pop edi
+    add edi, DESK_STRIDE
+    dec edx
+    jnz .row
 .done:
     popad
     ret
@@ -2082,7 +2735,7 @@ dk_draw_pointer:
     cmp edx, DESK_H
     jae .done
     imul edx, DESK_STRIDE
-    add edx, [bga_lfb]
+    add edx, [dk_page_lfb]
     movzx esi, word [dk_ptr_outline + ebp*2]
     movzx edi, word [dk_ptr_fill + ebp*2]
     xor ecx, ecx                          ; the column
@@ -2121,7 +2774,7 @@ dk_inject_key:
     mov ebx, [dk_inject_pos]
     cmp ebx, [dk_inject_len]
     jae .none
-    mov al, [console_fg]
+    mov al, [console_self]                ; (the console it's meant for)
     cmp al, [dk_inject_console]
     jne .none
     mov al, [dk_inject_buf + ebx]
@@ -2163,7 +2816,9 @@ dk_frame_n        dd 0                         ; this frame's copy
 dk_frame_rects    times DK_DIRTY_MAX * 4 dd 0
 dk_frame_ms       dd 0
 dk_bd_h           dd 0
-dk_frames         dd 0                         ; (counted, for testing)
+dk_frames         dd 0
+dk_bl_w           dd 0
+dk_bl_rows        dd 0
 dk_ptr_ghost      db 0                         ; the drawn pointer had an icon
 dk_clip_x0        dd 0
 dk_clip_y0        dd 0
@@ -2174,12 +2829,34 @@ dk_next_frame     dd 0
 dk_last_fast      dd 0
 dk_mix_sum        dd 0
 dk_btn_now        db 0
+dk_last_right     db 0
+dk_resizing       db 0
+dk_prog_open      db 0                         ; the Programs submenu is out
+dk_cal_open       db 0                         ; the calendar is out
+dk_prog_shown     dd 1                         ; its rows
+dk_alt_tab        db 0                         ; Alt+Tabs to act on
+dk_title_click_ms dd 0                         ; (a double click on a title)
+dk_title_click_win dd -1
+dkw_max           times DK_MAX_WIN db 0        ; maximized, and how it was
+dkw_sx            times DK_MAX_WIN dd 0
+dkw_sy            times DK_MAX_WIN dd 0
+dkw_sw            times DK_MAX_WIN dd 0
+dkw_sh            times DK_MAX_WIN dd 0
+dkw_sscale        times DK_MAX_WIN dd 0
 dk_ev_x           dd 0                         ; the event's pointer
 dk_ev_y           dd 0
 dk_last_fg        db 0xFF
 dk_mx             dd 0
 dk_my             dd 0
 dk_ptr_x          dd 0
+dk_page           dd 0                    ; the video page shown (0, 1)
+dk_page_lfb       dd 0                    ; the one being drawn
+dk_page_front     dd 0                    ; ... and its copy
+dk_fronts         dd DESK_FRONT0, DESK_FRONT1
+dk_prev_n         dd 0                    ; the last frame's rectangles
+dk_prev_rects     times DK_DIRTY_MAX * 4 dd 0
+dk_pg_ptr         times 2 * 4 dd 0        ; the pointer as drawn on each
+dk_pg_ptr_on      times 2 db 0
 dk_ptr_y          dd 0
 dk_last_buttons   db 0
 dk_dragging       db 0
@@ -2192,7 +2869,6 @@ dk_btn_step       dd 134
 dk_btn_top        dd 0
 dk_cx             dd 0                    ; the client area being drawn
 dk_cy             dd 0
-dk_g_bits         db 0
 dk_lx1            dd 0
 dk_ly1            dd 0
 dk_ldx            dd 0
@@ -2201,7 +2877,8 @@ dk_lsx            dd 0
 dk_lsy            dd 0
 dk_clock_text     times 12 db 0
 DK_KEY_END        equ 1                        ; (in dk_inject_buf: End)
-dk_inject_buf     times 256 db 0
+DK_INJECT_MAX     equ 2048
+dk_inject_buf     times DK_INJECT_MAX + 16 db 0
 dk_inject_len     dd 0
 dk_inject_pos     dd 0
 dk_inject_console db 0
@@ -2216,19 +2893,21 @@ dkw_w             times DK_MAX_WIN dd 0   ; the client area's size
 dkw_h             times DK_MAX_WIN dd 0
 dkw_cursor        times DK_MAX_WIN dd -1  ; a Terminal's cursor, as drawn
 dkw_blink         times DK_MAX_WIN db 0
+dkw_scroll        times DK_MAX_WIN dd 0  ; a Terminal's lines scrolled back
 dkw_title         times DK_MAX_WIN * DK_TITLE_LEN db 0
 dk_zorder         times DK_MAX_WIN db 0
 dk_zcount         dd 0
 
 ; each kind's place and size when it opens, and name
 ;                   term  clock pics  sys   files tasks mixer app
-dk_def_x          dd 30,   800,  240,  700,  60,   320,  420,  200
-dk_def_y          dd 24,   30,   120,  320,  90,   150,  260,  60
-dk_def_w          dd 640,  200,  320,  290,  560,  420,  400,  320
-dk_def_h          dd 400,  214,  200,  150,  380,  330,  210,  200
+dk_def_x          dd 30,   800,  240,  560,  60,   250,  420,  200
+dk_def_y          dd 24,   30,   120,  320,  90,   90,   260,  60
+dk_def_w          dd 640,  200,  320,  420,  560,  520,  400,  320
+dk_def_h          dd 400,  214,  200,  210,  380,  400,  210,  200
 dk_kind_names     dd dk_title_terminal, dk_title_clock, dk_title_pictures, dk_title_system
                   dd dk_title_files, dk_title_tasks, dk_title_mixer, dk_title_program
-dk_menu_labels    dd dk_title_terminal, dk_title_files, dk_title_clock, dk_title_pictures
+dk_menu_labels    dd dk_menu_programs
+                  dd dk_title_terminal, dk_title_files, dk_title_clock, dk_title_pictures
                   dd dk_title_tasks, dk_title_mixer, dk_title_system, dk_menu_exit
 dk_menu_kinds     db K_TERM, K_FILES, K_CLOCK, K_PICS, K_TASKS, K_MIXER, K_SYSTEM, K_NONE
 
@@ -2248,6 +2927,8 @@ dk_title_tasks      db "Tasks", 0
 dk_title_mixer      db "Mixer", 0
 dk_title_program    db "Program", 0
 dk_menu_exit        db "Exit desktop", 0
+dk_menu_programs    db "Programs", 0
+dk_msg_more         db ">", 0
 dk_msg_start        db "LexOS", 0
 dk_msg_x            db "x", 0
 dk_msg_keyboard     db "kbd", 0

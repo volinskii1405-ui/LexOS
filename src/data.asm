@@ -35,7 +35,7 @@ SECTOR_COUNT equ 8
 ; in slots 0..FS_DIR_SLOT_LIMIT-1 (fs_find_free_dir) - files take the
 ; rest first (fs_find_free), so up to 255 folders, nested as deep as you
 ; like, and the other ~770 slots for files.
-FS_START_SECTOR   equ 450     ; sector 1=bootloader, 2..449=kernel (448 sectors)
+FS_START_SECTOR   equ 578     ; sector 1=bootloader, 2..577=kernel (576 sectors)
 FS_FILE_COUNT     equ 1024
 FS_DIR_SLOT_LIMIT equ 255
 FS_NAME_LEN       equ 16
@@ -661,6 +661,12 @@ cmd_exit         db "exit", 0
 ; src/usermode.asm's, per console (src/console.asm swaps this file)
 app_active         db 0
 shell_at_prompt    db 0               ; reading a command line (main_loop)
+console_self       db 0               ; which console this is (src/console.asm)
+text_vram          dd VIDEO_MEM       ; src/screen.asm writes the text here
+kbd_buf_ascii      times 16 db 0      ; its keys (KBD_BUF_SIZE), put here by
+kbd_buf_scancode   times 16 db 0      ; keyboard_isr while it's on screen
+kbd_buf_head       db 0
+kbd_buf_tail       db 0
 vga_windowed       db 0               ; mode 13h shown in a desktop window
 vga_win_slot       dd 0               ; (its program window: src/dkwins.asm)
 prog_title         times 32 db 0      ; a text program's name for its Terminal
@@ -787,3 +793,4 @@ fs_list_type db 0
 fs_tree_depth db 0
 
 fs_current_dir dw FS_ROOT
+fs_apps_dir_name db "APPS", 0

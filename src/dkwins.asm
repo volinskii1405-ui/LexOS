@@ -9,20 +9,26 @@
 ; (to appsys.asm): dk_app_open, dk_app_close, dk_app_blit, dk_app_palette
 ; ============================================================
 
-DESK_IMG_FILE     equ 0x7500000           ; a picture's file (2MB)
-DESK_IMG_FILE_MAX equ 0x200000
-DESK_IMG_PIX      equ 0x7700000           ; ... decoded, 32bpp
-DESK_IMG_MAX_W    equ 960
-DESK_IMG_MAX_H    equ 640
+DESK_IMG_FILE     equ 0x7A00000           ; a picture's file (3MB) - and
+DESK_IMG_FILE_MAX equ 0x300000            ; a screenshot's, being saved
+DESK_IMG_PIX      equ 0x7700000           ; ... decoded, 32bpp (3MB)
+DESK_IMG_MAX_W    equ 1024
+DESK_IMG_MAX_H    equ 768
+DK_SHOT_SIZE      equ 54 + DESK_W * DESK_H * 3
 DK_APPS           equ 3                   ; programs' windows at once
 DK_APP_PIX        equ 0x5000000           ; their pixels, 2MB each
+DK_SB_BASE        equ 0x6340000           ; each console's lines scrolled
+DK_SB_LINES       equ 200                 ; off the top (32KB each)
 DK_VGA_LAST       equ 0x5710000           ; mode 13h windows: the picture
                                           ; as last shown (64KB per slot)
 DK_APP_MAX_PIX    equ 0x200000 / 4
 FM_MAX            equ 250                 ; Files: entries in a folder
 FM_ENTRY          equ 32                  ; name 0-16, kind 17, slot 20, size 24
-FM_COLS           equ 6
-FM_ROWS           equ 4
+FM_FIND_X         equ 224                 ; the toolbar's search box
+FM_FIND_W         equ 168
+FM_SORT_X         equ 398                 ; ...and its order button
+FM_SORT_W         equ 94
+FM_FIND_MAX       equ 14
 FM_CELL_W         equ 90
 FM_CELL_H         equ 80
 FM_TOP            equ 32
@@ -76,13 +82,14 @@ dk_draw_terminal:
     jle .next_row
     cmp ebx, [dk_clip_y1]
     jge .cursor
+    call dk_term_row_src                  ; (scrolled back: an older line)
+    mov [dk_term_rowp], eax
     xor edi, edi                          ; the column
 .cell:
-    mov eax, edx
-    imul eax, SCREEN_COLS
-    add eax, edi
-    shl eax, 1
-    add eax, [dk_term_src]
+    call dkc_selected                     ; (src/dkclip.asm: selected?)
+    setnz [dk_term_sel]
+    lea eax, [edi*2]
+    add eax, [dk_term_rowp]
     movzx ecx, byte [eax]                 ; the character
     movzx eax, byte [eax + 1]             ; its colors
     push edx
@@ -93,6 +100,10 @@ dk_draw_terminal:
     shr esi, 4
     and esi, 0x07
     mov esi, [dk_ega + esi*4]             ; background
+    cmp byte [dk_term_sel], 0             ; (selected: the colors swapped)
+    je .colors
+    xchg edx, esi
+.colors:
     mov eax, edi
     shl eax, 3
     add eax, [dk_cx]
@@ -106,6 +117,23 @@ dk_draw_terminal:
     inc edx
     jmp .row
 .cursor:
+    cmp dword [dkw_scroll + ebp*4], 0     ; scrolled back: no cursor, a tag
+    je .no_tag
+    mov eax, [dk_cx]
+    add eax, [dkw_w + ebp*4]
+    sub eax, 150
+    mov ebx, [dk_cy]
+    mov ecx, 150
+    mov edx, 18
+    mov esi, 0xE0B040
+    call dk_fill
+    add eax, 6
+    add ebx, 1
+    mov esi, dk_msg_scrolled
+    mov edx, COL_BLACK
+    call dk_text
+    jmp dk_contents_done
+.no_tag:
     cmp byte [dk_term_on], 0
     je dk_contents_done
     movzx eax, word [dkw_cursor + ebp*4]      ; column
@@ -124,6 +152,132 @@ dk_draw_terminal:
     mov esi, 0xC0C0C0
     call dk_fill
     jmp dk_contents_done
+
+; ebp = a Terminal, edx = a row of it -> eax = that row's 80 cells:
+; the screen's - or, scrolled back (dkw_scroll lines), older ones
+dk_term_row_src:
+    push ebx
+    push ecx
+    push edx
+    mov ecx, [dkw_scroll + ebp*4]
+    or ecx, ecx
+    jz .screen
+    mov ebx, [dkw_param + ebp*4]          ; its console
+    cmp ecx, [dk_sb_count + ebx*4]
+    jbe .scroll_ok
+    mov ecx, [dk_sb_count + ebx*4]
+.scroll_ok:
+    mov eax, [dk_sb_count + ebx*4]        ; L = count - scroll + row
+    sub eax, ecx
+    add eax, edx
+    cmp eax, [dk_sb_count + ebx*4]
+    jae .below
+    add eax, [dk_sb_head + ebx*4]         ; its place in the ring
+    sub eax, [dk_sb_count + ebx*4]
+    jns .ring
+    add eax, DK_SB_LINES
+.ring:
+    imul eax, eax, SCREEN_COLS * 2
+    shl ebx, 15
+    add eax, ebx
+    add eax, DK_SB_BASE
+    jmp .done
+.below:
+    sub eax, [dk_sb_count + ebx*4]
+    mov edx, eax
+.screen:
+    imul eax, edx, SCREEN_COLS * 2
+    add eax, [dk_term_src]
+.done:
+    pop edx
+    pop ecx
+    pop ebx
+    ret
+
+; A console's line about to scroll off the top of its screen
+; (scroll_screen, src/screen.asm - in its task): kept, a ring of
+; DK_SB_LINES, for its Terminal's mouse wheel
+dk_scrollback_save:
+    pushad
+    movzx ebx, byte [console_self]
+    cmp ebx, CONSOLE_MAX
+    jae .done
+    mov eax, [dk_sb_head + ebx*4]
+    imul edi, eax, SCREEN_COLS * 2
+    mov edx, ebx
+    shl edx, 15
+    add edi, edx
+    add edi, DK_SB_BASE
+    mov esi, [text_vram]
+    mov ecx, SCREEN_COLS * 2 / 4
+    cld
+    rep movsd
+    inc eax
+    cmp eax, DK_SB_LINES
+    jb .head
+    xor eax, eax
+.head:
+    mov [dk_sb_head + ebx*4], eax
+    cmp dword [dk_sb_count + ebx*4], DK_SB_LINES
+    jae .done
+    inc dword [dk_sb_count + ebx*4]
+.done:
+    popad
+    ret
+
+; Each frame: the mouse wheel's turns - over a Terminal, back through
+; what scrolled off it; over Files, its pages
+dk_wheel_work:
+    pushad
+    xor eax, eax
+    xchg eax, [mouse_wheel]
+    or eax, eax
+    jz .done
+    mov ebp, eax
+    mov eax, [dk_mx]
+    mov ebx, [dk_my]
+    call dk_window_at                     ; -> esi
+    cmp esi, -1
+    je .not_window
+    cmp byte [dkw_kind + esi], K_TERM
+    je .terminal
+    cmp byte [dkw_kind + esi], K_FILES
+    jne .done
+    mov eax, [dk_fm_page]                 ; Files: a page per notch
+    add eax, ebp
+    jns .page
+    xor eax, eax
+.page:
+    mov ecx, eax
+    imul ecx, [dk_fm_page_n]
+    cmp ecx, [dk_fm_count]
+    jb .page_ok
+    mov eax, [dk_fm_page]
+.page_ok:
+    mov [dk_fm_page], eax
+    mov eax, esi
+    call dk_mark_window_client
+    jmp .done
+.terminal:
+    imul ebp, ebp, -3                     ; up (-): three lines back each
+    add ebp, [dkw_scroll + esi*4]
+    jns .back
+    xor ebp, ebp
+.back:
+    mov ebx, [dkw_param + esi*4]
+    cmp ebp, [dk_sb_count + ebx*4]
+    jbe .scroll_ok
+    mov ebp, [dk_sb_count + ebx*4]
+.scroll_ok:
+    mov [dkw_scroll + esi*4], ebp
+    mov eax, esi
+    call dk_mark_window_client
+    jmp .done
+.not_window:
+    call dk_tray_wheel                    ; (the taskbar's volume)
+.done:
+    popad
+    ret
 
 ; ebp = a Terminal -> eax = its cursor's row, ebx = column, cl = 1 if
 ; it's showing now (only the console with the keyboard has one, blinking)
@@ -167,7 +321,7 @@ dk_draw_clock:
     mov edx, CLOCK_R
     call dk_clock_point                   ; -> eax, ebx
     push ecx
-    mov esi, 0x9AA3B5
+    mov esi, COL_MUTED
     push eax
     push edx
     mov eax, ecx
@@ -185,7 +339,7 @@ dk_draw_clock:
     mov edx, 5
     sub eax, 2
     sub ebx, 2
-    mov esi, 0x2A3140
+    mov esi, COL_TEXT
 .small:
     call dk_fill
     pop ecx
@@ -205,11 +359,11 @@ dk_draw_clock:
     pop ecx
     add eax, ecx
     mov edx, 45
-    mov esi, 0x1C2331
+    mov esi, COL_TEXT
     call dk_clock_hand
     movzx eax, byte [dk_m_now]            ; ...minutes, seconds
     mov edx, 68
-    mov esi, 0x1C2331
+    mov esi, COL_TEXT
     call dk_clock_hand
     movzx eax, byte [dk_s_now]
     mov edx, 74
@@ -358,11 +512,11 @@ dk_copy_pixels:
 .row:                                     ; edx = the screen row, from the top
     cmp edx, [dk_cp_r1]
     jge .done
-    mov eax, edx                          ; the source row
-    cmp dword [dk_cp_scale], 2
-    jne .row1
-    shr eax, 1
-.row1:
+    push edx                              ; the source row
+    mov eax, edx
+    xor edx, edx
+    div dword [dk_cp_scale]
+    pop edx
     imul eax, [dk_cp_w]
     shl eax, 2
     add eax, [dk_cp_src]
@@ -376,12 +530,19 @@ dk_copy_pixels:
     mov ebx, [dk_cp_c0]
     mov ecx, [dk_cp_c1]
     sub ecx, ebx
-    cmp dword [dk_cp_scale], 2
-    jne .straight
-    test edx, 1                           ; doubled: an odd row is the one
-    jz .doubled                           ; above it again, if that's drawn
-    cmp edx, [dk_cp_r0]
-    je .doubled
+    cmp dword [dk_cp_scale], 1
+    je .straight
+    cmp edx, [dk_cp_r0]                   ; scaled: a row that repeats the
+    je .scaled                            ; one above, if that's drawn
+    push eax
+    push edx
+    mov eax, edx
+    xor edx, edx
+    div dword [dk_cp_scale]
+    or edx, edx
+    pop edx
+    pop eax
+    jz .scaled
     lea esi, [edi - DESK_STRIDE]
     rep movsd
     jmp .next_row
@@ -389,13 +550,47 @@ dk_copy_pixels:
     lea esi, [esi + ebx*4]                ; 1:1 - a straight copy
     rep movsd
     jmp .next_row
-.doubled:
-    mov eax, ebx
-    shr eax, 1
-    mov eax, [esi + eax*4]
+.scaled:
+    cmp dword [dk_cp_scale], 2            ; doubled (the usual): pairs
+    jne .any_scale
+    test ebx, 1
+    jnz .any_scale
+    shr ebx, 1
+    lea esi, [esi + ebx*4]
+    shr ecx, 1
+    jz .odd_tail
+.pair:
+    lodsd
+    stosd
+    stosd
+    loop .pair
+.odd_tail:
+    mov ecx, [dk_cp_c1]                   ; (an odd last one)
+    sub ecx, [dk_cp_c0]
+    test ecx, 1
+    jz .next_row
+    lodsd
+    stosd
+    jmp .next_row
+.any_scale:
+    push edx
+    mov eax, ebx                          ; the first source pixel, and how
+    xor edx, edx                          ; far into its repeats
+    div dword [dk_cp_scale]
+    lea esi, [esi + eax*4]
+    mov ebx, edx
+    mov eax, [esi]
+.px:
     stosd
     inc ebx
-    loop .doubled
+    cmp ebx, [dk_cp_scale]
+    jb .same_px
+    xor ebx, ebx
+    add esi, 4
+    mov eax, [esi]
+.same_px:
+    loop .px
+    pop edx
 .next_row:
     inc edx
     jmp .row
@@ -622,25 +817,15 @@ dk_decode_bmp:
     stc
     ret
 
-; carry=0 if the console with the keyboard is waiting for a key, or its
-; program is running its own code (not in a system call) - a
-; moment the desktop may use the filesystem (its buffers are shared)
+; carry=0 if no console's task is inside the kernel (waiting, or running
+; ring-3 code) - a moment the desktop may use the filesystem (its
+; buffers are shared)
 dk_shell_idle:
-    push eax
-    movzx eax, byte [console_fg]
-    mov eax, [console_task + eax*4]
-    cmp byte [task_keywait + eax], 0      ; waiting for a key,
-    jne .idle
-    cmp byte [app_active], 0              ; or a program running in ring 3
-    je .busy                              ; - not inside a system call
-    cmp byte [task_insys + eax], 0
-    jne .busy
-.idle:
-    pop eax
+    cmp dword [bkl_owner], -1             ; no console's task in the kernel
+    jne .busy                             ; (src/sched.asm: the kernel lock)
     clc
     ret
 .busy:
-    pop eax
     stc
     ret
 
@@ -719,8 +904,9 @@ dk_draw_system:
     mov esi, dk_sys_buf
     call dk_sys_line
     mov esi, dk_sys_hint
-    mov edx, 0x6E7B8B
+    mov edx, COL_MUTED
     call dk_sys_line
+    call dk_sys_extras                    ; (src/dkstyle.asm: themes, sounds)
     jmp dk_contents_done
 
 ; esi (color edx) at the next line
@@ -739,49 +925,19 @@ dk_sys_line:
 ; Tasks: the CPU over the last minute, the tasks, End task
 ; ============================================================
 dk_draw_tasks:
-    ; the graph: 60 one-second bars
+    ; the graphs: the CPU, and the memory in use, over the last minute
     mov eax, [dk_cx]
     add eax, 10
     mov ebx, [dk_cy]
     add ebx, 8
-    mov ecx, 60 * 5
-    mov edx, 80
-    mov esi, 0x101820
-    call dk_fill
-    xor edi, edi
-.bar:
-    mov eax, [dk_cpu_pos]                 ; oldest first
-    add eax, edi
-    xor edx, edx
-    mov ecx, 60
-    div ecx
-    movzx edx, byte [dk_cpu_hist + edx]
-    imul edx, 80
-    push eax
-    mov eax, edx
-    xor edx, edx
-    mov ecx, 100
-    div ecx
-    mov edx, eax                          ; the bar's height
-    pop eax
-    or edx, edx
-    jz .next_bar
-    mov eax, edi
-    imul eax, 5
-    add eax, [dk_cx]
-    add eax, 10
-    mov ebx, [dk_cy]
-    add ebx, 88
-    sub ebx, edx
-    mov ecx, 4
-    mov esi, 0x43C06B
-    call dk_fill
-.next_bar:
-    inc edi
-    cmp edi, 60
-    jb .bar
-    ; "CPU 12%" beside it
-    mov edi, dk_sys_buf
+    mov esi, dk_cpu_hist
+    mov edx, 0x43C06B
+    call dk_task_graph
+    add eax, 260
+    mov esi, dk_mem_hist
+    mov edx, 0x5DADE2
+    call dk_task_graph
+    mov edi, dk_sys_buf                   ; "CPU 12%"
     mov esi, dk_task_cpu
     call wget_append
     movzx eax, byte [dk_cpu_now]
@@ -790,39 +946,53 @@ dk_draw_tasks:
     stosb
     mov byte [edi], 0
     mov eax, [dk_cx]
-    add eax, 324
+    add eax, 10
     mov ebx, [dk_cy]
-    add ebx, 40
+    add ebx, 94
     mov esi, dk_sys_buf
     mov edx, COL_TEXT
+    call dk_text
+    mov edi, dk_sys_buf                   ; "Memory 45 of 128 MB"
+    mov esi, dk_task_mem
+    call wget_append
+    mov eax, [dk_mem_now]
+    call wget_append_num
+    mov esi, dk_task_mem_of
+    call wget_append
+    mov byte [edi], 0
+    mov eax, [dk_cx]
+    add eax, 270
+    mov esi, dk_sys_buf
     call dk_text
     ; the table
     mov eax, [dk_cx]
     add eax, 10
     mov ebx, [dk_cy]
-    add ebx, 100
+    add ebx, 116
     mov esi, dk_task_header
-    mov edx, 0x6E7B8B
+    mov edx, COL_MUTED
     call dk_text
     xor ebp, ebp                          ; the task
     mov dword [dk_task_row], 0
 .task:
     cmp ebp, SCHED_MAX
-    jae .button
+    jae .buttons
     cmp byte [task_state + ebp], TASK_FREE
     je .next_task
+    cmp dword [dk_task_row], DK_TASK_ROWS
+    jae .buttons
     mov eax, [dk_cx]
     add eax, 6
     mov ebx, [dk_task_row]
     imul ebx, 18
     add ebx, [dk_cy]
-    add ebx, 120
+    add ebx, 136
     mov edx, COL_TEXT
     cmp ebp, [dk_task_sel]
     jne .not_sel
     push ebx
     sub ebx, 1
-    mov ecx, 390
+    mov ecx, 500
     push edx
     mov edx, 18
     mov esi, COL_TITLE_ON
@@ -832,7 +1002,7 @@ dk_draw_tasks:
     mov edx, COL_WHITE
 .not_sel:
     add eax, 4
-    mov edi, dk_sys_buf                   ; "3   play TUNE.WAV   waiting  1.2s"
+    mov edi, dk_sys_buf                   ; the pid
     push eax
     mov eax, ebp
     call wget_append_num
@@ -840,16 +1010,50 @@ dk_draw_tasks:
     mov byte [edi], 0
     mov esi, dk_sys_buf
     call dk_text
-    add eax, 40
+    add eax, 40                           ; its name
     mov esi, ebp
     imul esi, TASK_NAME_LEN
     add esi, task_names
-    call dk_text
-    add eax, 170
+    push edi
+    mov edi, 20
+    call dk_text_n
+    pop edi
+    add eax, 168                          ; its state
     movzx esi, byte [task_state + ebp]
     mov esi, [dk_state_names + esi*4]
     call dk_text
-    add eax, 90
+    add eax, 76                           ; its priority
+    movzx esi, byte [task_prio + ebp]
+    cmp esi, SCHED_PRIO_HIGH
+    jbe .prio_ok
+    xor esi, esi
+.prio_ok:
+    mov esi, [dk_prio_names + esi*4]
+    call dk_text
+    add eax, 72                           ; its program's memory
+    mov esi, dk_task_none
+    movzx ecx, byte [task_console + ebp]
+    cmp ecx, CONSOLE_MAX
+    jae .mem_shown
+    mov ecx, [dk_con_mem + ecx*4]
+    jecxz .mem_shown
+    mov edi, dk_sys_buf
+    push eax
+    mov eax, ecx
+    call wget_append_num
+    pop eax
+    mov esi, dk_task_kb
+    push esi
+    push eax
+    mov esi, dk_task_kb
+    call wget_append
+    pop eax
+    pop esi
+    mov byte [edi], 0
+    mov esi, dk_sys_buf
+.mem_shown:
+    call dk_text
+    add eax, 80                           ; its CPU time
     mov edi, dk_sys_buf
     push eax
     push edx
@@ -878,12 +1082,52 @@ dk_draw_tasks:
 .next_task:
     inc ebp
     jmp .task
-.button:
+.buttons:
+    ; Priority: [Low] [Normal] [High] - the selected task's lit
+    mov eax, [dk_cx]
+    add eax, 10
+    mov ebx, [dk_cy]
+    add ebx, DK_TASK_PRIO_Y + 4
+    mov esi, dk_task_prio
+    mov edx, COL_TEXT
+    call dk_text
+    xor ebp, ebp
+.prio_button:
+    imul eax, ebp, DK_TASK_PBTN_W + 6
+    add eax, [dk_cx]
+    add eax, DK_TASK_PBTN_X
+    mov ebx, [dk_cy]
+    add ebx, DK_TASK_PRIO_Y
+    mov ecx, DK_TASK_PBTN_W
+    mov edx, 24
+    mov esi, COL_BUTTON
+    mov edi, COL_TEXT
+    push eax
+    mov eax, [dk_task_sel]
+    cmp eax, -1
+    je .plain_prio
+    movzx eax, byte [task_prio + eax]
+    dec eax
+    cmp eax, ebp
+    jne .plain_prio
+    mov esi, COL_TITLE_ON
+    mov edi, COL_WHITE
+.plain_prio:
+    pop eax
+    call dk_fill
+    add eax, 10
+    add ebx, 4
+    mov edx, edi
+    mov esi, [dk_prio_names + ebp*4 + 4]
+    call dk_text
+    inc ebp
+    cmp ebp, 3
+    jb .prio_button
     ; [End task], and a message line
     mov eax, [dk_cx]
-    add eax, 300
+    add eax, DK_TASK_END_X
     mov ebx, [dk_cy]
-    add ebx, 296
+    add ebx, DK_TASK_END_Y
     mov ecx, 110
     mov edx, 24
     mov esi, 0xC0392B
@@ -901,6 +1145,114 @@ dk_draw_tasks:
     mov edx, 0xB03A2E
     call dk_text
     jmp dk_contents_done
+
+; A graph at eax, ebx: esi's 60 samples (0-100, oldest at dk_cpu_pos),
+; bars in color edx
+dk_task_graph:
+    pushad
+    mov [dk_tg_color], edx
+    mov [dk_tg_x], eax
+    mov [dk_tg_y], ebx
+    mov ecx, 60 * 4
+    mov edx, 80
+    push esi
+    mov esi, 0x101820
+    call dk_fill
+    pop esi
+    xor edi, edi
+.bar:
+    mov eax, [dk_cpu_pos]                 ; oldest first
+    add eax, edi
+    xor edx, edx
+    mov ecx, 60
+    div ecx
+    movzx edx, byte [esi + edx]
+    imul edx, 80
+    mov eax, edx
+    xor edx, edx
+    mov ecx, 100
+    div ecx
+    mov edx, eax                          ; the bar's height
+    or edx, edx
+    jz .next_bar
+    lea eax, [edi*4]
+    add eax, [dk_tg_x]
+    mov ebx, [dk_tg_y]
+    add ebx, 80
+    sub ebx, edx
+    mov ecx, 3
+    push esi
+    mov esi, [dk_tg_color]
+    call dk_fill
+    pop esi
+.next_bar:
+    inc edi
+    cmp edi, 60
+    jb .bar
+    popad
+    ret
+
+; Each console's program: how much of its 4MB it has used (pages that
+; aren't all zeros - app_run cleared them all) -> dk_con_mem, in KB;
+; and all the memory in use -> dk_mem_now (MB), dk_mem_pct
+dk_mem_sample:
+    pushad
+    mov ebp, 16 * 1024                    ; the kernel and low memory (KB)
+    cmp byte [dk_active], 0
+    je .consoles
+    add ebp, 32 * 1024                    ; the desktop's pictures
+.consoles:
+    xor ebx, ebx
+.console:
+    mov dword [dk_con_mem + ebx*4], 0
+    cmp byte [console_used + ebx], 0
+    je .next
+    add ebp, 1024                         ; its own pages, roughly
+    push ebx
+    mov eax, ebx
+    mov ebx, app_active
+    call console_saved_addr
+    mov al, [ebx]
+    pop ebx
+    or al, al
+    jz .next
+    imul edi, ebx, CONSOLE_SAVE_SIZE      ; its program's pages
+    add edi, CONSOLE_SAVE_BASE
+    xor edx, edx                          ; (used ones)
+    mov esi, APP_SIZE / 4096
+.page:
+    push edi
+    mov ecx, 1024
+    xor eax, eax
+    cld
+    repe scasd
+    pop edi
+    je .empty
+    add edx, 4
+.empty:
+    add edi, 4096
+    dec esi
+    jnz .page
+    mov [dk_con_mem + ebx*4], edx
+    add ebp, edx
+.next:
+    inc ebx
+    cmp ebx, CONSOLE_MAX
+    jb .console
+    mov eax, ebp                          ; KB -> MB, and a percentage
+    shr eax, 10
+    mov [dk_mem_now], eax
+    imul eax, 100
+    xor edx, edx
+    mov ecx, 128
+    div ecx
+    cmp eax, 100
+    jbe .pct
+    mov eax, 100
+.pct:
+    mov [dk_mem_pct], al
+    popad
+    ret
 
 ; Once a second: the CPU used since the last sample
 dk_tasks_sample:
@@ -931,6 +1283,19 @@ dk_tasks_sample:
     mov [dk_cpu_now], al
     mov ecx, [dk_cpu_pos]
     mov [dk_cpu_hist + ecx], al
+    push eax                              ; the memory too, while Tasks is
+    push ebx                              ; open (it reads programs' pages)
+    mov eax, K_TASKS
+    xor ebx, ebx
+    call dk_win_find
+    pop ebx
+    cmp eax, -1
+    pop eax
+    je .no_mem
+    call dk_mem_sample
+    mov dl, [dk_mem_pct]
+    mov [dk_mem_hist + ecx], dl
+.no_mem:
     inc ecx
     cmp ecx, 60
     jb .pos
@@ -1010,7 +1375,7 @@ dk_draw_mixer:
     mov ebx, [dk_cy]
     add ebx, 60
     mov esi, dk_mix_silent
-    mov edx, 0x6E7B8B
+    mov edx, COL_MUTED
     call dk_text
     jmp dk_contents_done
 
@@ -1024,7 +1389,7 @@ dk_slider:
     add ebx, 4
     mov ecx, MIX_SLIDER_W
     mov edx, 8
-    mov esi, 0xC5CAD3
+    mov esi, COL_BUTTON
     call dk_fill
     mov ecx, [dk_sl_value]
     imul ecx, MIX_SLIDER_W
@@ -1097,7 +1462,7 @@ dk_draw_files:
     add ebx, 4
     mov ecx, 40
     mov edx, 22
-    mov esi, 0xC5CAD3
+    mov esi, COL_BUTTON
     call dk_fill
     add eax, 8
     add ebx, 3
@@ -1108,9 +1473,10 @@ dk_draw_files:
     add eax, 56
     mov esi, dk_fm_path
     push edi
-    mov edi, 50
+    mov edi, (FM_FIND_X - 64) / 8
     call dk_text_n
     pop edi
+    call dk_fm_draw_tools                 ; the search, the order
     mov eax, [dk_cx]                      ; paging
     add eax, [dkw_w + ebp*4]
     sub eax, 62
@@ -1118,7 +1484,7 @@ dk_draw_files:
     add ebx, 4
     mov ecx, 26
     mov edx, 22
-    mov esi, 0xC5CAD3
+    mov esi, COL_BUTTON
     call dk_fill
     add eax, 30
     call dk_fill
@@ -1133,10 +1499,10 @@ dk_draw_files:
     ; the grid
     xor edi, edi                          ; the cell
 .cell:
-    cmp edi, FM_COLS * FM_ROWS
+    cmp edi, [dk_fm_page_n]
     jae .status
     mov eax, [dk_fm_page]
-    imul eax, FM_COLS * FM_ROWS
+    imul eax, [dk_fm_page_n]
     add eax, edi
     cmp eax, [dk_fm_count]
     jae .status
@@ -1147,7 +1513,7 @@ dk_draw_files:
     push eax
     mov eax, edi                          ; its cell's corner
     xor edx, edx
-    mov ecx, FM_COLS
+    mov ecx, [dk_fm_cols]
     div ecx
     imul ebx, eax, FM_CELL_H
     add ebx, FM_TOP
@@ -1183,8 +1549,11 @@ dk_draw_files:
     mov ebx, [dk_fm_cell_y]
     add ebx, 44
     mov edi, ecx
-    cmp edx, [dk_fm_sel]
-    jne .plain_name
+    push ebx
+    mov ebx, edx
+    call dk_sel_test
+    pop ebx
+    jc .plain_name
     push eax
     push ebx
     push ecx
@@ -1210,6 +1579,10 @@ dk_draw_files:
     inc edi
     jmp .cell
 .status:
+    cmp byte [dk_fm_state], 4             ; the rubber band
+    jne .no_band
+    call dk_draw_band
+.no_band:
     mov eax, [dk_cx]                      ; the bottom line: a message, or
     add eax, 8                            ; how many things are here
     mov ebx, [dk_cy]
@@ -1231,7 +1604,7 @@ dk_draw_files:
     mov eax, [dk_cx]
     add eax, 8
     mov esi, dk_sys_buf
-    mov edx, 0x6E7B8B
+    mov edx, COL_MUTED
 .say:
     call dk_text
     jmp dk_contents_done
@@ -1483,6 +1856,19 @@ dk_files_click:
     call dk_files_up
     ret
 .paging:
+    cmp ecx, FM_SORT_X                    ; [Sort: ...]: the next order
+    jb .done
+    cmp ecx, FM_SORT_X + FM_SORT_W
+    jae .not_sort
+    inc dword [dk_fm_sort]
+    cmp dword [dk_fm_sort], 3
+    jb .sorted
+    mov dword [dk_fm_sort], 0
+.sorted:
+    mov byte [dk_fm_refresh], 1
+    call snd_click
+    jmp .redraw
+.not_sort:
     mov edx, [dkw_w + eax*4]
     sub edx, 62
     cmp ecx, edx
@@ -1492,7 +1878,7 @@ dk_files_click:
     jb .prev
     mov edx, [dk_fm_page]                 ; [>]
     inc edx
-    imul edx, FM_COLS * FM_ROWS
+    imul edx, [dk_fm_page_n]
     cmp edx, [dk_fm_count]
     jae .done
     inc dword [dk_fm_page]
@@ -1512,26 +1898,40 @@ dk_files_click:
     xor edx, edx
     mov ebx, FM_CELL_H
     div ebx                               ; eax = the row
-    cmp eax, FM_ROWS
+    cmp eax, [dk_fm_rows]
     jae .miss
-    imul ebx, eax, FM_COLS
+    mov ebx, eax
+    imul ebx, [dk_fm_cols]
     mov eax, ecx
     sub eax, 4
     js .miss
     xor edx, edx
     mov ecx, FM_CELL_W
     div ecx                               ; eax = the column
-    cmp eax, FM_COLS
+    cmp eax, [dk_fm_cols]
     jae .miss
     add ebx, eax
     mov eax, [dk_fm_page]
-    imul eax, FM_COLS * FM_ROWS
+    imul eax, [dk_fm_page_n]
     add ebx, eax
     cmp ebx, [dk_fm_count]
     jae .miss
     ; pressed on an entry: selected; a click, a double click or a drag -
-    ; dk_files_drag decides as the mouse moves or the button comes up
+    ; dk_files_drag decides as the mouse moves or the button comes up.
+    ; Ctrl: in or out of the selection. One already selected: the whole
+    ; selection may be about to be dragged.
     mov [dk_fm_sel], ebx
+    cmp byte [kbd_ctrl_held], 0
+    je .no_ctrl
+    call dk_sel_toggle
+    pop eax
+    jmp .redraw
+.no_ctrl:
+    call dk_sel_test
+    jnc .keep
+    call dk_sel_clear
+    call dk_sel_set
+.keep:
     mov [dk_fm_press], ebx
     mov eax, [dk_mx]
     mov [dk_fm_press_x], eax
@@ -1541,7 +1941,15 @@ dk_files_click:
     pop eax
     jmp .redraw
 .miss:
-    mov dword [dk_fm_sel], -1
+    mov dword [dk_fm_sel], -1             ; nothing there: a rubber band
+    call dk_sel_clear                     ; to select with
+    mov ebx, [dk_mx]
+    mov [dk_fm_band_x0], ebx
+    mov [dk_fm_band_x1], ebx
+    mov ebx, [dk_my]
+    mov [dk_fm_band_y0], ebx
+    mov [dk_fm_band_y1], ebx
+    mov byte [dk_fm_state], 4
     pop eax
     jmp .redraw
 
@@ -1549,6 +1957,8 @@ dk_files_click:
 ; the pointer, cl = the button
 dk_files_drag:
     pushad
+    cmp byte [dk_fm_state], 4
+    je .band
     cmp byte [dk_fm_state], 3
     je .dragging
     or cl, cl                             ; state 2: pressed
@@ -1574,6 +1984,11 @@ dk_files_drag:
     jmp .done
 .clicked:
     mov byte [dk_fm_state], 0
+    mov ebx, [dk_fm_press]                ; (a plain click: just it)
+    call dk_sel_clear
+    call dk_sel_set
+    mov eax, K_FILES
+    call dk_mark_kind
     mov eax, [dk_fm_press]                ; a double click: open it
     cmp eax, [dk_fm_last_idx]
     jne .first
@@ -1591,7 +2006,7 @@ dk_files_drag:
     jmp .done
 .dragging:
     or cl, cl
-    jnz .done                             ; (dk_move_pointer draws it)
+    jnz .done                             ; (dk_present draws it)
     mov byte [dk_fm_state], 0             ; dropped: onto a folder?
     mov byte [dk_redraw_all], 1
     call dk_files_entry_at                ; -> edx = the entry, or -1
@@ -1609,6 +2024,18 @@ dk_files_drag:
 .move:
     mov eax, [dk_fm_press]
     call dk_files_move                    ; eax = what, edx = into
+    jmp .done
+.band:
+    mov [dk_fm_band_x1], eax              ; the rubber band follows...
+    mov [dk_fm_band_y1], ebx
+    push eax
+    mov eax, K_FILES
+    call dk_mark_kind
+    pop eax
+    or cl, cl
+    jnz .done
+    mov byte [dk_fm_state], 0             ; ...and selects what it covers
+    call dk_band_select
 .done:
     popad
     ret
@@ -1644,18 +2071,19 @@ dk_files_entry_at:
     xor edx, edx
     mov ebx, FM_CELL_H
     div ebx
-    cmp eax, FM_ROWS
+    cmp eax, [dk_fm_rows]
     jae .none
-    imul ebx, eax, FM_COLS
+    mov ebx, eax
+    imul ebx, [dk_fm_cols]
     mov eax, ecx
     xor edx, edx
     mov ecx, FM_CELL_W
     div ecx
-    cmp eax, FM_COLS
+    cmp eax, [dk_fm_cols]
     jae .none
     add ebx, eax
     mov eax, [dk_fm_page]
-    imul eax, FM_COLS * FM_ROWS
+    imul eax, [dk_fm_page_n]
     add ebx, eax
     cmp ebx, [dk_fm_count]
     jae .none
@@ -1698,7 +2126,7 @@ dk_screen_fill:
     mov edi, ebx
     imul edi, DESK_STRIDE
     lea edi, [edi + eax*4]
-    add edi, [bga_lfb]
+    add edi, [dk_page_lfb]
     mov eax, esi
     mov edx, ecx
     cld
@@ -1756,6 +2184,8 @@ dk_files_open:
     mov dword [dk_fm_page], 0
     mov dword [dk_fm_sel], -1
     mov byte [dk_fm_refresh], 1
+    mov dword [dk_fm_find_len], 0         ; (another folder: no search)
+    mov byte [dk_fm_find], 0
     jmp .done
 .file:
     cmp ecx, IC_IMAGE                     ; a picture: into Pictures
@@ -1770,27 +2200,17 @@ dk_files_open:
     call dk_win_single
     jmp .done
 .command:
+    cmp ecx, IC_APP                       ; a program: started by itself
+    jne .typed_in
+    mov edi, dk_fm_path
+    call dk_launch
+    jmp .done
+.typed_in:
     ; the rest: typed into the Terminal with the keyboard - "cd <here>",
     ; then what opens it. If that one's busy (a program, the editor,
     ; half a command typed), into a new Terminal instead.
-    mov bl, [console_fg]
-    cmp byte [shell_at_prompt], 0
-    je .elsewhere
-    cmp word [buf_len], 0
-    je .target
-.elsewhere:
-    xor ebx, ebx
-.free:
-    cmp ebx, CONSOLE_MAX
-    jae .busy
-    cmp byte [console_used + ebx], 0
-    je .new
-    inc ebx
-    jmp .free
-.new:
-    mov byte [console_request], CONSOLE_REQ_NEW
-.target:
-    mov [dk_inject_target], bl
+    call dk_pick_terminal                 ; -> bl
+    jc .busy
     mov edi, dk_inject_buf
     push esi
     mov esi, dk_cmd_cd
@@ -1808,24 +2228,1799 @@ dk_files_open:
     call wget_append                      ; the name
     mov al, 13
     stosb
-    mov al, [dk_inject_target]
-    mov [dk_inject_console], al
+    call dk_inject_go
+    jmp .done
+.busy:
+    mov dword [dk_fm_msg], dk_fm_full
+    mov byte [dk_redraw_all], 1
+.done:
+    popad
+    ret
+
+; ============================================================
+; The start menu's Programs: every .APP / .COM / .BIN on the disk
+; ============================================================
+dk_prog_scan:
+    pushad
+    mov dword [dk_prog_count], 0
+    mov dword [dk_prog_shown], 1
+    call dk_shell_idle                    ; (the filesystem's free?)
+    jc .done
+    xor ebx, ebx
+.slot:
+    cmp ebx, FS_TOTAL_SLOTS
+    jae .done
+    cmp dword [dk_prog_count], DK_PROG_MAX
+    jae .done
+    mov ax, bx
+    call fs_read_slot
+    mov al, [SCRATCH_ADDR + FS_TYPE_OFFSET]
+    cmp al, FS_TYPE_FREE
+    je .next
+    cmp al, FS_TYPE_DIR
+    je .next
+    mov edi, [dk_prog_count]              ; its name
+    shl edi, 4
+    add edi, dk_prog_names
+    mov esi, SCRATCH_ADDR
+    mov ecx, FS_NAME_LEN
+    rep movsb
+    mov byte [edi], 0
+    sub edi, FS_NAME_LEN
+    mov esi, edi
+    call dk_name_kind
+    cmp al, IC_APP
+    jne .next
+    mov al, [SCRATCH_ADDR + FS_PARENT_OFFSET]   ; and where it is
+    mov edi, [dk_prog_count]
+    shl edi, 5
+    add edi, dk_prog_paths
+    call dk_dir_path
+    mov ax, bx                            ; (the slot again: the path
+    call fs_read_slot                     ; walk read others)
+    inc dword [dk_prog_count]
+.next:
+    inc ebx
+    jmp .slot
+.done:
+    call dk_prog_filter
+    popad
+    ret
+
+; dk_prog_view: the programs whose names have dk_search in them (all,
+; with nothing typed); dk_prog_shown its rows, dk_prog_sel the first
+dk_prog_filter:
+    pushad
+    xor ebx, ebx                          ; the program
+    xor edx, edx                          ; the view's length
+.prog:
+    cmp ebx, [dk_prog_count]
+    jae .filtered
+    mov esi, ebx
+    shl esi, 4
+    add esi, dk_prog_names
+.start:                                   ; dk_search at any place in it?
+    xor ecx, ecx
+.cmp:
+    mov al, [dk_search + ecx]
+    or al, al
+    jz .match
+    mov ah, [esi + ecx]
+    or ah, ah
+    jz .no
+    cmp ah, 'a'
+    jb .upper
+    cmp ah, 'z'
+    ja .upper
+    sub ah, 32
+.upper:
+    cmp al, ah
+    jne .shift
+    inc ecx
+    jmp .cmp
+.shift:
+    inc esi
+    cmp byte [esi], 0
+    jne .start
+    jmp .no
+.match:
+    mov [dk_prog_view + edx*4], ebx
+    inc edx
+.no:
+    inc ebx
+    jmp .prog
+.filtered:
+    mov [dk_prog_vn], edx
+    mov dword [dk_prog_sel], -1
+    cmp byte [dk_search], 0
+    je .rows
+    or edx, edx
+    jz .rows
+    mov dword [dk_prog_sel], 0
+.rows:
+    or edx, edx
+    jnz .shown
+    inc edx                               ; ("nothing" takes a row)
+.shown:
+    mov [dk_prog_shown], edx
+    popad
+    ret
+
+; ============================================================
+; The start menu's search: while it's open, the keyboard types here
+; (push_key_to_buffer, src/interrupts.asm, hands the keys over) - the
+; Programs submenu shows what has the typed text in its name, the
+; arrows pick, Enter starts it, Esc closes the menu
+; ============================================================
+
+; al/ah = a key (from the keyboard's interrupt)
+dk_menu_key_in:
+    push ebx
+    movzx ebx, byte [dk_mkey_head]
+    mov [dk_mkeys + ebx*2], ax
+    inc bl
+    and bl, 15
+    cmp bl, [dk_mkey_tail]
+    je .full
+    mov [dk_mkey_head], bl
+.full:
+    pop ebx
+    ret
+
+; Each frame: the keys typed at the menu
+dk_menu_keys_work:
+    pushad
+.key:
+    movzx ebx, byte [dk_mkey_tail]
+    cmp bl, [dk_mkey_head]
+    je .done
+    mov ax, [dk_mkeys + ebx*2]
+    inc bl
+    and bl, 15
+    mov [dk_mkey_tail], bl
+    cmp byte [dk_menu_open], 0
+    je .key
+    call dk_mark_menu
+    cmp al, 27
+    je .escape
+    cmp al, 13
+    je .enter
+    cmp al, 8
+    je .back
+    or al, al
+    jz .special
+    cmp al, ' '
+    jb .key
+    cmp al, 'a'                           ; typed: into the search
+    jb .char
+    cmp al, 'z'
+    ja .char
+    sub al, 32
+.char:
+    mov ecx, [dk_search_len]
+    cmp ecx, DK_SEARCH_MAX
+    jae .key
+    mov [dk_search + ecx], al
+    mov byte [dk_search + ecx + 1], 0
+    inc dword [dk_search_len]
+    cmp byte [dk_prog_open], 0            ; (the list, read the first time)
+    jne .refilter
+    mov byte [dk_prog_open], 1
+    call dk_prog_scan
+    jmp .key
+.refilter:
+    call dk_prog_filter
+    jmp .key
+.back:
+    mov ecx, [dk_search_len]
+    or ecx, ecx
+    jz .key
+    dec ecx
+    mov [dk_search_len], ecx
+    mov byte [dk_search + ecx], 0
+    call dk_prog_filter
+    jmp .key
+.special:
+    cmp dword [dk_prog_vn], 0
+    je .key
+    mov ecx, [dk_prog_sel]
+    cmp ah, 0x48                          ; Up
+    jne .down
+    dec ecx
+    jns .picked
+    xor ecx, ecx
+    jmp .picked
+.down:
+    cmp ah, 0x50                          ; Down
+    jne .key
+    cmp byte [dk_prog_open], 0
+    jne .have_list
+    mov byte [dk_prog_open], 1
+    call dk_prog_scan
+    mov ecx, -1
+.have_list:
+    inc ecx
+    cmp ecx, [dk_prog_vn]
+    jb .picked
+    mov ecx, [dk_prog_vn]
+    dec ecx
+.picked:
+    mov [dk_prog_sel], ecx
+    jmp .key
+.enter:
+    mov eax, [dk_prog_sel]
+    cmp eax, -1
+    je .key
+    mov byte [dk_menu_open], 0
+    mov byte [dk_prog_open], 0
+    call snd_click
+    call dk_prog_run
+    call dk_search_clear
+    jmp .key
+.escape:
+    mov byte [dk_menu_open], 0
+    mov byte [dk_prog_open], 0
+    call dk_search_clear
+    jmp .key
+.done:
+    popad
+    ret
+
+dk_search_clear:
+    mov dword [dk_search_len], 0
+    mov byte [dk_search], 0
+    mov dword [dk_prog_sel], -1
+    ret
+
+; The search's box, over the menu (when something's typed)
+dk_draw_search:
+    pushad
+    cmp dword [dk_search_len], 0
+    jne .typed
+    xor eax, eax                          ; nothing yet: a hint
+    mov ebx, DESK_H - DK_TASKBAR_H - DK_MENU_ITEMS * DK_MENU_ITEM_H - DK_MENU_ITEM_H - 4
+    mov ecx, DK_MENU_W
+    mov edx, DK_MENU_ITEM_H + 4
+    mov esi, COL_SUBMENU
+    call dk_fill
+    add eax, 8
+    add ebx, 6
+    mov esi, dk_msg_find_hint
+    mov edx, COL_MUTED
+    call dk_text
+    jmp .done
+.typed:
+    xor eax, eax
+    mov ebx, DESK_H - DK_TASKBAR_H - DK_MENU_ITEMS * DK_MENU_ITEM_H - DK_MENU_ITEM_H - 4
+    mov ecx, DK_MENU_W
+    mov edx, DK_MENU_ITEM_H + 4
+    mov esi, COL_TITLE_ON
+    call dk_fill
+    add eax, 8
+    add ebx, 6
+    mov esi, dk_msg_find
+    mov edx, COL_WHITE
+    call dk_text
+    add eax, 6 * 8
+    mov esi, dk_search
+    call dk_text
+    mov ecx, [dk_search_len]              ; the cursor
+    lea eax, [eax + ecx*8]
+    add ebx, 13
+    mov ecx, 8
+    mov edx, 2
+    mov esi, COL_WHITE
+    call dk_fill
+.done:
+    popad
+    ret
+
+; al = a folder's slot byte (FS_ROOT_BYTE: the root), edi = 32 bytes ->
+; its path there, "/" or "/A/B"
+dk_dir_path:
+    pushad
+    mov byte [edi], '/'
+    mov byte [edi + 1], 0
+    xor ecx, ecx                          ; folders on the way up
+.up:
+    cmp al, FS_ROOT_BYTE
+    je .climbed
+    cmp ecx, 4
+    jae .climbed
+    movzx eax, al
+    mov [dk_path_up + ecx*4], eax
+    inc ecx
+    call fs_read_slot
+    mov al, [SCRATCH_ADDR + FS_PARENT_OFFSET]
+    jmp .up
+.climbed:
+    jecxz .done
+.down:
+    dec ecx
+    push ecx
+    mov eax, [dk_path_up + ecx*4]
+    call fs_read_slot
+    mov esi, SCRATCH_ADDR
+    mov ecx, FS_NAME_LEN
+.skip:
+    cmp byte [edi], 0
+    je .at_end
+    inc edi
+    jmp .skip
+.at_end:
+    cmp byte [edi - 1], '/'
+    je .name
+    mov byte [edi], '/'
+    inc edi
+.name:
+    lodsb
+    or al, al
+    jz .named
+    stosb
+    loop .name
+.named:
+    mov byte [edi], 0
+    pop ecx
+    or ecx, ecx
+    jnz .down
+.done:
+    popad
+    ret
+
+; The submenu, right of the menu, down to the taskbar
+dk_draw_programs:
+    pushad
+    mov eax, DK_MENU_W
+    mov edx, [dk_prog_shown]
+    imul edx, DK_MENU_ITEM_H
+    mov ebx, DESK_H - DK_TASKBAR_H
+    sub ebx, edx
+    mov ecx, DK_PROG_W
+    mov esi, COL_SUBMENU
+    call dk_fill
+    cmp dword [dk_prog_vn], 0
+    jne .items
+    add eax, 14
+    add ebx, 4
+    mov esi, dk_prog_none
+    mov edx, COL_MUTED
+    call dk_text
+    jmp .done
+.items:
+    xor ecx, ecx
+.item:
+    cmp ecx, [dk_prog_vn]
+    jae .done
+    push ebx
+    imul edx, ecx, DK_MENU_ITEM_H
+    add ebx, edx
+    mov edx, COL_TEXT
+    cmp ecx, [dk_prog_sel]                ; (the one Enter starts: lit)
+    jne .plain
+    push ecx
+    mov eax, DK_MENU_W
+    mov ecx, DK_PROG_W
+    mov edx, DK_MENU_ITEM_H
+    mov esi, COL_TITLE_ON
+    call dk_fill
+    pop ecx
+    mov edx, COL_WHITE
+.plain:
+    add ebx, 4
+    mov eax, DK_MENU_W + 12
+    push ecx
+    mov ecx, [dk_prog_view + ecx*4]
+    mov esi, ecx
+    shl esi, 4
+    add esi, dk_prog_names
+    call dk_text
+    mov eax, DK_MENU_W + 130              ; (and where)
+    mov esi, ecx
+    pop ecx
+    shl esi, 5
+    add esi, dk_prog_paths
+    mov edx, COL_MUTED
+    push edi
+    mov edi, 12
+    call dk_text_n
+    pop edi
+    pop ebx
+    inc ecx
+    jmp .item
+.done:
+    popad
+    ret
+
+; eax = a row of the submenu: that program, started by itself
+dk_prog_run:
+    pushad
+    cmp eax, [dk_prog_vn]
+    jae .done
+    mov eax, [dk_prog_view + eax*4]
+    mov esi, eax
+    shl esi, 4
+    add esi, dk_prog_names
+    mov edi, eax
+    shl edi, 5
+    add edi, dk_prog_paths
+    call dk_launch
+.done:
+    popad
+    ret
+
+; ============================================================
+; Starting a program with a click: in a console of its own that no one
+; sees - no Terminal window, only the program's own. If it writes text
+; (a program for the text screen), its Terminal shows up with its name
+; on it; when it ends, the console closes by itself - unless it left
+; text to read (a .BIN, a game for the text screen, always closes).
+; dk_launch_state: 0 -, 1 started ("cd" typed), 2 the program running.
+; ============================================================
+
+; esi = a program's name, edi = the folder it's in ("/A/B")
+dk_launch:
+    pushad
+    mov ebx, 1                            ; a free console
+.free:
+    cmp ebx, CONSOLE_MAX
+    jae .full
+    cmp byte [console_used + ebx], 0
+    je .found
+    inc ebx
+    jmp .free
+.full:
+    mov dword [dk_fm_msg], dk_fm_full
+    mov byte [dk_redraw_all], 1
+    mov eax, SND_ERROR
+    call snd_play
+    jmp .done
+.found:
+    mov byte [console_request], CONSOLE_REQ_NEW   ; (it'll be ebx)
+    mov byte [dk_launch_state + ebx], 1
+    mov byte [dk_launch_show + ebx], 0
+    mov dword [dk_launch_seen + ebx*4], 0
+    call dk_ext_dword                     ; a .BIN: always closes after
+    cmp eax, 'BIN'
+    sete [dk_launch_bin + ebx]
+    push edi
+    mov edi, ebx                          ; its name, for its Terminal
+    shl edi, 4
+    add edi, dk_launch_name
+    push esi
+    mov ecx, 15
+.name:
+    lodsb
+    stosb
+    or al, al
+    loopnz .name
+    mov byte [edi], 0
+    pop esi
+    pop edx                               ; edx = the folder
+    mov edi, dk_inject_buf                ; "cd <where>", "<verb> <name>"
+    push esi
+    mov esi, dk_cmd_cd
+    call wget_append
+    mov esi, edx
+    call wget_append
+    mov al, 13
+    stosb
+    pop esi
+    call dk_open_command                  ; -> edx = the verb
+    push esi
+    mov esi, edx
+    call wget_append
+    pop esi
+    call wget_append
+    mov al, 13
+    stosb
+    call dk_inject_go                     ; (bl = the console)
+.done:
+    popad
+    ret
+
+; The shell of console_self is about to carry out `buffer`: a launched
+; console's program starts (after its "cd") on a clean screen
+dk_launch_start:
+    push eax
+    movzx eax, byte [console_self]
+    cmp byte [dk_launch_state + eax], 1
+    jne .out
+    cmp word [buffer], 'cd'
+    jne .program
+    cmp byte [buffer + 2], ' '
+    je .out
+.program:
+    mov byte [dk_launch_state + eax], 2
+    call clear_screen
+.out:
+    pop eax
+    ret
+
+; ... and it has: a launched console's program ended - the console
+; closes (doesn't return), or stays, its Terminal shown, if there's
+; text on its screen to read
+dk_launch_end:
+    pushad
+    movzx edx, byte [console_self]
+    cmp byte [dk_launch_state + edx], 2
+    jne .out
+    mov byte [dk_launch_state + edx], 0
+    cmp byte [dk_active], 0
+    je .shown                             ; (no desktop: a console as any)
+    cmp byte [dk_launch_bin + edx], 0
+    jne .close
+    mov ebx, edx
+    call dk_launch_text
+    jnc .close
+.shown:
+    mov byte [dk_launch_show + edx], 1    ; (the desktop shows its Terminal)
+.out:
+    popad
+    ret
+.close:
+    popad
+    jmp console_cmd_exit
+
+; A game's line of help (si) and a moment to read it (ecx ms) before
+; it takes the screen - left out when it was started with a click: it
+; opens its own window at once, no Terminal flashing up first
+game_intro:
+    push eax
+    movzx eax, byte [console_self]
+    cmp byte [dk_launch_state + eax], 2
+    pop eax
+    je .done
+    push ecx
+    call print_string
+    pop ecx
+    call speaker_delay_ms
+.done:
+    ret
+
+; ebx = a console -> carry=1 if there's any text on its screen
+dk_launch_text:
+    push eax
+    push ecx
+    push esi
+    mov esi, ebx
+    shl esi, 12
+    add esi, DESK_TEXT
+    mov ecx, 80 * 25
+.cell:
+    mov al, [esi]
+    cmp al, ' '
+    je .next
+    or al, al
+    jnz .yes
+.next:
+    add esi, 2
+    loop .cell
+    pop esi
+    pop ecx
+    pop eax
+    clc
+    ret
+.yes:
+    pop esi
+    pop ecx
+    pop eax
+    stc
+    ret
+
+; ============================================================
+; The taskbar's tray: the volume (Mixer), the network (System), the
+; time (a calendar)
+; ============================================================
+DK_TRAY_VOL_X equ DESK_W - 118
+DK_TRAY_LANG_X equ DESK_W - 152
+DK_TRAY_NET_X equ DESK_W - 92
+
+dk_draw_tray:
+    pushad
+    mov ebp, DESK_H - DK_TASKBAR_H + 7    ; (the icons' top)
+    cmp byte [lang_ru_enabled], 0         ; the keyboard's language (src/lang.asm)
+    je .no_lang
+    mov eax, DK_TRAY_LANG_X
+    lea ebx, [ebp - 2]
+    mov ecx, 24
+    mov edx, 18
+    mov esi, COL_TASKBTN
+    cmp byte [lang_layout], 0
+    je .lang_box
+    mov esi, 0x2E7D32                     ; (Russian: green)
+.lang_box:
+    call dk_fill
+    add eax, 4
+    inc ebx
+    mov esi, dk_msg_en
+    cmp byte [lang_layout], 0
+    je .lang_text
+    mov esi, dk_msg_ru
+.lang_text:
+    mov edx, COL_BARTEXT
+    call dk_text
+.no_lang:
+    ; the volume: a speaker, and waves as loud as it is
+    mov eax, DK_TRAY_VOL_X
+    lea ebx, [ebp + 5]
+    mov ecx, 4
+    mov edx, 6
+    mov esi, COL_BARTEXT
+    call dk_fill
+    mov eax, DK_TRAY_VOL_X + 4            ; the cone
+    lea ebx, [ebp + 3]
+    mov ecx, 2
+    mov edx, 10
+    call dk_fill
+    mov eax, DK_TRAY_VOL_X + 6
+    lea ebx, [ebp + 1]
+    mov edx, 14
+    call dk_fill
+    cmp dword [mix_master], 0
+    jne .loud
+    mov eax, DK_TRAY_VOL_X + 10           ; muted: a red cross
+    lea ebx, [ebp + 4]
+    mov esi, 0xE04040
+    mov ecx, DK_TRAY_VOL_X + 16
+    lea edx, [ebp + 10]
+    call dk_line_c
+    mov eax, DK_TRAY_VOL_X + 10
+    lea ebx, [ebp + 10]
+    mov ecx, DK_TRAY_VOL_X + 16
+    lea edx, [ebp + 4]
+    call dk_line_c
+    jmp .net
+.loud:
+    mov eax, DK_TRAY_VOL_X + 10
+    lea ebx, [ebp + 5]
+    mov ecx, 2
+    mov edx, 6
+    mov esi, COL_BARTEXT
+    call dk_fill
+    cmp dword [mix_master], 50
+    jb .net
+    mov eax, DK_TRAY_VOL_X + 14
+    lea ebx, [ebp + 2]
+    mov edx, 12
+    call dk_fill
+.net:
+    ; the network: four bars, green once it's set up
+    mov esi, 0x5A6B85
+    cmp byte [net_ready], 0
+    je .bars
+    mov esi, 0x43C06B
+.bars:
+    xor ecx, ecx
+.bar:
+    lea eax, [ecx*4 + DK_TRAY_NET_X]
+    lea edx, [ecx*3 + 4]                  ; 4, 7, 10, 13 high
+    mov ebx, ebp
+    add ebx, 16
+    sub ebx, edx
+    push ecx
+    mov ecx, 3
+    call dk_fill
+    pop ecx
+    inc ecx
+    cmp ecx, 4
+    jb .bar
+    popad
+    ret
+
+; dk_line with ebx..edx as dk_line wants it, esi the color (a helper)
+dk_line_c:
+    call dk_line
+    ret
+
+; eax = x of a click on the tray
+dk_tray_click:
+    pushad
+    cmp eax, DK_TRAY_VOL_X - 6            ; EN / RU: the other one
+    jae .not_lang
+    call lang_toggle
+    jmp .done
+.not_lang:
+    cmp eax, DK_TRAY_NET_X - 4
+    jae .not_volume
+    mov eax, K_MIXER
+    call dk_win_single
+    jmp .done
+.not_volume:
+    cmp eax, DESK_W - 64
+    jae .time
+    mov eax, K_SYSTEM
+    call dk_win_single
+    jmp .done
+.time:
+    mov byte [dk_cal_open], 1
+    call dk_mark_calendar
+.done:
+    popad
+    ret
+
+; The mouse wheel over the tray's volume: the master volume, 5 a notch
+; (ebp = the turns: - is up, louder)
+dk_tray_wheel:
+    pushad
+    cmp dword [dk_my], DESK_H - DK_TASKBAR_H
+    jb .done
+    cmp dword [dk_mx], DK_TRAY_VOL_X - 4
+    jb .done
+    cmp dword [dk_mx], DK_TRAY_NET_X - 4
+    jae .done
+    imul eax, ebp, -5
+    add eax, [mix_master]
+    jns .low_ok
+    xor eax, eax
+.low_ok:
+    cmp eax, 100
+    jbe .high_ok
+    mov eax, 100
+.high_ok:
+    mov [mix_master], eax
+    mov eax, DESK_W - DK_TRAY_W           ; the icon, the Mixer: redrawn
+    mov ebx, DESK_H - DK_TASKBAR_H
+    mov ecx, DK_TRAY_W
+    mov edx, DK_TASKBAR_H
+    call dk_mark
+    mov eax, K_MIXER
+    call dk_mark_kind
+.done:
+    popad
+    ret
+
+; ============================================================
+; The calendar: this month, today marked
+; ============================================================
+DK_CAL_X equ DESK_W - DK_CAL_W - 4
+DK_CAL_Y equ DESK_H - DK_TASKBAR_H - DK_CAL_H - 4
+
+dk_mark_calendar:
+    pushad
+    mov eax, DK_CAL_X
+    mov ebx, DK_CAL_Y
+    mov ecx, DK_CAL_W
+    mov edx, DK_CAL_H
+    call dk_mark
+    popad
+    ret
+
+dk_draw_calendar:
+    pushad
+    mov eax, DK_CAL_X
+    mov ebx, DK_CAL_Y
+    mov ecx, DK_CAL_W
+    mov edx, DK_CAL_H
+    mov esi, COL_FRAME
+    call dk_fill
+    inc eax
+    inc ebx
+    sub ecx, 2
+    sub edx, 2
+    mov esi, COL_POPUP
+    call dk_fill
+    ; today, in the user's time zone
+    call rtc_read_date                    ; bh:bl:cl = day:month:year
+    movzx eax, bh
+    mov [dk_cal_day], eax
+    movzx eax, bl
+    mov [dk_cal_month], eax
+    movzx eax, cl
+    add eax, 2000
+    mov [dk_cal_year], eax
+    call rtc_read_time                    ; bh = the hour (UTC)
+    movzx eax, bh
+    add ax, [user_tz_offset]
+    cwde
+    or eax, eax
+    jns .not_before
+    dec dword [dk_cal_day]                ; (yesterday there)
+    jnz .dated
+    dec dword [dk_cal_month]
+    jnz .prev_month
+    mov dword [dk_cal_month], 12
+    dec dword [dk_cal_year]
+.prev_month:
+    call dk_cal_days                      ; -> eax
+    mov [dk_cal_day], eax
+    jmp .dated
+.not_before:
+    cmp eax, 24
+    jb .dated
+    call dk_cal_days                      ; (tomorrow there)
+    inc dword [dk_cal_day]
+    cmp [dk_cal_day], eax
+    jbe .dated
+    mov dword [dk_cal_day], 1
+    inc dword [dk_cal_month]
+    cmp dword [dk_cal_month], 12
+    jbe .dated
+    mov dword [dk_cal_month], 1
+    inc dword [dk_cal_year]
+.dated:
+    ; "September 2026"
+    mov edi, dk_sys_buf
+    mov eax, [dk_cal_month]
+    mov esi, [dk_month_names + eax*4 - 4]
+    call wget_append
+    mov al, ' '
+    stosb
+    mov eax, [dk_cal_year]
+    call wget_append_num
+    mov byte [edi], 0
+    mov eax, DK_CAL_X + 12
+    mov ebx, DK_CAL_Y + 8
+    mov esi, dk_sys_buf
+    mov edx, COL_TEXT
+    call dk_text
+    mov eax, DK_CAL_X + 12
+    mov ebx, DK_CAL_Y + 32
+    mov esi, dk_cal_weekdays
+    mov edx, COL_MUTED
+    call dk_text
+    ; the 1st's weekday (Sakamoto's): 0 = Sunday -> its column, Monday first
+    mov eax, [dk_cal_year]
+    mov ecx, [dk_cal_month]
+    cmp ecx, 3
+    jae .no_shift
+    dec eax
+.no_shift:
+    mov ebx, eax                          ; y + y/4 - y/100 + y/400
+    mov esi, eax
+    shr esi, 2
+    add ebx, esi
+    xor edx, edx
+    mov esi, 100
+    div esi
+    sub ebx, eax
+    shr eax, 2
+    add ebx, eax
+    movzx eax, byte [dk_cal_t + ecx - 1]
+    add ebx, eax
+    inc ebx                               ; + day 1
+    mov eax, ebx
+    xor edx, edx
+    mov esi, 7
+    div esi
+    add edx, 6                            ; Sunday = 0 -> column 6
+    mov eax, edx
+    xor edx, edx
+    div esi
+    mov ebp, edx                          ; ebp = the 1st's column
+    call dk_cal_days
+    mov [dk_cal_dim], eax
+    mov ecx, 1                            ; the day
+.day:
+    cmp ecx, [dk_cal_dim]
+    ja .done
+    lea eax, [ebp + ecx - 1]
+    xor edx, edx
+    mov esi, 7
+    div esi                               ; eax = row, edx = column
+    imul ebx, eax, 22
+    add ebx, DK_CAL_Y + 54
+    imul eax, edx, 32
+    add eax, DK_CAL_X + 10
+    mov edx, COL_TEXT
+    cmp ecx, [dk_cal_day]
+    jne .plain
+    push ecx                              ; today
+    push ebx
+    sub ebx, 3
+    mov ecx, 26
+    mov edx, 21
+    mov esi, COL_TITLE_ON
+    call dk_fill
+    pop ebx
+    pop ecx
+    mov edx, COL_WHITE
+.plain:
+    mov edi, dk_sys_buf
+    push eax
+    mov eax, ecx
+    call dk_two_digits
+    pop eax
+    mov byte [edi], 0
+    cmp byte [dk_sys_buf], '0'
+    jne .two
+    mov byte [dk_sys_buf], ' '
+.two:
+    add eax, 4
+    mov esi, dk_sys_buf
+    call dk_text
+    inc ecx
+    jmp .day
+.done:
+    popad
+    ret
+
+; -> eax = the days in dk_cal_month of dk_cal_year
+dk_cal_days:
+    push ecx
+    mov ecx, [dk_cal_month]
+    movzx eax, byte [dk_cal_month_days + ecx - 1]
+    cmp ecx, 2
+    jne .done
+    mov ecx, [dk_cal_year]                ; February, a leap year
+    test ecx, 3
+    jnz .done
+    push eax
+    push edx
+    mov eax, ecx
+    xor edx, edx
+    mov ecx, 100
+    div ecx
+    or edx, edx
+    jnz .leap_pop
+    test eax, 3                           ; (a century: /400 only)
+    jnz .no_leap_pop
+.leap_pop:
+    pop edx
+    pop eax
+    inc eax
+    jmp .done
+.no_leap_pop:
+    pop edx
+    pop eax
+.done:
+    pop ecx
+    ret
+
+; ============================================================
+; Files: the selection (a bit per entry), the rubber band, the context
+; menu, the trash
+; ============================================================
+dk_sel_clear:
+    push edi
+    push ecx
+    push eax
+    mov edi, dk_fm_selmap
+    mov ecx, 32 / 4
+    xor eax, eax
+    cld
+    rep stosd
+    pop eax
+    pop ecx
+    pop edi
+    ret
+
+; ebx = an entry: selected
+dk_sel_set:
+    cmp ebx, 256
+    jae .done
+    bts [dk_fm_selmap], ebx
+.done:
+    ret
+
+dk_sel_toggle:
+    cmp ebx, 256
+    jae .done
+    btc [dk_fm_selmap], ebx
+.done:
+    ret
+
+; ebx = an entry -> carry=0 if selected
+dk_sel_test:
+    cmp ebx, 256
+    jae .no
+    bt [dk_fm_selmap], ebx
+    cmc
+    ret
+.no:
+    stc
+    ret
+
+; The rubber band (screen coordinates, dk_fm_band_*): its outline
+dk_draw_band:
+    pushad
+    mov eax, [dk_fm_band_x0]
+    mov ecx, [dk_fm_band_x1]
+    cmp eax, ecx
+    jle .x
+    xchg eax, ecx
+.x:
+    mov ebx, [dk_fm_band_y0]
+    mov edx, [dk_fm_band_y1]
+    cmp ebx, edx
+    jle .y
+    xchg ebx, edx
+.y:
+    sub ecx, eax
+    inc ecx
+    sub edx, ebx
+    inc edx
+    mov esi, COL_TITLE_ON
+    push edx
+    mov edx, 1                            ; top, bottom
+    call dk_fill
+    pop edx
+    push ebx
+    add ebx, edx
+    dec ebx
+    push edx
+    mov edx, 1
+    call dk_fill
+    pop edx
+    pop ebx
+    push ecx
+    mov ecx, 1                            ; left, right
+    call dk_fill
+    pop ecx
+    add eax, ecx
+    dec eax
+    mov ecx, 1
+    call dk_fill
+    popad
+    ret
+
+; The band let go of: the entries on this page it touches, selected
+dk_band_select:
+    pushad
+    mov eax, K_FILES
+    xor ebx, ebx
+    call dk_win_find
+    cmp eax, -1
+    je .done
+    call dk_client_origin                 ; -> eax, ebx
+    mov [dk_fm_bx], eax
+    mov [dk_fm_by], ebx
+    mov eax, [dk_fm_band_x0]              ; the band, ordered
+    mov ecx, [dk_fm_band_x1]
+    cmp eax, ecx
+    jle .x
+    xchg eax, ecx
+.x:
+    mov ebx, [dk_fm_band_y0]
+    mov edx, [dk_fm_band_y1]
+    cmp ebx, edx
+    jle .y
+    xchg ebx, edx
+.y:
+    mov [dk_fm_bl], eax
+    mov [dk_fm_br], ecx
+    mov [dk_fm_bt], ebx
+    mov [dk_fm_bb], edx
+    xor edi, edi                          ; the cell on the page
+.cell:
+    cmp edi, [dk_fm_page_n]
+    jae .done
+    mov ebx, [dk_fm_page]
+    imul ebx, [dk_fm_page_n]
+    add ebx, edi
+    cmp ebx, [dk_fm_count]
+    jae .done
+    mov eax, edi                          ; its rectangle on the screen
+    xor edx, edx
+    div dword [dk_fm_cols]                ; eax = row, edx = column
+    imul eax, FM_CELL_H
+    add eax, FM_TOP
+    add eax, [dk_fm_by]
+    imul edx, FM_CELL_W
+    add edx, 4
+    add edx, [dk_fm_bx]
+    cmp edx, [dk_fm_br]                   ; left edge right of the band?
+    jg .next
+    lea esi, [edx + FM_CELL_W]
+    cmp esi, [dk_fm_bl]
+    jl .next
+    cmp eax, [dk_fm_bb]
+    jg .next
+    lea esi, [eax + FM_CELL_H]
+    cmp esi, [dk_fm_bt]
+    jl .next
+    mov esi, ebx                          ; (not "..")
+    shl esi, 5
+    cmp byte [DESK_FILES + esi + 17], IC_UP
+    je .next
+    call dk_sel_set
+.next:
+    inc edi
+    jmp .cell
+.done:
+    mov eax, K_FILES
+    call dk_mark_kind
+    popad
+    ret
+
+; A right click (dk_mx, dk_my): over Files, its context menu
+DKC_OPEN    equ 1
+DKC_RENAME  equ 2
+DKC_COPY    equ 3
+DKC_DELETE  equ 4
+DKC_PROPS   equ 5
+DKC_NEWDIR  equ 6
+DKC_SELALL  equ 7
+DKC_FOREVER equ 8
+DKC_EMPTY   equ 9
+DK_CTX_W    equ 160
+DK_CTX_ITEM equ 22
+
+dk_right_click:
+    pushad
+    cmp byte [dk_ctx_open], 0             ; (one already out: away)
+    je .none_out
+    call dk_mark_ctx
+    mov byte [dk_ctx_open], 0
+.none_out:
+    cmp byte [dk_menu_open], 0
+    je .no_menu
+    call dk_mark_menu
+    mov byte [dk_menu_open], 0
+    mov byte [dk_prog_open], 0
+.no_menu:
+    mov eax, [dk_mx]
+    mov ebx, [dk_my]
+    call dk_window_at                     ; -> esi
+    cmp esi, -1
+    je .done
+    cmp byte [dkw_kind + esi], K_FILES
+    jne .done
+    mov eax, esi
+    call dk_raise
+    call dk_trash_find                    ; (in the trash: other items)
+    mov byte [dk_ctx_in_trash], 0
+    jc .not_trash
+    cmp al, [dk_fm_dir]
+    jne .not_trash
+    mov byte [dk_ctx_in_trash], 1
+.not_trash:
+    mov dword [dk_ctx_n], 0
+    call dk_files_entry_at                ; -> edx
+    cmp edx, -1
+    je .empty_space
+    mov eax, edx
+    shl eax, 5
+    cmp byte [DESK_FILES + eax + 17], IC_UP
+    je .done
+    mov ebx, edx                          ; on something: it's what's
+    mov [dk_fm_sel], ebx                  ; selected (unless it already is)
+    call dk_sel_test
+    jnc .selected
+    call dk_sel_clear
+    call dk_sel_set
+.selected:
+    cmp byte [dk_ctx_in_trash], 0
+    jne .trash_item
+    mov al, DKC_OPEN
+    call dk_ctx_add
+    mov al, DKC_RENAME
+    call dk_ctx_add
+    mov al, DKC_COPY
+    call dk_ctx_add
+    mov al, DKC_DELETE
+    call dk_ctx_add
+    mov al, DKC_PROPS
+    call dk_ctx_add
+    jmp .show
+.trash_item:
+    mov al, DKC_FOREVER
+    call dk_ctx_add
+    mov al, DKC_PROPS
+    call dk_ctx_add
+    jmp .show
+.empty_space:
+    call dk_sel_clear
+    mov dword [dk_fm_sel], -1
+    cmp byte [dk_ctx_in_trash], 0
+    jne .trash_space
+    mov al, DKC_NEWDIR
+    call dk_ctx_add
+    mov al, DKC_SELALL
+    call dk_ctx_add
+    jmp .show
+.trash_space:
+    mov al, DKC_EMPTY
+    call dk_ctx_add
+.show:
+    mov eax, [dk_mx]                      ; where: at the pointer, on screen
+    mov ecx, DESK_W - DK_CTX_W
+    cmp eax, ecx
+    jle .x_ok
+    mov eax, ecx
+.x_ok:
+    mov [dk_ctx_x], eax
+    mov eax, [dk_ctx_n]
+    imul eax, DK_CTX_ITEM
+    mov ecx, DESK_H - DK_TASKBAR_H
+    sub ecx, eax
+    mov eax, [dk_my]
+    cmp eax, ecx
+    jle .y_ok
+    mov eax, ecx
+.y_ok:
+    mov [dk_ctx_y], eax
+    mov byte [dk_ctx_open], 1
+    call dk_mark_ctx
+    mov eax, K_FILES
+    call dk_mark_kind
+.done:
+    popad
+    ret
+
+; al = an item for the context menu
+dk_ctx_add:
+    push ebx
+    mov ebx, [dk_ctx_n]
+    mov [dk_ctx_ids + ebx], al
+    inc dword [dk_ctx_n]
+    pop ebx
+    ret
+
+dk_mark_ctx:
+    pushad
+    mov eax, [dk_ctx_x]
+    mov ebx, [dk_ctx_y]
+    mov ecx, DK_CTX_W + 3
+    mov edx, [dk_ctx_n]
+    imul edx, DK_CTX_ITEM
+    add edx, 3
+    call dk_mark
+    popad
+    ret
+
+dk_draw_ctx:
+    pushad
+    mov eax, [dk_ctx_x]
+    mov ebx, [dk_ctx_y]
+    mov ecx, DK_CTX_W
+    mov edx, [dk_ctx_n]
+    imul edx, DK_CTX_ITEM
+    push eax
+    push ebx
+    add eax, 3                            ; a shadow
+    add ebx, 3
+    mov esi, 0x08101C
+    call dk_fill
+    pop ebx
+    pop eax
+    mov esi, COL_FRAME
+    call dk_fill
+    inc eax
+    inc ebx
+    sub ecx, 2
+    sub edx, 2
+    mov esi, COL_MENU
+    call dk_fill
+    xor ecx, ecx
+.item:
+    cmp ecx, [dk_ctx_n]
+    jae .done
+    movzx esi, byte [dk_ctx_ids + ecx]
+    mov esi, [dk_ctx_labels + esi*4 - 4]
+    mov eax, [dk_ctx_x]
+    add eax, 12
+    imul ebx, ecx, DK_CTX_ITEM
+    add ebx, [dk_ctx_y]
+    add ebx, 3
+    mov edx, COL_TEXT
+    call dk_text
+    inc ecx
+    jmp .item
+.done:
+    popad
+    ret
+
+; A left click while the context menu's out: its item, or nothing
+dk_ctx_click:
+    pushad
+    call dk_mark_ctx
+    mov byte [dk_ctx_open], 0
+    sub eax, [dk_ctx_x]
+    js .done
+    cmp eax, DK_CTX_W
+    jae .done
+    sub ebx, [dk_ctx_y]
+    js .done
+    mov eax, ebx
+    xor edx, edx
+    mov ecx, DK_CTX_ITEM
+    div ecx
+    cmp eax, [dk_ctx_n]
+    jae .done
+    movzx eax, byte [dk_ctx_ids + eax]
+    call dk_ctx_do
+.done:
+    popad
+    ret
+
+; eax = a context menu item (DKC_*): done
+dk_ctx_do:
+    pushad
+    mov dword [dk_fm_msg], 0
+    cmp eax, DKC_OPEN
+    jne .not_open
+    mov eax, [dk_fm_sel]
+    cmp eax, -1
+    je .done
+    call dk_files_open
+    jmp .done
+.not_open:
+    cmp eax, DKC_PROPS
+    jne .not_props
+    call dk_files_props
+    jmp .done
+.not_props:
+    cmp eax, DKC_SELALL
+    jne .not_all
+    xor ebx, ebx
+.all:
+    cmp ebx, [dk_fm_count]
+    jae .all_done
+    mov esi, ebx
+    shl esi, 5
+    cmp byte [DESK_FILES + esi + 17], IC_UP
+    je .all_next
+    call dk_sel_set
+.all_next:
+    inc ebx
+    jmp .all
+.all_done:
+    mov eax, K_FILES
+    call dk_mark_kind
+    jmp .done
+.not_all:
+    cmp eax, DKC_DELETE
+    jne .not_delete
+    call dk_files_trash
+    jmp .done
+.not_delete:
+    ; the rest are typed into a Terminal (cd here first): ren/cp/mkdir
+    ; wait for what the new name is; rm goes straight away
+    mov ebp, eax                          ; ebp = the item
+    call dk_pick_terminal                 ; -> bl
+    jc .no_room
+    mov edi, dk_inject_buf
+    mov esi, dk_cmd_cd
+    call wget_append
+    mov esi, dk_fm_path
+    call wget_append
+    mov al, 13
+    stosb
+    cmp ebp, DKC_NEWDIR
+    jne .not_newdir
+    mov esi, dk_cmd_mkdir
+    call wget_append
+    jmp .typed
+.not_newdir:
+    cmp ebp, DKC_RENAME
+    je .named
+    cmp ebp, DKC_COPY
+    jne .removing
+.named:
+    mov esi, dk_cmd_ren
+    cmp ebp, DKC_RENAME
+    je .verb
+    mov esi, dk_cmd_cp
+.verb:
+    call wget_append
+    mov esi, [dk_fm_sel]
+    cmp esi, -1
+    je .done
+    shl esi, 5
+    add esi, DESK_FILES
+    call wget_append
+    mov al, ' '
+    stosb
+    jmp .typed
+.removing:
+    cmp ebp, DKC_FOREVER                  ; (nothing else gets here)
+    je .rm_start
+    cmp ebp, DKC_EMPTY
+    jne .done
+.rm_start:
+    ; Delete forever (the selected) / Empty trash (everything): rm each,
+    ; as many as the typing buffer holds
+    xor ecx, ecx
+.rm:
+    cmp ecx, [dk_fm_count]
+    jae .typed
+    mov esi, ecx
+    shl esi, 5
+    add esi, DESK_FILES
+    cmp byte [esi + 17], IC_UP
+    je .rm_next
+    cmp ebp, DKC_EMPTY
+    je .rm_it
+    push ebx
+    mov ebx, ecx
+    call dk_sel_test
+    pop ebx
+    jc .rm_next
+.rm_it:
+    mov edx, edi
+    sub edx, dk_inject_buf
+    cmp edx, 256 - FS_NAME_LEN - 8
+    ja .typed
+    push esi
+    mov esi, dk_cmd_rm
+    call wget_append
+    pop esi
+    call wget_append
+    mov al, 13
+    stosb
+    mov byte [dk_fm_refresh], 1
+.rm_next:
+    inc ecx
+    jmp .rm
+.typed:
+    call dk_inject_go
+    jmp .done
+.no_room:
+    mov dword [dk_fm_msg], dk_fm_full
+.done:
+    mov byte [dk_redraw_all], 1
+    popad
+    ret
+
+; Properties: the selected one's size / kind, on the status line
+dk_files_props:
+    pushad
+    mov esi, [dk_fm_sel]
+    cmp esi, -1
+    je .done
+    shl esi, 5
+    add esi, DESK_FILES
+    mov edi, dk_fm_propbuf
+    push esi
+    call wget_append                      ; the name
+    pop esi
+    cmp byte [esi + 17], IC_FOLDER
+    jne .file
+    push esi
+    mov esi, dk_fm_is_folder
+    call wget_append
+    pop esi
+    jmp .said
+.file:
+    push esi
+    mov esi, dk_fm_sep
+    call wget_append
+    pop esi
+    mov eax, [esi + 24]
+    call wget_append_num
+    mov esi, dk_fm_bytes
+    call wget_append
+.said:
+    mov byte [edi], 0
+    mov dword [dk_fm_msg], dk_fm_propbuf
+.done:
+    popad
+    ret
+
+; -> al = the trash's slot byte (/TRASH), carry=1 if there's none
+dk_trash_find:
+    push ebx
+    push edx
+    call dk_shell_idle
+    jc .none
+    xor ebx, ebx
+.slot:
+    cmp ebx, FS_TOTAL_SLOTS
+    jae .none
+    mov ax, bx
+    call fs_read_slot
+    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
+    jne .next
+    cmp byte [SCRATCH_ADDR + FS_PARENT_OFFSET], FS_ROOT_BYTE
+    jne .next
+    cmp dword [SCRATCH_ADDR], 'TRAS'
+    jne .next
+    cmp word [SCRATCH_ADDR + 4], 'H'
+    jne .next
+    mov al, bl
+    pop edx
+    pop ebx
+    clc
+    ret
+.next:
+    inc ebx
+    jmp .slot
+.none:
+    pop edx
+    pop ebx
+    stc
+    ret
+
+; Delete: the selected into /TRASH (made the first time)
+dk_files_trash:
+    pushad
+    call dk_shell_idle
+    jc .busy
+    call dk_trash_find
+    jnc .have
+    call fs_find_free_dir                 ; none yet: made, in the root
+    cmp ax, -1
+    je .busy
+    movzx ebx, ax
+    push ebx
+    mov edi, SCRATCH_ADDR
+    mov ecx, FS_CONTENT_OFFSET + FS_CONTENT_LEN
+    xor eax, eax
+    cld
+    rep stosb
+    mov dword [SCRATCH_ADDR], 'TRAS'
+    mov byte [SCRATCH_ADDR + 4], 'H'
+    mov byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
+    mov byte [SCRATCH_ADDR + FS_PARENT_OFFSET], FS_ROOT_BYTE
+    pop eax
+    push eax
+    call fs_write_slot
+    pop eax
+.have:
+    cmp al, [dk_fm_dir]                   ; (in the trash itself: nothing)
+    je .done
+    mov [dk_fm_dest], al
+    mov dword [dk_fm_moved_msg], dk_fm_trashed
+    xor ebx, ebx
+.each:
+    cmp ebx, [dk_fm_count]
+    jae .moved
+    call dk_sel_test
+    jc .next
+    mov eax, ebx
+    call dk_move_entry
+.next:
+    inc ebx
+    jmp .each
+.moved:
+    mov dword [dk_fm_moved_msg], dk_fm_moved
+    jmp .done
+.busy:
+    mov dword [dk_fm_msg], dk_fm_busy
+.done:
+    mov byte [dk_redraw_all], 1
+    popad
+    ret
+
+; ============================================================
+; Screenshots: PrintScreen (keyboard_isr sets dk_shot_req). In the frame
+; the picture's made (dk_shot_capture: the back buffer as a 24-bit
+; .BMP at DESK_IMG_FILE); after it, with no console in the kernel, it's
+; written to PICS/SHOTnn.BMP (dk_shot_save) - slow, so not holding up
+; the whole machine the way a frame does.
+; ============================================================
+dk_shot_capture:
+    pushad
+    cmp byte [dk_shot_req], 0
+    je .done
+    mov byte [dk_shot_req], 0
+    cmp byte [dk_shot_ready], 0           ; (one's still being written)
+    jne .done
+    mov edi, DESK_IMG_FILE
+    mov word [edi], 'BM'
+    mov dword [edi + 2], DK_SHOT_SIZE
+    mov dword [edi + 6], 0
+    mov dword [edi + 10], 54
+    mov dword [edi + 14], 40
+    mov dword [edi + 18], DESK_W
+    mov dword [edi + 22], DESK_H          ; (bottom-up)
+    mov word [edi + 26], 1
+    mov word [edi + 28], 24
+    mov dword [edi + 30], 0
+    mov dword [edi + 34], DESK_W * DESK_H * 3
+    mov dword [edi + 38], 2835
+    mov dword [edi + 42], 2835
+    mov dword [edi + 46], 0
+    mov dword [edi + 50], 0
+    add edi, 54
+    mov edx, DESK_H - 1                   ; the rows, bottom first
+.row:
+    mov esi, edx
+    imul esi, DESK_STRIDE
+    add esi, DESK_BACK
+    mov ecx, DESK_W
+.px:
+    mov eax, [esi]                        ; 0x00RRGGBB -> B, G, R
+    mov [edi], ax
+    shr eax, 16
+    mov [edi + 2], al
+    add esi, 4
+    add edi, 3
+    loop .px
+    dec edx
+    jns .row
+    mov byte [dk_shot_ready], 1
+.done:
+    popad
+    ret
+
+dk_shot_save:
+    pushad
+    cmp byte [dk_shot_ready], 0
+    je .done
+    pushfd                                ; the kernel, while no console's
+    cli                                   ; in it (src/sched.asm)
+    cmp dword [bkl_owner], -1
+    jne .later
+    mov eax, [sched_current]
+    mov [bkl_owner], eax
+    popfd
+    push word [fs_current_dir]            ; (the console on screen's -
+    push dword [fs_tmp_slot]              ;  put back after)
+    ; where: PICS, if there is one
+    mov word [fs_current_dir], FS_ROOT
+    mov byte [dk_shot_where], 0
+    xor ebx, ebx
+.pics:
+    cmp ebx, FS_TOTAL_SLOTS
+    jae .named_dir
+    mov ax, bx
+    call fs_read_slot
+    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
+    jne .pics_next
+    cmp byte [SCRATCH_ADDR + FS_PARENT_OFFSET], FS_ROOT_BYTE
+    jne .pics_next
+    cmp dword [SCRATCH_ADDR], 'PICS'
+    jne .pics_next
+    cmp byte [SCRATCH_ADDR + 4], 0
+    jne .pics_next
+    mov [fs_current_dir], bx
+    mov byte [dk_shot_where], 1
+    jmp .named_dir
+.pics_next:
+    inc ebx
+    jmp .pics
+.named_dir:
+    ; the first SHOTnn.BMP that isn't there yet
+    mov ecx, 1
+.name:
+    mov dword [fs_tmp_name], 'SHOT'
+    mov eax, ecx
+    mov edi, fs_tmp_name + 4
+    call dk_two_digits
+    mov dword [fs_tmp_name + 6], '.BMP'
+    mov byte [fs_tmp_name + 10], 0
+    push ecx
+    mov si, fs_tmp_name
+    call fs_find_by_name
+    pop ecx
+    cmp ax, -1
+    je .free
+    inc ecx
+    cmp ecx, 99
+    jbe .name
+    jmp .failed
+.free:
+    mov dword [fs_stream_size], DK_SHOT_SIZE
+    call fs_stream_prepare
+    jc .failed
+    mov dword [fh_src_ptr], DESK_IMG_FILE
+    mov dword [fs_stream_source], fh_stream_byte
+    call fs_stream_write
+    jc .failed
+    mov edi, dk_toast_buf                 ; "Saved PICS/SHOT01.BMP"
+    mov esi, dk_shot_saved
+    call wget_append
+    cmp byte [dk_shot_where], 0
+    je .in_root
+    mov esi, dk_shot_pics
+    call wget_append
+.in_root:
+    mov esi, fs_tmp_name
+    call wget_append
+    mov byte [edi], 0
+    jmp .said
+.failed:
+    mov edi, dk_toast_buf
+    mov esi, dk_shot_failed
+    call wget_append
+    mov byte [edi], 0
+.said:
+    pop dword [fs_tmp_slot]
+    pop word [fs_current_dir]
+    mov dword [bkl_owner], -1
+    mov byte [dk_shot_ready], 0
+    mov byte [dk_fm_refresh], 1           ; (Files shows it)
+    call dk_toast
+    jmp .done
+.later:
+    popfd
+.done:
+    popad
+    ret
+
+; dk_toast_buf shown at the top for a few seconds
+DK_TOAST_W equ 420
+dk_toast:
+    pushad
+    mov eax, SND_NOTIFY
+    call snd_play
+    mov eax, [timer_ms]
+    add eax, 3500
+    mov [dk_toast_until], eax
+    mov byte [dk_toast_on], 1
+    call dk_mark_toast
+    popad
+    ret
+
+dk_mark_toast:
+    pushad
+    mov eax, (DESK_W - DK_TOAST_W) / 2
+    mov ebx, 8
+    mov ecx, DK_TOAST_W + 3
+    mov edx, 34
+    call dk_mark
+    popad
+    ret
+
+; Each frame: gone once its time's up
+dk_toast_work:
+    cmp byte [dk_toast_on], 0
+    je .done
+    push eax
+    mov eax, [timer_ms]
+    sub eax, [dk_toast_until]
+    pop eax
+    js .done
+    mov byte [dk_toast_on], 0
+    call dk_mark_toast
+.done:
+    ret
+
+dk_draw_toast:
+    pushad
+    cmp byte [dk_toast_on], 0
+    je .done
+    mov eax, (DESK_W - DK_TOAST_W) / 2
+    mov ebx, 8
+    mov ecx, DK_TOAST_W
+    mov edx, 30
+    mov esi, 0x2B3445
+    call dk_fill
+    add eax, 12
+    add ebx, 7
+    mov esi, dk_toast_buf
+    mov edx, COL_WHITE
+    push edi
+    mov edi, (DK_TOAST_W - 24) / 8
+    call dk_text_n
+    pop edi
+.done:
+    popad
+    ret
+
+; -> bl = the console to type a command into: the one on screen, if
+; its shell waits at an empty prompt - else a new one (asked for here).
+; carry=1 if there's no room for one.
+dk_pick_terminal:
+    mov bl, [console_fg]
+    cmp byte [shell_at_prompt], 0
+    je .elsewhere
+    cmp word [buf_len], 0
+    je .ok
+.elsewhere:
+    xor ebx, ebx
+.free:
+    cmp ebx, CONSOLE_MAX
+    jae .full
+    cmp byte [console_used + ebx], 0
+    je .new
+    inc ebx
+    jmp .free
+.new:
+    mov byte [console_request], CONSOLE_REQ_NEW
+.ok:
+    clc
+    ret
+.full:
+    stc
+    ret
+
+; bl = that console, edi = the end of the keys in dk_inject_buf: typed
+; into it, and its Terminal to the front (a new one comes up by itself)
+dk_inject_go:
+    pushad
+    mov [dk_inject_console], bl
     mov dword [dk_inject_pos], 0
-    mov eax, edi
-    sub eax, dk_inject_buf
-    mov [dk_inject_len], eax
-    movzx ebx, byte [dk_inject_target]    ; its Terminal to the front
-                                          ; (a new one comes up by itself)
+    sub edi, dk_inject_buf
+    mov [dk_inject_len], edi
+    movzx ebx, bl
     mov eax, K_TERM
     call dk_win_find
     cmp eax, -1
     je .done
     mov byte [dkw_hidden + eax], 0
     call dk_raise
-    jmp .done
-.busy:
-    mov dword [dk_fm_msg], dk_fm_full
-    mov byte [dk_redraw_all], 1
 .done:
     popad
     ret
@@ -1848,6 +4043,8 @@ dk_open_command:
 ; Up to the parent folder
 dk_files_up:
     pushad
+    mov dword [dk_fm_find_len], 0         ; (another folder: no search)
+    mov byte [dk_fm_find], 0
     cmp byte [dk_fm_dir], FS_ROOT_BYTE
     je .done
     call dk_shell_idle
@@ -1892,9 +4089,6 @@ dk_files_move:
     pushad
     call dk_shell_idle
     jc .busy
-    mov esi, eax
-    shl esi, 5
-    add esi, DESK_FILES                   ; esi = what
     mov edi, edx
     shl edi, 5
     add edi, DESK_FILES                   ; edi = where to
@@ -1904,14 +4098,53 @@ dk_files_move:
     jne .into_folder
     cmp bl, FS_ROOT_BYTE
     je .done
+    push eax
     mov eax, ebx
     call fs_read_slot
+    pop eax
     movzx ebx, byte [SCRATCH_ADDR + FS_PARENT_OFFSET]
     jmp .have_dest
 .into_folder:
     movzx ebx, word [edi + 20]
 .have_dest:
     mov [dk_fm_dest], bl
+    ; the one pressed - or, if it's one of those selected, all of them
+    mov ebx, eax
+    call dk_sel_test
+    jc .just_one
+    xor ebx, ebx
+.each:
+    cmp ebx, [dk_fm_count]
+    jae .done
+    cmp ebx, edx                          ; (not into itself)
+    je .next
+    call dk_sel_test
+    jc .next
+    mov eax, ebx
+    call dk_move_entry
+.next:
+    inc ebx
+    jmp .each
+.just_one:
+    call dk_move_entry                    ; eax = the entry
+    jmp .done
+.busy:
+    mov dword [dk_fm_msg], dk_fm_busy
+    mov byte [dk_redraw_all], 1
+.done:
+    popad
+    ret
+
+; eax = an entry of the list: into the folder dk_fm_dest (its slot
+; byte) - not a folder into itself or below, not onto a name taken
+dk_move_entry:
+    pushad
+    mov esi, eax
+    shl esi, 5
+    add esi, DESK_FILES                   ; esi = what
+    cmp byte [esi + 17], IC_UP
+    je .done
+    movzx ebx, byte [dk_fm_dest]
     ; a folder: not into itself or anything inside it
     cmp byte [esi + 17], IC_FOLDER
     jne .no_loop
@@ -1957,16 +4190,14 @@ dk_files_move:
     mov [SCRATCH_ADDR + FS_PARENT_OFFSET], bl
     call fs_write_slot
     mov byte [dk_fm_refresh], 1
-    mov dword [dk_fm_msg], dk_fm_moved
+    mov eax, [dk_fm_moved_msg]
+    mov [dk_fm_msg], eax
     jmp .done
 .taken:
     mov dword [dk_fm_msg], dk_fm_taken
     jmp .done
 .refuse:
     mov dword [dk_fm_msg], dk_fm_into_itself
-    jmp .done
-.busy:
-    mov dword [dk_fm_msg], dk_fm_busy
 .done:
     mov byte [dk_redraw_all], 1
     popad
@@ -1977,6 +4208,10 @@ dk_files_refresh:
     pushad
     call dk_shell_idle
     jc .done
+    cmp byte [dk_fm_refresh], 0           ; (asked for: things moved - the
+    je .keep_selection                    ; selection's out of date)
+    call dk_sel_clear
+.keep_selection:
     mov byte [dk_fm_refresh], 0
     mov edi, DESK_FILES
     xor edx, edx                          ; entries
@@ -2044,9 +4279,10 @@ dk_files_refresh:
     cmp byte [dk_fm_pass], 2
     jb .scan_pass
 .listed:
+    call dk_fm_arrange                    ; (the search, the order: edx)
     mov [dk_fm_count], edx
     mov eax, [dk_fm_page]                 ; (a page that's gone: back to one)
-    imul eax, FM_COLS * FM_ROWS
+    imul eax, [dk_fm_page_n]
     cmp eax, edx
     jb .page_ok
     mov dword [dk_fm_page], 0
@@ -2067,6 +4303,11 @@ dk_files_refresh:
 dk_win_click:
     pushad
     movzx edx, byte [dkw_kind + eax]
+    cmp edx, K_TERM                       ; a Terminal: a selection begins
+    jne .not_term                         ; (src/dkclip.asm)
+    call dkc_press
+    jmp .done
+.not_term:
     cmp edx, K_PICS
     jne .not_pics
     mov byte [dk_pic_state], 1            ; the next picture
@@ -2082,6 +4323,11 @@ dk_win_click:
     call dk_tasks_click
     jmp .done
 .not_tasks:
+    cmp edx, K_SYSTEM
+    jne .not_system
+    call dk_system_click                  ; (src/dkstyle.asm)
+    jmp .done
+.not_system:
     cmp edx, K_MIXER
     jne .done
     call dk_mixer_click
@@ -2091,9 +4337,11 @@ dk_win_click:
 
 dk_tasks_click:
     mov dword [dk_task_msg], 0
-    cmp ebx, 290                          ; [End task]
-    jb .row
-    cmp ecx, 300
+    cmp ebx, DK_TASK_END_Y                ; [End task]
+    jl .not_end
+    cmp ebx, DK_TASK_END_Y + 24
+    jge .redraw
+    cmp ecx, DK_TASK_END_X
     jb .redraw
     mov eax, [dk_task_sel]
     cmp eax, -1
@@ -2110,8 +4358,34 @@ dk_tasks_click:
 .refuse:
     mov dword [dk_task_msg], dk_task_cant
     jmp .redraw
-.row:
-    sub ebx, 118
+.not_end:
+    cmp ebx, DK_TASK_PRIO_Y               ; Priority: [Low] [Normal] [High]
+    jl .not_prio
+    cmp ebx, DK_TASK_PRIO_Y + 24
+    jge .redraw
+    sub ecx, DK_TASK_PBTN_X
+    js .redraw
+    mov eax, ecx
+    xor edx, edx
+    mov ecx, DK_TASK_PBTN_W + 6
+    div ecx
+    cmp eax, 3
+    jae .redraw
+    mov ecx, [dk_task_sel]
+    cmp ecx, -1
+    je .redraw
+    cmp ecx, [dk_task]                    ; (the desktop stays as it is)
+    je .no_prio
+    inc eax
+    mov [task_prio + ecx], al
+    mov dword [dk_task_msg], dk_task_prio_set
+    call snd_click
+    jmp .redraw
+.no_prio:
+    mov dword [dk_task_msg], dk_task_prio_no
+    jmp .redraw
+.not_prio:
+    sub ebx, 136
     js .redraw
     mov eax, ebx
     xor edx, edx
@@ -2176,6 +4450,7 @@ DKP_EXIT equ 2                            ; and end the console
 
 dk_win_x:
     pushad
+    call snd_click
     movzx edx, byte [dkw_kind + eax]
     cmp edx, K_TERM
     jne .not_term
@@ -2199,7 +4474,7 @@ dk_win_x:
     ; Terminal 1: its console is the kernel's own and can't end - the
     ; window goes (the menu's Terminal brings it back), and the
     ; keyboard to another console, if there is one
-    mov byte [dkw_hidden + ecx], 1
+    mov byte [dkw_hidden + ecx], 2        ; (closed - not just minimized)
     mov byte [dk_redraw_all], 1
     cmp byte [console_fg], 0
     jne .done
@@ -2220,7 +4495,8 @@ dk_win_x:
     jne .close
     mov ecx, [dkw_param + eax*4]          ; a program's: it's stopped
     movzx ebx, byte [dk_app_console + ecx]
-    mov al, DKP_STOP
+    mov byte [dk_launch_bin + ebx], 1     ; (started with a click: its
+    mov al, DKP_STOP                      ; console goes too)
     call dk_pend
     jmp .done
 .close:
@@ -2325,7 +4601,11 @@ dk_vga_open:
     push esi
     push edi
     mov esi, buffer                       ; the title: the command line
-    mov edi, dk_vga_title                 ; (it's run from)
+    mov edi, dk_vga_title                 ; (it's run from) - "run " left out
+    cmp dword [esi], 'run '
+    jne .from
+    add esi, 4
+.from:
     mov ecx, DK_TITLE_LEN - 1
 .char:
     lodsb
@@ -2553,12 +4833,57 @@ dk_clear_prog_title:
     mov byte [dk_redraw_all], 1
     ret
 
-; Each frame: pictures and file lists waiting to be (re)loaded
+; Files' grid: as many columns and rows as its window has room for
+dk_fm_layout:
+    pushad
+    mov eax, K_FILES
+    xor ebx, ebx
+    call dk_win_find
+    cmp eax, -1
+    je .done
+    mov ebp, eax
+    mov eax, [dkw_w + ebp*4]
+    sub eax, 8
+    xor edx, edx
+    mov ecx, FM_CELL_W
+    div ecx
+    cmp eax, 1
+    jae .cols
+    mov eax, 1
+.cols:
+    mov ebx, eax
+    mov eax, [dkw_h + ebp*4]
+    sub eax, FM_TOP + 26
+    jns .rows_room
+    xor eax, eax
+.rows_room:
+    xor edx, edx
+    mov ecx, FM_CELL_H
+    div ecx
+    cmp eax, 1
+    jae .rows
+    mov eax, 1
+.rows:
+    cmp ebx, [dk_fm_cols]
+    jne .changed
+    cmp eax, [dk_fm_rows]
+    je .done
+.changed:
+    mov [dk_fm_cols], ebx
+    mov [dk_fm_rows], eax
+    imul eax, ebx
+    mov [dk_fm_page_n], eax
+    mov dword [dk_fm_page], 0             ; (from the first page again)
+    mov byte [dk_redraw_all], 1
+.done:
+    popad
+    ret
 
 ; Each frame: pictures and file lists waiting to be (re)loaded
 dk_windows_work:
     pushad
     call dk_pend_work
+    call dk_fm_layout
     cmp byte [dk_pic_state], 1
     jne .files
     mov eax, K_PICS
@@ -2823,7 +5148,30 @@ dk_app_blit:
     pushad
     cmp byte [dk_app_used + eax], 0
     je .done
-    mov [dk_ab_slot], eax
+    ; its last frame not on the screen yet: wait for it (a few frames
+    ; at most) - no use making pictures faster than they're shown, and
+    ; the time goes to the other programs instead
+    mov ecx, [timer_ms]
+.unshown:
+    cmp byte [dk_app_unshown + eax], 0
+    je .shown
+    cmp byte [dk_suspended], 0
+    jne .shown
+    mov edx, [timer_ms]
+    sub edx, ecx
+    cmp edx, 50
+    ja .shown
+    push eax
+    mov eax, WAIT_MS
+    call task_wait
+    pop eax
+    cmp byte [dk_app_used + eax], 0
+    je .done
+    jmp .unshown
+.shown:
+    inc dword [sched_lock]                ; (the desktop mustn't draw a
+    mov [dk_ab_slot], eax                 ; half-copied frame)
+    mov dword [dk_ab_y0], -1              ; (the rows that change)
     mov edi, eax
     shl edi, 21
     add edi, DK_APP_PIX
@@ -2847,39 +5195,69 @@ dk_app_blit:
     mov eax, [dk_ab_slot]
     shl eax, 10
     add eax, dk_app_pal
+    xor ebp, ebp                          ; (this row changed?)
 .px8:
     movzx edx, byte [esi]
     mov edx, [eax + edx*4]
+    cmp [edi], edx
+    je .same8
     mov [edi], edx
+    inc ebp
+.same8:
     inc esi
     add edi, 4
     loop .px8
     pop esi
-    jmp .next_row
+    jmp .row_seen
 .rgb:
     push esi
     lea esi, [esi + edx*4]
     cld
-    rep movsd
+    xor ebp, ebp
+    push esi
+    push edi
+    push ecx
+    repe cmpsd                            ; the same as it was?
+    pop ecx
+    pop edi
     pop esi
+    je .rgb_done
+    inc ebp
+    rep movsd
+.rgb_done:
+    pop esi
+.row_seen:
+    or ebp, ebp
+    jz .next_row
+    cmp dword [dk_ab_y0], -1
+    jne .y0
+    mov [dk_ab_y0], ebx
+.y0:
+    mov [dk_ab_y1], ebx
 .next_row:
     inc ebx
     jmp .row
 .rows_done:
-    ; that rectangle of the window, scaled, is dirty
+    dec dword [sched_lock]
+    ; the rows of that rectangle that changed, scaled, are dirty
+    cmp dword [dk_ab_y0], -1
+    je .done                              ; (nothing did)
     mov edx, [dk_ab_slot]
+    mov byte [dk_app_unshown + edx], 1
     mov eax, [dk_app_win + edx*4]
     call dk_client_origin                 ; -> eax, ebx
     mov ecx, [dk_app_scale + edx*4]
     mov esi, [app_rect_x]
     imul esi, ecx
     add eax, esi
-    mov esi, [app_rect_y]
+    mov esi, [dk_ab_y0]
     imul esi, ecx
     add ebx, esi
     mov esi, [app_rect_w]
     imul esi, ecx
-    mov edi, [app_rect_h]
+    mov edi, [dk_ab_y1]
+    sub edi, [dk_ab_y0]
+    inc edi
     imul edi, ecx
     mov ecx, esi
     mov edx, edi
@@ -2893,6 +5271,7 @@ dk_app_blit:
 ; ============================================================
 dk_term_src       dd 0
 dk_term_on        db 0
+dk_term_sel       db 0
 dk_ccx            dd 0                    ; the clock's center
 dk_ccy            dd 0
 dk_h_now          db 0
@@ -2910,6 +5289,100 @@ dk_cp_c1          dd 0
 dk_cp_r1          dd 0
 dk_cp_r0          dd 0
 dk_inject_target  db 0
+dk_shot_req       db 0                    ; PrintScreen pressed
+dk_shot_ready     db 0                    ; the .BMP's made, to be written
+dk_shot_where     db 0
+dk_toast_on       db 0
+dk_toast_until    dd 0
+dk_toast_buf      times 64 db 0
+dk_shot_saved     db "Screenshot saved: ", 0
+dk_shot_pics      db "PICS/", 0
+dk_shot_failed    db "The screenshot couldn't be saved (disk full?).", 0
+dk_fm_selmap      times 32 db 0           ; Files: the selection, a bit each
+dk_fm_band_x0     dd 0                    ; the rubber band (screen)
+dk_fm_band_y0     dd 0
+dk_fm_band_x1     dd 0
+dk_fm_band_y1     dd 0
+dk_fm_bx          dd 0
+dk_fm_by          dd 0
+dk_fm_bl          dd 0
+dk_fm_br          dd 0
+dk_fm_bt          dd 0
+dk_fm_bb          dd 0
+dk_fm_moved_msg   dd dk_fm_moved
+dk_fm_propbuf     times 64 db 0
+dk_ctx_open       db 0                    ; the context menu
+dk_ctx_in_trash   db 0
+dk_ctx_x          dd 0
+dk_ctx_y          dd 0
+dk_ctx_n          dd 0
+dk_ctx_ids        times 8 db 0
+dk_ctx_labels     dd dk_ctx_l_open, dk_ctx_l_rename, dk_ctx_l_copy, dk_ctx_l_delete
+                  dd dk_ctx_l_props, dk_ctx_l_newdir, dk_ctx_l_selall
+                  dd dk_ctx_l_forever, dk_ctx_l_empty
+dk_ctx_l_open     db "Open", 0
+dk_ctx_l_rename   db "Rename...", 0
+dk_ctx_l_copy     db "Copy to...", 0
+dk_ctx_l_delete   db "Delete", 0
+dk_ctx_l_props    db "Properties", 0
+dk_ctx_l_newdir   db "New folder...", 0
+dk_ctx_l_selall   db "Select all", 0
+dk_ctx_l_forever  db "Delete forever", 0
+dk_ctx_l_empty    db "Empty trash", 0
+dk_cmd_mkdir      db "mkdir ", 0
+dk_cmd_ren        db "ren ", 0
+dk_cmd_cp         db "cp ", 0
+dk_cmd_rm         db "rm ", 0
+dk_fm_trashed     db "Moved to the trash (/TRASH).", 0
+dk_fm_is_folder   db " - a folder", 0
+dk_fm_sep         db " - ", 0
+dk_fm_bytes       db " bytes", 0
+dk_cal_day        dd 0
+dk_cal_month      dd 0
+dk_cal_year       dd 0
+dk_cal_dim        dd 0
+dk_cal_t          db 0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4
+dk_cal_month_days db 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+dk_cal_weekdays   db "Mo  Tu  We  Th  Fr  Sa  Su", 0
+dk_month_names    dd dk_m1, dk_m2, dk_m3, dk_m4, dk_m5, dk_m6
+                  dd dk_m7, dk_m8, dk_m9, dk_m10, dk_m11, dk_m12
+dk_m1  db "January", 0
+dk_m2  db "February", 0
+dk_m3  db "March", 0
+dk_m4  db "April", 0
+dk_m5  db "May", 0
+dk_m6  db "June", 0
+dk_m7  db "July", 0
+dk_m8  db "August", 0
+dk_m9  db "September", 0
+dk_m10 db "October", 0
+dk_m11 db "November", 0
+dk_m12 db "December", 0
+dk_term_rowp      dd 0
+dk_sb_head        times CONSOLE_MAX dd 0  ; the scrollback rings (DK_SB_BASE)
+dk_sb_count       times CONSOLE_MAX dd 0
+dk_msg_scrolled   db "scrolled back", 0
+dk_prog_count     dd 0                    ; Programs: what's there
+dk_prog_names     times DK_PROG_MAX * 16 db 0
+dk_prog_paths     times DK_PROG_MAX * 32 db 0
+dk_path_up        times 4 dd 0
+dk_prog_none      db "(no programs)", 0
+DK_SEARCH_MAX     equ 14
+dk_search         times DK_SEARCH_MAX + 2 db 0
+dk_search_len     dd 0
+dk_prog_view      times DK_PROG_MAX dd 0  ; the rows shown: which programs
+dk_prog_vn        dd 0
+dk_prog_sel       dd -1                   ; the row Enter starts
+dk_mkeys          times 16 dw 0           ; keys typed at the menu
+dk_mkey_head      db 0
+dk_mkey_tail      db 0
+dk_msg_find       db "Find:", 0
+dk_msg_en         db "EN", 0
+dk_msg_ru         db "RU", 0
+dk_msg_find_hint  db "Type to search", 0
+dk_fm_cols        dd 6                    ; Files: the grid the window has
+dk_fm_rows        dd 4                    ; room for (dk_fm_layout)
+dk_fm_page_n      dd 24
 dk_pic_state      db 0                    ; 0 -, 1 to load, 2 shown, 3 none
 dk_pic_slot       dd -1
 dk_pic_dir        db FS_ROOT_BYTE
@@ -2956,6 +5429,9 @@ dk_ao_h           dd 0
 dk_ab_slot        dd 0
 dk_ab_dest        dd 0
 dk_app_used       times DK_APPS db 0
+dk_app_unshown    times 4 db 0            ; a frame waiting to be shown
+dk_ab_y0          dd 0
+dk_ab_y1          dd 0
 dk_app_vga        times DK_APPS db 0      ; a kernel program's mode 13h
 dk_ao_title       dd 0                    ; dk_app_open's title, if not app_name
 dk_vga_title      times DK_TITLE_LEN db 0
@@ -2968,6 +5444,11 @@ dk_pend_since     dd 0
 dk_title_uranium  db "uranium - ", 0
 dk_cmd_exit       db "exit", 13, 0
 dk_app_console    times DK_APPS db 0
+dk_launch_state   times CONSOLE_MAX db 0  ; a program started with a click
+dk_launch_bin     times CONSOLE_MAX db 0  ; closes after, whatever (a .BIN; [x])
+dk_launch_show    times CONSOLE_MAX db 0  ; its Terminal to be shown
+dk_launch_seen    times CONSOLE_MAX dd 0  ; when text was first on its screen
+dk_launch_name    times CONSOLE_MAX * 16 db 0
 dk_app_win        times DK_APPS dd 0
 dk_app_w          times DK_APPS dd 0
 dk_app_h          times DK_APPS dd 0
@@ -3016,7 +5497,31 @@ dk_sys_ip           db "Address: ", 0
 dk_sys_no_ip        db "(no network yet)", 0
 dk_sys_hint         db "Type `desktop` again to leave.", 0
 dk_task_cpu         db "CPU ", 0
-dk_task_header      db "PID  NAME                 STATE      CPU", 0
+dk_task_header      db "PID  NAME                 STATE     PRIO     MEMORY    CPU", 0
+DK_TASK_ROWS        equ 10
+DK_TASK_PRIO_Y      equ 330
+DK_TASK_PBTN_X      equ 90
+DK_TASK_PBTN_W      equ 76
+DK_TASK_END_X       equ 400
+DK_TASK_END_Y       equ 362
+dk_task_mem         db "Memory ", 0
+dk_task_mem_of      db " of 128 MB in use", 0
+dk_task_prio        db "Priority:", 0
+dk_task_prio_set    db "Priority set.", 0
+dk_task_prio_no     db "The desktop's own priority stays.", 0
+dk_task_none        db "-", 0
+dk_task_kb          db " KB", 0
+dk_prio_names       dd dk_task_none, dk_prio_low, dk_prio_normal, dk_prio_high
+dk_prio_low         db "Low", 0
+dk_prio_normal      db "Normal", 0
+dk_prio_high        db "High", 0
+dk_mem_hist         times 60 db 0
+dk_mem_now          dd 0
+dk_mem_pct          db 0
+dk_con_mem          times CONSOLE_MAX dd 0
+dk_tg_color         dd 0
+dk_tg_x             dd 0
+dk_tg_y             dd 0
 dk_task_end         db "End task", 0
 dk_task_ended       db "Ended.", 0
 dk_task_cant        db "Not that one (a console, or the desktop).", 0

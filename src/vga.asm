@@ -67,7 +67,7 @@ vga_enter_mode13:
     mov byte [vga_windowed], 1
     push ecx
     push edi
-    movzx edi, byte [console_fg]
+    movzx edi, byte [console_self]
     shl edi, 16
     add edi, VGA_SHADOW_BASE
     xor eax, eax
@@ -82,6 +82,7 @@ vga_enter_mode13:
 .no_window:
     pop eax
 .screen:
+    call console_wait_fg               ; (the screen's the one on it's)
     call desktop_suspend_hook          ; (src/desktop.asm: out of the way)
     mov byte [vga_graphics_active], 1  ; (for background tasks that draw
                                        ; on the text screen - the clock)
@@ -133,7 +134,7 @@ vga_unwindow:
     mov byte [vga_windowed], 0
     call vga_sync_window                  ; (0xA0000 is the VGA's again)
     call vga_enter_mode13
-    movzx esi, byte [console_fg]
+    movzx esi, byte [console_self]
     shl esi, 16
     add esi, VGA_SHADOW_BASE
     mov edi, VGA_FB
@@ -181,7 +182,7 @@ vga_sync_window:
     mov eax, VGA_FB
     cmp byte [vga_windowed], 0
     je vga_map_eax
-    movzx eax, byte [console_fg]
+    movzx eax, byte [console_self]
     shl eax, 16
     add eax, VGA_SHADOW_BASE
     jmp vga_map_eax
@@ -193,10 +194,17 @@ vga_map_real:
     mov eax, VGA_FB
 vga_map_eax:                           ; (eax = what's to be seen there)
     or eax, 0x03                       ; present, writable
+    movzx edx, byte [console_self]     ; (in this console's page tables)
+    imul edx, edx, 0x3000
+    add edx, CONSOLE_PT_BASE + 0x1000 + (VGA_FB >> 12) * 4
+    cmp byte [console_paging], 0
+    jne .table
+    mov edx, PAGE_TABLE_LOW + (VGA_FB >> 12) * 4
+.table:
     mov ebx, VGA_FB
     xor ecx, ecx
 .page:
-    mov [PAGE_TABLE_LOW + (VGA_FB >> 12) * 4 + ecx*4], eax
+    mov [edx + ecx*4], eax
     invlpg [ebx]
     add eax, 4096
     add ebx, 4096
