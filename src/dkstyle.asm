@@ -16,6 +16,7 @@ DK_THEMES      equ 5
 DK_SYS_ROW_Y   equ 150                    ; System: the theme buttons
 DK_SYS_BTN_X   equ 80
 DK_SYS_BTN_W   equ 64
+DK_SYS_BTN_GAP equ 4
 DK_SYS_BTN_H   equ 20
 DK_SYS_SND_Y   equ 180                    ; ...and the sounds' switch
 
@@ -89,7 +90,7 @@ dk_sys_extras:
     call dk_text
     xor ebp, ebp
 .button:
-    imul eax, ebp, DK_SYS_BTN_W + 6
+    imul eax, ebp, DK_SYS_BTN_W + DK_SYS_BTN_GAP
     add eax, [dk_cx]
     add eax, DK_SYS_BTN_X
     mov ebx, [dk_cy]
@@ -117,7 +118,7 @@ dk_sys_extras:
     cmp byte [snd_ui_on], 0
     setne cl
     call dk_sys_button
-    add eax, DK_SYS_BTN_W + 6
+    add eax, DK_SYS_BTN_W + DK_SYS_BTN_GAP
     mov esi, dk_msg_off
     cmp byte [snd_ui_on], 0
     sete cl
@@ -145,7 +146,7 @@ dk_sys_button:
     add eax, 6
     add ebx, 2
     push edi
-    mov edi, (DK_SYS_BTN_W - 8) / 8
+    mov edi, DK_SYS_BTN_W / 8 - 1
     call dk_text_n
     pop edi
     popad
@@ -158,7 +159,7 @@ dk_system_click:
     js .done
     mov eax, ecx
     xor edx, edx
-    mov ecx, DK_SYS_BTN_W + 6
+    mov ecx, DK_SYS_BTN_W + DK_SYS_BTN_GAP
     div ecx                               ; eax = which button, edx = where in it
     cmp edx, DK_SYS_BTN_W
     jae .done

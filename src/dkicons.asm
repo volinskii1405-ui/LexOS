@@ -525,14 +525,18 @@ dki_draw:
     mov ebx, edx
     inc eax
     inc ebx
-    mov edx, COL_BLACK
+    mov edx, COL_BLACK                    ; (a shadow the other way round
+    cmp dword [dk_th + TH_BARTEXT], COL_WHITE   ; from the name: a light
+    je .shadow                            ;  theme's names are dark)
+    mov edx, COL_WHITE
+.shadow:
     call dk_text_n
     pop ebx
     pop eax
     push ebx
     mov ebx, [dki_y + ebx*4]
     add ebx, 46
-    mov edx, COL_WHITE
+    mov edx, COL_BARTEXT
     call dk_text_n
     pop ebx
 .next:
