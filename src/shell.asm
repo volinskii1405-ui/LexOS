@@ -986,6 +986,19 @@ show_help:
     push si
 
     mov byte [help_current_page], 0
+    call pipe_active                ; (into a pipe or a file: all of it,
+    jnc .redraw                     ;  no pages - src/pipe.asm)
+    xor bx, bx
+.all:
+    push bx
+    shl bx, 1
+    mov si, [help_lines + bx]
+    call print_string
+    pop bx
+    inc bx
+    cmp bx, HELP_LINE_COUNT
+    jb .all
+    jmp .help_done
 
 .redraw:
     call clear_screen
@@ -1064,6 +1077,7 @@ show_help:
 
 .exit_help:
     call clear_screen
+.help_done:
 
     pop si
     pop cx

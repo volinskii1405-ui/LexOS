@@ -175,6 +175,7 @@ TR = {
 'help_l59': ('часы в правом верхнем углу (фоновая задача)', 'un reloj arriba a la derecha (tarea de fondo)'),
 'help_l70': ('система кратко (с котом Lex) / время работы', 'el sistema de un vistazo (con Lex) / tiempo encendido'),
 'help_l72': ('кот Lex что-нибудь скажет (или ваш текст)', 'el gato Lex dice algo (o lo que escribas)'),
+'help_l73': ('вывод a в команду b (grep, head...) / в файл f', 'la salida de a a b (grep, head...) / al archivo f'),
 'help_l60': ('новая / другая консоль / закрыть эту', 'nueva consola / cambiar / cerrar esta'),
 'help_l54': ('Tiny BASIC (можно загрузить и запустить n)', 'Tiny BASIC (puede cargar y ejecutar n)'),
 # ---- the desktop ----

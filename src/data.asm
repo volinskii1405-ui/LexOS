@@ -245,6 +245,7 @@ help_l59 db "  clock        - toggle a clock in the top-right corner (a backgrou
 help_l70 db "  neofetch / uptime - the system at a glance (with Lex) / time since boot", 13, 10, 0
 help_l72 db "  lex [text]   - Lex the cat says something (or what you type)", 13, 10, 0
 help_l60 db "  Alt+T / Alt+1..9 / exit - new console / switch console / close this one", 13, 10, 0
+help_l73 db "  a | b, a > f, a >> f - a's output into b (grep, head...) / file f", 13, 10, 0
 help_l54 db "  basic [n]    - Tiny BASIC (optionally load and run program n)", 13, 10, 0
 
 help_lines:
@@ -258,7 +259,7 @@ help_lines:
     dw help_l41, help_l42, help_l43, help_l44, help_l45, help_l62
     dw help_l46, help_l47, help_l48, help_l49, help_l50, help_l51
     dw help_l52, help_l53, help_l55, help_l54, help_l56, help_l57, help_l63, help_l64, help_l66, help_l67, help_l68, help_l69
-    dw help_l58, help_l59, help_l70, help_l72, help_l60
+    dw help_l58, help_l59, help_l70, help_l72, help_l73, help_l60
 help_lines_end:
 
 HELP_LINE_COUNT equ (help_lines_end - help_lines) / 2

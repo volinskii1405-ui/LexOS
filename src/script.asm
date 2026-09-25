@@ -365,7 +365,7 @@ script_run_line:
     mov byte [edi], 0
 .copied:
     mov byte [script_expanding], 1        ; (no second expansion)
-    call handle_command
+    call shell_run_line
     mov byte [script_expanding], 0
     ret
 
