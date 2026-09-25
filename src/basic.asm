@@ -2626,6 +2626,7 @@ basic_strcpy:
 basic_puts:
     push eax
     push esi
+    call tr_lookup                 ; (src/langui.asm)
 .loop:
     mov al, [esi]
     or al, al

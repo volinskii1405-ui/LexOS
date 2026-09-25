@@ -2921,8 +2921,9 @@ dk_draw_tray:
     mov edx, COL_WHITE
     call dk_text
 .no_caps:
-    cmp byte [lang_ru_enabled], 0         ; the keyboard's language (src/lang.asm)
-    je .no_lang
+    mov al, [lang_ru_enabled]             ; the keyboard's language (src/lang.asm)
+    or al, [lang_es_enabled]
+    jz .no_lang
     mov eax, DK_TRAY_LANG_X
     lea ebx, [ebp - 2]
     mov ecx, 24
@@ -2930,16 +2931,13 @@ dk_draw_tray:
     mov esi, COL_TASKBTN
     cmp byte [lang_layout], 0
     je .lang_box
-    mov esi, 0x2E7D32                     ; (Russian: green)
+    mov esi, 0x2E7D32                     ; (Russian, Spanish: green)
 .lang_box:
     call dk_fill
     add eax, 4
     inc ebx
-    mov esi, dk_msg_en
-    cmp byte [lang_layout], 0
-    je .lang_text
-    mov esi, dk_msg_ru
-.lang_text:
+    movzx esi, byte [lang_layout]
+    mov esi, [dk_lang_msgs + esi*4]
     mov edx, COL_BARTEXT
     call dk_text
 .no_lang:
@@ -3475,6 +3473,11 @@ DKC_TASKS    equ 17
 DKC_SYSTEM   equ 18
 DKC_ARRANGE  equ 19
 DKC_BACKDROP equ 20
+DKC_FCOPY    equ 21
+DKC_FCUT     equ 22
+DKC_FPASTE   equ 23
+DKC_CATHIDE  equ 24
+DKC_CATSHOW  equ 25
 DK_CTX_W    equ 160
 DK_CTX_ITEM equ 22
 
@@ -3530,6 +3533,10 @@ dk_right_click:
     jne .trash_item
     mov al, DKC_OPEN
     call dk_ctx_add
+    mov al, DKC_FCOPY                     ; (src/dkextra.asm)
+    call dk_ctx_add
+    mov al, DKC_FCUT
+    call dk_ctx_add
     mov al, DKC_RENAME
     call dk_ctx_add
     mov al, DKC_COPY
@@ -3552,6 +3559,11 @@ dk_right_click:
     jne .trash_space
     mov al, DKC_NEWDIR
     call dk_ctx_add
+    cmp dword [dkx_fc_n], 0               ; (something to paste)
+    je .no_paste
+    mov al, DKC_FPASTE
+    call dk_ctx_add
+.no_paste:
     mov al, DKC_SELALL
     call dk_ctx_add
     jmp .show
@@ -5476,6 +5488,8 @@ dk_ctx_labels     dd dk_ctx_l_open, dk_ctx_l_rename, dk_ctx_l_copy, dk_ctx_l_del
                   dd dkx_l_minimize, dkx_l_restore, dkx_l_maximize, dkx_l_unmax
                   dd dkx_l_close, dkx_l_newterm, dkx_l_files, dkx_l_tasks
                   dd dkx_l_system, dkx_l_arrange, dkx_l_backdrop
+                  dd dkx_l_fcopy, dkx_l_fcut, dkx_l_fpaste
+                  dd dkx_l_cathide, dkx_l_catshow
 dk_ctx_l_open     db "Open", 0
 dk_ctx_l_rename   db "Rename...", 0
 dk_ctx_l_copy     db "Copy to...", 0
@@ -5536,6 +5550,8 @@ dk_mkey_head      db 0
 dk_mkey_tail      db 0
 dk_msg_find       db "Find:", 0
 dk_msg_en         db "EN", 0
+dk_msg_es         db "ES", 0
+dk_lang_msgs      dd dk_msg_en, dk_msg_ru, dk_msg_es
 dk_msg_caps       db "A", 24, 0
 dk_time_click_ms  dd 0
 dk_msg_ru         db "RU", 0

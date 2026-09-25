@@ -17,7 +17,8 @@ SND_CLICK      equ 0
 SND_START      equ 1
 SND_ERROR      equ 2
 SND_NOTIFY     equ 3
-SND_COUNT      equ 4
+SND_MEOW       equ 4                      ; (Lex: src/dkcat.asm)
+SND_COUNT      equ 5
 SND_BASE       equ 0x3F10000              ; 64KB each (past HTTPD_REQ)
 SND_SLOT       equ 0x10000
 
@@ -229,3 +230,5 @@ snd_notes:
     dw 523, 110, 9000, 659, 110, 9000, 784, 110, 9000, 1047, 300, 10000, 0 ; start
     dw 330, 110, 12000, 247, 220, 12000, 0                        ; error
     dw 1319, 80, 8000, 1760, 170, 8000, 0                         ; news
+    dw 620, 35, 7000, 760, 35, 8000, 900, 45, 9000, 980, 60, 9000 ; meow: up...
+    dw 900, 60, 8500, 780, 70, 8000, 660, 90, 7000, 560, 110, 6000, 0 ; ...and down

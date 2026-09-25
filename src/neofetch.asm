@@ -2,7 +2,9 @@
 ;
 ; neofetch: the system at a glance, next to Lex - the cat LexOS is
 ; named after - drawn in colored text. uptime: how long since boot.
-; Exports: neofetch_command, uptime_command
+; lex [text]: Lex says something - the text, or one of his own sayings -
+; in a speech bubble, like cowsay.
+; Exports: neofetch_command, uptime_command, lex_command
 
 NF_ART_W       equ 22
 
@@ -107,15 +109,28 @@ neofetch_command:
 .theme:
     mov esi, nf_lbl_theme
     call nf_field
-    ; Language
+    ; the keyboard's layouts
     mov edi, nf_buf
     mov esi, nf_val_en
-    cmp byte [lang_ru_enabled], 0
-    je .lang
-    mov esi, nf_val_enru
-.lang:
     call wget_append
+    cmp byte [lang_ru_enabled], 0
+    je .no_ru
+    mov esi, nf_w_ru
+    call wget_append
+.no_ru:
+    cmp byte [lang_es_enabled], 0
+    je .no_es
+    mov esi, nf_w_es
+    call wget_append
+.no_es:
     mov esi, nf_lbl_lang
+    call nf_field
+    ; the system's language (in itself)
+    mov edi, nf_buf
+    movzx eax, byte [sys_lang]
+    mov esi, [lang_ui_names + eax*4]
+    call wget_append
+    mov esi, nf_lbl_ui
     call nf_field
     ; CPU
     mov edi, nf_buf
@@ -451,7 +466,7 @@ nf_lbl_uptime  db "Uptime: ", 0
 nf_lbl_shell   db "Shell: ", 0
 nf_lbl_display db "Display: ", 0
 nf_lbl_theme   db "Theme: ", 0
-nf_lbl_lang    db "Language: ", 0
+nf_lbl_lang    db "Keyboard: ", 0
 nf_lbl_cpu     db "CPU: ", 0
 nf_lbl_memory  db "Memory: ", 0
 nf_lbl_consoles db "Consoles: ", 0
@@ -462,7 +477,9 @@ nf_val_shell   db "lexsh", 0
 nf_val_text    db "80x25 text", 0
 nf_val_desktop db "1024x768x32, desktop", 0
 nf_val_en      db "English", 0
-nf_val_enru    db "English + Russian", 0
+nf_w_ru        db " + Russian", 0
+nf_w_es        db " + Spanish", 0
+nf_lbl_ui      db "System: ", 0
 nf_val_cat     db "Lex (purring)", 0
 
 ; Lex, sitting: "1, color" changes the color, each line NF_ART_W wide
@@ -479,3 +496,130 @@ nf_art9  db 1, 0x0E, "    ~ L e x ~", "         ", 0
 nf_art_lines dd nf_art0, nf_art1, nf_art2, nf_art3, nf_art4, nf_art5
              dd nf_art6, nf_art7, nf_art8, nf_art9
 NF_ART_N equ 10
+
+; ============================================================
+; lex [text]: Lex the cat says it (or something of his own)
+; ============================================================
+lex_command:                              ; esi = the text after "lex" (or 0)
+    pushad
+    mov al, [current_color]
+    mov [nf_color], al
+    or esi, esi
+    jz .own
+.skip:
+    cmp byte [esi], ' '
+    jne .have
+    inc esi
+    jmp .skip
+.have:
+    cmp byte [esi], 0
+    jne .said
+.own:
+    rdtsc                                 ; one of his sayings, at random
+    xor edx, edx
+    mov ecx, LEX_SAYINGS
+    div ecx
+    mov esi, [lex_sayings + edx*4]
+    call tr_lookup                        ; (src/langui.asm: in the system's
+.said:                                    ;  language)
+    mov [lex_text], esi
+    xor ecx, ecx                          ; its length (at most 60 shown)
+.len:
+    cmp byte [esi + ecx], 0
+    je .measured
+    inc ecx
+    cmp ecx, 60
+    jb .len
+.measured:
+    mov [lex_len], ecx
+    call basic_newline
+    mov al, ' '                           ;  ____
+    call print_char
+    mov ecx, [lex_len]
+    add ecx, 2
+    mov al, '_'
+.top:
+    call print_char
+    loop .top
+    call basic_newline
+    mov al, '<'                           ; < text >
+    call print_char
+    mov al, ' '
+    call print_char
+    mov byte [current_color], 0x0E
+    mov esi, [lex_text]
+    mov ecx, [lex_len]
+.text:
+    lodsb
+    call print_char
+    loop .text
+    mov al, [nf_color]
+    mov [current_color], al
+    mov al, ' '
+    call print_char
+    mov al, '>'
+    call print_char
+    call basic_newline
+    mov al, ' '                           ;  ----
+    call print_char
+    mov ecx, [lex_len]
+    add ecx, 2
+    mov al, '-'
+.bottom:
+    call print_char
+    loop .bottom
+    call basic_newline
+    mov ecx, lex_art_n                    ; and Lex himself, under it
+    xor ebx, ebx
+.art:
+    mov esi, [lex_art + ebx*4]
+    call lex_art_line
+    call nf_end_line
+    inc ebx
+    loop .art
+    popad
+    ret
+
+; esi = a line of Lex (with "1, color" in it)
+lex_art_line:
+    pushad
+.char:
+    lodsb
+    or al, al
+    jz .done
+    cmp al, 1
+    jne .put
+    lodsb
+    mov [current_color], al
+    jmp .char
+.put:
+    call print_char
+    jmp .char
+.done:
+    mov al, [nf_color]
+    mov [current_color], al
+    popad
+    ret
+
+lex_text       dd 0
+lex_len        dd 0
+lex_art        dd lex_art0, lex_art1, lex_art2, lex_art3, lex_art4
+lex_art_n      equ 5
+lex_art0 db "      \", 0
+lex_art1 db "       \   ", 1, 0x0F, "/\_/\", 0
+lex_art2 db "          ", 1, 0x0F, "( ", 1, 0x0A, "o", 1, 0x0F, ".", 1, 0x0A, "o", 1, 0x0F, " )", 0
+lex_art3 db "           ", 1, 0x0F, "> ", 1, 0x0D, "^", 1, 0x0F, " <   ", 1, 0x0E, "Lex", 0
+lex_art4 db "          ", 1, 0x0F, "(_) (_)~", 0
+LEX_SAYINGS    equ 10
+lex_sayings    dd lex_s0, lex_s1, lex_s2, lex_s3, lex_s4
+               dd lex_s5, lex_s6, lex_s7, lex_s8, lex_s9
+lex_s0 db "Meow! Don't forget to save your file.", 0
+lex_s1 db "Purr... the kernel is warm, I'll sleep on it.", 0
+lex_s2 db "Is it dinner time yet?", 0
+lex_s3 db "I knocked a byte off the table. Sorry.", 0
+lex_s4 db "Type help if you're lost. I never am.", 0
+lex_s5 db "Written in assembly, like all good cats.", 0
+lex_s6 db "Mrrr. Pet me, then run neofetch.", 0
+lex_s7 db "I chased the mouse pointer. It got away.", 0
+lex_s8 db "Nine consoles, nine lives.", 0
+lex_s9 db "Meow meow! (That means: nice OS.)", 0

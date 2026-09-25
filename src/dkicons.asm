@@ -625,6 +625,18 @@ dki_press:
     mov byte [dki_moved], 0
     jmp .done
 .nothing:
+    mov edx, [timer_ms]                   ; the background clicked twice:
+    sub edx, [dki_bg_click_ms]            ; a Terminal (as the start menu's)
+    cmp edx, 450
+    ja .first_bg
+    mov dword [dki_bg_click_ms], 0
+    mov eax, 1
+    call dk_menu_choose
+    jmp .unpick
+.first_bg:
+    mov edx, [timer_ms]
+    mov [dki_bg_click_ms], edx
+.unpick:
     mov ebx, [dki_sel]                    ; the background: none picked
     cmp ebx, -1
     je .done
@@ -920,6 +932,7 @@ dki_moved        db 0
 dki_rescan       db 1
 dki_scanned      dd 0
 dki_click_ms     dd 0
+dki_bg_click_ms  dd 0
 dki_dir          db 0
 dki_file         times DKI_MAX * FS_NAME_LEN db 0
 dki_label        times DKI_MAX * FS_NAME_LEN db 0

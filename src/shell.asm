@@ -469,6 +469,18 @@ handle_command:
     je .do_uptime
 
     mov si, buffer
+    mov di, cmd_lex
+    call strcmp_eq
+    cmp ax, 1
+    je .do_lex
+
+    mov si, buffer
+    mov di, cmd_lex_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_lex_text
+
+    mov si, buffer
     mov di, cmd_neofetch
     call strcmp_eq
     cmp ax, 1
@@ -804,6 +816,16 @@ handle_command:
     call uptime_command        ; (src/neofetch.asm)
     jmp .done
 
+.do_lex:
+    xor esi, esi
+    call lex_command           ; (src/neofetch.asm)
+    jmp .done
+
+.do_lex_text:
+    mov esi, buffer + 4        ; (what follows "lex ")
+    call lex_command
+    jmp .done
+
 .do_neofetch:
     call neofetch_command
     jmp .done
@@ -1054,7 +1076,12 @@ show_help:
 ; ============================================================
 do_shutdown:
     mov ax, 0x2000
-    mov dx, 0x604
+    mov dx, 0x604                  ; QEMU
+    out dx, ax
+    mov dx, 0xB004                 ; Bochs, older QEMU
+    out dx, ax
+    mov ax, 0x3400
+    mov dx, 0x4004                 ; VirtualBox
     out dx, ax
 .halt_loop:
     hlt

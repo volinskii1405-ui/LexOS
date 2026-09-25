@@ -2,17 +2,21 @@
 ;
 ; The first boot (no USER.CFG yet): a setup on a green screen, in
 ; 1024x768 - a card asking, one step at a time, for a nickname, a
-; password (or none), the time zone (Left/Right through the world) and
-; the language: English only, or English and Russian (the Cyrillic
-; letters and the ЙЦУКЕН layout, Alt+Shift - src/lang.asm). Every later
+; password (or none), the time zone (Left/Right through the world), the
+; keyboard's layouts - English always, Russian and Spanish ticked on if
+; wanted (Alt+Shift goes round them - src/lang.asm) - and the system's
+; language: English, Russian or Spanish (help, menus, messages -
+; src/langui.asm). Every later
 ; boot: if there's a password, the same screen asks for it. Then the
 ; desktop - straight away, its Terminal 1 minimized to the taskbar.
 ; Without the BGA video (another card) it's the old text setup
 ; (src/user.asm) and the shell, as ever.
 ;
-; USER.CFG: "NICK\r\nTZ\r\nHASH\r\nLANG\r\n" - HASH the password's
-; FNV-1a in 8 hex digits (empty: no password), LANG "en" or "ru". A
-; two-line USER.CFG from before is read as no password, English.
+; USER.CFG: "NICK\r\nTZ\r\nHASH\r\nLAYOUTS\r\nUI\r\n" - HASH the
+; password's FNV-1a in 8 hex digits (empty: no password), LAYOUTS "en",
+; or with "ru" and/or "es" ("ru,es"), UI the system's language, "en",
+; "ru" or "es". Older ones: two lines - no password, English; four - the
+; system's language English.
 ; It's drawn with the desktop's own primitives (dk_fill, dk_text into
 ; DESK_BACK - src/desktop.asm) and copied to the screen by itself.
 ; Exports: welcome_setup, welcome_boot, welcome_parse_extra
@@ -46,7 +50,13 @@ welcome_setup:
     mov byte [wl_pass_len], 0
     mov dword [wl_tz], WL_TZ_DEFAULT
     mov dword [wl_lang], 0
-    call lang_patch_font                  ; (the Russian choice shows in Russian)
+    mov dword [wl_lay_row], 1
+    mov byte [wl_lay_ru], 0
+    mov byte [wl_lay_es], 0
+    mov dword [wl_ui], 0
+    call lang_patch_es                    ; (Español, Русский: shown in their
+    call lang_patch_font                  ;  own letters)
+    call tr_load                          ; (src/langui.asm: the translations)
 .step:
     call wl_draw_step
     call read_key
@@ -61,7 +71,9 @@ welcome_setup:
     je .pass_key
     cmp edx, 2
     je .tz_key
-    jmp .lang_key
+    cmp edx, 3
+    je .lang_key
+    jmp .ui_key
 .nick_key:
     mov edi, wl_nick
     movzx ecx, byte [wl_nick_len]
@@ -90,15 +102,52 @@ welcome_setup:
     jge .step
     inc dword [wl_tz]
     jmp .step
-.lang_key:
-    cmp ah, 0x4B
-    je .lang_flip
-    cmp ah, 0x4D
-    je .lang_flip
-    cmp al, 9                             ; (Tab too)
+.lang_key:                                ; the layouts: Up / Down, Space
+    cmp ah, 0x48
+    je .lay_up
+    cmp ah, 0x50
+    je .lay_down
+    cmp al, ' '
     jne .step
-.lang_flip:
-    xor dword [wl_lang], 1
+    mov eax, [wl_lay_row]                 ; (English: always on)
+    cmp eax, 1
+    jne .lay_es
+    xor byte [wl_lay_ru], 1
+    jmp .step
+.lay_es:
+    cmp eax, 2
+    jne .step
+    xor byte [wl_lay_es], 1
+    jmp .step
+.lay_up:
+    cmp dword [wl_lay_row], 0
+    je .step
+    dec dword [wl_lay_row]
+    jmp .step
+.lay_down:
+    cmp dword [wl_lay_row], 2
+    jae .step
+    inc dword [wl_lay_row]
+    jmp .step
+.ui_key:                                  ; the system's language
+    cmp ah, 0x48
+    je .ui_up
+    cmp ah, 0x4B
+    je .ui_up
+    cmp ah, 0x50
+    je .ui_down
+    cmp ah, 0x4D
+    je .ui_down
+    jmp .step
+.ui_up:
+    cmp dword [wl_ui], 0
+    je .step
+    dec dword [wl_ui]
+    jmp .step
+.ui_down:
+    cmp dword [wl_ui], 2
+    jae .step
+    inc dword [wl_ui]
     jmp .step
 .back:
     cmp dword [wl_step], 0
@@ -112,7 +161,7 @@ welcome_setup:
     je .step
 .not_first:
     inc dword [wl_step]
-    cmp dword [wl_step], 4
+    cmp dword [wl_step], WL_STEPS
     jb .step
     ; done: what was chosen, kept
     movzx ecx, byte [wl_nick_len]
@@ -127,11 +176,17 @@ welcome_setup:
     mov esi, wl_pass
     call wl_hash                          ; -> eax
     mov [user_pass_hash], eax
-    mov al, [wl_lang]
+    mov al, [wl_lay_ru]                   ; the layouts, the language
     mov [lang_ru_enabled], al
-    or al, al
-    jnz .russian
-    call lang_unpatch_font                ; (English: the font as it was)
+    mov al, [wl_lay_es]
+    mov [lang_es_enabled], al
+    mov eax, [wl_ui]
+    mov [sys_lang], al
+    cmp byte [lang_ru_enabled], 0         ; (no Russian at all: the font
+    jne .russian                          ;  as it was)
+    cmp byte [sys_lang], 1
+    je .russian
+    call lang_unpatch_font
 .russian:
     call user_save_cfg
     mov byte [wl_did_setup], 1
@@ -621,6 +676,7 @@ wl_show_card:
 ; esi at card-relative eax, ebx: color edx, scale ecx (1: dk_text)
 wl_card_text:
     pushad
+    call tr_lookup                        ; (src/langui.asm)
     add eax, WL_CARD_X
     add eax, [wl_shift]
     add ebx, WL_CARD_Y
@@ -660,10 +716,10 @@ wl_draw_step:
     ; the steps along the top: a bar each, green up to this one
     xor ebp, ebp
 .bar:
-    imul eax, ebp, 134
+    imul eax, ebp, 106
     add eax, 40
     mov ebx, 26
-    mov ecx, 124
+    mov ecx, 98
     mov edx, 5
     mov esi, WL_LINE
     cmp ebp, [wl_step]
@@ -674,7 +730,7 @@ wl_draw_step:
     add ebx, WL_CARD_Y
     call dk_fill
     inc ebp
-    cmp ebp, 4
+    cmp ebp, WL_STEPS
     jb .bar
     mov edx, [wl_step]                    ; the title, the question
     mov esi, [wl_titles + edx*4]
@@ -697,7 +753,10 @@ wl_draw_step:
     je .password
     cmp edx, 2
     je .zone
-    jmp .language
+    cmp edx, 3
+    je .language
+    call wl_draw_ui
+    jmp .foot
 .name:
     mov esi, wl_nick
     movzx ecx, byte [wl_nick_len]
@@ -719,8 +778,16 @@ wl_draw_step:
     jz .hint
     mov esi, wl_hint
     cmp edx, 2
-    jne .hint
+    jne .not_zone_hint
     mov esi, wl_hint_zone
+.not_zone_hint:
+    cmp edx, 3
+    jne .not_lay_hint
+    mov esi, wl_hint_lay
+.not_lay_hint:
+    cmp edx, 4
+    jne .hint
+    mov esi, wl_hint_ui
 .hint:
     mov eax, 40
     mov ebx, WL_CARD_H - 40
@@ -732,7 +799,7 @@ wl_draw_step:
     inc eax
     add al, '0'
     stosb
-    mov eax, ' / 4'
+    mov eax, ' / 5'
     stosd
     mov byte [edi], 0
     mov esi, wl_buf
@@ -843,38 +910,122 @@ wl_draw_zone:
     popad
     ret
 
-; The language: two cards, the chosen one green
+; The keyboard's layouts: a row each - English (always), Russian,
+; Spanish - a box ticked for each that's on, the row Space acts on framed
 wl_draw_language:
     pushad
     xor ebp, ebp
-.option:
-    imul eax, ebp, 270
-    add eax, 40
-    mov ebx, 128
-    mov ecx, 250
-    mov edx, 110
+.row:
+    mov eax, 40
+    imul ebx, ebp, 54
+    add ebx, 120
+    mov ecx, WL_CARD_W - 80
+    mov edx, 48
     mov esi, WL_LINE
-    cmp ebp, [wl_lang]
+    cmp ebp, [wl_lay_row]
     jne .frame
     mov esi, WL_GREEN
 .frame:
     call wl_card_box
-    cmp ebp, [wl_lang]                    ; the chosen: pale green, a tick
+    call wl_lay_on                        ; ebp -> ZF=0 if it's on
+    jz .box
+    push eax                              ; on: pale green
+    push ebx
+    add eax, 2 + WL_CARD_X
+    add ebx, 2 + WL_CARD_Y
+    mov ecx, WL_CARD_W - 84
+    mov edx, 44
+    mov esi, 0xE4F4EA
+    call dk_fill
+    pop ebx
+    pop eax
+.box:
+    push eax                              ; the tick box
+    push ebx
+    add eax, 14
+    add ebx, 14
+    mov ecx, 20
+    mov edx, 20
+    mov esi, WL_MUTED
+    call wl_lay_on
+    jz .box_frame
+    mov esi, WL_GREEN
+.box_frame:
+    call wl_card_box
+    call wl_lay_on
+    jz .no_tick
+    add eax, 6
+    add ebx, 2
+    mov esi, wl_tick
+    mov edx, WL_GREEN
+    mov ecx, 1
+    call wl_card_text
+.no_tick:
+    pop ebx
+    pop eax
+    add eax, 50                           ; its name, and a word on it
+    add ebx, 8
+    mov esi, [lang_ui_names + ebp*4]
+    mov edx, WL_INK
+    mov ecx, 1
+    call wl_card_text
+    add ebx, 18
+    mov esi, [wl_lay_notes + ebp*4]
+    mov edx, WL_MUTED
+    call wl_card_text
+    inc ebp
+    cmp ebp, 3
+    jb .row
+    popad
+    ret
+
+; ebp = a layout row -> ZF=0 if it's on (English: always)
+wl_lay_on:
+    or ebp, ebp
+    jz .yes
+    cmp ebp, 1
+    jne .spanish
+    cmp byte [wl_lay_ru], 0
+    ret
+.spanish:
+    cmp byte [wl_lay_es], 0
+    ret
+.yes:
+    or esp, esp
+    ret
+
+; The system's language: a row each, the chosen one green with a tick
+wl_draw_ui:
+    pushad
+    xor ebp, ebp
+.row:
+    mov eax, 40
+    imul ebx, ebp, 54
+    add ebx, 120
+    mov ecx, WL_CARD_W - 80
+    mov edx, 48
+    mov esi, WL_LINE
+    cmp ebp, [wl_ui]
+    jne .frame
+    mov esi, WL_GREEN
+.frame:
+    call wl_card_box
+    cmp ebp, [wl_ui]
     jne .words
     push eax
     push ebx
     add eax, 2 + WL_CARD_X
     add ebx, 2 + WL_CARD_Y
-    mov ecx, 246
-    mov edx, 106
+    mov ecx, WL_CARD_W - 84
+    mov edx, 44
     mov esi, 0xE4F4EA
     call dk_fill
     pop ebx
     pop eax
     push eax
     push ebx
-    add eax, 226
-    add ebx, 8
+    add eax, WL_CARD_W - 110
+    add ebx, 16
     mov esi, wl_tick
     mov edx, WL_GREEN
     mov ecx, 1
@@ -883,19 +1034,18 @@ wl_draw_language:
     pop eax
 .words:
     add eax, 20
-    add ebx, 26
-    mov esi, [wl_lang_names + ebp*4]
+    add ebx, 8
+    mov esi, [lang_ui_names + ebp*4]
     mov edx, WL_INK
-    mov ecx, 2
-    call wl_card_text
-    add ebx, 44
-    mov esi, [wl_lang_notes + ebp*4]
-    mov edx, WL_MUTED
     mov ecx, 1
     call wl_card_text
+    add ebx, 18
+    mov esi, [wl_ui_notes + ebp*4]
+    mov edx, WL_MUTED
+    call wl_card_text
     inc ebp
-    cmp ebp, 2
-    jb .option
+    cmp ebp, 3
+    jb .row
     popad
     ret
 
@@ -985,7 +1135,10 @@ wl_draw_login:
     mov esi, WL_GREEN
     call dk_fill
     mov esi, wl_msg_sign_in
-    mov eax, WL_CARD_W / 2 - 7 * 8
+    call tr_lookup                        ; (centered, as it's written)
+    call wl_strlen
+    imul eax, ecx, -8
+    add eax, WL_CARD_W / 2
     mov ebx, 194
     mov edx, 0xFFFFFF
     mov ecx, 2
@@ -1165,11 +1318,27 @@ user_save_cfg:
 .no_hash:
     mov ax, 0x0A0D
     stosw
-    mov ax, 'en'
+    mov ax, 'en'                          ; the layouts: "en", "ru", "es", "ru,es"
     cmp byte [lang_ru_enabled], 0
-    je .lang
+    jne .ru
+    cmp byte [lang_es_enabled], 0
+    je .layouts
+    mov ax, 'es'
+    jmp .layouts
+.ru:
     mov ax, 'ru'
-.lang:
+    cmp byte [lang_es_enabled], 0
+    je .layouts
+    stosw
+    mov al, ','
+    stosb
+    mov ax, 'es'
+.layouts:
+    stosw
+    mov ax, 0x0A0D
+    stosw
+    movzx eax, byte [sys_lang]            ; the system's language
+    mov ax, [wl_ui_codes + eax*2]
     stosw
     mov ax, 0x0A0D
     stosw
@@ -1215,6 +1384,8 @@ welcome_parse_extra:
     pushad
     mov dword [user_pass_hash], 0
     mov byte [lang_ru_enabled], 0
+    mov byte [lang_es_enabled], 0
+    mov byte [sys_lang], 0
     movzx ecx, word [content_buf_len]
     mov esi, content_buf
     lea ebp, [esi + ecx]                  ; the end
@@ -1250,18 +1421,40 @@ welcome_parse_extra:
     jmp .hex
 .hashed:
     mov [user_pass_hash], eax
-.line:                                    ; the next line: the language
+.line:                                    ; the next line: the layouts
     cmp esi, ebp
     jae .done
     lodsb
     cmp al, 10
     jne .line
+.layouts:                                 ; ("ru", "es" in it, to its end)
+    lea eax, [esi + 1]
+    cmp eax, ebp
+    jae .done
+    cmp byte [esi], 10
+    je .ui_line
+    cmp word [esi], 'ru'
+    jne .not_ru
+    mov byte [lang_ru_enabled], 1
+.not_ru:
+    cmp word [esi], 'es'
+    jne .not_es
+    mov byte [lang_es_enabled], 1
+.not_es:
+    inc esi
+    jmp .layouts
+.ui_line:                                 ; and the system's language
+    inc esi
     lea eax, [esi + 1]
     cmp eax, ebp
     jae .done
     cmp word [esi], 'ru'
+    jne .not_ui_ru
+    mov byte [sys_lang], 1
+.not_ui_ru:
+    cmp word [esi], 'es'
     jne .done
-    mov byte [lang_ru_enabled], 1
+    mov byte [sys_lang], 2
 .done:
     popad
     ret
@@ -1276,6 +1469,12 @@ wl_bg_kept       db 0
 wl_step          dd 0
 wl_tz            dd 0
 wl_lang          dd 0
+wl_lay_row       dd 1                     ; (the layouts' row Space acts on)
+wl_lay_ru        db 0
+wl_lay_es        db 0
+wl_ui            dd 0
+WL_STEPS         equ 5
+wl_ui_codes      db "enrues"
 wl_wrong         dd 0
 wl_shift         dd 0
 wl_cfg_len       dd 0
@@ -1312,22 +1511,28 @@ wl_tick          db 251, 0                ; (a check mark in code page 437)
 wl_hint_first    db "Enter: next", 0
 wl_hint          db "Enter: next   Esc: back", 0
 wl_hint_zone     db "Left / Right: the time zone   Enter: next   Esc: back", 0
-wl_titles        dd wl_t_name, wl_t_pass, wl_t_zone, wl_t_lang
+wl_hint_lay      db "Up / Down, Space: on / off   Enter: next   Esc: back", 0
+wl_hint_ui       db "Up / Down: choose   Enter: start   Esc: back", 0
+wl_titles        dd wl_t_name, wl_t_pass, wl_t_zone, wl_t_lang, wl_t_ui
 wl_t_name        db "Your name", 0
 wl_t_pass        db "A password", 0
 wl_t_zone        db "Your time zone", 0
-wl_t_lang        db "Language", 0
-wl_questions     dd wl_q_name, wl_q_pass, wl_q_zone, wl_q_lang
+wl_t_lang        db "Keyboard", 0
+wl_t_ui          db "System language", 0
+wl_questions     dd wl_q_name, wl_q_pass, wl_q_zone, wl_q_lang, wl_q_ui
 wl_q_name        db "What should LexOS call you? (up to 12 letters)", 0
 wl_q_pass        db "Asked at every start. Leave it empty for none.", 0
 wl_q_zone        db "Where are you? The clocks will show your time.", 0
-wl_q_lang        db "Left / Right to choose, Enter to start.", 0
-wl_lang_names    dd wl_l_en, wl_l_ru
-wl_l_en          db "English", 0
-wl_l_ru          db 0x90, 0xE3, 0xE1, 0xE1, 0xAA, 0xA8, 0xA9, 0  ; "Русский"
-wl_lang_notes    dd wl_n_en, wl_n_ru
-wl_n_en          db "English letters only", 0
-wl_n_ru          db "and English: Alt+Shift", 0
+wl_q_lang        db "English is always there. Tick the others you want.", 0
+wl_q_ui          db "Help, menus and messages will be in it.", 0
+wl_lay_notes     dd wl_n_en, wl_n_ru, wl_n_es
+wl_n_en          db "QWERTY - always on", 0
+wl_n_ru          db 0x89, 0x96, 0x93, 0x8A, 0x85, 0x8D, 0x2C, 0x20, 0x41, 0x6C, 0x74, 0x2B, 0x53, 0x68, 0x69, 0x66, 0x74, 0x20, 0xAF, 0xA5, 0xE0, 0xA5, 0xAA, 0xAB, 0xEE, 0xE7, 0xA0, 0xA5, 0xE2, 0  ; "ЙЦУКЕН, Alt+Shift переключает"
+wl_n_es          db 0xF7, 0x2C, 0x20, 0xF2, 0x20, 0xF3, 0x20, 0xF4, 0x20, 0xF5, 0x20, 0xF6, 0x2C, 0x20, 0xB5, 0x20, 0xB6, 0x20, 0x2D, 0x20, 0x41, 0x6C, 0x74, 0x2B, 0x53, 0x68, 0x69, 0x66, 0x74, 0  ; "ñ, á é í ó ú, ¿ ¡ - Alt+Shift"
+wl_ui_notes      dd wl_u_en, wl_u_ru, wl_u_es
+wl_u_en          db "Help, menus and messages in English", 0
+wl_u_ru          db 0x91, 0xAF, 0xE0, 0xA0, 0xA2, 0xAA, 0xA0, 0x2C, 0x20, 0xAC, 0xA5, 0xAD, 0xEE, 0x20, 0xA8, 0x20, 0xE1, 0xAE, 0xAE, 0xA1, 0xE9, 0xA5, 0xAD, 0xA8, 0xEF, 0x20, 0x2D, 0x20, 0xAF, 0xAE, 0x2D, 0xE0, 0xE3, 0xE1, 0xE1, 0xAA, 0xA8, 0  ; "Справка, меню и сообщения - по-русски"
+wl_u_es          db 0x41, 0x79, 0x75, 0x64, 0x61, 0x2C, 0x20, 0x6D, 0x65, 0x6E, 0xF6, 0x73, 0x20, 0x79, 0x20, 0x6D, 0x65, 0x6E, 0x73, 0x61, 0x6A, 0x65, 0x73, 0x20, 0x65, 0x6E, 0x20, 0x65, 0x73, 0x70, 0x61, 0xF7, 0x6F, 0x6C, 0  ; "Ayuda, menús y mensajes en español"
 wl_zones:
     dd wl_z_m12, wl_z_m11, wl_z_m10, wl_z_m9, wl_z_m8, wl_z_m7, wl_z_m6
     dd wl_z_m5, wl_z_m4, wl_z_m3, wl_z_m2, wl_z_m1, wl_z_0, wl_z_1

@@ -370,8 +370,8 @@ dk_fm_keys_work:
     and bl, 15
     mov [dk_fm_ktail], bl
     mov ecx, [dk_fm_find_len]
-    cmp al, 27                            ; Esc: none
-    je .clear
+    cmp al, 27                            ; Esc: none - or, with nothing
+    je .esc                               ; typed, Files closes
     cmp al, 8
     je .back
     cmp al, 13                            ; Enter: the first shown
@@ -391,11 +391,26 @@ dk_fm_keys_work:
     inc dword [dk_fm_find_len]
     jmp .changed
 .back:
-    jecxz .keys
+    or ecx, ecx                           ; (nothing typed: up a folder)
+    jz .up
     dec ecx
     mov [dk_fm_find_len], ecx
     mov byte [dk_fm_find + ecx], 0
     jmp .changed
+.up:
+    call snd_click
+    call dk_files_up                      ; (src/dkwins.asm)
+    mov eax, K_FILES
+    call dk_mark_kind
+    jmp .keys
+.esc:
+    or ecx, ecx
+    jnz .clear
+    call dk_top_window                    ; (Files, in front)
+    cmp eax, -1
+    je .keys
+    call dk_win_x
+    jmp .keys
 .clear:
     mov dword [dk_fm_find_len], 0
     mov byte [dk_fm_find], 0

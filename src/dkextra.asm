@@ -18,6 +18,9 @@ DKX_RECENT_SIZE equ 48                    ; a name (16), its folder (32)
 dkt_show:
     pushad
     call dkt_mark                         ; (the old one away)
+    mov edx, [dkt_y_req]                  ; (where: asked for, once)
+    mov [dkt_y], edx
+    mov dword [dkt_y_req], DKT_Y
     mov edi, dkt_text
     mov edx, 63
 .copy:
@@ -29,6 +32,7 @@ dkt_show:
     jnz .copy
     mov byte [edi], 0
 .copied:
+    mov eax, [esp + 28]                   ; (pushad's eax: lodsb took al)
     mov esi, dkt_text                     ; its box: centered on eax, on the
     call dki_strlen                       ; screen
     shl ecx, 3
@@ -71,7 +75,7 @@ dkt_mark:
     cmp byte [dkt_on], 0
     je .done
     mov eax, [dkt_x]
-    mov ebx, DKT_Y
+    mov ebx, [dkt_y]
     mov ecx, [dkt_w]
     add ecx, 3
     mov edx, DKT_H + 3
@@ -194,7 +198,7 @@ dkt_draw:
     cmp byte [dkt_on], 0
     je .done
     mov eax, [dkt_x]
-    mov ebx, DKT_Y
+    mov ebx, [dkt_y]
     add eax, 3                            ; a shadow
     add ebx, 3
     mov ecx, [dkt_w]
@@ -608,6 +612,12 @@ dkx_ctx_items:
     call dk_ctx_add
     mov al, DKC_BACKDROP
     call dk_ctx_add
+    mov al, DKC_CATHIDE                   ; (src/dkcat.asm)
+    cmp byte [cat_on], 0
+    jne .cat_item
+    mov al, DKC_CATSHOW
+.cat_item:
+    call dk_ctx_add
 .some:
     call snd_click
     popad
@@ -655,6 +665,17 @@ dkx_ctx_do:
     call dk_win_x
     jmp .done
 .not_close:
+    cmp eax, DKC_CATHIDE                  ; Lex: hidden / shown
+    jb .not_cat
+    call dkx_cat_toggle
+    jmp .done
+.not_cat:
+    cmp eax, DKC_FCOPY                    ; Files: Copy, Cut, Paste
+    jb .not_fclip
+    sub al, DKC_FCOPY - 1
+    mov [dkx_fc_req], al
+    jmp .done
+.not_fclip:
     cmp eax, DKC_ARRANGE
     jne .not_arrange
     call dkx_arrange_icons
@@ -1072,6 +1093,12 @@ kbd_is_letter:
     jae .no
     cmp byte [lang_layout], 0
     je .english
+    cmp byte [lang_layout], 2             ; Spanish: the English ones, and ñ
+    jne .russian
+    cmp ebx, 0x27
+    je .yes
+    jmp .english
+.russian:
     mov al, [lang_ru_lower + ebx]         ; (src/lang.asm)
     cmp al, 0x80
     jae .yes
@@ -1279,6 +1306,444 @@ dkx_startup_scan:
     popad
     ret
 
+; The keyboard interrupt, Esc on the desktop -> carry=0 if it closes the
+; window in front (a Clock, System, Tasks, Mixer or Pictures - nothing
+; typed there; the menus, Terminals, programs and Files keep their Esc)
+dkx_esc_closes:
+    push eax
+    cmp byte [dk_menu_open], 0
+    jne .no
+    cmp byte [dk_ctx_open], 0
+    jne .no
+    cmp byte [dk_fm_typing], 0
+    jne .no
+    call dk_top_window
+    cmp eax, -1
+    je .no
+    movzx eax, byte [dkw_kind + eax]
+    cmp eax, K_CLOCK
+    je .yes
+    cmp eax, K_SYSTEM
+    je .yes
+    cmp eax, K_TASKS
+    je .yes
+    cmp eax, K_MIXER
+    je .yes
+    cmp eax, K_PICS
+    je .yes
+.no:
+    pop eax
+    stc
+    ret
+.yes:
+    pop eax
+    clc
+    ret
+
+; ============================================================
+; Shut down / Restart (the start menu): the settings written first, a
+; goodbye on the screen for a moment, then off (do_shutdown, ACPI) or
+; round again (do_reboot) - src/shell.asm's, as `shutdown` / `reboot`
+; ============================================================
+
+; al = 1 shut down, 2 restart (the desktop's task)
+dkx_power:
+    mov [dkx_power_what], al
+    push eax
+    mov eax, [timer_ms]
+    mov [dkx_power_since], eax
+    pop eax
+    mov byte [dk_menu_open], 0
+    mov byte [dk_redraw_all], 1
+    call snd_click
+    ret
+
+; Each frame: DESKTOP.CFG saved? then after a second, off
+dkx_power_work:
+    cmp byte [dkx_power_what], 0
+    je .done
+    cmp byte [dk_cfg_dirty], 0            ; (dk_settings_work still to write it)
+    jne .done
+    mov eax, [timer_ms]
+    sub eax, [dkx_power_since]
+    cmp eax, 1200
+    jb .done
+    cmp byte [dkx_power_what], 2
+    je .reboot
+    call do_shutdown
+.reboot:
+    call do_reboot
+.done:
+    ret
+
+; Drawn over everything (dk_render) while powering off
+dkx_bye_draw:
+    pushad
+    cmp byte [dkx_power_what], 0
+    je .done
+    xor eax, eax
+    xor ebx, ebx
+    mov ecx, DESK_W
+    mov edx, DESK_H
+    mov esi, 0x0B1026
+    call dk_fill
+    mov esi, dkx_msg_bye_off
+    cmp byte [dkx_power_what], 1
+    je .say
+    mov esi, dkx_msg_bye_restart
+.say:
+    call tr_lookup                        ; (src/langui.asm)
+    call dki_strlen
+    shl ecx, 2
+    mov eax, DESK_W / 2
+    sub eax, ecx
+    mov ebx, DESK_H / 2 - 40
+    mov edx, 0xFFFFFF
+    call dk_text
+    mov esi, dkx_msg_bye_lex
+    call tr_lookup
+    call dki_strlen
+    shl ecx, 2
+    mov eax, DESK_W / 2
+    sub eax, ecx
+    mov ebx, DESK_H / 2
+    mov edx, 0xE0B040
+    call dk_text
+    mov esi, dkx_msg_bye_cat              ; (a little Lex, waving)
+    mov ebx, DESK_H / 2 + 40
+.cat:
+    cmp byte [esi], 0
+    je .done
+    mov eax, DESK_W / 2 - 40
+    mov edx, 0xC0C8D8
+    call dk_text
+    call dki_strlen
+    lea esi, [esi + ecx + 1]
+    add ebx, 16
+    jmp .cat
+.done:
+    popad
+    ret
+
+; ============================================================
+; Files' clipboard: Ctrl+C / Ctrl+X (or Copy / Cut on the right-click
+; menu) keep the files selected - by their slots and names; Ctrl+V
+; (Paste) in another folder copies them there (plain files; a name
+; that's taken gets "_2", "_3"... before its extension) or, cut, moves
+; them (folders too). Done by the desktop's task between frames, with
+; the kernel lock taken (as DESKTOP.CFG is written).
+; ============================================================
+
+; Each frame: what the keys or the menu asked for
+dkx_fc_work:
+    pushad
+    movzx eax, byte [dkx_fc_req]
+    or eax, eax
+    jz .done
+    cmp eax, 3
+    je .paste
+    mov byte [dkx_fc_req], 0
+    call dkx_fc_take                      ; eax = 1 copy, 2 cut
+    jmp .done
+.paste:
+    cmp dword [dkx_fc_n], 0
+    je .nothing
+    cmp byte [dk_shot_ready], 0           ; (a screenshot's in the buffer)
+    jne .done
+    pushfd
+    cli
+    cmp dword [bkl_owner], -1             ; (a console in the kernel: later)
+    jne .later
+    mov eax, [sched_current]
+    mov [bkl_owner], eax
+    popfd
+    mov byte [dkx_fc_req], 0
+    call dkx_fc_paste
+    mov dword [bkl_owner], -1
+    jmp .done
+.later:
+    popfd
+    jmp .done
+.nothing:
+    mov byte [dkx_fc_req], 0
+.done:
+    popad
+    ret
+
+; eax = 1 copy / 2 cut: the selected entries (or the one picked) kept
+dkx_fc_take:
+    pushad
+    mov [dkx_fc_mode], al
+    mov dword [dkx_fc_n], 0
+    xor ebx, ebx
+.each:
+    cmp ebx, [dk_fm_count]
+    jae .taken
+    call dk_sel_test
+    jc .next
+    call dkx_fc_add
+.next:
+    inc ebx
+    jmp .each
+.taken:
+    cmp dword [dkx_fc_n], 0               ; none selected: the one picked
+    jne .say
+    mov ebx, [dk_fm_sel]
+    cmp ebx, -1
+    je .say
+    call dkx_fc_add
+.say:
+    mov ecx, [dkx_fc_n]
+    jecxz .done
+    mov edi, dk_toast_buf                 ; "Copied: 3 - Ctrl+V pastes"
+    mov esi, dkx_msg_fc_copied
+    cmp byte [dkx_fc_mode], 1
+    je .verb
+    mov esi, dkx_msg_fc_cut
+.verb:
+    call tr_lookup
+    call wget_append
+    mov eax, ecx
+    call wget_append_num
+    mov esi, dkx_msg_fc_hint
+    call tr_lookup
+    call wget_append
+    mov byte [edi], 0
+    call dk_toast
+.done:
+    popad
+    ret
+
+; ebx = an entry of Files' list: onto the clipboard ("..": not)
+dkx_fc_add:
+    pushad
+    mov esi, ebx
+    shl esi, 5
+    add esi, DESK_FILES
+    cmp byte [esi + 17], IC_UP
+    je .done
+    mov ecx, [dkx_fc_n]
+    cmp ecx, DKX_FC_MAX
+    jae .done
+    mov ax, [esi + 20]                    ; its slot, its name
+    mov [dkx_fc_slot + ecx*2], ax
+    mov edi, ecx
+    shl edi, 4
+    add edi, dkx_fc_name
+    push ecx
+    mov ecx, FS_NAME_LEN
+    cld
+    rep movsb
+    pop ecx
+    mov byte [edi - 1], 0
+    inc dword [dkx_fc_n]
+.done:
+    popad
+    ret
+
+; The clipboard into Files' folder (the kernel lock held)
+dkx_fc_paste:
+    pushad
+    push word [fs_current_dir]
+    push dword [fs_tmp_slot]
+    movzx eax, byte [dk_fm_dir]           ; the folder: fs_current_dir
+    cmp al, FS_ROOT_BYTE
+    jne .dir
+    mov eax, FS_ROOT
+.dir:
+    mov [fs_current_dir], ax
+    mov dword [dkx_fc_done], 0
+    xor ebx, ebx
+.each:
+    cmp ebx, [dkx_fc_n]
+    jae .all
+    movzx eax, word [dkx_fc_slot + ebx*2] ; still that file?
+    call fs_read_slot
+    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_FREE
+    je .next
+    mov esi, ebx
+    shl esi, 4
+    add esi, dkx_fc_name
+    mov edi, SCRATCH_ADDR
+    call dkx_str_eq
+    jne .next
+    cmp byte [dkx_fc_mode], 2
+    je .cut
+    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
+    je .next                              ; (copies: files only)
+    call dkx_fc_copy_one                  ; ebx = which
+    jc .next
+    inc dword [dkx_fc_done]
+    jmp .next
+.cut:
+    call dkx_fc_move_one
+    jc .next
+    inc dword [dkx_fc_done]
+.next:
+    inc ebx
+    jmp .each
+.all:
+    cmp byte [dkx_fc_mode], 2             ; (moved: nothing left to paste)
+    jne .said
+    mov dword [dkx_fc_n], 0
+.said:
+    mov edi, dk_toast_buf                 ; "Pasted: 3"
+    mov esi, dkx_msg_fc_pasted
+    call tr_lookup
+    call wget_append
+    mov eax, [dkx_fc_done]
+    call wget_append_num
+    mov byte [edi], 0
+    call dk_toast
+    mov byte [dk_fm_refresh], 1
+    mov eax, K_FILES
+    call dk_mark_kind
+    pop dword [fs_tmp_slot]
+    pop word [fs_current_dir]
+    popad
+    ret
+
+; ebx = a clipboard entry (a file, its slot read): a copy of it in
+; fs_current_dir -> carry=1 if it couldn't be made
+dkx_fc_copy_one:
+    pushad
+    movzx eax, word [dkx_fc_slot + ebx*2]
+    mov edi, DESK_IMG_FILE                ; its content (a picture's buffer:
+    mov ecx, DK_SHOT_SIZE                 ;  free between frames)
+    call fs_load_to
+    mov [dkx_fc_size], ecx
+    mov esi, ebx
+    shl esi, 4
+    add esi, dkx_fc_name
+    call dkx_fc_free_name                 ; -> fs_tmp_name, carry=1: none
+    jc .fail
+    mov eax, [dkx_fc_size]
+    mov [fs_stream_size], eax
+    call fs_stream_prepare
+    jc .fail
+    mov dword [fh_src_ptr], DESK_IMG_FILE
+    mov dword [fs_stream_source], fh_stream_byte
+    call fs_stream_write
+    popad
+    clc
+    ret
+.fail:
+    popad
+    stc
+    ret
+
+; ebx = a clipboard entry (its slot read): moved into fs_current_dir ->
+; carry=1 if not (there already, a folder into itself, a name taken)
+dkx_fc_move_one:
+    pushad
+    mov dl, [dk_fm_dir]                   ; the destination's slot byte
+    cmp [SCRATCH_ADDR + FS_PARENT_OFFSET], dl
+    je .fail
+    movzx eax, word [dkx_fc_slot + ebx*2]
+    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
+    jne .not_dir
+    movzx ecx, dl                         ; a folder: not into itself or below
+.walk:
+    cmp cl, FS_ROOT_BYTE
+    je .not_dir
+    cmp cl, al
+    je .fail
+    push eax
+    movzx eax, cl
+    call fs_read_slot
+    pop eax
+    mov cl, [SCRATCH_ADDR + FS_PARENT_OFFSET]
+    jmp .walk
+.not_dir:
+    mov esi, ebx                          ; its name free there?
+    shl esi, 4
+    add esi, dkx_fc_name
+    mov edi, fs_tmp_name
+    call dki_copy
+    push eax
+    mov si, fs_tmp_name
+    call fs_find_by_name
+    cmp ax, -1
+    pop eax
+    jne .fail
+    call fs_read_slot                     ; moved: its parent
+    mov dl, [dk_fm_dir]
+    mov [SCRATCH_ADDR + FS_PARENT_OFFSET], dl
+    call fs_write_slot
+    popad
+    clc
+    ret
+.fail:
+    popad
+    stc
+    ret
+
+; esi = a name -> fs_tmp_name: it, or (taken in fs_current_dir) it with
+; "_2".."_9" before its extension; carry=1 if all of those are taken
+dkx_fc_free_name:
+    pushad
+    mov [dkx_fc_src], esi
+    mov edi, fs_tmp_name
+    call dki_copy
+    mov byte [dkx_fc_try], '1'
+.try:
+    mov si, fs_tmp_name
+    call fs_find_by_name
+    cmp ax, -1
+    je .free
+    inc byte [dkx_fc_try]
+    cmp byte [dkx_fc_try], '9'
+    ja .none
+    mov esi, [dkx_fc_src]                 ; its last "." (edx), its length
+    xor ecx, ecx
+    mov edx, -1
+.dot:
+    mov al, [esi + ecx]
+    or al, al
+    jz .split
+    cmp al, '.'
+    jne .dot_next
+    mov edx, ecx
+.dot_next:
+    inc ecx
+    jmp .dot
+.split:
+    cmp edx, -1                           ; (none: the suffix at the end)
+    jne .has_ext
+    mov edx, ecx
+.has_ext:
+    mov eax, ecx                          ; the base: as much as fits with
+    sub eax, edx                          ; "_N" and the extension in 15
+    mov ebx, 13
+    sub ebx, eax
+    jns .room
+    xor ebx, ebx
+.room:
+    mov ecx, edx
+    cmp ecx, ebx
+    jbe .base
+    mov ecx, ebx
+.base:
+    mov edi, fs_tmp_name
+    cld
+    rep movsb
+    mov byte [edi], '_'
+    mov al, [dkx_fc_try]
+    mov [edi + 1], al
+    add edi, 2
+    mov esi, [dkx_fc_src]                 ; then the extension (or the 0)
+    add esi, edx
+    call dki_copy
+    jmp .try
+.free:
+    popad
+    clc
+    ret
+.none:
+    popad
+    stc
+    ret
+
 ; ============================================================
 ; Data (shared)
 ; ============================================================
@@ -1300,6 +1765,35 @@ dkx_close_req    db 0
 dkx_logout_req   db 0
 dkx_desk_hid     times DK_MAX_WIN db 0
 dk_snap_now      dd 0
+DKX_FC_MAX       equ 16
+dkx_fc_req       db 0                     ; 1 copy, 2 cut, 3 paste (asked)
+dkx_fc_mode      db 0
+dkx_fc_n         dd 0
+dkx_fc_done      dd 0
+dkx_fc_size      dd 0
+dkx_fc_try       db 0
+dkx_fc_src       dd 0
+dkx_fc_slot      times DKX_FC_MAX dw 0
+dkx_fc_name      times DKX_FC_MAX * 16 db 0
+dkx_msg_fc_copied db "Copied: ", 0
+dkx_msg_fc_cut   db "Cut: ", 0
+dkx_msg_fc_hint  db " - Ctrl+V in another folder pastes", 0
+dkx_msg_fc_pasted db "Pasted: ", 0
+dkx_l_fcopy      db "Copy", 0
+dkx_l_fcut       db "Cut", 0
+dkx_l_fpaste     db "Paste", 0
+dkx_l_cathide    db "Hide Lex", 0
+dkx_l_catshow    db "Show Lex", 0
+dkt_y            dd DKT_Y                 ; where the tooltip is (dkt_show)
+dkt_y_req        dd DKT_Y
+dkx_power_what   db 0                     ; 1 shutting down, 2 restarting
+dkx_power_since  dd 0
+dkx_msg_bye_off  db "LexOS is shutting down...", 0
+dkx_msg_bye_restart db "LexOS is restarting...", 0
+dkx_msg_bye_lex  db "Bye! See you soon.  - Lex", 0
+dkx_msg_bye_cat  db "  /\_/\  ", 0
+                 db " ( o.o ) ", 0
+                 db "  > ^ <  ", 0, 0
 dkx_st_scan      db 0
 dkx_st_launching db 0
 dkx_st_dir       db 0

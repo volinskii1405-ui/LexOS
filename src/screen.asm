@@ -264,8 +264,11 @@ update_hw_cursor:
 ; whose upper half nobody has zeroed.
 print_string:
     pusha
-.loop:
-    a16 lodsb
+    movzx esi, si
+    call tr_lookup                 ; (the system's language: src/langui.asm -
+.loop:                             ;  a translation can be anywhere in memory)
+    mov al, [esi]
+    inc esi
     cmp al, 0
     je .done
     call print_char

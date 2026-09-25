@@ -278,6 +278,11 @@ dk_settings_load:
     jc .backdrop
     mov [snd_ui_on], al
 .backdrop:
+    mov esi, dkx_cfg_cat                  ; "cat=N" (src/dkcat.asm)
+    call dk_cfg_value
+    jc .no_cat
+    mov [cat_on], al
+.no_cat:
     mov esi, dk_cfg_backdrop              ; "backdrop=N"
     call dk_cfg_value
     jc .apply
@@ -359,6 +364,13 @@ dk_settings_work:
     mov esi, dk_cfg_sounds
     call wget_append
     mov al, [snd_ui_on]
+    add al, '0'
+    stosb
+    mov ax, 0x0A0D
+    stosw
+    mov esi, dkx_cfg_cat
+    call wget_append
+    mov al, [cat_on]
     add al, '0'
     stosb
     mov ax, 0x0A0D

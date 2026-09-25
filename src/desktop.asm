@@ -55,7 +55,7 @@ DK_MAX_WIN        equ 16
 DK_TITLE_LEN      equ 32
 DK_MENU_W         equ 170
 DK_MENU_ITEM_H    equ 24
-DK_MENU_ITEMS     equ 10
+DK_MENU_ITEMS     equ 12
 DK_TRAY_W         equ 188                 ; the taskbar's right end: volume,
                                           ; network, the time
 DK_CAL_W          equ 244                 ; the calendar
@@ -358,6 +358,9 @@ desktop_task:
     call dkc_work                         ; (src/dkclip.asm: copy, paste)
     call dk_fm_keys_work                  ; (src/dkfind.asm: Files' search)
     call dkx_startup_work                 ; (src/dkextra.asm: STARTUP)
+    call dkx_power_work                   ; (src/dkextra.asm: shut down)
+    call dkx_fc_work                      ; (src/dkextra.asm: Files' clipboard)
+    call dkx_cat_work                     ; (src/dkcat.asm: Lex)
     call dkt_work                         ; (src/dkextra.asm: the tooltip,
     call dkx_win_key                      ;  the Win key)
     call dk_alt_tab_work
@@ -504,6 +507,7 @@ dk_win_open:
     add [dkw_y + ecx*4], edx
 .title:
     mov esi, [dk_kind_names + eax*4]
+    call tr_lookup                        ; (the system's language)
     imul edi, ecx, DK_TITLE_LEN
     add edi, dkw_title
 .copy:
@@ -1331,6 +1335,8 @@ dk_click:
     call dk_ctx_click                     ; (src/dkwins.asm)
     jmp .done
 .no_ctx:
+    call dkx_cat_click                    ; Lex? (src/dkcat.asm) he meows
+    jnc .done
     cmp ebx, DESK_H - DK_TASKBAR_H        ; the taskbar's very end: the
     jb .not_desk_btn                      ; desktop (src/dkextra.asm)
     cmp eax, DESK_W - DKX_DESK_W
@@ -1822,6 +1828,10 @@ dk_menu_choose:
     cmp eax, 7
     je .logout
     cmp eax, 8
+    je .restart
+    cmp eax, 9
+    je .shutdown
+    cmp eax, 10
     je .exit
     movzx eax, byte [dk_menu_kinds + eax]
     cmp eax, K_PICS
@@ -1840,6 +1850,12 @@ dk_menu_choose:
     ret
 .logout:
     jmp dkx_logout                        ; (src/dkextra.asm)
+.restart:
+    mov al, 2
+    jmp dkx_power
+.shutdown:
+    mov al, 1
+    jmp dkx_power
 
 dk_mark_menu:
     pushad
@@ -1934,7 +1950,9 @@ dk_render:
 .no_ctx:
     call dk_snap_draw                     ; (src/dkextra.asm: an edge's outline)
     call dk_draw_toast
+    call dkx_cat_draw                     ; (src/dkcat.asm: Lex)
     call dkt_draw                         ; (src/dkextra.asm: the tooltip)
+    call dkx_bye_draw                     ; (and the goodbye, powering off)
 .done:
     popad
     ret
@@ -2383,6 +2401,7 @@ dk_text:
 ; the same, at most edi characters
 dk_text_n:
     pushad
+    call tr_lookup                        ; (src/langui.asm)
 .char:
     or edi, edi
     jz .done
@@ -3003,8 +3022,9 @@ dk_kind_names     dd dk_title_terminal, dk_title_clock, dk_title_pictures, dk_ti
 dk_menu_labels    dd dk_menu_programs
                   dd dk_title_terminal, dk_title_files, dk_title_clock, dk_title_pictures
                   dd dk_title_tasks, dk_title_mixer, dk_title_system, dk_menu_logout
-                  dd dk_menu_exit
-dk_menu_kinds     db K_TERM, K_FILES, K_CLOCK, K_PICS, K_TASKS, K_MIXER, K_SYSTEM, K_NONE, K_NONE
+                  dd dk_menu_restart, dk_menu_shutdown, dk_menu_exit
+dk_menu_kinds     db K_TERM, K_FILES, K_CLOCK, K_PICS, K_TASKS, K_MIXER, K_SYSTEM, K_NONE
+                  db K_NONE, K_NONE, K_NONE
 
 ; the arrow, 12x19: bit n = column n
 dk_ptr_outline dw 0x001, 0x003, 0x005, 0x009, 0x011, 0x021, 0x041, 0x081, 0x101, 0x201
@@ -3022,6 +3042,8 @@ dk_title_tasks      db "Tasks", 0
 dk_title_mixer      db "Mixer", 0
 dk_title_program    db "Program", 0
 dk_menu_logout      db "Log out", 0
+dk_menu_restart     db "Restart", 0
+dk_menu_shutdown    db "Shut down", 0
 dk_menu_exit        db "Exit desktop", 0
 dk_menu_programs    db "Programs", 0
 dk_msg_more         db ">", 0

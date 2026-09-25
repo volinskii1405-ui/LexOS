@@ -12,7 +12,8 @@ pool, with a byte per pool sector in the bitmap before it.
 
 It adds to what's on the disk already - the files you made in LexOS
 stay: a file that's there by that name is left alone, except in /APPS
-(the programs - brought up to date if they changed). A folder takes the
+and /SYSTEM (the programs, the translations - brought up to date if they
+changed). A folder takes the
 first free slot from 0, a file from 255, as fs_find_free_dir /
 fs_find_free do."""
 import os, sys
@@ -30,7 +31,7 @@ FS_EXTRA_START = FS_BITMAP_SECTOR + FS_BITMAP_SECTORS
 TYPE_FREE, TYPE_FILE, TYPE_DIR = 0, 1, 2
 ROOT = 0xFF
 NO_CHAIN = 0xFFFF
-UPDATED = ('APPS',)                 # folders whose files follow disk/
+UPDATED = ('APPS', 'SYSTEM')       # folders whose files follow disk/
 
 image_path, top = sys.argv[1], sys.argv[2]
 img = bytearray(open(image_path, 'rb').read())

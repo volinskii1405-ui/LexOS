@@ -318,6 +318,25 @@ keyboard_isr:
     je .not_desk_keys              ; (src/dkextra.asm)
     cmp bh, 0
     jne .not_desk_keys
+    cmp byte [dk_fm_typing], 0     ; Files in front: Ctrl+C / X / V are
+    je .not_files_clip             ; its files' (src/dkextra.asm)
+    cmp byte [lang_ctrl_held], 0
+    je .not_files_clip
+    cmp al, 0x2E                   ; C
+    jne .not_fc_c
+    mov byte [dkx_fc_req], 1
+    jmp .eoi
+.not_fc_c:
+    cmp al, 0x2D                   ; X
+    jne .not_fc_x
+    mov byte [dkx_fc_req], 2
+    jmp .eoi
+.not_fc_x:
+    cmp al, 0x2F                   ; V
+    jne .not_files_clip
+    mov byte [dkx_fc_req], 3
+    jmp .eoi
+.not_files_clip:
     cmp byte [dkx_win_held], 0     ; Win+D: the desktop; Win+E: Files;
     je .not_win_combo              ; Win+L: log out
     mov byte [dkx_win_combo], 1
@@ -346,10 +365,15 @@ keyboard_isr:
     cmp al, 0x01                   ; Ctrl+Shift+Esc: Tasks
     jne .not_desk_keys
     cmp byte [lang_ctrl_held], 0
-    je .not_desk_keys
+    je .desk_esc
     cmp byte [kbd_shift_held], 0
-    je .not_desk_keys
+    je .desk_esc
     mov byte [dkx_tasks_req], 1
+    jmp .eoi
+.desk_esc:                         ; Esc, a Clock / System / Tasks / Mixer /
+    call dkx_esc_closes            ; Pictures in front: it closes (the rest -
+    jc .not_desk_keys              ; Terminals, programs, Files - keep it)
+    mov byte [dkx_close_req], 1
     jmp .eoi
 .not_desk_keys:
 
@@ -465,6 +489,8 @@ keyboard_isr:
     cmp al, 0
     je .eoi                         ; no ASCII value for this key (Ctrl/Alt/CapsLock) - ignore
     call lang_map                   ; (the Russian layout, if it's on)
+    or al, al                       ; (a dead key, Spanish: its letter next)
+    jz .eoi
     mov ah, bl
     call push_key_to_buffer
 
