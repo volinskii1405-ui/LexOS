@@ -247,8 +247,12 @@ dk_fm_ext:
 ; window)
 dk_fm_draw_tools:
     pushad
+    mov eax, ebp
+    call dk_fm_shift                      ; (narrow: all a bit to the left)
+    mov edi, edx
     mov eax, [dk_cx]                      ; the box
     add eax, FM_FIND_X
+    sub eax, edi
     mov ebx, [dk_cy]
     add ebx, 4
     mov ecx, FM_FIND_W
@@ -258,8 +262,10 @@ dk_fm_draw_tools:
     push eax
     mov eax, [dk_cx]
     add eax, FM_FIND_X
+    sub eax, edi
     cmp [esp], ebp                        ; (in front: typing goes here)
-    pop edi
+    pop esi
+    mov esi, COL_BUTTON
     jne .frame
     mov esi, COL_TITLE_ON
 .frame:
@@ -291,8 +297,11 @@ dk_fm_draw_tools:
     mov esi, COL_TEXT
     call dk_fill
 .sort:
+    mov eax, ebp
+    call dk_fm_shift
     mov eax, [dk_cx]                      ; [Sort: Name]
     add eax, FM_SORT_X
+    sub eax, edx
     mov ebx, [dk_cy]
     add ebx, 4
     mov ecx, FM_SORT_W
@@ -306,6 +315,20 @@ dk_fm_draw_tools:
     mov edx, COL_TEXT
     call dk_text
     popad
+    ret
+
+; eax = a Files window -> edx = how far left its search and order go
+; (a narrow one - half the screen: the page buttons stay clear)
+dk_fm_shift:
+    mov edx, FM_SORT_X + FM_SORT_W + 68
+    sub edx, [dkw_w + eax*4]
+    jns .some
+    xor edx, edx
+.some:
+    cmp edx, 120
+    jbe .done
+    mov edx, 120
+.done:
     ret
 
 ; ============================================================

@@ -285,6 +285,7 @@ dk_settings_load:
     jae .apply
     mov [dk_bg_mode], eax
 .apply:
+    call dkx_recent_load                  ; (src/dkextra.asm)
     cmp dword [dk_theme], DK_THEMES
     jb .theme_ok
     mov dword [dk_theme], 0
@@ -369,6 +370,7 @@ dk_settings_work:
     stosb
     mov ax, 0x0A0D
     stosw
+    call dkx_recent_save                  ; (src/dkextra.asm: recent programs)
     call dki_save                         ; (src/dkicons.asm: where they are)
     sub edi, dk_cfg_buf
     mov [fs_stream_size], edi

@@ -226,6 +226,23 @@ keyboard_isr:
     mov byte [dk_shot_req], 1
     jmp .eoi
 .not_prtsc:
+    cmp bh, 0                    ; the Win keys let go (E0 DB / E0 DC):
+    je .not_win_up               ; alone, the start menu; with a key
+    cmp al, 0xDB                 ; (Win+D...), that's done already
+    je .win_up                   ; (src/dkextra.asm)
+    cmp al, 0xDC
+    jne .not_win_up
+.win_up:
+    cmp byte [dkx_win_held], 0
+    je .eoi
+    mov byte [dkx_win_held], 0
+    cmp byte [dkx_win_combo], 0
+    jne .eoi
+    cmp byte [dk_active], 0
+    je .eoi
+    mov byte [dkx_win_req], 1
+    jmp .eoi
+.not_win_up:
 
     cmp al, 0x2A                 ; Left Shift (press)
     je .shift_down
@@ -296,6 +313,45 @@ keyboard_isr:
     mov cl, al
     movzx ecx, cl
     mov byte [key_held + ecx], 1
+
+    cmp byte [dk_active], 0        ; the desktop's own keys
+    je .not_desk_keys              ; (src/dkextra.asm)
+    cmp bh, 0
+    jne .not_desk_keys
+    cmp byte [dkx_win_held], 0     ; Win+D: the desktop; Win+E: Files;
+    je .not_win_combo              ; Win+L: log out
+    mov byte [dkx_win_combo], 1
+    cmp al, 0x20                   ; D
+    jne .not_win_d
+    mov byte [dkx_desk_req], 1
+    jmp .eoi
+.not_win_d:
+    cmp al, 0x12                   ; E
+    jne .not_win_e
+    mov byte [dkx_files_req], 1
+    jmp .eoi
+.not_win_e:
+    cmp al, 0x26                   ; L
+    jne .eoi
+    mov byte [dkx_logout_req], 1
+    jmp .eoi
+.not_win_combo:
+    cmp al, 0x3E                   ; Alt+F4: the window in front closes
+    jne .not_alt_f4
+    cmp byte [kbd_alt_held], 0
+    je .not_alt_f4
+    mov byte [dkx_close_req], 1
+    jmp .eoi
+.not_alt_f4:
+    cmp al, 0x01                   ; Ctrl+Shift+Esc: Tasks
+    jne .not_desk_keys
+    cmp byte [lang_ctrl_held], 0
+    je .not_desk_keys
+    cmp byte [kbd_shift_held], 0
+    je .not_desk_keys
+    mov byte [dkx_tasks_req], 1
+    jmp .eoi
+.not_desk_keys:
 
     ; Alt+T / Alt+1..9: open / switch consoles (src/console.asm) - just
     ; recorded here, acted on at the next safe point
@@ -371,9 +427,12 @@ keyboard_isr:
     cmp bl, 0x5C
     jne .not_win_key
 .win_key:
-    cmp byte [dk_active], 0
-    je .eoi
-    mov byte [dkx_win_req], 1
+    cmp byte [dk_active], 0        ; (held: the menu when it's let go,
+    je .eoi                        ;  unless a key came with it)
+    cmp byte [dkx_win_held], 0     ; (the key repeating: still held)
+    jne .eoi
+    mov byte [dkx_win_held], 1
+    mov byte [dkx_win_combo], 0
     jmp .eoi
 .not_win_key:
     xor ax, ax
@@ -383,7 +442,20 @@ keyboard_isr:
 
 .normal_key:
     xor bh, bh                     ; bx = scancode, index into the table
-    cmp byte [lang_shift_held], 0  ; (the shared one: src/lang.asm)
+    cmp bl, 0x3A                   ; Caps Lock (src/dkextra.asm)
+    jne .not_caps
+    call kbd_caps_toggle
+    jmp .eoi
+.not_caps:
+    mov cl, [lang_shift_held]      ; (the shared one: src/lang.asm) -
+    cmp byte [kbd_caps_on], 0      ; Caps Lock turns it round for letters
+    je .shift_known
+    call kbd_is_letter
+    jne .shift_known
+    xor cl, 1
+.shift_known:
+    mov [kbd_shift_eff], cl
+    or cl, cl
     je .use_lower
     mov al, [scancode_upper + bx]
     jmp .have_ascii

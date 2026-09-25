@@ -102,7 +102,7 @@ lang_map:
     jae .done
     push ebx
     movzx ebx, bl
-    cmp byte [lang_shift_held], 0
+    cmp byte [kbd_shift_eff], 0           ; (Shift, or Caps Lock's)
     jne .upper
     mov bl, [lang_ru_lower + ebx]
     jmp .have

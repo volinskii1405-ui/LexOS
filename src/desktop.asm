@@ -56,7 +56,7 @@ DK_TITLE_LEN      equ 32
 DK_MENU_W         equ 170
 DK_MENU_ITEM_H    equ 24
 DK_MENU_ITEMS     equ 10
-DK_TRAY_W         equ 160                 ; the taskbar's right end: volume,
+DK_TRAY_W         equ 188                 ; the taskbar's right end: volume,
                                           ; network, the time
 DK_CAL_W          equ 244                 ; the calendar
 DK_CAL_H          equ 196
@@ -141,6 +141,7 @@ desktop_command:
     call dk_settings_load                 ; (src/dkstyle.asm: DESKTOP.CFG)
     call dki_forget                       ; (src/dkicons.asm: read them anew)
     call dkc_forget                       ; (src/dkclip.asm: no selection)
+    call dkx_startup_arm                  ; (src/dkextra.asm: STARTUP's programs)
     ; no windows yet: Clock, and a Terminal per console (made below)
     xor eax, eax
 .clear:
@@ -356,6 +357,7 @@ desktop_task:
     call dk_menu_keys_work                ; (src/dkwins.asm: the menu's search)
     call dkc_work                         ; (src/dkclip.asm: copy, paste)
     call dk_fm_keys_work                  ; (src/dkfind.asm: Files' search)
+    call dkx_startup_work                 ; (src/dkextra.asm: STARTUP)
     call dkt_work                         ; (src/dkextra.asm: the tooltip,
     call dkx_win_key                      ;  the Win key)
     call dk_alt_tab_work
@@ -808,6 +810,12 @@ dk_check_changes:
     mov eax, ebp
     call dk_mark_window_client
 .not_scrolled:
+    cmp byte [dkw_max + ebp], 0           ; (maximized: its history above
+    je .one_row                           ;  may have moved too - all of it)
+    mov eax, ebp
+    call dk_mark_window_client
+    jmp .same
+.one_row:
     mov eax, ebp                          ; that row, dirty
     call dk_client_origin                 ; -> eax, ebx
     push edx
@@ -910,9 +918,11 @@ dk_mark_cell:
     cmp eax, SCREEN_ROWS
     jae .done
     shl ecx, 3
-    shl eax, 4
-    mov esi, ecx
     mov edi, eax
+    call dk_term_extra                    ; (maximized: rows above it)
+    add edi, eax
+    shl edi, 4
+    mov esi, ecx
     mov eax, ebp
     call dk_client_origin                 ; -> eax, ebx
     add eax, esi
@@ -1205,9 +1215,48 @@ dk_mouse_event:
     or cl, cl                             ; let go: this is where it stays
     jnz .follow
     mov byte [dk_dragging], 0
+    call dk_snap_zone                     ; (src/dkextra.asm) at an edge?
+    push edx
+    xor edx, edx
+    call dk_snap_show                     ; (the outline away)
+    pop edx
+    or edx, edx
+    jz .follow
+    mov eax, [dk_drag_win]
+    call dk_win_snap                      ; half the screen, or all of it
+    jmp .done
 .follow:
     ; dragging a window: it follows
+    or cl, cl                             ; (held: at an edge, its outline)
+    jz .no_zone
+    push eax
+    call dk_snap_zone
+    call dk_snap_show
+    pop eax
+.no_zone:
     mov esi, [dk_drag_win]
+    cmp byte [dkw_max + esi], 0           ; a maximized (or snapped) one
+    je .not_max                           ; pulled away: its own size again
+    mov edx, eax
+    sub edx, [dk_drag_dx]
+    cmp edx, [dkw_x + esi*4]
+    jne .unmax
+    mov edx, ebx
+    sub edx, [dk_drag_dy]
+    cmp edx, [dkw_y + esi*4]
+    je .not_max
+.unmax:
+    push eax
+    mov eax, esi
+    call dk_win_maximize                  ; (back as it was)
+    mov eax, [dkw_w + esi*4]              ; the pointer on its title still
+    shr eax, 1
+    cmp [dk_drag_dx], eax
+    jbe .dx_ok
+    mov [dk_drag_dx], eax
+.dx_ok:
+    pop eax
+.not_max:
     mov edx, eax
     sub edx, [dk_drag_dx]
     mov edi, ebx
@@ -1276,6 +1325,18 @@ dk_click:
     call dk_ctx_click                     ; (src/dkwins.asm)
     jmp .done
 .no_ctx:
+    cmp ebx, DESK_H - DK_TASKBAR_H        ; the taskbar's very end: the
+    jb .not_desk_btn                      ; desktop (src/dkextra.asm)
+    cmp eax, DESK_W - DKX_DESK_W
+    jb .not_desk_btn
+    cmp byte [dk_cal_open], 0
+    je .desk_btn
+    call dk_mark_calendar
+    mov byte [dk_cal_open], 0
+.desk_btn:
+    call dkx_show_desktop
+    jmp .done
+.not_desk_btn:
     cmp byte [dk_cal_open], 0             ; the calendar: any click closes
     je .no_cal                            ; it (the time's own: see the
     call dk_mark_calendar                 ; tray, it toggles)
@@ -1537,9 +1598,12 @@ dk_min_offset:
 .done:
     ret
 
-; eax = a window -> carry=0 if it can be maximized (Files, programs)
+; eax = a window -> carry=0 if it can be maximized (Files, programs,
+; Terminals - their history above, then)
 dk_can_max:
     cmp byte [dkw_kind + eax], K_FILES
+    je .yes
+    cmp byte [dkw_kind + eax], K_TERM
     je .yes
     cmp byte [dkw_kind + eax], K_APP
     je .yes
@@ -1592,16 +1656,20 @@ dk_win_maximize:
     mov [dkw_sw + ebp*4], eax
     mov eax, [dkw_h + ebp*4]
     mov [dkw_sh + ebp*4], eax
-    mov dword [dkw_x + ebp*4], 0
+    mov eax, [dk_area_x]                  ; (the screen, or half of it:
+    mov [dkw_x + ebp*4], eax              ;  dk_win_snap)
     mov dword [dkw_y + ebp*4], 0
-    mov dword [dkw_w + ebp*4], DESK_W - DK_BORDER * 2
+    mov eax, [dk_area_w]
+    sub eax, DK_BORDER * 2
+    mov [dkw_w + ebp*4], eax
     mov dword [dkw_h + ebp*4], DESK_H - DK_TASKBAR_H - DK_TITLE_H - DK_BORDER * 2
     cmp byte [dkw_kind + ebp], K_APP
     jne .laid_out
     mov ecx, [dkw_param + ebp*4]          ; a program: the biggest whole
     mov eax, [dk_app_scale + ecx*4]       ; scale that fits
     mov [dkw_sscale + ebp*4], eax
-    mov eax, DESK_W - DK_BORDER * 2
+    mov eax, [dk_area_w]
+    sub eax, DK_BORDER * 2
     xor edx, edx
     div dword [dk_app_w + ecx*4]
     mov ebx, eax
@@ -1623,9 +1691,11 @@ dk_win_maximize:
     mov edx, [dk_app_h + ecx*4]
     imul edx, eax
     mov [dkw_h + ebp*4], edx
-    mov eax, DESK_W - DK_BORDER * 2       ; centered
+    mov eax, [dk_area_w]                  ; centered
+    sub eax, DK_BORDER * 2
     sub eax, ebx
     sar eax, 1
+    add eax, [dk_area_x]
     mov [dkw_x + ebp*4], eax
     mov eax, DESK_H - DK_TASKBAR_H - DK_TITLE_H - DK_BORDER * 2
     sub eax, edx
@@ -1856,6 +1926,7 @@ dk_render:
     je .no_ctx
     call dk_draw_ctx                      ; (src/dkwins.asm)
 .no_ctx:
+    call dk_snap_draw                     ; (src/dkextra.asm: an edge's outline)
     call dk_draw_toast
     call dkt_draw                         ; (src/dkextra.asm: the tooltip)
 .done:
@@ -2190,6 +2261,7 @@ dk_draw_taskbar:
     mov edx, COL_BARTEXT
     call dk_text
     call dk_draw_tray                     ; (src/dkwins.asm)
+    call dkx_draw_desk_btn                ; (src/dkextra.asm)
     popad
     ret
 
@@ -2846,6 +2918,8 @@ dk_btn_now        db 0
 dk_last_right     db 0
 dk_resizing       db 0
 dk_prog_open      db 0                         ; the Programs submenu is out
+dk_area_x         dd 0                         ; where maximizing fills
+dk_area_w         dd DESK_W
 dk_cal_open       db 0                         ; the calendar is out
 dk_prog_shown     dd 1                         ; its rows
 dk_alt_tab        db 0                         ; Alt+Tabs to act on

@@ -75,6 +75,14 @@ All taken in QEMU (1024x768) - more in [docs/screenshots](docs/screenshots).
 </tr>
 <tr>
 <td align="center" valign="top"><img src="docs/screenshots/23-logout.png" alt="Signing in again after Log out" width="400"><br><sub>Log out: back to the sign-in screen</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/24-snap.png" alt="Dragging a window to the left edge" width="400"><br><sub>Drag to an edge: an outline, then half the screen</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/25-desktop-menu.png" alt="The desktop's right-click menu" width="400"><br><sub>Right-click on the desktop</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/26-recent-programs.png" alt="Recent programs first in the start menu" width="400"><br><sub>Recent programs come first in Programs</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/27-terminal-maximized.png" alt="A maximized Terminal" width="400"><br><sub>A maximized Terminal shows its history above</sub></td>
 <td></td>
 </tr>
 </table>
@@ -410,9 +418,22 @@ alex@/PROGRAMS$
 - **Desktop.** `desktop` switches to a graphical desktop in 1024x768
   true color: windows with title bars you drag with the mouse, that
   come to the front when clicked and close with their [x], minimize
-  with [_] (to the taskbar) and - Files and programs - maximize with
-  the box or a double click on the title; Files resizes by its
-  bottom-right corner; Alt+Tab brings the window at the back forward.
+  with [_] (to the taskbar) and - Files, programs and Terminals -
+  maximize with the box or a double click on the title (a Terminal
+  then shows the lines that scrolled off above its 25); Files resizes
+  by its bottom-right corner; Alt+Tab brings the window at the back
+  forward. Dragged to the screen's left or right edge a window takes
+  that half (Files, programs - the others just go to that side), to
+  its top the whole screen; an outline shows where while it's held
+  there, and pulling a maximized one away gives it its own size back.
+  Keys: **Alt+F4** closes the window in front, **Win+D** (or the thin
+  strip at the taskbar's right end) shows the desktop and brings the
+  windows back, **Win+E** opens Files, **Win+L** logs out,
+  **Ctrl+Shift+Esc** opens Tasks. Right-click a taskbar button:
+  Minimize / Restore, Maximize, Close; right-click the desktop: New
+  Terminal, Files, Tasks, System, Arrange icons, Next backdrop.
+  **Caps Lock** works (with its light), an "A" in the tray while it's
+  on.
   A taskbar with a button per window and a tray - volume (click: the
   Mixer, wheel: the master volume), network (green once it's set up),
   the time (click: this month's calendar, double-click: the Clock;
@@ -424,11 +445,15 @@ alex@/PROGRAMS$
   the volume shows it ("Volume 70%") in a tooltip (src/dkextra.asm).
   Typing while the menu's open
   searches: Programs shows what has the typed text in its name, Up /
-  Down pick, Enter starts it, Esc closes the menu.
+  Down pick, Enter starts it, Esc closes the menu. The last 4 programs
+  started from the desktop come first in Programs, marked (kept in
+  `DESKTOP.CFG`).
   - **Icons on the desktop**: whatever's in `/DESKTOP` (src/dkicons.asm).
     A `.LNK` file there is a shortcut - its text is the path it opens
     (`/APPS/FIRE.APP`, a folder like `/DEMOS`). Double-click opens,
-    drag moves (the places are remembered).
+    drag moves (the places are remembered). Whatever program (or
+    `.LNK` to one) is in `/DESKTOP/STARTUP` starts by itself with the
+    desktop.
   - **Themes**: Classic, Dark, Light, Forest, Plum - System's buttons
     (src/dkstyle.asm); a **backdrop** - Night, Sunset, Ocean, Slate -
     can replace the theme's own gradient. With the sounds' switch
@@ -944,7 +969,9 @@ src/
   dkclip.asm           copy and paste between the Terminals.
   dkfind.asm           Files' search and order.
   dkextra.asm          the tray's tooltips (date, volume), the Win
-                       key, Log out.
+                       key and other shortcuts, Log out, snapping,
+                       the taskbar's and desktop's menus, recent
+                       programs, Caps Lock, /DESKTOP/STARTUP.
   neofetch.asm         `neofetch` (with Lex the cat) and `uptime`.
   lang.asm             Russian: code page 866 letters, the layout.
   font866.inc          the Cyrillic glyphs (from CyrKoi-VGA16).
