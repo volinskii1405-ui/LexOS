@@ -143,7 +143,7 @@ dki_scan:
     xor ebx, ebx
 .place:
     cmp ebx, [dki_new_n]
-    jae .placed
+    jae .placed_old
     mov esi, ebx
     shl esi, 4
     add esi, dki_new_file
@@ -151,12 +151,26 @@ dki_scan:
     jnc .put
     call dki_saved_place
     jnc .put
-    call dki_default_place
+    mov eax, -1                           ; (a new one: once the others are in)
+    mov edx, -1
 .put:
     mov [dki_new_x + ebx*4], eax
     mov [dki_new_y + ebx*4], edx
     inc ebx
     jmp .place
+.placed_old:
+    xor ebx, ebx                          ; the new ones: free cells
+.place_new:
+    cmp ebx, [dki_new_n]
+    jae .placed
+    cmp dword [dki_new_x + ebx*4], -1
+    jne .next_new
+    call dki_default_place
+    mov [dki_new_x + ebx*4], eax
+    mov [dki_new_y + ebx*4], edx
+.next_new:
+    inc ebx
+    jmp .place_new
 .placed:
     mov esi, dki_new_file                 ; they're the ones now
     mov edi, dki_file
@@ -426,39 +440,7 @@ dki_number:
 ; ebx = which (in the new list) -> eax, edx: the first default place
 ; no icon (new or shown) is in yet
 dki_default_place:
-    push ecx
-    push esi
-    xor ecx, ecx                          ; the place, down then left
-.try:
-    mov eax, ecx
-    xor edx, edx
-    push ecx
-    mov ecx, DKI_ROWS
-    div ecx
-    pop ecx
-    imul eax, -(DKI_W + 10)               ; the column
-    add eax, DESK_W - DKI_W - 10
-    imul edx, DKI_H + 8
-    add edx, DKI_TOP
-    xor esi, esi                          ; taken by one placed before?
-.taken:
-    cmp esi, ebx
-    jae .free
-    cmp eax, [dki_new_x + esi*4]
-    jne .other
-    cmp edx, [dki_new_y + esi*4]
-    je .next
-.other:
-    inc esi
-    jmp .taken
-.next:
-    inc ecx
-    cmp ecx, 40
-    jb .try
-.free:
-    pop esi
-    pop ecx
-    ret
+    jmp dkg_default_place                 ; (src/dkgrid.asm: the first free cell)
 
 ; ============================================================
 ; Drawing (dk_render, the background's part)
@@ -678,9 +660,10 @@ dki_drag_move:
     mov ebx, [dki_drag]
     or cl, cl
     jnz .held
-    mov dword [dki_drag], -1              ; let go: there it stays
-    cmp byte [dki_moved], 0
+    mov dword [dki_drag], -1              ; let go: into the nearest free
+    cmp byte [dki_moved], 0               ; cell (src/dkgrid.asm), and kept
     je .done
+    call dkg_snap
     mov byte [dk_cfg_dirty], 1            ; (src/dkstyle.asm: saved)
     jmp .done
 .held:

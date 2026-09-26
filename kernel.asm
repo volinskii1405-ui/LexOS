@@ -539,4 +539,5 @@ kext_start:
     dd KEXT_STAMP
 %include "src/dkcat.asm"
 %include "src/dkname.asm"
+%include "src/dkgrid.asm"
 kext_end:
