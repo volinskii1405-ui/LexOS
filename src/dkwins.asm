@@ -4372,7 +4372,7 @@ dk_gui_verb:
     je .yes
     cmp edx, dk_verb_web
     je .yes
-    cmp edx, dkt_verb_unzip               ; (ZIP: src/dktrash.asm)
+    cmp edx, dkt_verb_view                ; (a ZIP, looked into: src/dktrash.asm)
     je .yes
     pop edx
     pop eax
@@ -5838,7 +5838,7 @@ dk_ext_verbs      dd 'APP', dk_verb_run, 'COM', dk_verb_run, 'BIN', dk_verb_run
                   dd 'WAV', dk_verb_play, 'IMF', dk_verb_play, 'MOD', dk_verb_mod
                   dd 'HG', dk_verb_none, 'BAS', dk_verb_basic, 'TRG', dk_verb_turtle
                   dd 'CH8', dk_verb_chip8, 'HTM', dk_verb_web, 'MD', dk_verb_web
-                  dd 'ZIP', dkt_verb_unzip, 0, 0
+                  dd 'ZIP', dkt_verb_view, 0, 0
 dk_state_names    dd dk_st_free, dk_st_ready, dk_st_waiting, dk_st_paused
 
 dk_verb_run       db "run ", 0

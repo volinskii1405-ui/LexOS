@@ -136,6 +136,10 @@ All taken in QEMU (1024x768) - more in [docs/screenshots](docs/screenshots).
 </tr>
 <tr>
 <td align="center" valign="top"><img src="docs/screenshots/52-zip-extract.png" alt="Extract here" width="400"><br><sub>Extract here: any ZIP, from here or anywhere</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/53-zip-viewer.png" alt="Looking into a ZIP" width="400"><br><sub>A double click on a ZIP: its folders, a text or picture shown</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/54-desktop-trash.png" alt="The trash on the desktop" width="400"><br><sub>The trash, top left (full here); long names on two lines</sub></td>
 <td></td>
 </tr>
 </table>
@@ -564,9 +568,14 @@ tester@/PROGRAMS$
   unzip opens; `zip -x X.ZIP [FOLDER]` unpacks (stored, fixed and
   dynamic deflate - ZIPs from other computers too) into a folder named
   after it, the names made LexOS names (capitals, 15 characters); `zip
-  -l X.ZIP` lists. Files' menu has **Compress to ZIP**, and **Extract
-  here** on a `.ZIP` (a double click too): they run by themselves, a line
-  at the top says when they're done.
+  -l X.ZIP` lists; **`zip -v X.ZIP`** - a double click on a `.ZIP` -
+  opens it in a window: its folders (double-click in, Backspace / Up
+  out), each file's size and how well it packed, the chosen one shown
+  before it's unpacked (a text - UTF-8 too - or a `.BMP` picture, fitted
+  in), **Extract all** or **Extract chosen** (into a folder named after
+  the archive). Files' menu has **Compress to ZIP**, and **Extract here**
+  on a `.ZIP`: they run by themselves, a line at the top says when
+  they're done.
 - **LexOS Web** (`apps/browser.c`, `/APPS/BROWSER.APP`, the WEB icon):
   a web browser in an 800x600 window. It opens pages from the disk - a
   demo site, `/DEMOS/SITE/INDEX.HTM`, with Lex's picture and pages in
@@ -667,6 +676,15 @@ tester@/PROGRAMS$
     a window with the name and icon, the folder it's in, its kind, size
     (a folder: how many things are in it), when it last changed, and a
     **Read-only** box to tick (as `attrib +r`).
+  - **The trash on the desktop** (src/dktrash.asm), top left: an icon
+    of its own - papers stick out of it when there's something in it. A
+    double click opens it in Files; whatever's dropped on it (a desktop
+    icon, or out of Files) is deleted into it; its menu has **Empty the
+    trash** (done quietly, for good - not what's read-only).
+  - **Pictures for icons** (tools/mkicons.py -> src/dkart.inc,
+    src/dkart.asm): the trash, a globe for the browser, a pad and pencil
+    for Notepad, a zipper for `.ZIP`s. A desktop icon's name that's
+    longer than its cell goes on two lines.
   - **The trash remembers** (src/dktrash.asm): whatever's deleted (or
     moved) keeps the folder it came from; in TRASH, **Restore** puts it
     back there - or in the root, if that folder's gone or the name's
@@ -1189,6 +1207,7 @@ disk/                  what LexOS's disk starts with: APPS/ (the built
 docs/screenshots/      the screenshots, described in Russian in its README.
 tools/                 mkdisk.py (disk/ -> the image's filesystem),
                        mklang.py (the translations -> disk/SYSTEM/LANG.DAT),
+                       mkicons.py (the picture icons -> src/dkart.inc),
                        makemod.py (DEMO.MOD).
 src/
   data.asm             constants, messages, working variables.
@@ -1269,12 +1288,15 @@ src/
   dkname.asm           Create > and the name dialog: files made, renamed,
                        copied, deleted with the mouse.
   dkgrid.asm           the desktop icons' invisible grid.
+  dkart.asm            picture icons (dkart.inc, made by tools/mkicons.py),
+                       desktop names on two lines.
   dkprops.asm          the Properties window.
   dktrash.asm          Restore (where things came from), Edit in
-                       Notepad, Compress to ZIP / Extract here.
+                       Notepad, Compress to ZIP / Extract here, the
+                       trash's desktop icon, Empty the trash.
   dkdrop.asm           dragging files between Files and the desktop.
   appext.asm           system calls: keymode, readdir, mkdir, notify.
-                       (These six are the kernel's extension - KEXT:
+                       (These are the kernel's extension - KEXT:
                        assembled with the kernel, cut off by the
                        Makefile into /SYSTEM/KEXT.BIN, loaded at boot
                        at 0x5740000: the 576 sectors the boot sector

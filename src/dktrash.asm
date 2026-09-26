@@ -231,6 +231,7 @@ dkt_unzip:
 dkt_force_verb   dd 0
 dkt_verb_zip     db "run zip.app -q ", 0
 dkt_verb_unzip   db "run zip.app -x -q ", 0
+dkt_verb_view    db "run zip.app -v ", 0
 dkt_cmd          times 40 db 0
 dkt_l_zip        db "Compress to ZIP", 0
 dkt_l_unzip      db "Extract here", 0
