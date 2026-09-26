@@ -129,13 +129,17 @@ dkt_ctx_edit_item:
     mov esi, [dk_fm_sel]
     shl esi, 5
     add esi, DESK_FILES
-    movzx eax, byte [esi + 17]
-    cmp eax, IC_FOLDER
+    movzx eax, byte [esi + 17]            ; (text: not folders, programs,
+    cmp eax, IC_TEXT                      ;  pictures, sounds, archives)
+    je .edit
+    cmp eax, IC_SCRIPT
+    je .edit
+    cmp eax, IC_FILE
+    jne .no_edit
+    call dk_ext_dword
+    cmp eax, 'ZIP'
     je .no_edit
-    cmp eax, IC_APP
-    je .no_edit
-    cmp eax, IC_IMAGE
-    je .no_edit
+.edit:
     mov al, DKC_EDIT
     call dk_ctx_add
 .no_edit:
