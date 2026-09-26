@@ -18,7 +18,7 @@ where there's a Bus Master IDE controller), a folder-aware filesystem, a
 command shell with line editing and history, preemptive multitasking and
 virtual consoles, protected (ring 3) programs in C or assembly, a windowed
 desktop, networking, sound, pipes, a journaled filesystem, a web browser
-and a C compiler that both run inside it - and Lex, the cat it's named
+(https too - its own TLS 1.3) and a C compiler that both run inside it - and Lex, the cat it's named
 after (feed him). No libc,
 no bootloader framework, no BIOS calls once the kernel starts — every byte
 that touches the screen, keyboard, mouse, disk, clock, sound or network
@@ -112,6 +112,14 @@ All taken in QEMU (1024x768) - more in [docs/screenshots](docs/screenshots).
 <tr>
 <td align="center" valign="top"><img src="docs/screenshots/41-cc-rings.png" alt="A graphics program compiled inside LexOS" width="400"><br><sub>A graphics program, compiled inside LexOS</sub></td>
 <td align="center" valign="top"><img src="docs/screenshots/38-browser-russian.png" alt="A page in Russian" width="400"><br><sub>UTF-8 pages in Russian and Spanish</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/44-https.png" alt="https://pypi.org/ in LexOS Web" width="400"><br><sub>https:// - TLS 1.3, written for LexOS</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/42-create-menu.png" alt="Create > on the desktop" width="400"><br><sub>Right click: Create &gt; a folder, a TXT, a HG, a Link</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/43-name-dialog.png" alt="A name dialog" width="400"><br><sub>Names asked in a dialog - no Terminal needed</sub></td>
+<td></td>
 </tr>
 </table>
 
@@ -511,11 +519,19 @@ tester@/PROGRAMS$
   program the pointer in its window, its buttons and the wheel;
   `fetch(url, buf, size)` downloads a web page into its memory (the
   kernel's own TCP and HTTP, as `wget`, following redirects); `font()`
-  hands it the system's 8x16 font, Russian and Spanish letters included.
+  hands it the system's 8x16 font, Russian and Spanish letters included;
+  `tcp_open`/`tcp_send`/`tcp_recv`/`tcp_close` give it a TCP connection
+  of its own (the browser's TLS runs on that).
 - **LexOS Web** (`apps/browser.c`, `/APPS/BROWSER.APP`, the WEB icon):
   a web browser in an 800x600 window. It opens pages from the disk - a
   demo site, `/DEMOS/SITE/INDEX.HTM`, with Lex's picture and pages in
-  Russian and Spanish - or from the web over plain `http://` (under QEMU
+  Russian and Spanish - or from the web over `http://` and **`https://`**
+  (TLS 1.3 of its own, `apps/tls.h`: X25519, SHA-256/HKDF, AES-128-GCM
+  and ChaCha20-Poly1305, checked against the standards' test vectors,
+  OpenSSL and real sites; the server's Finished is checked, its
+  certificate isn't - there's no list of authorities to check it
+  against - so it's encrypted, but not proof of who's on the other end;
+  a green TLS in the address bar says so) (under QEMU
   the host is `10.0.2.2`: `python3 -m http.server 8000` there, then
   `10.0.2.2:8000` in the address bar). It shows headings, paragraphs,
   bold/italic/underlined and colored text, links (relative ones too),
@@ -586,6 +602,16 @@ tester@/PROGRAMS$
     his eyes shut and a tear, and says so now and then; tired, he sleeps
     more. It's kept in `DESKTOP.CFG` with the time, and the time the
     machine was off counts too.
+  - **Files without a Terminal** (src/dkname.asm): a right click on the
+    desktop or on Files' empty space has **Create >** - its submenu
+    opens under the pointer: Create a folder, Create a TXT, Create a HG
+    (a script to start from), Create a Link (a `.LNK` to a path, like
+    `/APPS/FIRE.APP`). Each asks for the name in a small dialog (the name
+    chosen, so typing replaces it; Enter / Esc, OK / Cancel; what's wrong
+    - a name taken, too long, read-only - said in it). Files' Rename...
+    and Copy to... ask the same way, and an icon on the desktop has its
+    own menu: Open, Rename..., Delete (into TRASH). The desktop's task
+    does the work itself, with the kernel lock, through the journal.
   - A double click on the empty desktop opens a Terminal; Esc closes a
     Clock, System, Tasks, Mixer or Pictures window in front.
   - **Icons on the desktop**: whatever's in `/DESKTOP` (src/dkicons.asm).
@@ -1085,7 +1111,8 @@ boot.asm              16-bit boot sector: loads the kernel, enables A20,
 kernel.asm             32-bit kernel entry point; %includes everything below.
 apps/                  example ring-3 programs (`make apps`): lexos.inc for
                        assembly, lexos.h + crt0.asm + app.ld for C;
-                       browser.c (LexOS Web), cc.c (the C compiler).
+                       browser.c (LexOS Web) and tls.h (its TLS 1.3),
+                       cc.c (the C compiler).
 disk/                  what LexOS's disk starts with: APPS/ (the built
                        programs), DEMOS/ (scripts, music, a CHIP-8 ROM,
                        SITE/ - the browser's demo site, C/ - C examples),
@@ -1170,6 +1197,8 @@ src/
                        programs, Caps Lock, /DESKTOP/STARTUP.
   neofetch.asm         `neofetch` (with Lex the cat), `uptime`, `lex`.
   dkcat.asm            Lex on the taskbar, and his food, joy, energy.
+  dkname.asm           Create > and the name dialog: files made, renamed,
+                       copied, deleted with the mouse.
   fsjournal.asm        the filesystem's journal, file times and
                        attributes, `ls -l`, `attrib`, `fsck`.
   langui.asm           the system's language: /SYSTEM/LANG.DAT, tr_lookup.
@@ -1255,9 +1284,10 @@ src/
 - Pipes pass files, not streams: a command's whole output is caught
   first (up to 20KB per console), then handed on - and a command that
   waits for keys (`uranium`, a game) can't be piped.
-- LexOS Web speaks HTTP/1.0 without TLS - no `https://` - and knows no
-  CSS, JavaScript, forms or frames; tables are rows of cells, pictures
-  are `.BMP` only, a page up to 256KB.
+- LexOS Web knows no CSS, JavaScript, forms or frames; tables are rows
+  of cells, pictures are `.BMP` only, a page up to 256KB. Its https
+  offers only TLS 1.3 with X25519 (servers asking for another key
+  exchange are refused) and doesn't check certificates (see above).
 - `cc.app` has no structs, unions, floats, multi-dimensional arrays or
   function pointers, `unsigned`/`short`/`long` are plain `int`, and
   `#define` is for constants (no macros with arguments, no `#if`).
