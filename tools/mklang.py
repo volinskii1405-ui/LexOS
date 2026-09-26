@@ -176,6 +176,7 @@ TR = {
 'help_l70': ('система кратко (с котом Lex) / время работы', 'el sistema de un vistazo (con Lex) / tiempo encendido'),
 'help_l72': ('кот Lex что-нибудь скажет (или ваш текст)', 'el gato Lex dice algo (o lo que escribas)'),
 'help_l73': ('вывод a в команду b (grep, head...) / в файл f', 'la salida de a a b (grep, head...) / al archivo f'),
+'help_l76': ('веб-браузер / компилятор C', 'navegador web / compilador de C'),
 'help_l74': ('с датой и размером / только чтение или нет', 'con fecha y tamaño / solo lectura o no'),
 'help_l75': ('проверить файловую систему (и исправить ошибки)', 'revisar el sistema de archivos (y arreglarlo)'),
 'jnl_m_ro': ('Файл только для чтения (attrib -r <имя> разрешит изменения).\n', 'Es de solo lectura (attrib -r <nombre> permite cambiarlo).\n'),

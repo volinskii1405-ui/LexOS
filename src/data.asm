@@ -245,6 +245,7 @@ help_l59 db "  clock        - toggle a clock in the top-right corner (a backgrou
 help_l70 db "  neofetch / uptime - the system at a glance (with Lex) / time since boot", 13, 10, 0
 help_l72 db "  lex [text]   - Lex the cat says something (or what you type)", 13, 10, 0
 help_l60 db "  Alt+T / Alt+1..9 / exit - new console / switch console / close this one", 13, 10, 0
+help_l76 db "  run browser.app [url] / run cc.app <f.c> - the web browser / a C compiler", 13, 10, 0
 help_l74 db "  ls -l / attrib <n> [+r|-r] - with times, sizes / read-only or not", 13, 10, 0
 help_l75 db "  fsck [fix]   - check the filesystem (and put right what's wrong)", 13, 10, 0
 help_l73 db "  a | b, a > f, a >> f - a's output into b (grep, head...) / file f", 13, 10, 0
@@ -258,7 +259,7 @@ help_lines:
     dw help_l24, help_l25, help_l26, help_l27, help_l28
     dw help_l29, help_l30, help_l31, help_l32, help_l33
     dw help_l34, help_l35, help_l38, help_l65, help_l39, help_l40
-    dw help_l41, help_l42, help_l43, help_l44, help_l45, help_l62
+    dw help_l41, help_l42, help_l43, help_l44, help_l45, help_l62, help_l76
     dw help_l46, help_l47, help_l48, help_l49, help_l50, help_l51
     dw help_l52, help_l53, help_l55, help_l54, help_l56, help_l57, help_l63, help_l64, help_l66, help_l67, help_l68, help_l69
     dw help_l58, help_l59, help_l70, help_l72, help_l73, help_l74, help_l75, help_l60
