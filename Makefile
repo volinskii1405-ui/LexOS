@@ -12,12 +12,21 @@ $(BUILD_DIR):
 $(BUILD_DIR)/boot.bin: boot.asm | $(BUILD_DIR)
 	$(ASM) -f bin $< -o $@
 
-$(BUILD_DIR)/kernel.bin: $(SRC_FILES) | $(BUILD_DIR)
+# the kernel and its extension (kernel.asm's KEXT section) in one go,
+# then cut apart: 576 sectors for the boot sector to load, the rest onto
+# the disk as /SYSTEM/KEXT.BIN (kext_load reads it at boot).
+$(BUILD_DIR)/kernel.full: $(SRC_FILES) | $(BUILD_DIR)
 	$(ASM) -f bin -i. kernel.asm -o $@
+
+$(BUILD_DIR)/kernel.bin: $(BUILD_DIR)/kernel.full
+	head -c 294912 $< > $@
+
+disk/SYSTEM/KEXT.BIN: $(BUILD_DIR)/kernel.full
+	tail -c +294913 $< > $@
 
 # The files LexOS's own disk starts with (tools/mkdisk.py): disk/APPS -
 # the example programs, disk/DEMOS - scripts, music, a CHIP-8 ROM...
-DISK_FILES = $(wildcard disk/* disk/*/* disk/*/*/*) disk/SYSTEM/LANG.DAT
+DISK_FILES = $(wildcard disk/* disk/*/* disk/*/*/*) disk/SYSTEM/LANG.DAT disk/SYSTEM/KEXT.BIN
 
 # The translations (src/langui.asm): made from tools/mklang.py's table
 disk/SYSTEM/LANG.DAT: tools/mklang.py $(wildcard src/*.asm)

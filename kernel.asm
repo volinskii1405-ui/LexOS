@@ -51,6 +51,7 @@ kernel_start:
     call devmgr_init         ; initializes all devices (screen/keyboard/disk/timer)
     call pm_init             ; paging, TSS, ring 3 (src/usermode.asm)
     call fs_cache_init       ; slot cache + extra-sector bitmap (src/fs_extra.asm)
+    call kext_load           ; /SYSTEM/KEXT.BIN: the rest of the kernel (below)
     call console_init        ; (src/console.asm)
 
     call clear_screen
@@ -205,9 +206,7 @@ shared_system_start:
 %include "src/dkextra.asm"
 %include "src/neofetch.asm"
 %include "src/langui.asm"
-%include "src/dkcat.asm"
 %include "src/fsjournal.asm"
-%include "src/dkname.asm"
 shared_system_end:
 align 4096, db 0
 %include "src/grep.asm"
@@ -485,6 +484,59 @@ com_shift_held     db 0     ; com_poll_key's own Shift-key tracking
 
 ; Pad the remaining space within the sectors the bootloader reads,
 ; so the file size is a multiple of 512 bytes (see KERNEL_SECTORS_1..5 in boot.asm: 64+128+128+128+128 = 576).
+; The kernel's extension (KEXT_BASE): what didn't fit in the 576 sectors
+; the boot sector loads. Assembled with the rest (so it calls into the
+; kernel, and the kernel into it, by name), then cut off by the Makefile
+; into disk/SYSTEM/KEXT.BIN, which kext_load reads at boot. None of it
+; is reached through 16-bit pointers (it's far above 0x10000).
+KEXT_BASE equ 0x5740000
+KEXT_MAX  equ 0xC0000                ; (up to the WAV buffer)
+KEXT_STAMP equ ((kernel_image_end - $$) & 0xFFFF) * 65536 + ((kext_end - kext_start) & 0xFFFF) ; (a kernel and its own extension)
+kext_path db "/SYSTEM/KEXT.BIN", 0
+kext_msg_missing db "/SYSTEM/KEXT.BIN is missing or old: the desktop's newer parts are off.", 10, 0
+
+kext_load:
+    pushad
+    push word [fs_current_dir]
+    mov esi, kext_path
+    call dki_resolve                 ; (src/dkicons.asm) -> eax = the slot
+    cmp eax, -1
+    je .missing
+    mov edi, KEXT_BASE
+    mov ecx, KEXT_MAX
+    call fs_load_to                  ; -> ecx
+    cmp dword [KEXT_BASE], 'KEXT'
+    jne .missing
+    mov eax, [KEXT_BASE + 4]         ; (built with this very kernel?)
+    cmp eax, kext_end - KEXT_BASE
+    jne .missing
+    cmp dword [KEXT_BASE + 8], KEXT_STAMP
+    jne .missing
+    mov byte [kext_ok], 1
+    jmp .done
+.missing:
+    mov edi, KEXT_BASE               ; (every call into it just returns)
+    mov ecx, KEXT_MAX
+    mov al, 0xC3
+    cld
+    rep stosb
+    mov esi, kext_msg_missing
+    call basic_puts
+.done:
+    pop word [fs_current_dir]
+    popad
+    ret
+kext_ok db 0
+
 kernel_image_end:
 KERNEL_IMAGE_START equ 0x8000
 times (512*576)-($-$$) db 0
+
+section kext follows=.text vstart=KEXT_BASE
+kext_start:
+    dd 'KEXT'
+    dd kext_end - kext_start
+    dd KEXT_STAMP
+%include "src/dkcat.asm"
+%include "src/dkname.asm"
+kext_end:
