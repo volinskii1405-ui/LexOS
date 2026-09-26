@@ -354,6 +354,7 @@ app_abort:
     mov byte [task_insys + ecx], 0
     mov byte [app_active], 0
     mov byte [app_abort_request], 0
+    mov byte [app_raw_ctrl], 0            ; (keymode: the program's only)
     sti
     push eax
     call app_gfx_off                      ; src/appsys.asm
