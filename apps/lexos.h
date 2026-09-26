@@ -113,6 +113,15 @@ static inline int mouse(int m[4])                         { return lx_syscall(29
  * address is in buf. As `wget`, but nothing's saved or shown. */
 static inline int fetch(const char *url, void *buf, int n) { return lx_syscall3(30, (int)url, (int)buf, n); }
 
+/* A TCP connection of your own (one at a time): tcp_open(host, port)
+ * -> 0 or -1; tcp_send(buf, n) -> n or -1; tcp_recv(buf, size, ms) ->
+ * bytes, 0 once the other side has closed, -1 if nothing came in ms;
+ * tcp_close(). apps/tls.h builds https on it. */
+static inline int tcp_open(const char *host, int port)    { return lx_syscall(32, (int)host, port); }
+static inline int tcp_send(const void *buf, int n)        { return lx_syscall(33, (int)buf, n); }
+static inline int tcp_recv(void *buf, int n, int ms)      { return lx_syscall3(34, (int)buf, n, ms); }
+static inline void tcp_close(void)                        { lx_syscall(35, 0, 0); }
+
 /* font(buf): the system's 8x16 font, 4096 bytes - 256 glyphs, 16 rows
  * each, bit 7 the leftmost pixel (code page 866: Russian letters at
  * 0x80-0xAF and 0xE0-0xF1; Spanish ones at 0xF2-0xF7, 0xFC, 0xFD...). */

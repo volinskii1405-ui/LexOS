@@ -12,11 +12,17 @@
  * UTF-8 is shown in LexOS's font (Russian and Spanish letters too);
  * scripts and styles are skipped.
  *
+ * https:// works too: apps/tls.h does TLS 1.3 (X25519, AES-GCM or
+ * ChaCha20-Poly1305) over the kernel's TCP - encrypted, though the
+ * server's certificate isn't checked (there's no list of authorities
+ * to check it against).
+ *
  * The mouse: click a link, the wheel scrolls, the scrollbar drags. The
  * keys: arrows, PgUp/PgDn, Home/End, Space - scroll; Backspace - back;
  * Tab (or a click on it) - the address bar, Enter there goes; F5 -
  * reload; Esc - quit. */
 #include "lexos.h"
+#include "tls.h"                         /* https:// - TLS 1.3 of its own */
 
 #define W 800
 #define H 600
@@ -84,7 +90,7 @@ static char title[80];
 static char url[URL_MAX], edit_url[URL_MAX];
 static char hist[HIST_MAX][URL_MAX];
 static int nhist, hpos = -1;
-static int editing, hover_link = -1, hover_btn = -1;
+static int editing, edit_fresh, hover_link = -1, hover_btn = -1;
 static char status[URL_MAX + 40];
 static const char *home = "/DEMOS/SITE/INDEX.HTM";
 
@@ -203,6 +209,14 @@ static int to_font(unsigned u, char *out)
     case 0x2192: out[0] = 0x1A; return 1;
     case 0x2190: out[0] = 0x1B; return 1;
     }
+    if (u >= 0xC0 && u <= 0xFF) {                        /* other accents: the letter */
+        static const char latin[] = "AAAAAAACEEEEIIIIDNOOOOOxOUUUUYTsaaaaaaaceeeeiiiidnooooo/ouuuuyty";
+        out[0] = u == 0xE7 ? (char)0xB7 : u == 0xC7 ? (char)0xB8 : latin[u - 0xC0];
+        return 1;
+    }
+    if (u == 0x456 || u == 0x457) { out[0] = 'i'; return 1; }   /* Ukrainian */
+    if (u == 0x454) { out[0] = (char)0xA5; return 1; }
+    if (u == 0x491) { out[0] = (char)0xA3; return 1; }
     out[0] = '?';
     return 1;
 }
@@ -416,7 +430,8 @@ static int add_link(const char *href)
 }
 
 /* --- addresses --- */
-static int is_http(const char *u) { return starts_ci(u, "http://"); }
+static int is_https(const char *u) { return starts_ci(u, "https://"); }
+static int is_http(const char *u) { return starts_ci(u, "http://") || is_https(u); }
 
 /* "a/b/../c/./d" -> "a/c/d" (in place, from where the path starts) */
 static void tidy_path(char *p)
@@ -446,11 +461,15 @@ static void resolve(const char *base, const char *href, char *out)
     int i;
     copy(h, href, URL_MAX);
     for (i = 0; h[i]; i++) if (h[i] == '#') { h[i] = 0; break; }
-    if (is_http(h) || starts_ci(h, "https://")) { copy(out, h, URL_MAX); return; }
+    if (is_http(h)) { copy(out, h, URL_MAX); return; }
     if (starts_ci(h, "file:")) { copy(out, h + 5, URL_MAX); return; }
-    if (h[0] == '/' && h[1] == '/') { copy(out, "http:", URL_MAX); append(out, h, URL_MAX); return; }
+    if (h[0] == '/' && h[1] == '/') {
+        copy(out, is_https(base) ? "https:" : "http:", URL_MAX);
+        append(out, h, URL_MAX);
+        return;
+    }
     if (is_http(base)) {
-        const char *hs = base + 7, *slash = hs;
+        const char *hs = base + (is_https(base) ? 8 : 7), *slash = hs;
         int n;
         while (*slash && *slash != '/') slash++;
         n = slash - base;
@@ -526,7 +545,68 @@ static unsigned *load_bmp(const unsigned char *b, int n, int *pw, int *ph)
     return pix;
 }
 
-/* a file (this disk) or a page (http) -> buf; its length, or <0 */
+/* https://host[:port]/path -> buf, as fetch() does it for http (-3:
+ * moved, the address in buf; -2: not the page; -4: TLS failed) */
+static int https_fetch(const char *u, char *buf, int max)
+{
+    char host[URL_MAX], path[URL_MAX];
+    int port = 443, n = 0, len, code, body, i;
+    const char *p = u + 8;
+    while (*p && *p != '/' && *p != ':' && n < URL_MAX - 1) host[n++] = *p++;
+    host[n] = 0;
+    if (*p == ':') { port = atoi(p + 1); while (*p && *p != '/') p++; }
+    copy(path, *p ? p : "/", URL_MAX);
+    len = tls_get(host, port, path, buf, max - 1);
+    if (len < 0) return -4;
+    buf[len] = 0;
+    if (len < 12 || memcmp(buf, "HTTP/", 5)) return -2;
+    code = atoi(buf + 9);
+    for (body = 0; body + 3 < len; body++)
+        if (buf[body] == '\r' && buf[body + 1] == '\n' && buf[body + 2] == '\r' && buf[body + 3] == '\n') break;
+    body += 4;
+    if (body > len) body = len;
+    if (code >= 300 && code < 400) {                     /* moved: where to */
+        for (i = 0; i < body; i++)
+            if (buf[i] == '\n' && starts_ci(buf + i + 1, "location:")) {
+                const char *l = buf + i + 10;
+                char to[URL_MAX];
+                int k = 0;
+                while (*l == ' ') l++;
+                while (*l && *l != '\r' && *l != '\n' && k < URL_MAX - 1) to[k++] = *l++;
+                to[k] = 0;
+                copy(buf, to, max);
+                return -3;
+            }
+        return -2;
+    }
+    if (code != 200) return -2;
+    {                                                    /* chunked? */
+        int chunked = 0;
+        for (i = 0; i < body; i++)
+            if (buf[i] == '\n' && starts_ci(buf + i + 1, "transfer-encoding:") && starts_ci(buf + i + 20, "chunked"))
+                chunked = 1;
+        if (!chunked) {
+            memmove(buf, buf + body, len - body);
+            return len - body;
+        }
+        {
+            int in = body, outp = 0;
+            for (;;) {
+                int size = 0;
+                while (in < len && hexval(buf[in]) >= 0) size = size * 16 + hexval(buf[in++]);
+                while (in < len && buf[in] != '\n') in++;
+                in++;
+                if (size <= 0 || in + size > len) break;
+                memmove(buf + outp, buf + in, size);
+                outp += size;
+                in += size + 2;
+            }
+            return outp;
+        }
+    }
+}
+
+/* a file (this disk) or a page (http, https) -> buf; its length, or <0 */
 static int load(const char *where, char *buf, int max)
 {
     int fd, n, tries;
@@ -534,7 +614,7 @@ static int load(const char *where, char *buf, int max)
     if (is_http(where)) {
         copy(u, where, URL_MAX);
         for (tries = 0; tries < 4; tries++) {
-            n = fetch(u, buf, max);
+            n = is_https(u) ? https_fetch(u, buf, max) : fetch(u, buf, max);
             if (n != -3) return n;
             buf[max - 1] = 0;
             {
@@ -943,8 +1023,16 @@ static void draw_bar(void)
         const char *t = editing ? edit_url : url;
         int len = strlen(t), vis = (ADDR_W - 16) / 8;
         if (len > vis) t += len - vis;
-        text_at(ADDR_X + 7, BTN_Y + 4, t, C_TEXT, 0, ADDR_W - 12);
+        if (editing && edit_fresh && *t) {               /* chosen: lit */
+            fill(ADDR_X + 6, BTN_Y + 4, (int)strlen(t) * 8 + 2, 16, C_LINK, 0, H);
+            text_at(ADDR_X + 7, BTN_Y + 4, t, C_PAGE, 0, ADDR_W - 12);
+        } else
+            text_at(ADDR_X + 7, BTN_Y + 4, t, C_TEXT, 0, ADDR_W - 12);
         if (editing) fill(ADDR_X + 7 + (int)strlen(t) * 8, BTN_Y + 4, 2, 16, C_LINK, 0, H);
+    }
+    if (!editing && is_https(url)) {                     /* encrypted: said */
+        fill(ADDR_X + ADDR_W - 44, BTN_Y + 4, 38, 16, RGB(40, 150, 70), 0, H);
+        text_at(ADDR_X + ADDR_W - 41, BTN_Y + 4, "TLS", RGB(255, 255, 255), ST_BOLD, 32);
     }
     bevel(GO_X, BTN_Y, 36, BTN_H, hover_btn == 4 ? C_HOVER : C_BTN);
     text_at(GO_X + 10, BTN_Y + 4, "Go", C_TEXT, ST_BOLD, 24);
@@ -1020,8 +1108,8 @@ static void error_page(const char *what, const char *where)
     const char *parts[] = { "<title>Can't open this page</title><body><h1>Can't open this page</h1><p>",
                             what, "</p><p><b>", where,
                             "</b></p><hr><p>Pages can be on this disk (<a href=\"/DEMOS/SITE/INDEX.HTM\">"
-                            "/DEMOS/SITE/INDEX.HTM</a>) or on the web over <b>http://</b> - "
-                            "https needs encryption LexOS doesn't have.</p>", 0 };
+                            "/DEMOS/SITE/INDEX.HTM</a>) or on the web, over <b>http://</b> or "
+                            "<b>https://</b>.</p>", 0 };
     int i;
     *s = 0;
     for (i = 0; parts[i]; i++) append(s, parts[i], SRC_MAX);
@@ -1041,11 +1129,11 @@ static void go(const char *to, int remember)
     char where[URL_MAX];
     copy(where, to, URL_MAX);
     if (!where[0]) return;
-    if (!is_http(where) && !starts_ci(where, "https://") && where[0] != '/' &&
+    if (!is_http(where) && where[0] != '/' &&
         (starts_ci(where, "www.") || (strlen(where) > 4 && !starts_ci(where + strlen(where) - 4, ".htm") &&
                                      !starts_ci(where + strlen(where) - 5, ".html")))) {
         char t[URL_MAX];                  /* "example.com" -> http:// */
-        copy(t, "http://", URL_MAX);
+        copy(t, "https://", URL_MAX);
         append(t, where, URL_MAX);
         copy(where, t, URL_MAX);
     }
@@ -1055,14 +1143,17 @@ static void go(const char *to, int remember)
     append(status, " ...", sizeof status);
     hover_link = -1;
     redraw();
-    if (starts_ci(where, "https://")) {
-        error_page("LexOS can't open https:// pages: they need encryption (TLS) it doesn't have. Try http://.", where);
-    } else {
+    {
         n = load(where, src, SRC_MAX);
         if (n >= 0) srclen = n;
-        else error_page(n == -2 ? "The server answered, but not with the page (not found, or not allowed)."
-                                : is_http(where) ? "No answer - is the network up? (ifconfig, dhcp)"
-                                                 : "There's no such file on this disk.", where);
+        else if (n == -4) {
+            static char why[200];
+            copy(why, "The encrypted connection (TLS 1.3) didn't work: ", sizeof why);
+            append(why, tls_error, sizeof why);
+            error_page(why, where);
+        } else error_page(n == -2 ? "The server answered, but not with the page (not found, or not allowed)."
+                                  : is_http(where) ? "No answer - is the network up? (ifconfig, dhcp)"
+                                                   : "There's no such file on this disk.", where);
     }
     src[srclen] = 0;
     if (remember) {
@@ -1104,7 +1195,7 @@ static void press(int b)
     else if (b == 2) { int s = scroll; go(url, 0); scroll = s; clamp_scroll(); redraw(); }
     else if (b == 3) go(home, 1);
     else if (b == 4) { editing = 0; go(edit_url, 1); }
-    else if (b == 5 && !editing) { editing = 1; copy(edit_url, url, URL_MAX); redraw(); }
+    else if (b == 5 && !editing) { editing = 1; edit_fresh = 1; copy(edit_url, url, URL_MAX); redraw(); }
 }
 
 int main(int argc, char **argv)
@@ -1121,8 +1212,12 @@ int main(int argc, char **argv)
                 int l = strlen(edit_url);
                 if (ch == 13) { editing = 0; go(edit_url, 1); }
                 else if (ch == 27) editing = 0;
-                else if (ch == 8) { if (l) edit_url[l - 1] = 0; }
-                else if (ch >= 32 && ch < 127 && l < URL_MAX - 1) { edit_url[l] = ch; edit_url[l + 1] = 0; }
+                else if (ch == 8) { if (edit_fresh) edit_url[0] = 0; else if (l) edit_url[l - 1] = 0; edit_fresh = 0; }
+                else if (ch >= 32 && ch < 127 && l < URL_MAX - 1) {
+                    if (edit_fresh) { l = 0; edit_fresh = 0; }   /* (all chosen: replaced) */
+                    edit_url[l] = ch;
+                    edit_url[l + 1] = 0;
+                }
                 changed = 1;
             } else if (ch == 27) break;
             else if (ch == 9 || ch == 12) { press(5); }

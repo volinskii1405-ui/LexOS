@@ -1163,6 +1163,132 @@ sys_fetch:
     ret
 
 ; ============================================================
+; A TCP connection of the program's own (for what `fetch` can't do -
+; https, in LexOS Web's own TLS: apps/tls.h). One at a time, the
+; kernel's own TCP (src/inet.asm).
+; SYS_TCP_OPEN: ebx = a host (name or a.b.c.d), ecx = its port -> 0, or
+; -1. SYS_TCP_SEND: ebx = bytes, ecx = how many -> that, or -1.
+; SYS_TCP_RECV: ebx = a buffer, ecx = its size, edx = ms to wait at most
+; -> bytes put there; 0 the other side's closed; -1 nothing yet.
+; SYS_TCP_CLOSE.
+; ============================================================
+sys_tcp_open:
+    mov esi, [ebp + 16]                   ; the host -> fetch_url
+    mov edi, fetch_url
+    mov ecx, FETCH_URL_MAX - 1
+.copy:
+    cmp esi, APP_BASE
+    jb .fail
+    cmp esi, APP_STACK_TOP
+    jae .fail
+    lodsb
+    stosb
+    or al, al
+    jz .copied
+    loop .copy
+    mov byte [edi], 0
+.copied:
+    movzx ebx, byte [console_self]        ; (quietly)
+    mov al, [pipe_on + ebx]
+    push eax
+    mov byte [pipe_on + ebx], 2
+    call net_init
+    jc .no
+    mov esi, fetch_url
+    call net_resolve_host                 ; -> eax
+    jc .no
+    mov [tcp_remote_ip], eax
+    mov eax, [ebp + 24]
+    mov [tcp_remote_port], ax
+    mov dword [tcp_rx_buf], WGET_BUF
+    mov dword [tcp_rx_len], 0
+    mov dword [tcp_rx_max], WGET_MAX
+    mov byte [tcp_rx_overflow], 0
+    mov dword [app_tcp_pos], 0
+    call tcp_connect
+    jc .no
+    xor ecx, ecx
+    jmp .said
+.no:
+    mov ecx, -1
+.said:
+    pop eax
+    movzx ebx, byte [console_self]
+    mov [pipe_on + ebx], al
+    mov eax, ecx
+    ret
+.fail:
+    mov eax, -1
+    ret
+
+sys_tcp_send:
+    mov eax, [ebp + 16]
+    mov ecx, [ebp + 24]
+    call app_check_buf
+    mov esi, eax
+    mov edx, ecx
+.chunk:
+    or edx, edx
+    jz .sent
+    mov ecx, edx
+    cmp ecx, 1400
+    jbe .size
+    mov ecx, 1400
+.size:
+    call tcp_send_data
+    jc .fail
+    add esi, ecx
+    sub edx, ecx
+    jmp .chunk
+.sent:
+    mov eax, [ebp + 24]
+    ret
+.fail:
+    mov eax, -1
+    ret
+
+sys_tcp_recv:
+    mov eax, [ebp + 16]
+    mov ecx, [ebp + 24]
+    call app_check_buf
+    mov eax, [timer_ms]
+    add eax, [ebp + 20]
+    mov [app_tcp_until], eax
+.poll:
+    mov ecx, [tcp_rx_len]
+    sub ecx, [app_tcp_pos]
+    jnz .have
+    cmp byte [tcp_state], TCP_ESTABLISHED
+    jne .closed
+    call net_poll
+    mov eax, [timer_ms]
+    cmp eax, [app_tcp_until]
+    js .poll
+    mov eax, -1
+    ret
+.have:
+    cmp ecx, [ebp + 24]
+    jbe .fits
+    mov ecx, [ebp + 24]
+.fits:
+    mov esi, [app_tcp_pos]
+    add esi, WGET_BUF
+    mov edi, [ebp + 16]
+    add [app_tcp_pos], ecx
+    mov eax, ecx
+    cld
+    rep movsb
+    ret
+.closed:
+    xor eax, eax
+    ret
+
+sys_tcp_close:
+    call tcp_close
+    xor eax, eax
+    ret
+
+; ============================================================
 ; SYS_FONT: ebx = 4096 bytes <- the system's 8x16 font (256 glyphs, 16
 ; rows each, bit 7 the leftmost pixel) - with the letters the system's
 ; languages need (src/lang.asm)
@@ -1389,3 +1515,5 @@ wget_to_app      db 0                     ; (src/inet.asm: into a program's buff
 wget_app_buf     dd 0
 wget_app_max     dd 0
 wget_app_len     dd 0
+app_tcp_pos      dd 0
+app_tcp_until    dd 0
