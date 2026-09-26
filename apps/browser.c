@@ -941,6 +941,11 @@ static void tag(int *p)
         ital += closing ? -1 : 1; if (ital < 0) ital = 0; return;
     }
     if (!strcmp(name, "u") || !strcmp(name, "ins")) { under += closing ? -1 : 1; if (under < 0) under = 0; return; }
+    if (!strcmp(name, "code") || !strcmp(name, "tt") || !strcmp(name, "kbd") || !strcmp(name, "samp")) {
+        if (closing) { if (ncolor) ncolor--; }
+        else if (ncolor < 8) color_stack[ncolor++] = RGB(170, 40, 100);
+        return;
+    }
     if (!strcmp(name, "font")) {
         if (closing) { if (ncolor) ncolor--; }
         else if (ncolor < 8) color_stack[ncolor++] = parse_color(attr("color"), cur_color());
@@ -953,6 +958,410 @@ static void tag(int *p)
         if (!closing && v && *v) { pending_space = 1; put_char('['); while (*v) put_char((unsigned char)*v++); put_char(']'); flush_word(); }
         return;
     }
+}
+
+
+/* ============================================================
+ * Markdown (.MD): turned into HTML first, then laid out as a page -
+ * # headings (and === / --- under a line), paragraphs, **bold**,
+ * *italic*, `code`, ``` code blocks ``` (and 4-space indented ones),
+ * - / * / 1. lists (nested by indent), > quotes, tables, ---,
+ * [links](url), ![pictures](x.bmp), <http://...>, and HTML as it is
+ * ============================================================ */
+static char *mo;
+static int mn, mcap;
+static void mput(const char *t, int n) { if (n > 0 && mn + n < mcap) { memcpy(mo + mn, t, n); mn += n; } }
+static void mputs(const char *t) { mput(t, strlen(t)); }
+static void mesc(const char *t, int n)
+{
+    int i;
+    for (i = 0; i < n; i++) {
+        if (t[i] == '<') mputs("&lt;");
+        else if (t[i] == '>') mputs("&gt;");
+        else if (t[i] == '&') mputs("&amp;");
+        else if (t[i] == '"') mputs("&quot;");
+        else mput(t + i, 1);
+    }
+}
+static int md_alnum(int c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || (unsigned char)c >= 0x80; }
+static int md_punct(int c) { return c > 32 && c < 127 && !md_alnum(c); }
+
+/* t[0..n): a line's (or a paragraph's) text, its inline markup */
+static void minline(const char *t, int n)
+{
+    int i = 0, b = 0, it = 0;
+    while (i < n) {
+        char c = t[i];
+        if (c == '\\' && i + 1 < n && md_punct(t[i + 1])) { mesc(t + i + 1, 1); i += 2; continue; }
+        if (c == '`') {                                  /* `code` */
+            int k = 0, j, e = -1;
+            while (i + k < n && t[i + k] == '`') k++;
+            for (j = i + k; j + k <= n; j++) {
+                int m = 0;
+                while (m < k && t[j + m] == '`') m++;
+                if (m == k && (j + k >= n || t[j + k] != '`')) { e = j; break; }
+            }
+            if (e < 0) { mput(t + i, k); i += k; continue; }
+            mputs("<code>");
+            mesc(t + i + k, e - i - k);
+            mputs("</code>");
+            i = e + k;
+            continue;
+        }
+        if ((c == '*' || c == '_') && i + 1 < n && t[i + 1] == c) {   /* **bold** */
+            if (c == '_' && i > 0 && md_alnum(t[i - 1]) && b == 0) { mput(t + i, 2); i += 2; continue; }
+            mputs(b ? "</b>" : "<b>");
+            b = !b;
+            i += 2;
+            continue;
+        }
+        if (c == '*' || c == '_') {                      /* *italic* */
+            int opening = !it && i + 1 < n && t[i + 1] != ' ';
+            int closing = it && i > 0 && t[i - 1] != ' ';
+            if (c == '_' && ((i > 0 && md_alnum(t[i - 1]) && !it) || (i + 1 < n && md_alnum(t[i + 1]) && it))) { mput(t + i, 1); i++; continue; }
+            if (opening || closing) { mputs(it ? "</i>" : "<i>"); it = !it; i++; continue; }
+            mput(t + i, 1);
+            i++;
+            continue;
+        }
+        if (c == '~' && i + 1 < n && t[i + 1] == '~') { i += 2; continue; }
+        if ((c == '!' && i + 1 < n && t[i + 1] == '[') || c == '[') {   /* [text](url), ![alt](src) */
+            int img = c == '!', s0 = i + img + 1, depth = 1, j = s0, e, u0, u1;
+            while (j < n && depth) { if (t[j] == '[') depth++; else if (t[j] == ']') depth--; if (depth) j++; }
+            if (j < n && j + 1 < n && t[j + 1] == '(') {
+                e = j;
+                u0 = j + 2;
+                u1 = u0;
+                depth = 1;
+                while (u1 < n && depth) { if (t[u1] == '(') depth++; else if (t[u1] == ')') depth--; if (depth) u1++; }
+                if (u1 < n) {
+                    int ue = u0;                         /* (url "title") */
+                    while (ue < u1 && t[ue] != ' ') ue++;
+                    if (img) {
+                        mputs("<img src=\"");
+                        mesc(t + u0, ue - u0);
+                        mputs("\" alt=\"");
+                        mesc(t + s0, e - s0);
+                        mputs("\">");
+                    } else {
+                        mputs("<a href=\"");
+                        mesc(t + u0, ue - u0);
+                        mputs("\">");
+                        minline(t + s0, e - s0);
+                        mputs("</a>");
+                    }
+                    i = u1 + 1;
+                    continue;
+                }
+            }
+            mput(t + i, 1);
+            i++;
+            continue;
+        }
+        if (c == '<') {                                  /* <http://...>, or HTML */
+            int j = i + 1;
+            if (j < n && (starts_ci(t + j, "http://") || starts_ci(t + j, "https://"))) {
+                int e = j;
+                while (e < n && t[e] != '>' && t[e] != ' ') e++;
+                if (e < n && t[e] == '>') {
+                    mputs("<a href=\"");
+                    mesc(t + j, e - j);
+                    mputs("\">");
+                    mesc(t + j, e - j);
+                    mputs("</a>");
+                    i = e + 1;
+                    continue;
+                }
+            }
+            if (j < n && ((t[j] >= 'a' && t[j] <= 'z') || (t[j] >= 'A' && t[j] <= 'Z') || t[j] == '/' || t[j] == '!')) {
+                int e = j;
+                while (e < n && t[e] != '>') e++;
+                if (e < n) { mput(t + i, e + 1 - i); i = e + 1; continue; }
+            }
+            mputs("&lt;");
+            i++;
+            continue;
+        }
+        if (c == '&') {                                  /* &amp; as it is */
+            int j = i + 1;
+            while (j < n && j - i < 10 && (md_alnum(t[j]) || t[j] == '#')) j++;
+            if (j < n && t[j] == ';' && j > i + 1) { mput(t + i, j + 1 - i); i = j + 1; continue; }
+            mputs("&amp;");
+            i++;
+            continue;
+        }
+        if (c == '>') { mputs("&gt;"); i++; continue; }
+        if (c == ' ' && i + 2 < n && t[i + 1] == ' ' && t[i + 2] == '\n') { mputs("<br>"); i += 3; continue; }
+        mput(t + i, 1);
+        i++;
+    }
+    if (it) mputs("</i>");
+    if (b) mputs("</b>");
+}
+
+/* the lines: [ls, le) of line k */
+static int strchr_n(const char *s, int n, int c) { int i; for (i = 0; i < n; i++) if (s[i] == c) return 1; return 0; }
+static int md_lead(const char *l, int n) { int i = 0; while (i < n && (l[i] == ' ' || l[i] == '\t')) i += 1; return i; }
+static int md_blank(const char *l, int n) { return md_lead(l, n) == n; }
+static int md_rule(const char *l, int n)
+{
+    int i, k = 0;
+    char c = 0;
+    for (i = 0; i < n; i++) {
+        if (l[i] == ' ' || l[i] == '\t') continue;
+        if (!c) c = l[i];
+        if (l[i] != c || (c != '-' && c != '*' && c != '_')) return 0;
+        k++;
+    }
+    return k >= 3;
+}
+/* a list item? -> the text's start (and *ordered), or -1 */
+static int md_item(const char *l, int n, int *ordered)
+{
+    int i = md_lead(l, n);
+    if (i < n && (l[i] == '-' || l[i] == '*' || l[i] == '+') && i + 1 < n && l[i + 1] == ' ') { *ordered = 0; return i + 2; }
+    if (i < n && l[i] >= '0' && l[i] <= '9') {
+        int j = i;
+        while (j < n && l[j] >= '0' && l[j] <= '9') j++;
+        if (j < n && (l[j] == '.' || l[j] == ')') && j + 1 < n && l[j + 1] == ' ') { *ordered = 1; return j + 2; }
+    }
+    return -1;
+}
+static int md_cells(const char *l, int n, int head)   /* | a | b | */
+{
+    int i = md_lead(l, n), s;
+    if (i < n && l[i] == '|') i++;
+    while (n > i && (l[n - 1] == ' ' || l[n - 1] == '|')) n--;
+    mputs("<tr>");
+    while (i <= n) {
+        s = i;
+        while (i < n && l[i] != '|') { if (l[i] == '\\') i++; i++; }
+        mputs(head ? "<th>" : "<td>");
+        while (s < i && l[s] == ' ') s++;
+        minline(l + s, i - s);
+        mputs(head ? "</th>" : "</td>");
+        i++;
+    }
+    mputs("</tr>\n");
+    return 0;
+}
+static int md_is_sep(const char *l, int n)            /* |---|:--:| */
+{
+    int i, dash = 0;
+    for (i = 0; i < n; i++) {
+        if (l[i] == '-') dash++;
+        else if (l[i] != '|' && l[i] != ':' && l[i] != ' ') return 0;
+    }
+    return dash >= 3;
+}
+
+static void md_blocks(const char *t, int n)
+{
+    int p = 0, lists[8], lind[8], nlist = 0, para = -1, pend = 0;
+    while (p < n) {
+        int e = p, ln, ordered = 0, it;
+        const char *l = t + p;
+        while (e < n && t[e] != '\n') e++;
+        ln = e - p;
+        if (ln && l[ln - 1] == '\r') ln--;
+#define NEXT (p = e + 1)
+#define FLUSH do { if (para >= 0) { mputs("<p>"); minline(t + para, pend - para); mputs("</p>\n"); para = -1; } } while (0)
+#define CLOSE_LISTS do { while (nlist) { mputs(lists[--nlist] ? "</ol>\n" : "</ul>\n"); } } while (0)
+        if (md_blank(l, ln)) {
+            FLUSH;
+            /* a list goes on past a blank line only if what follows is its */
+            if (nlist) {
+                int q = e + 1, qe, o2;
+                while (q < n) { qe = q; while (qe < n && t[qe] != '\n') qe++; if (!md_blank(t + q, qe - q)) break; q = qe + 1; }
+                if (q >= n || (md_item(t + q, n - q, &o2) < 0 && md_lead(t + q, n - q) < 2)) CLOSE_LISTS;
+            }
+            NEXT;
+            continue;
+        }
+        {                                               /* ``` fenced code ``` */
+            int i = md_lead(l, ln);
+            if (i + 2 < ln && ((l[i] == '`' && l[i + 1] == '`' && l[i + 2] == '`') || (l[i] == '~' && l[i + 1] == '~' && l[i + 2] == '~'))) {
+                char f = l[i];
+                FLUSH;
+                CLOSE_LISTS;
+                mputs("<pre>");
+                NEXT;
+                while (p < n) {
+                    int e2 = p, l2, j;
+                    while (e2 < n && t[e2] != '\n') e2++;
+                    l2 = e2 - p;
+                    if (l2 && t[p + l2 - 1] == '\r') l2--;
+                    j = md_lead(t + p, l2);
+                    if (j + 2 < l2 + 1 && l2 - j >= 3 && t[p + j] == f && t[p + j + 1] == f && t[p + j + 2] == f) { p = e2 + 1; break; }
+                    mesc(t + p, l2);
+                    mputs("\n");
+                    p = e2 + 1;
+                }
+                mputs("</pre>\n");
+                continue;
+            }
+        }
+        if (l[md_lead(l, ln)] == '#') {                  /* # a heading */
+            int i = md_lead(l, ln), h = 0, s0, s1;
+            while (i < ln && l[i] == '#' && h < 7) { i++; h++; }
+            if (h <= 6 && (i == ln || l[i] == ' ')) {
+                char tagn[8] = "<h1>";
+                FLUSH;
+                CLOSE_LISTS;
+                while (i < ln && l[i] == ' ') i++;
+                s0 = i;
+                s1 = ln;
+                while (s1 > s0 && (l[s1 - 1] == '#' || l[s1 - 1] == ' ')) s1--;
+                tagn[2] = '0' + h;
+                mputs(tagn);
+                minline(l + s0, s1 - s0);
+                tagn[1] = '/'; tagn[2] = 'h'; tagn[3] = '0' + h; tagn[4] = '>'; tagn[5] = 0;
+                mputs(tagn);
+                mputs("\n");
+                NEXT;
+                continue;
+            }
+        }
+        /* === / --- under a paragraph's one line: a heading */
+        if (para >= 0 && ln >= 2 && md_lead(l, ln) < 4) {
+            int i = md_lead(l, ln), k = i;
+            char c = l[i];
+            while (k < ln && l[k] == c) k++;
+            while (k < ln && l[k] == ' ') k++;
+            if ((c == '=' || c == '-') && k == ln && k - i >= 2) {
+                mputs(c == '=' ? "<h1>" : "<h2>");
+                minline(t + para, pend - para);
+                mputs(c == '=' ? "</h1>\n" : "</h2>\n");
+                para = -1;
+                NEXT;
+                continue;
+            }
+        }
+        if (md_rule(l, ln)) { FLUSH; CLOSE_LISTS; mputs("<hr>\n"); NEXT; continue; }
+        if (l[md_lead(l, ln)] == '>') {                  /* > a quote: its lines, again */
+            int q = p, qn = 0;
+            char *sub = malloc(n - p + 1);
+            FLUSH;
+            CLOSE_LISTS;
+            if (!sub) { NEXT; continue; }
+            while (q < n) {
+                int qe = q, j;
+                while (qe < n && t[qe] != '\n') qe++;
+                j = md_lead(t + q, qe - q);
+                if (q + j >= qe || t[q + j] != '>') break;
+                j++;
+                if (q + j < qe && t[q + j] == ' ') j++;
+                memcpy(sub + qn, t + q + j, qe - q - j);
+                qn += qe - q - j;
+                sub[qn++] = '\n';
+                q = qe + 1;
+            }
+            mputs("<blockquote>");
+            md_blocks(sub, qn);
+            mputs("</blockquote>\n");
+            free(sub);
+            p = q;
+            continue;
+        }
+        if (strchr_n(l, ln, '|') && e + 1 < n) {         /* a table */
+            int e2 = e + 1, l2;
+            while (e2 < n && t[e2] != '\n') e2++;
+            l2 = e2 - e - 1;
+            if (md_is_sep(t + e + 1, l2) && strchr_n(t + e + 1, l2, '-')) {
+                FLUSH;
+                CLOSE_LISTS;
+                mputs("<table>");
+                md_cells(l, ln, 1);
+                p = e2 + 1;
+                while (p < n) {
+                    int e3 = p;
+                    while (e3 < n && t[e3] != '\n') e3++;
+                    if (md_blank(t + p, e3 - p) || !strchr_n(t + p, e3 - p, '|')) break;
+                    md_cells(t + p, e3 - p - (e3 > p && t[e3 - 1] == '\r'), 0);
+                    p = e3 + 1;
+                }
+                mputs("</table>\n");
+                continue;
+            }
+        }
+        it = md_item(l, ln, &ordered);
+        if (it >= 0) {                                   /* - an item */
+            int ind = md_lead(l, ln);
+            FLUSH;
+            while (nlist && ind < lind[nlist - 1]) mputs(lists[--nlist] ? "</ol>\n" : "</ul>\n");
+            if (nlist && ind == lind[nlist - 1] && lists[nlist - 1] != ordered) mputs(lists[--nlist] ? "</ol>\n" : "</ul>\n");
+            if ((!nlist || ind > lind[nlist - 1]) && nlist < 8) {
+                lists[nlist] = ordered;
+                lind[nlist++] = ind;
+                mputs(ordered ? "<ol>" : "<ul>");
+            }
+            mputs("<li>");
+            minline(l + it, ln - it);
+            mputs("\n");
+            NEXT;
+            continue;
+        }
+        if (nlist && md_lead(l, ln) >= 2 && para < 0) {  /* an item's next line */
+            mputs(" ");
+            minline(l + md_lead(l, ln), ln - md_lead(l, ln));
+            mputs("\n");
+            NEXT;
+            continue;
+        }
+        if (para < 0 && md_lead(l, ln) >= 4 && !nlist) { /* indented code */
+            mputs("<pre>");
+            while (p < n) {
+                int e2 = p, l2;
+                while (e2 < n && t[e2] != '\n') e2++;
+                l2 = e2 - p;
+                if (l2 && t[p + l2 - 1] == '\r') l2--;
+                if (!md_blank(t + p, l2) && md_lead(t + p, l2) < 4) break;
+                if (l2 > 4) mesc(t + p + 4, l2 - 4);
+                mputs("\n");
+                p = e2 + 1;
+            }
+            mputs("</pre>\n");
+            continue;
+        }
+        if (l[md_lead(l, ln)] == '<' && para < 0) {      /* HTML as it is */
+            CLOSE_LISTS;
+            mput(l, ln);
+            mputs("\n");
+            NEXT;
+            continue;
+        }
+        if (nlist) CLOSE_LISTS;
+        if (para < 0) para = p + md_lead(l, ln);         /* a paragraph's line */
+        pend = p + ln;
+        NEXT;
+    }
+    FLUSH;
+    CLOSE_LISTS;
+#undef NEXT
+#undef FLUSH
+#undef CLOSE_LISTS
+}
+
+/* src[0..srclen): Markdown -> HTML, in its place */
+static void markdown(void)
+{
+    mcap = srclen * 3 + 8192;
+    mo = malloc(mcap);
+    if (!mo) return;
+    mn = 0;
+    mputs("<html><body>");
+    md_blocks(src, srclen);
+    mputs("</body></html>");
+    if (mn > SRC_MAX) mn = SRC_MAX;
+    memcpy(src, mo, mn);
+    srclen = mn;
+    free(mo);
+}
+static int is_markdown(const char *u)
+{
+    int l = 0;
+    while (u[l] && u[l] != '?' && u[l] != '#') l++;
+    return (l > 3 && starts_ci(u + l - 3, ".md")) || (l > 9 && starts_ci(u + l - 9, ".markdown"));
 }
 
 static void free_page(void)
@@ -1156,6 +1565,7 @@ static void go(const char *to, int remember)
                                                    : "There's no such file on this disk.", where);
     }
     src[srclen] = 0;
+    if (is_markdown(where)) { markdown(); src[srclen] = 0; }
     if (remember) {
         if (hpos < HIST_MAX - 1) hpos++;
         else memmove(hist[0], hist[1], sizeof hist[0] * (HIST_MAX - 1));
