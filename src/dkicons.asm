@@ -751,6 +751,9 @@ dki_open:
     je .folder
     cmp al, IC_IMAGE
     je .picture
+    mov esi, dki_tmp_name                 ; Notepad, the browser: as programs
+    call dk_gui_verb
+    jnc .program
     ; the rest: as Files would - typed into a Terminal
     call dk_pick_terminal                 ; -> bl
     jc .done

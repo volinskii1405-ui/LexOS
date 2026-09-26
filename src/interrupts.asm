@@ -403,6 +403,21 @@ keyboard_isr:
 .not_alt:
 
     ; Ctrl+C while a program (src/usermode.asm) runs: ask to stop it
+    mov byte [kbd_raw_now], 0
+    cmp byte [lang_ctrl_held], 0   ; (unless it asked for Ctrl+letters:
+    je .not_raw_ctrl               ;  keymode, src/appext.asm)
+    push eax
+    push ebx
+    movzx eax, byte [console_fg]
+    mov ebx, app_raw_ctrl
+    call console_saved_addr
+    cmp byte [ebx], 0
+    pop ebx
+    pop eax
+    je .not_raw_ctrl
+    mov byte [kbd_raw_now], 1      ; (a letter: its control code, 1-26)
+    jmp .not_ctrl_c
+.not_raw_ctrl:
     cmp al, 0x2F                   ; Ctrl+V on the desktop: paste
     jne .not_ctrl_v                ; (src/dkclip.asm)
     cmp byte [lang_ctrl_held], 0
@@ -491,6 +506,16 @@ keyboard_isr:
     call lang_map                   ; (the Russian layout, if it's on)
     or al, al                       ; (a dead key, Spanish: its letter next)
     jz .eoi
+    cmp byte [kbd_raw_now], 0       ; Ctrl+letter, for a program that asked
+    je .cooked                      ; (keymode): 1-26, whatever the layout
+    mov cl, [scancode_lower + bx]
+    cmp cl, 'a'
+    jb .cooked
+    cmp cl, 'z'
+    ja .cooked
+    sub cl, 0x60
+    mov al, cl
+.cooked:
     mov ah, bl
     call push_key_to_buffer
 

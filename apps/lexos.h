@@ -127,9 +127,33 @@ static inline void tcp_close(void)                        { lx_syscall(35, 0, 0)
  * 0x80-0xAF and 0xE0-0xF1; Spanish ones at 0xF2-0xF7, 0xFC, 0xFD...). */
 static inline void font(void *buf)                        { lx_syscall(31, (int)buf, 0); }
 
+/* keymode(1): Ctrl+letters are this program's own while it's in front
+ * (on the desktop Ctrl+C would otherwise end it, and Ctrl+V type the
+ * desktop's clipboard into it) - see keydown(KEY_CTRL) for Ctrl. */
+static inline void keymode(int raw)                       { lx_syscall(36, raw, 0); }
+
+/* --- folders ---
+ * readdir("/DEMOS", i, &e): the i-th thing in a folder ("/" the root,
+ * "" the current one) -> 0, or -1 past the last one. mkdir("NAME") or
+ * mkdir("/A/NAME") -> 0, or -1 (taken, no such folder, no room). */
+struct lx_dirent {
+    char name[16];
+    int type;                           /* LX_FILE, LX_DIR, LX_PROGRAM */
+    unsigned size;
+    unsigned char time[8];              /* yy mm dd hh mi (0: none) */
+};
+#define LX_FILE    1
+#define LX_DIR     2
+#define LX_PROGRAM 3
+static inline int readdir(const char *path, int i, struct lx_dirent *e) { return lx_syscall3(37, (int)path, i, (int)e); }
+static inline int mkdir(const char *path)                 { return lx_syscall(38, (int)path, 0); }
+
 /* keydown(scancode): 1 while that key is held - for games. */
 static inline int keydown(int scancode)                   { return lx_syscall(20, scancode, 0); }
 #define KEY_ESC   0x01
+#define KEY_CTRL  0x1D
+#define KEY_LSHIFT 0x2A
+#define KEY_RSHIFT 0x36
 #define KEY_ENTER 0x1C
 #define KEY_SPACE 0x39
 #define KEY_UP    0x48

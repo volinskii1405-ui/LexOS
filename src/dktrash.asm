@@ -102,4 +102,52 @@ dkt_name_free:
     clc
     ret
 
+; eax = a context menu item past Files' own (DKC_TRESTORE on)
+dkt_ctx_more:
+    cmp eax, DKC_TRESTORE
+    jne .not_restore
+    jmp dkt_restore
+.not_restore:
+    cmp eax, DKC_EDIT
+    jne .not_edit
+    jmp dkt_edit
+.not_edit:
+    ret
+
+; Files' menu, on something: Edit in Notepad - if it's a file
+dkt_ctx_edit_item:
+    push eax
+    mov eax, [dk_fm_sel]
+    shl eax, 5
+    movzx eax, byte [DESK_FILES + eax + 17]
+    cmp eax, IC_FOLDER
+    je .no
+    cmp eax, IC_APP
+    je .no
+    cmp eax, IC_IMAGE
+    je .no
+    mov al, DKC_EDIT
+    call dk_ctx_add
+.no:
+    pop eax
+    ret
+
+; The selected file, into Notepad (as a program: no Terminal)
+dkt_edit:
+    pushad
+    mov esi, [dk_fm_sel]
+    cmp esi, -1
+    je .done
+    shl esi, 5
+    add esi, DESK_FILES
+    mov byte [dkt_force_edit], 1
+    mov edi, dk_fm_path
+    call dk_launch
+    mov byte [dkt_force_edit], 0
+.done:
+    popad
+    ret
+
+dkt_force_edit   db 0
+dkt_l_edit       db "Edit in Notepad", 0
 dkt_m_restored   db "Restored.", 0

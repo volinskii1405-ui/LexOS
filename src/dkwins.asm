@@ -2294,7 +2294,10 @@ dk_files_open:
     jmp .done
 .command:
     cmp ecx, IC_APP                       ; a program: started by itself
-    jne .typed_in
+    je .launch
+    call dk_gui_verb                      ; (Notepad, the browser: too)
+    jc .typed_in
+.launch:
     mov edi, dk_fm_path
     call dk_launch
     jmp .done
@@ -2801,11 +2804,27 @@ dk_launch:
     mov al, 13
     stosb
     pop esi
+    push edx                              ; (the folder)
     call dk_open_command                  ; -> edx = the verb
     push esi
     mov esi, edx
     call wget_append
     pop esi
+    pop eax
+    cmp edx, dk_verb_edit                 ; Notepad, the browser: the whole
+    je .whole                             ; path
+    cmp edx, dk_verb_web
+    jne .named
+.whole:
+    push esi
+    mov esi, eax
+    call wget_append
+    pop esi
+    cmp byte [edi - 1], '/'
+    je .named
+    mov al, '/'
+    stosb
+.named:
     call wget_append
     mov al, 13
     stosb
@@ -3500,6 +3519,7 @@ DKC_IRENAME  equ 36
 DKC_IDELETE  equ 37
 DKC_IPROPS   equ 38                   ; (src/dkprops.asm)
 DKC_TRESTORE equ 39                   ; the trash's (src/dktrash.asm)
+DKC_EDIT     equ 40                   ; Edit in Notepad (src/dktrash.asm)
 DK_CTX_W    equ 160
 DK_CTX_ITEM equ 22
 
@@ -3558,6 +3578,7 @@ dk_right_click:
     jne .trash_item
     mov al, DKC_OPEN
     call dk_ctx_add
+    call dkt_ctx_edit_item                ; (a file: Edit in Notepad)
     mov al, DKC_FCOPY                     ; (src/dkextra.asm)
     call dk_ctx_add
     mov al, DKC_FCUT
@@ -3774,13 +3795,13 @@ dk_text_raw_all:
 ; eax = a context menu item (DKC_*): done
 dk_ctx_do:
     pushad
-    cmp eax, DKC_TRESTORE                 ; (src/dktrash.asm)
-    jne .not_restore
+    cmp eax, DKC_TRESTORE                 ; (src/dktrash.asm: Restore,
+    jb .not_more                          ;  Edit, ...)
     mov dword [dk_fm_msg], 0
-    call dkt_restore
+    call dkt_ctx_more
     popad
     ret
-.not_restore:
+.not_more:
     cmp eax, DKC_MINIMIZE                 ; (the taskbar's and the desktop's:
     jb .files_item                        ;  src/dkextra.asm)
     call dkx_ctx_do
@@ -4304,6 +4325,9 @@ dk_inject_go:
 ; esi = an entry -> edx = the command that opens it ("run ", "play "...)
 dk_open_command:
     push eax
+    mov edx, dk_verb_edit                 ; (Edit in Notepad: src/dktrash.asm)
+    cmp byte [dkt_force_edit], 0
+    jne .done
     call dk_ext_dword
     push esi
     mov esi, dk_ext_verbs
@@ -4314,6 +4338,26 @@ dk_open_command:
     mov edx, dk_verb_edit                 ; the rest: into the editor
 .done:
     pop eax
+    ret
+
+; esi = a file's name: carry=0 if what opens it is a window of its own
+; (Notepad, the browser) - started like a program, no Terminal
+dk_gui_verb:
+    push eax
+    push edx
+    call dk_open_command                  ; -> edx
+    cmp edx, dk_verb_edit
+    je .yes
+    cmp edx, dk_verb_web
+    je .yes
+    pop edx
+    pop eax
+    stc
+    ret
+.yes:
+    pop edx
+    pop eax
+    clc
     ret
 
 ; Up to the parent folder
@@ -5609,7 +5653,7 @@ dk_ctx_labels     dd dk_ctx_l_open, dk_ctx_l_rename, dk_ctx_l_copy, dk_ctx_l_del
                   dd dkx_l_catfeed, dkx_l_catpet, dkx_l_catplay, dkx_l_cathow
                   dd dkx_l_create, dkx_l_newdir, dkx_l_newtxt, dkx_l_newhg
                   dd dkx_l_newlnk, dkx_l_iopen, dkx_l_irename, dkx_l_idelete
-                  dd dkx_l_iprops, dkt_l_restore
+                  dd dkx_l_iprops, dkt_l_restore, dkt_l_edit
 dk_ctx_l_open     db "Open", 0
 dk_ctx_l_rename   db "Rename...", 0
 dk_ctx_l_copy     db "Copy to...", 0
@@ -5765,7 +5809,8 @@ dk_ext_kinds      dd 'APP', IC_APP, 'COM', IC_APP, 'BIN', IC_APP, 'BMP', IC_IMAG
 dk_ext_verbs      dd 'APP', dk_verb_run, 'COM', dk_verb_run, 'BIN', dk_verb_run
                   dd 'WAV', dk_verb_play, 'IMF', dk_verb_play, 'MOD', dk_verb_mod
                   dd 'HG', dk_verb_none, 'BAS', dk_verb_basic, 'TRG', dk_verb_turtle
-                  dd 'CH8', dk_verb_chip8, 0, 0
+                  dd 'CH8', dk_verb_chip8, 'HTM', dk_verb_web, 'MD', dk_verb_web
+                  dd 0, 0
 dk_state_names    dd dk_st_free, dk_st_ready, dk_st_waiting, dk_st_paused
 
 dk_verb_run       db "run ", 0
@@ -5775,7 +5820,8 @@ dk_verb_none      db 0
 dk_verb_basic     db "basic ", 0
 dk_verb_turtle    db "turtle ", 0
 dk_verb_chip8     db "chip8 ", 0
-dk_verb_edit      db "uranium ", 0
+dk_verb_edit      db "run notepad.app ", 0
+dk_verb_web       db "run browser.app ", 0
 dk_cmd_cd         db "cd ", 0
 dk_st_free        db "-", 0
 dk_st_ready       db "ready", 0
