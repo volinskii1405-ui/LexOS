@@ -600,9 +600,24 @@ dkx_ctx_items:
     call dk_ctx_add
     jmp .some
 .desktop:
+    mov byte [dk_ctx_where], 2
     mov ebx, [dk_my]                      ; on Lex: his own
     call dkx_cat_hit
-    jc .desk_items
+    jc .not_lex
+    jmp .lex_items
+.not_lex:
+    call dki_at                           ; on an icon: Open, Rename, Delete
+    cmp ecx, -1
+    je .desk_items
+    mov [dk_ctx_icon], ecx
+    mov al, DKC_IOPEN
+    call dk_ctx_add
+    mov al, DKC_IRENAME
+    call dk_ctx_add
+    mov al, DKC_IDELETE
+    call dk_ctx_add
+    jmp .some
+.lex_items:
     mov al, DKC_CATFEED
     call dk_ctx_add
     mov al, DKC_CATPET
@@ -615,6 +630,8 @@ dkx_ctx_items:
     call dk_ctx_add
     jmp .some
 .desk_items:
+    mov al, DKC_CREATE                    ; Create > (src/dkname.asm)
+    call dk_ctx_add
     mov al, DKC_NEWTERM
     call dk_ctx_add
     mov al, DKC_FILES
@@ -647,6 +664,11 @@ dkx_ctx_items:
 dkx_ctx_do:
     pushad
     mov ebp, [dkx_ctx_win]
+    cmp eax, DKC_CREATE                   ; (src/dkname.asm's)
+    jb .not_dkn
+    call dkx_ctx_create
+    jmp .done
+.not_dkn:
     cmp eax, DKC_MINIMIZE
     jne .not_min
     mov byte [dkw_hidden + ebp], 1
@@ -718,6 +740,74 @@ dkx_ctx_do:
     sub eax, DKC_NEWTERM                  ; the rest: as the start menu's
     movzx eax, byte [dkx_ctx_menu + eax]  ; items
     call dk_menu_choose
+.done:
+    popad
+    ret
+
+; eax = Create's items, or a desktop icon's (Open, Rename, Delete)
+dkx_ctx_create:
+    pushad
+    mov bl, [dk_fm_dir]                   ; where: Files' folder, or /DESKTOP
+    cmp byte [dk_ctx_where], 1
+    je .where
+    mov bl, [dki_dir]
+.where:
+    cmp eax, DKC_NEW_LNK
+    ja .icon
+    cmp eax, DKC_NEW_DIR
+    jb .done
+    mov ecx, eax                          ; DKC_NEW_* -> DKN_NEW*, and a
+    sub ecx, DKC_NEW_DIR                  ; name to start from
+    mov esi, [dkx_new_names + ecx*4]
+    lea eax, [ecx + DKN_NEWDIR]
+    xor ecx, ecx
+    call dkn_ask
+    jmp .done
+.icon:
+    mov ebx, [dk_ctx_icon]
+    cmp ebx, -1
+    je .done
+    cmp ebx, [dki_n]
+    jae .done
+    cmp eax, DKC_IOPEN
+    jne .not_open
+    call dki_open
+    jmp .done
+.not_open:
+    push eax
+    call dk_shell_idle                    ; (its slot: the disk's lists)
+    pop eax
+    jc .done
+    push eax
+    mov esi, dki_folder_path              ; "/DESKTOP/NAME" -> its slot
+    mov edi, dki_tmp_path
+    call dki_copy
+    mov byte [edi - 1], '/'
+    mov esi, ebx
+    shl esi, 4
+    add esi, dki_file
+    call dki_copy
+    mov esi, dki_tmp_path
+    call dki_resolve                      ; -> eax
+    mov ecx, eax
+    pop eax
+    cmp ecx, -1
+    je .done
+    mov esi, ebx
+    shl esi, 4
+    add esi, dki_file
+    mov bl, [dki_dir]
+    cmp eax, DKC_IRENAME
+    jne .delete
+    mov al, DKN_RENAME
+    call dkn_ask
+    jmp .done
+.delete:
+    mov byte [dkn_op], DKN_TRASH          ; (no dialog: straight away)
+    mov [dkn_dir], bl
+    mov [dkn_slot], ecx
+    mov dword [dkn_len], 0
+    mov byte [dkn_req], 1
 .done:
     popad
     ret
@@ -1863,3 +1953,8 @@ dkt_d6           db "Saturday", 0
 dkt_vol_buf      times 24 db 0
 dkt_msg_volume   db "Volume ", 0
 dkt_msg_muted    db "Muted", 0
+dkx_new_names    dd dkx_nn_dir, dkx_nn_txt, dkx_nn_hg, dkx_nn_lnk
+dkx_nn_dir       db "FOLDER", 0
+dkx_nn_txt       db "NOTE.TXT", 0
+dkx_nn_hg        db "SCRIPT.HG", 0
+dkx_nn_lnk       db "/APPS/", 0

@@ -357,6 +357,8 @@ desktop_task:
     call dk_menu_keys_work                ; (src/dkwins.asm: the menu's search)
     call dkc_work                         ; (src/dkclip.asm: copy, paste)
     call dk_fm_keys_work                  ; (src/dkfind.asm: Files' search)
+    call dkn_work                         ; (src/dkname.asm: the dialog)
+    call dk_sub_hover_work                ; (the context menu's pointer)
     call dkx_startup_work                 ; (src/dkextra.asm: STARTUP)
     call dkx_power_work                   ; (src/dkextra.asm: shut down)
     call dkx_fc_work                      ; (src/dkextra.asm: Files' clipboard)
@@ -1331,6 +1333,8 @@ dk_mouse_event:
 ; A left press at eax, ebx
 dk_click:
     pushad
+    call dkn_click                        ; the name dialog's (src/dkname.asm)
+    jnc .done
     cmp byte [dk_ctx_open], 0             ; a context menu: an item, or
     je .no_ctx                            ; away it goes
     call dk_ctx_click                     ; (src/dkwins.asm)
@@ -1949,10 +1953,12 @@ dk_render:
     cmp byte [dk_ctx_open], 0
     je .no_ctx
     call dk_draw_ctx                      ; (src/dkwins.asm)
+    call dk_draw_sub                      ; (src/dkname.asm: Create >)
 .no_ctx:
     call dk_snap_draw                     ; (src/dkextra.asm: an edge's outline)
     call dk_draw_toast
     call dkt_draw                         ; (src/dkextra.asm: the tooltip)
+    call dkn_draw                         ; (src/dkname.asm: a name dialog)
     call dkx_bye_draw                     ; (and the goodbye, powering off)
 .done:
     popad
@@ -2403,6 +2409,11 @@ dk_text:
 dk_text_n:
     pushad
     call tr_lookup                        ; (src/langui.asm)
+    jmp dk_text_go
+; the same, the text as it is (typed, not to be translated)
+dk_text_raw:
+    pushad
+dk_text_go:
 .char:
     or edi, edi
     jz .done

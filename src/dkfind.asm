@@ -355,6 +355,8 @@ dk_fm_keys_work:
     mov byte [dk_fm_typing], 0
     cmp byte [dk_menu_open], 0
     jne .keys
+    cmp byte [dkn_open], 0                ; (a name dialog: the keys its)
+    jne .keys
     call dk_top_window
     cmp eax, -1
     je .keys

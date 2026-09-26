@@ -3488,11 +3488,21 @@ DKC_CATFEED  equ 26                   ; (Lex's own: src/dkcat.asm)
 DKC_CATPET   equ 27
 DKC_CATPLAY  equ 28
 DKC_CATHOW   equ 29
+DKC_CREATE   equ 30                   ; (src/dkname.asm's, from here)
+DKC_NEW_DIR  equ 31
+DKC_NEW_TXT  equ 32
+DKC_NEW_HG   equ 33
+DKC_NEW_LNK  equ 34
+DKC_IOPEN    equ 35                   ; a desktop icon's
+DKC_IRENAME  equ 36
+DKC_IDELETE  equ 37
 DK_CTX_W    equ 160
 DK_CTX_ITEM equ 22
 
 dk_right_click:
     pushad
+    cmp byte [dkn_open], 0                ; (the name dialog: first that)
+    jne .done
     cmp byte [dk_ctx_open], 0             ; (one already out: away)
     je .none_out
     call dk_mark_ctx
@@ -3515,6 +3525,7 @@ dk_right_click:
 .window:
     cmp byte [dkw_kind + esi], K_FILES
     jne .done
+    mov byte [dk_ctx_where], 1
     mov eax, esi
     call dk_raise
     call dk_trash_find                    ; (in the trash: other items)
@@ -3567,7 +3578,7 @@ dk_right_click:
     mov dword [dk_fm_sel], -1
     cmp byte [dk_ctx_in_trash], 0
     jne .trash_space
-    mov al, DKC_NEWDIR
+    mov al, DKC_CREATE                    ; Create > (src/dkname.asm)
     call dk_ctx_add
     cmp dword [dkx_fc_n], 0               ; (something to paste)
     je .no_paste
@@ -3599,6 +3610,8 @@ dk_right_click:
 .y_ok:
     mov [dk_ctx_y], eax
     mov byte [dk_ctx_open], 1
+    mov dword [dk_ctx_hover], -1
+    mov byte [dk_sub_open], 0
     call dk_mark_ctx
     mov eax, K_FILES
     call dk_mark_kind
@@ -3617,6 +3630,14 @@ dk_ctx_add:
 
 dk_mark_ctx:
     pushad
+    cmp byte [dk_sub_open], 0             ; (Create's submenu too)
+    je .no_sub
+    mov eax, [dk_sub_x]
+    mov ebx, [dk_sub_y]
+    mov ecx, DK_SUB_W + 3
+    mov edx, DK_SUB_N * DK_CTX_ITEM + 3
+    call dk_mark
+.no_sub:
     mov eax, [dk_ctx_x]
     mov ebx, [dk_ctx_y]
     mov ecx, DK_CTX_W + 3
@@ -3654,15 +3675,37 @@ dk_draw_ctx:
 .item:
     cmp ecx, [dk_ctx_n]
     jae .done
+    imul ebx, ecx, DK_CTX_ITEM
+    add ebx, [dk_ctx_y]
+    cmp ecx, [dk_ctx_hover]               ; (under the pointer: lit)
+    jne .unlit
+    push ecx
+    mov eax, [dk_ctx_x]
+    add eax, 2
+    inc ebx
+    mov ecx, DK_CTX_W - 4
+    mov edx, DK_CTX_ITEM - 2
+    mov esi, COL_SUBMENU
+    call dk_fill
+    dec ebx
+    pop ecx
+.unlit:
     movzx esi, byte [dk_ctx_ids + ecx]
+    push esi
     mov esi, [dk_ctx_labels + esi*4 - 4]
     mov eax, [dk_ctx_x]
     add eax, 12
-    imul ebx, ecx, DK_CTX_ITEM
-    add ebx, [dk_ctx_y]
     add ebx, 3
     mov edx, COL_TEXT
     call dk_text
+    pop esi
+    cmp esi, DKC_CREATE                   ; Create: its arrow
+    jne .no_arrow
+    mov eax, [dk_ctx_x]
+    add eax, DK_CTX_W - 18
+    mov esi, dk_ctx_arrow
+    call dk_text_raw_all
+.no_arrow:
     inc ecx
     jmp .item
 .done:
@@ -3672,24 +3715,54 @@ dk_draw_ctx:
 ; A left click while the context menu's out: its item, or nothing
 dk_ctx_click:
     pushad
+    call dk_sub_at                        ; Create's submenu: one of its
+    cmp ecx, -1                           ; (src/dkname.asm)
+    je .not_sub
     call dk_mark_ctx
     mov byte [dk_ctx_open], 0
+    lea eax, [ecx + DKC_NEW_DIR]
+    call dk_ctx_do
+    jmp .done
+.not_sub:
     sub eax, [dk_ctx_x]
-    js .done
+    js .away
     cmp eax, DK_CTX_W
-    jae .done
+    jae .away
     sub ebx, [dk_ctx_y]
-    js .done
+    js .away
     mov eax, ebx
     xor edx, edx
     mov ecx, DK_CTX_ITEM
     div ecx
     cmp eax, [dk_ctx_n]
-    jae .done
-    movzx eax, byte [dk_ctx_ids + eax]
+    jae .away
+    movzx ecx, byte [dk_ctx_ids + eax]
+    cmp ecx, DKC_CREATE                   ; Create: its submenu (it stays)
+    jne .item
+    call dk_mark_ctx
+    mov [dk_ctx_hover], eax
+    call dk_sub_place
+    call dk_mark_ctx
+    jmp .done
+.item:
+    call dk_mark_ctx
+    mov byte [dk_ctx_open], 0
+    mov eax, ecx
     call dk_ctx_do
+    jmp .done
+.away:
+    call dk_mark_ctx
+    mov byte [dk_ctx_open], 0
 .done:
     popad
+    ret
+
+; esi = a short text drawn as it is (eax, ebx, edx as dk_text)
+dk_text_raw_all:
+    push edi
+    mov edi, 1000
+    call dk_text_raw
+    pop edi
     ret
 
 ; eax = a context menu item (DKC_*): done
@@ -3739,6 +3812,41 @@ dk_ctx_do:
     call dk_files_trash
     jmp .done
 .not_delete:
+    cmp eax, DKC_RENAME                   ; Rename..., Copy to...: asked in
+    je .ask                               ; a dialog (src/dkname.asm)
+    cmp eax, DKC_COPY
+    jne .not_ask
+.ask:
+    mov edx, [dk_fm_sel]
+    cmp edx, -1
+    je .done
+    shl edx, 5
+    add edx, DESK_FILES
+    cmp byte [edx + 17], IC_UP
+    je .done
+    movzx ecx, word [edx + 20]            ; its slot
+    mov bl, [dk_fm_dir]
+    mov esi, edx                          ; (Rename: its name to start from)
+    mov byte [dk_fm_name_tmp + FS_NAME_LEN], 0
+    push eax
+    push ecx
+    mov edi, dk_fm_name_tmp
+    mov ecx, FS_NAME_LEN
+    cld
+    rep movsb
+    mov byte [edi - 1], 0
+    pop ecx
+    pop eax
+    mov esi, dk_fm_name_tmp
+    cmp eax, DKC_RENAME
+    mov al, DKN_RENAME
+    je .asked
+    mov al, DKN_COPYTO
+    mov esi, dk_fm_slash
+.asked:
+    call dkn_ask
+    jmp .done
+.not_ask:
     ; the rest are typed into a Terminal (cd here first): ren/cp/mkdir
     ; wait for what the new name is; rm goes straight away
     mov ebp, eax                          ; ebp = the item
@@ -5488,10 +5596,15 @@ dk_fm_moved_msg   dd dk_fm_moved
 dk_fm_propbuf     times 64 db 0
 dk_ctx_open       db 0                    ; the context menu
 dk_ctx_in_trash   db 0
+dk_fm_name_tmp    times FS_NAME_LEN + 1 db 0
+dk_fm_slash       db "/", 0
+dk_ctx_arrow      db 0x10, 0
 dk_ctx_x          dd 0
 dk_ctx_y          dd 0
 dk_ctx_n          dd 0
-dk_ctx_ids        times 8 db 0
+dk_ctx_ids        times 12 db 0
+dk_ctx_where      db 0                  ; 1 Files, 2 the desktop
+dk_ctx_icon       dd -1                 ; (a desktop icon's menu)
 dk_ctx_labels     dd dk_ctx_l_open, dk_ctx_l_rename, dk_ctx_l_copy, dk_ctx_l_delete
                   dd dk_ctx_l_props, dk_ctx_l_newdir, dk_ctx_l_selall
                   dd dk_ctx_l_forever, dk_ctx_l_empty
@@ -5501,6 +5614,8 @@ dk_ctx_labels     dd dk_ctx_l_open, dk_ctx_l_rename, dk_ctx_l_copy, dk_ctx_l_del
                   dd dkx_l_fcopy, dkx_l_fcut, dkx_l_fpaste
                   dd dkx_l_cathide, dkx_l_catshow
                   dd dkx_l_catfeed, dkx_l_catpet, dkx_l_catplay, dkx_l_cathow
+                  dd dkx_l_create, dkx_l_newdir, dkx_l_newtxt, dkx_l_newhg
+                  dd dkx_l_newlnk, dkx_l_iopen, dkx_l_irename, dkx_l_idelete
 dk_ctx_l_open     db "Open", 0
 dk_ctx_l_rename   db "Rename...", 0
 dk_ctx_l_copy     db "Copy to...", 0

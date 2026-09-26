@@ -574,6 +574,32 @@ dki_mark:
 
 ; A press at eax, ebx on the background: an icon picked, opened (twice),
 ; or picked up to be moved
+; eax, ebx -> ecx = the icon there, or -1
+dki_at:
+    push edx
+    mov ecx, [dki_n]
+.find:
+    dec ecx
+    js .none
+    mov edx, [dki_x + ecx*4]
+    cmp eax, edx
+    jl .find
+    add edx, DKI_W
+    cmp eax, edx
+    jge .find
+    mov edx, [dki_y + ecx*4]
+    cmp ebx, edx
+    jl .find
+    add edx, DKI_H
+    cmp ebx, edx
+    jge .find
+    pop edx
+    ret
+.none:
+    mov ecx, -1
+    pop edx
+    ret
+
 dki_press:
     pushad
     mov ecx, [dki_n]
