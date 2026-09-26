@@ -516,6 +516,8 @@ push_key_to_buffer:
     je .console                    ; is its search (src/dkwins.asm); Files
     cmp byte [dk_suspended], 0     ; in front: its search (src/dkfind.asm)
     jne .console
+    cmp byte [dkn_open], 0         ; a name dialog: its (src/dkname.asm)
+    jne .name
     cmp byte [dk_menu_open], 0
     jne .menu
     cmp byte [dk_fm_typing], 0
@@ -523,6 +525,8 @@ push_key_to_buffer:
     jmp dk_fm_key_in
 .menu:
     jmp dk_menu_key_in
+.name:
+    jmp dkn_key_in
 .console:
     pushad
     mov ecx, eax

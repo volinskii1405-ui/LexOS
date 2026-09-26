@@ -57,6 +57,7 @@ kernel_start:
     call print_banner
     mov si, welcome_msg
     call print_string
+    call jnl_boot_note       ; (src/fsjournal.asm: a write finished at boot?)
 
     call fs_ensure_readme    ; creates README.TXT in the root if it doesn't exist yet
 
@@ -120,7 +121,7 @@ main_loop:
     mov byte [shell_at_prompt], 1   ; (the desktop's Files types in here)
     call read_command_line   ; blocks until the user presses Enter
     mov byte [shell_at_prompt], 0
-    call handle_command
+    call shell_run_line      ; (through its pipes: src/pipe.asm)
     call fs_print_prompt
     jmp main_loop
 
@@ -205,6 +206,8 @@ shared_system_start:
 %include "src/neofetch.asm"
 %include "src/langui.asm"
 %include "src/dkcat.asm"
+%include "src/fsjournal.asm"
+%include "src/dkname.asm"
 shared_system_end:
 align 4096, db 0
 %include "src/grep.asm"
@@ -214,6 +217,7 @@ align 4096, db 0
 %include "src/welcome.asm"
 %include "src/tabcomplete.asm"
 %include "src/script.asm"
+%include "src/pipe.asm"
 
 ; src/atadma.asm (Bus Master IDE / ATA DMA) is included here, at the very
 ; end, rather than next to src/ata.asm above: none of its own code needs

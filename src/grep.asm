@@ -119,6 +119,12 @@ fs_grep:
 .count_done:
     mov [grep_match_count], cx
 
+    mov byte [grep_plain], 0              ; in a pipe: just the lines (once
+    call pipe_plain                       ; each), as other commands want
+    jnc .header                           ; them (src/pipe.asm)
+    mov byte [grep_plain], 1
+    jmp .scan_start
+.header:
     mov ax, [grep_match_count]
     call print_dec_word
     mov si, msg_grep_header_mid
@@ -129,6 +135,7 @@ fs_grep:
     call print_string
 
     ; --- Pass 2: find and print each line containing a match ---
+.scan_start:
     xor bx, bx
     mov word [grep_line_num], 1
     mov word [grep_line_start], 0
@@ -153,6 +160,9 @@ fs_grep:
     mov [grep_match_start], bx
     call grep_report_match
     add bx, [grep_needle_len]
+    cmp byte [grep_plain], 0
+    je .scan_loop
+    mov bx, [grep_line_end]               ; (the line's shown: on to the next)
     jmp .scan_loop
 
 .no_match_here:
@@ -194,6 +204,7 @@ grep_line_start  dw 0
 grep_line_end    dw 0
 grep_match_start dw 0
 grep_saved_color db 0
+grep_plain       db 0
 
 ; ============================================================
 ; content_buf[bx .. bx+needle_len) == grep_needle ?  ax = 1/0.
@@ -244,6 +255,8 @@ grep_report_match:
     push dx
     push si
 
+    cmp byte [grep_plain], 0
+    jne .find_end_start
     mov si, msg_grep_line_label
     call print_string
     mov ax, [grep_line_num]
@@ -258,6 +271,7 @@ grep_report_match:
     call print_string
 
     ; --- find the end of the line (CR, LF, or end of buffer) ---
+.find_end_start:
     mov bx, [grep_line_start]
 .find_end_loop:
     cmp bx, [content_buf_len]

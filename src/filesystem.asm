@@ -66,13 +66,14 @@ fs_read_slot:
 ;     same split as fs_read_slot above.
 ;     Returns: carry=0 on success, carry=1 on error. ---
 fs_write_slot:
+    call jnl_stamp                ; when it changed (src/fsjournal.asm)
     push ax
 
     cmp ax, FS_FILE_COUNT
     jae .ram_slot
 
     add ax, FS_START_SECTOR
-    call ata_write_sector
+    call jnl_write_sector         ; (through the journal)
     setc [fs_last_carry]
 
     pop ax

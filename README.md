@@ -17,7 +17,9 @@ Its own 32-bit protected-mode kernel, a real ATA disk driver (PIO, or DMA
 where there's a Bus Master IDE controller), a folder-aware filesystem, a
 command shell with line editing and history, preemptive multitasking and
 virtual consoles, protected (ring 3) programs in C or assembly, a windowed
-desktop, networking, sound - and Lex, the cat it's named after. No libc,
+desktop, networking, sound, pipes, a journaled filesystem, a web browser
+(https too - its own TLS 1.3) and a C compiler that both run inside it - and Lex, the cat it's named
+after (feed him). No libc,
 no bootloader framework, no BIOS calls once the kernel starts — every byte
 that touches the screen, keyboard, mouse, disk, clock, sound or network
 card goes through hardware ports that this project drives itself.
@@ -97,6 +99,26 @@ All taken in QEMU (1024x768) - more in [docs/screenshots](docs/screenshots).
 </tr>
 <tr>
 <td align="center" valign="top"><img src="docs/screenshots/32-shutdown.png" alt="Shutting down" width="400"><br><sub>Shut down / Restart from the start menu</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/34-pipes-fsck.png" alt="Pipes, ls -l, attrib and fsck" width="400"><br><sub>Pipes and redirection, <code>ls -l</code>, read-only files, <code>fsck</code></sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/36-lex-fed.png" alt="Lex fed, and how he is" width="400"><br><sub>Lex is a tamagotchi: fed (a bowl), and how he is</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/37-browser.png" alt="LexOS Web" width="400"><br><sub>LexOS Web - a browser, pages from the disk or http://</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/39-browser-lex.png" alt="LexOS Web: a page with a picture" width="400"><br><sub>Pictures (BMP), centered text, links</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/40-cc.png" alt="Compiling C inside LexOS" width="400"><br><sub><code>cc.app</code>: C compiled inside LexOS, then run</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/41-cc-rings.png" alt="A graphics program compiled inside LexOS" width="400"><br><sub>A graphics program, compiled inside LexOS</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/38-browser-russian.png" alt="A page in Russian" width="400"><br><sub>UTF-8 pages in Russian and Spanish</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/44-https.png" alt="https://pypi.org/ in LexOS Web" width="400"><br><sub>https:// - TLS 1.3, written for LexOS</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/42-create-menu.png" alt="Create > on the desktop" width="400"><br><sub>Right click: Create &gt; a folder, a TXT, a HG, a Link</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/43-name-dialog.png" alt="A name dialog" width="400"><br><sub>Names asked in a dialog - no Terminal needed</sub></td>
 <td></td>
 </tr>
 </table>
@@ -150,6 +172,33 @@ tester@/PROGRAMS$
 - A simple folder-aware filesystem on top of the ATA driver — files and
   folders live in fixed-size sectors, with parent pointers for
   subdirectories (`mkdir`, `cd`, `pwd`, `tree`, `mv`, `cp`, `ren`).
+- **A journal** (src/fsjournal.asm): a write cut short - the power, QEMU
+  closed, a crash - can't leave the filesystem half changed. Its own
+  records (the directory slots and the free-space map) don't go straight
+  to the disk: they're kept in RAM, each sector once, and then written
+  out together - first into a journal area past the filesystem, then a
+  header with where each belongs and a checksum (from that moment the
+  change counts), then each to its own place, then the header cleared.
+  At boot an unfinished commit is finished ("Journal: a write cut short
+  was finished"); before the header, nothing had changed. A commit
+  happens whenever the kernel lock is let go - a command done, a program
+  back in ring 3 - when the desktop's idle, and before switching off. A
+  file's data is written before the records pointing to it, and a sector
+  a file lets go of isn't given to another until the change counts, so a
+  file being replaced keeps its old content until the new one is safe.
+  `tools/mkdisk.py` finishes a journal too before it adds files.
+- **Times and attributes.** Every slot keeps when it last changed (from
+  the RTC) and its attributes. `ls -l` shows the kind (`d` folder, `x`
+  program, `-` file), `r` for read-only, the date and time, the size.
+  `attrib <name> +r` makes a file or folder read-only - `rm`, `ren`,
+  `mv`, `uranium` and programs' `open` for writing refuse it - and
+  `attrib <name> -r` undoes it.
+- **`fsck`** checks the whole filesystem: each slot's kind and folder,
+  each file's chain of sectors (in range, marked used, nobody else's, no
+  loop, as long as its size says) and sectors in use by nothing.
+  `fsck fix` puts right what it finds: bad slots freed, lost files moved
+  to `/`, broken or shared chains cut short, sizes set to what the chain
+  holds, the free-space map made to match.
 - Files aren't stuck at one sector: content grows past its initial 127
   inline bytes into a chain of extra disk sectors, tracked by a small
   on-disk bitmap. `cat`, `size`, `head`, `tail`, `grep`, `cp`, and `rm` all
@@ -186,7 +235,8 @@ tester@/PROGRAMS$
   unchanged.
 - `grep` searches a file's content for a piece of text and prints every
   match as `Line <n>, Symbol <col> <line text>`, with the matched text
-  itself highlighted in bright red on screen.
+  itself highlighted in bright red on screen. In a pipe (`ls | grep
+  APP`) it prints just the matching lines, each once.
 - `rm` supports wildcards: `rm *.bin` deletes every file whose name matches
   the pattern (`*` stands for any run of characters, case-insensitive), and
   `rm -a` deletes everything in the current directory. Either way `USER.CFG`
@@ -226,6 +276,12 @@ tester@/PROGRAMS$
   creating it while actually `cd`'d into `TMP` gets the RAM slot.
 
 ### Shell
+- **Pipes and redirection** (src/pipe.asm): `ls | grep APP | head 3`,
+  `help > HELP.TXT`, `date >> LOG.TXT`. A command's output is caught
+  on its way to the screen, saved as a file `PIPE$`, and the next command
+  gets that file as its first argument (`grep APP` runs as `grep PIPE$
+  APP`, `run wc.app` as `run wc.app PIPE$`); `>` writes it to a file,
+  `>>` adds it to the end. Scripts' lines go through pipes too.
 - Real line editing: Left/Right/Home/End/Delete work anywhere in the line,
   not just Backspace at the end. Ctrl+L clears the screen, keeping the
   line typed so far.
@@ -459,6 +515,48 @@ tester@/PROGRAMS$
   of a maze in 3D, Wolfenstein-style: a raycaster with textured walls,
   a tiled floor and ceiling, fog and a map (M); arrows / WASD, each
   level a new, bigger maze.
+  `open` takes a path (`/DEMOS/SITE/LEX.BMP`); `mouse()` gives a
+  program the pointer in its window, its buttons and the wheel;
+  `fetch(url, buf, size)` downloads a web page into its memory (the
+  kernel's own TCP and HTTP, as `wget`, following redirects); `font()`
+  hands it the system's 8x16 font, Russian and Spanish letters included;
+  `tcp_open`/`tcp_send`/`tcp_recv`/`tcp_close` give it a TCP connection
+  of its own (the browser's TLS runs on that).
+- **LexOS Web** (`apps/browser.c`, `/APPS/BROWSER.APP`, the WEB icon):
+  a web browser in an 800x600 window. It opens pages from the disk - a
+  demo site, `/DEMOS/SITE/INDEX.HTM`, with Lex's picture and pages in
+  Russian and Spanish - or from the web over `http://` and **`https://`**
+  (TLS 1.3 of its own, `apps/tls.h`: X25519, SHA-256/HKDF, AES-128-GCM
+  and ChaCha20-Poly1305, checked against the standards' test vectors,
+  OpenSSL and real sites; the server's Finished is checked, its
+  certificate isn't - there's no list of authorities to check it
+  against - so it's encrypted, but not proof of who's on the other end;
+  a green TLS in the address bar says so) (under QEMU
+  the host is `10.0.2.2`: `python3 -m http.server 8000` there, then
+  `10.0.2.2:8000` in the address bar). It shows headings, paragraphs,
+  bold/italic/underlined and colored text, links (relative ones too),
+  lists (nested, bullets and numbers), `<pre>`, `<hr>`, `<blockquote>`,
+  `<center>`, tables as rows of cells, `<body bgcolor>` and pictures -
+  `<img>` of `.BMP` files (8, 24 or 32 bits); text in UTF-8, entities;
+  scripts and styles are skipped. Back / forward / reload / home, an
+  address bar (Tab, or click it), a scrollbar, the wheel, links lighting
+  up under the pointer with their address in the status line.
+- **A C compiler inside LexOS** (`apps/cc.c`, `/APPS/CC.APP`): write C
+  in `uranium`, then `run cc.app game.c` makes `GAME.APP` - one pass,
+  straight to x86 machine code, no assembler or linker; `run game.app`.
+  It knows `int`, `char`, `void`, pointers, one-dimensional arrays,
+  globals and locals with initializers, functions (recursion, any number
+  of arguments), `if`/`else`, `while`, `do`, `for`, `switch`/`case`,
+  `break`, `continue`, `return`, every operator (assignments like `+=`,
+  `?:`, `&&`, `<<`, `++`...), casts, `sizeof`, string and character
+  literals, `#define`. Every program gets a small library: `printf`
+  (`%d %u %x %c %s`), `puts`, `putchar`, `readline`, `getkey`, strings,
+  `atoi`, `rand`, `malloc`, files, `sleep_ms`, `millis`, graphics
+  (`gfx_mode`, `gfx_blit`, `gfx_palette`, `gfx_mode_ex`), `keydown`,
+  `mouse`, and `syscall(n, a, b, c)` for the rest. Examples in
+  `/DEMOS/C`: `HELLO.C` (arguments), `FIB.C` (recursion, `switch`),
+  `PRIMES.C` (a sieve, pointers), `GUESS.C` (keyboard, `rand`),
+  `RINGS.C` (animated graphics).
 - **Desktop.** `desktop` switches to a graphical desktop in 1024x768
   true color: windows with title bars you drag with the mouse, that
   come to the front when clicked and close with their [x], minimize
@@ -496,7 +594,24 @@ tester@/PROGRAMS$
   - **Lex**, the cat LexOS is named after (src/dkcat.asm), lives on the
     taskbar: he walks along it, sits, curls up and sleeps (Zzz); click
     him and he meows. The desktop's right-click menu hides him or calls
-    him back.
+    him back. He's a tamagotchi, too: food, joy and energy run down as
+    time goes by (energy while he's awake - sleep brings it back). Right-
+    click him: **Feed** (a bowl), **Pet** (a heart and a purr), **Play**
+    (for a while he chases the pointer), **How is Lex?** (three bars
+    over him). Hungry or lonely, he's sad - he stops walking and sits with
+    his eyes shut and a tear, and says so now and then; tired, he sleeps
+    more. It's kept in `DESKTOP.CFG` with the time, and the time the
+    machine was off counts too.
+  - **Files without a Terminal** (src/dkname.asm): a right click on the
+    desktop or on Files' empty space has **Create >** - its submenu
+    opens under the pointer: Create a folder, Create a TXT, Create a HG
+    (a script to start from), Create a Link (a `.LNK` to a path, like
+    `/APPS/FIRE.APP`). Each asks for the name in a small dialog (the name
+    chosen, so typing replaces it; Enter / Esc, OK / Cancel; what's wrong
+    - a name taken, too long, read-only - said in it). Files' Rename...
+    and Copy to... ask the same way, and an icon on the desktop has its
+    own menu: Open, Rename..., Delete (into TRASH). The desktop's task
+    does the work itself, with the kernel lock, through the journal.
   - A double click on the empty desktop opens a Terminal; Esc closes a
     Clock, System, Tasks, Mixer or Pictures window in front.
   - **Icons on the desktop**: whatever's in `/DESKTOP` (src/dkicons.asm).
@@ -843,6 +958,8 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `ntp [server]` | set the clock from a time server (default `pool.ntp.org`) |
 | `dhcp` | get an address from the DHCP server again |
 | `run <n>.app [args]` | run a protected (ring 3) program - see `apps/` |
+| `run browser.app [url]` | LexOS Web, the browser (or the WEB icon) |
+| `run cc.app <f.c> [-o <n>.app]` | compile C into a program, inside LexOS |
 | Alt+T / Alt+1..9 / `exit` | open a new console / switch to console N / close this one |
 | `ps` | list the running tasks (pid, state, priority, CPU time) |
 | `kill <pid>` | stop a background task |
@@ -878,7 +995,12 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `<n>.hg [args]` | run a script (variables, if/while/for - see Scripts) |
 | `set <v> = <x>` / `vars` / `unset <v>` | script variables, at the prompt too |
 | `input <v> [prompt]` / `sleep <ms>` | read a line into a variable / wait |
-| `grep <n> <text>` | search file `n` for `text`; prints `Line <n>, Symbol <col> <line>` for each match, with the match highlighted in red |
+| `grep <n> <text>` | search file `n` for `text`; prints `Line <n>, Symbol <col> <line>` for each match, with the match highlighted in red (in a pipe: just the lines) |
+| `a \| b` | `a`'s output into `b` (`ls \| grep APP \| head 3`) |
+| `a > f` / `a >> f` | `a`'s output into file `f` / added to its end |
+| `ls -l` | the folder with kinds, read-only marks, times and sizes |
+| `attrib <n> [+r \| -r]` | show / set / clear a file's or folder's read-only attribute |
+| `fsck [fix]` | check the filesystem (and put right what's wrong) |
 | **Editors** | |
 | `uranium <n>` | full-screen text editor (creates the file if it doesn't exist) |
 | `hex <n>` | hex/assembly editor (auto-adds `.BIN` if the name has no dot) |
@@ -923,7 +1045,8 @@ BIOS  →  boot.asm (16-bit real mode)
             ▼
          welcome_boot: the login (if there's a password), the desktop
             ▼
-         main_loop:  read_command_line → handle_command → repeat
+         main_loop:  read_command_line → shell_run_line (pipes, > >>)
+                     → handle_command → repeat
                      (Terminal 1's shell; every console runs its own)
 ```
 
@@ -962,6 +1085,7 @@ outside the kernel image need a full 32-bit linear address:
 | Desktop picture pixels / its file (and a screenshot's) | `0x7700000` / `0x7A00000` |
 | Desktop: what's on each video page (2 x 3MB) | `0x7400000` / `0x7D00000` |
 | httpd's request / the desktop's sounds / the translations | `0x3F00000` / `0x3F10000` / `0x3F80000` |
+| Pipes' caught output (9 x 20KB) / the journal's sectors (120) | `0x3FC0000` / `0x3FF0000` |
 | RTL8139 receive ring / transmit buffers | `0x300000` / `0x304000` |
 | .COM program segment | `0x100000` |
 | Kernel code/data | `0x8000` – `0x4FFFF` (576 sectors) |
@@ -974,7 +1098,10 @@ name, type, parent pointer, a 32-bit size, up to 127 bytes of inline
 content; folders only ever take slots 0-254, so a parent pointer still
 fits in one byte), a 59-sector free-space map (one byte per extra
 sector), then 30000 extra 512-byte sectors that files chain into once
-they outgrow the inline area (508 data bytes each).
+they outgrow the inline area (508 data bytes each), then the journal: a
+header sector and room for 120 sectors. A slot also keeps its last
+change's time (bytes 148-152: year, month, day, hour, minute) and its
+attributes (153).
 
 ## Project layout
 
@@ -983,9 +1110,12 @@ boot.asm              16-bit boot sector: loads the kernel, enables A20,
                        sets up the GDT, switches to protected mode.
 kernel.asm             32-bit kernel entry point; %includes everything below.
 apps/                  example ring-3 programs (`make apps`): lexos.inc for
-                       assembly, lexos.h + crt0.asm + app.ld for C.
+                       assembly, lexos.h + crt0.asm + app.ld for C;
+                       browser.c (LexOS Web) and tls.h (its TLS 1.3),
+                       cc.c (the C compiler).
 disk/                  what LexOS's disk starts with: APPS/ (the built
-                       programs), DEMOS/ (scripts, music, a CHIP-8 ROM),
+                       programs), DEMOS/ (scripts, music, a CHIP-8 ROM,
+                       SITE/ - the browser's demo site, C/ - C examples),
                        DESKTOP/ (the icons, STARTUP/), SYSTEM/ (LANG.DAT).
 docs/screenshots/      the screenshots, described in Russian in its README.
 tools/                 mkdisk.py (disk/ -> the image's filesystem),
@@ -1066,7 +1196,11 @@ src/
                        the taskbar's and desktop's menus, recent
                        programs, Caps Lock, /DESKTOP/STARTUP.
   neofetch.asm         `neofetch` (with Lex the cat), `uptime`, `lex`.
-  dkcat.asm            Lex on the taskbar.
+  dkcat.asm            Lex on the taskbar, and his food, joy, energy.
+  dkname.asm           Create > and the name dialog: files made, renamed,
+                       copied, deleted with the mouse.
+  fsjournal.asm        the filesystem's journal, file times and
+                       attributes, `ls -l`, `attrib`, `fsck`.
   langui.asm           the system's language: /SYSTEM/LANG.DAT, tr_lookup.
   lang.asm             the Russian and Spanish letters and layouts.
   font866.inc          the Cyrillic glyphs (from CyrKoi-VGA16).
@@ -1106,6 +1240,7 @@ src/
                        rest as blue "ghost text" until Tab accepts it.
   script.asm           *.hg scripts: variables, expressions, if/while/
                        for/goto, set/vars/input/sleep, AUTOEXEC.HG.
+  pipe.asm             pipes and redirection: a | b, a > f, a >> f.
 ```
 
 ## Known limitations
@@ -1136,7 +1271,26 @@ src/
   content past that grows through a chain of extra sectors, but the pool
   is fixed at 30000 sectors (~15MB), and file/folder names are at most 15
   characters, the extension included (`hostput` wants a DOS 8.3 name for
-  the host's side).
+  the host's side). Longer names would mean a new on-disk format - the
+  16-byte name sits at the start of every slot, and every command, the
+  desktop's Files, the tools and `mkdisk.py` compare names that way, many
+  of them through 16-bit pointers into low memory - so they were left out
+  when the journal, times and attributes came in.
+- The journal covers the filesystem's own records; a file's data goes
+  straight to its sectors (before the records that point to it). One
+  command that changes more than 120 different record sectors at once
+  (`rm -a` in a big folder) is committed in parts. `fsck` looks at the
+  disk's slots, not the 8 `TMP` RAM slots' names.
+- Pipes pass files, not streams: a command's whole output is caught
+  first (up to 20KB per console), then handed on - and a command that
+  waits for keys (`uranium`, a game) can't be piped.
+- LexOS Web knows no CSS, JavaScript, forms or frames; tables are rows
+  of cells, pictures are `.BMP` only, a page up to 256KB. Its https
+  offers only TLS 1.3 with X25519 (servers asking for another key
+  exchange are refused) and doesn't check certificates (see above).
+- `cc.app` has no structs, unions, floats, multi-dimensional arrays or
+  function pointers, `unsigned`/`short`/`long` are plain `int`, and
+  `#define` is for constants (no macros with arguments, no `#if`).
 - `grep`, `head`, `tail`, and `uranium` all read a file through the same
   4 KB `content_buf` (see `fs_load_content` in `src/fs_extra.asm`), so
   only the first 4 KB of a larger file is visible to them - `uranium`

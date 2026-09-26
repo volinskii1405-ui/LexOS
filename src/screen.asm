@@ -24,6 +24,8 @@
 ; the console's own buffer in RAM.
 
 clear_screen:
+    call pipe_active                 ; (output into a pipe: nothing to clear)
+    jc .caught
     pusha
     mov edi, [text_vram]
     mov ecx, SCREEN_COLS * SCREEN_ROWS   ; "loop" uses ECX by default in a 32-bit
@@ -38,6 +40,7 @@ clear_screen:
     mov word [cursor_col], 0
     call update_hw_cursor
     popa
+.caught:
     ret
 
 ; ============================================================
@@ -97,6 +100,11 @@ print_prompt:
 ; ============================================================
 print_char:
     pusha
+    call pipe_catch                  ; (caught for a pipe: src/pipe.asm)
+    jnc .to_screen
+    popa
+    ret
+.to_screen:
 
     cmp al, 0x0D
     je .cr
