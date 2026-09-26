@@ -3496,6 +3496,8 @@ DKC_NEW_LNK  equ 34
 DKC_IOPEN    equ 35                   ; a desktop icon's
 DKC_IRENAME  equ 36
 DKC_IDELETE  equ 37
+DKC_IPROPS   equ 38                   ; (src/dkprops.asm)
+DKC_TRESTORE equ 39                   ; the trash's (src/dktrash.asm)
 DK_CTX_W    equ 160
 DK_CTX_ITEM equ 22
 
@@ -3568,6 +3570,8 @@ dk_right_click:
     call dk_ctx_add
     jmp .show
 .trash_item:
+    mov al, DKC_TRESTORE                  ; (back where it was)
+    call dk_ctx_add
     mov al, DKC_FOREVER
     call dk_ctx_add
     mov al, DKC_PROPS
@@ -3768,6 +3772,13 @@ dk_text_raw_all:
 ; eax = a context menu item (DKC_*): done
 dk_ctx_do:
     pushad
+    cmp eax, DKC_TRESTORE                 ; (src/dktrash.asm)
+    jne .not_restore
+    mov dword [dk_fm_msg], 0
+    call dkt_restore
+    popad
+    ret
+.not_restore:
     cmp eax, DKC_MINIMIZE                 ; (the taskbar's and the desktop's:
     jb .files_item                        ;  src/dkextra.asm)
     call dkx_ctx_do
@@ -3938,34 +3949,14 @@ dk_ctx_do:
 ; Properties: the selected one's size / kind, on the status line
 dk_files_props:
     pushad
-    mov esi, [dk_fm_sel]
-    cmp esi, -1
+    mov esi, [dk_fm_sel]                  ; a window of its own
+    cmp esi, -1                           ; (src/dkprops.asm)
     je .done
     shl esi, 5
-    add esi, DESK_FILES
-    mov edi, dk_fm_propbuf
-    push esi
-    call wget_append                      ; the name
-    pop esi
-    cmp byte [esi + 17], IC_FOLDER
-    jne .file
-    push esi
-    mov esi, dk_fm_is_folder
-    call wget_append
-    pop esi
-    jmp .said
-.file:
-    push esi
-    mov esi, dk_fm_sep
-    call wget_append
-    pop esi
-    mov eax, [esi + 24]
-    call wget_append_num
-    mov esi, dk_fm_bytes
-    call wget_append
-.said:
-    mov byte [edi], 0
-    mov dword [dk_fm_msg], dk_fm_propbuf
+    cmp byte [DESK_FILES + esi + 17], IC_UP
+    je .done
+    movzx ecx, word [DESK_FILES + esi + 20]
+    call dkp_ask
 .done:
     popad
     ret
@@ -4469,6 +4460,7 @@ dk_move_entry:
     ; move it
     movzx eax, word [esi + 20]
     call fs_read_slot
+    call dkt_note_origin                  ; (where it was: src/dktrash.asm)
     mov bl, [dk_fm_dest]
     mov [SCRATCH_ADDR + FS_PARENT_OFFSET], bl
     call fs_write_slot
@@ -5593,7 +5585,6 @@ dk_fm_br          dd 0
 dk_fm_bt          dd 0
 dk_fm_bb          dd 0
 dk_fm_moved_msg   dd dk_fm_moved
-dk_fm_propbuf     times 64 db 0
 dk_ctx_open       db 0                    ; the context menu
 dk_ctx_in_trash   db 0
 dk_fm_name_tmp    times FS_NAME_LEN + 1 db 0
@@ -5616,6 +5607,7 @@ dk_ctx_labels     dd dk_ctx_l_open, dk_ctx_l_rename, dk_ctx_l_copy, dk_ctx_l_del
                   dd dkx_l_catfeed, dkx_l_catpet, dkx_l_catplay, dkx_l_cathow
                   dd dkx_l_create, dkx_l_newdir, dkx_l_newtxt, dkx_l_newhg
                   dd dkx_l_newlnk, dkx_l_iopen, dkx_l_irename, dkx_l_idelete
+                  dd dkx_l_iprops, dkt_l_restore
 dk_ctx_l_open     db "Open", 0
 dk_ctx_l_rename   db "Rename...", 0
 dk_ctx_l_copy     db "Copy to...", 0
@@ -5630,9 +5622,6 @@ dk_cmd_ren        db "ren ", 0
 dk_cmd_cp         db "cp ", 0
 dk_cmd_rm         db "rm ", 0
 dk_fm_trashed     db "Moved to the trash (/TRASH).", 0
-dk_fm_is_folder   db " - a folder", 0
-dk_fm_sep         db " - ", 0
-dk_fm_bytes       db " bytes", 0
 dk_cal_day        dd 0
 dk_cal_month      dd 0
 dk_cal_year       dd 0

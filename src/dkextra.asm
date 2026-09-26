@@ -616,6 +616,8 @@ dkx_ctx_items:
     call dk_ctx_add
     mov al, DKC_IDELETE
     call dk_ctx_add
+    mov al, DKC_IPROPS
+    call dk_ctx_add
     jmp .some
 .lex_items:
     mov al, DKC_CATFEED
@@ -797,6 +799,11 @@ dkx_ctx_create:
     shl esi, 4
     add esi, dki_file
     mov bl, [dki_dir]
+    cmp eax, DKC_IPROPS                   ; (src/dkprops.asm)
+    jne .not_props
+    call dkp_ask
+    jmp .done
+.not_props:
     cmp eax, DKC_IRENAME
     jne .delete
     mov al, DKN_RENAME
@@ -1426,6 +1433,8 @@ dkx_esc_closes:
     cmp byte [dk_ctx_open], 0
     jne .no
     cmp byte [dk_fm_typing], 0
+    jne .no
+    cmp byte [dkn_open], 0                ; (a dialog: Esc's its)
     jne .no
     call dk_top_window
     cmp eax, -1

@@ -87,6 +87,8 @@ dkn_key_in:
     ret
 
 dkn_mark:
+    cmp byte [dkn_op], DKN_PROPS          ; (Properties: its own size)
+    je dkp_mark
     pushad
     mov eax, DKN_X
     mov ebx, DKN_Y
@@ -109,6 +111,11 @@ dkn_work:
     inc bl
     and bl, 15
     mov [dkn_ktail], bl
+    cmp byte [dkn_op], DKN_PROPS          ; (Properties: src/dkprops.asm)
+    jne .typing
+    call dkp_key
+    jmp .key
+.typing:
     mov ecx, [dkn_len]
     cmp al, 27
     je .cancel
@@ -209,6 +216,11 @@ dkn_do:
     mov [fs_current_dir], ax
     mov dword [dkn_err], 0
     movzx eax, byte [dkn_op]
+    cmp eax, DKN_PROPS                    ; (src/dkprops.asm)
+    jne .not_props
+    call dkp_do
+    jmp .out
+.not_props:
     cmp eax, DKN_TRASH
     je .trash
     cmp dword [dkn_len], 0
@@ -416,6 +428,7 @@ dkn_do:
     mov dl, al
     mov eax, [dkn_slot]
     call fs_read_slot
+    call dkt_note_origin                  ; (src/dktrash.asm: Restore's)
     mov [SCRATCH_ADDR + FS_PARENT_OFFSET], dl
     call fs_write_slot
     jmp .made
@@ -626,6 +639,11 @@ dkn_draw:
     pushad
     cmp byte [dkn_open], 0
     je .done
+    cmp byte [dkn_op], DKN_PROPS
+    jne .name_box
+    call dkp_draw
+    jmp .done
+.name_box:
     mov eax, DKN_X + 4                    ; a shadow, the frame, the face
     mov ebx, DKN_Y + 4
     mov ecx, DKN_W
@@ -721,8 +739,10 @@ dkn_draw:
 
 ; eax = its x, esi = its words
 dkn_button:
-    pushad
     mov ebx, DKN_BTN_Y
+; the same at ebx
+dkn_button_at:
+    pushad
     mov ecx, DKN_BTN_W
     mov edx, DKN_BTN_H
     push esi
@@ -759,6 +779,11 @@ dkn_click:
     ret
 .open:
     pushad
+    cmp byte [dkn_op], DKN_PROPS
+    jne .name_box
+    call dkp_click
+    jmp .done
+.name_box:
     cmp ebx, DKN_BTN_Y
     jl .done
     cmp ebx, DKN_BTN_Y + DKN_BTN_H
@@ -1000,6 +1025,8 @@ dkx_l_newlnk     db "Create a Link", 0
 dkx_l_iopen      db "Open", 0
 dkx_l_irename    db "Rename...", 0
 dkx_l_idelete    db "Delete", 0
+dkx_l_iprops     db "Properties...", 0
+dkt_l_restore    db "Restore", 0
 dkn_m_empty      db "Type a name first.", 0
 dkn_m_taken      db "That name is taken here.", 0
 dkn_m_full       db "No room for it on the disk.", 0

@@ -540,4 +540,6 @@ kext_start:
 %include "src/dkcat.asm"
 %include "src/dkname.asm"
 %include "src/dkgrid.asm"
+%include "src/dkprops.asm"
+%include "src/dktrash.asm"
 kext_end:
