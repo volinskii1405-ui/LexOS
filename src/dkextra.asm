@@ -610,6 +610,8 @@ dkx_ctx_items:
     cmp ecx, -1
     je .desk_items
     mov [dk_ctx_icon], ecx
+    call dkt_icon_menu                    ; (the trash's own: src/dktrash.asm)
+    jnc .some
     mov al, DKC_IOPEN
     call dk_ctx_add
     mov al, DKC_IRENAME
@@ -1412,7 +1414,7 @@ dkx_startup_scan:
 .named:
     mov esi, edi
     call dk_name_kind
-    cmp al, IC_APP
+    call dk_kind_app
     jne .next
     inc dword [dkx_st_n]
 .next:

@@ -1529,6 +1529,11 @@ IC_APP    equ 4
 IC_IMAGE  equ 5
 IC_SOUND  equ 6
 IC_SCRIPT equ 7
+IC_TRASH  equ 8                         ; (pictures: src/dkart.asm)
+IC_TRASH_FULL equ 9
+IC_WEB    equ 10
+IC_NOTEPAD equ 11
+IC_ZIP    equ 12
 
 dk_draw_files:
     ; the toolbar: [Up], the path, [<] [>]
@@ -1758,6 +1763,8 @@ dk_ext_lookup:
 
 ; esi = a 0-terminated name -> al = its icon (by extension)
 dk_name_kind:
+    call dka_name_look                    ; (the browser, Notepad: pictures)
+    jnc .looked
     push esi
     call dk_ext_dword
     or eax, eax
@@ -1771,12 +1778,18 @@ dk_name_kind:
     mov al, IC_TEXT
 .done:
     pop esi
+.looked:
     ret
 
 ; Icon ecx at eax, ebx (32x32), through [dk_icon_fill] (the back
 ; buffer's dk_fill, or the screen's dk_screen_fill)
 dk_icon:
     pushad
+    cmp ecx, IC_TRASH                     ; (a picture: src/dkart.asm)
+    jb .drawn
+    call dka_icon
+    jmp .done
+.drawn:
     cmp ecx, IC_FOLDER
     je .folder
     cmp ecx, IC_UP
@@ -2293,7 +2306,8 @@ dk_files_open:
     call dk_win_single
     jmp .done
 .command:
-    cmp ecx, IC_APP                       ; a program: started by itself
+    mov al, cl                            ; a program: started by itself
+    call dk_kind_app
     je .launch
     call dk_gui_verb                      ; (Notepad, the browser: too)
     jc .typed_in
@@ -2365,7 +2379,7 @@ dk_prog_scan:
     sub edi, FS_NAME_LEN
     mov esi, edi
     call dk_name_kind
-    cmp al, IC_APP
+    call dk_kind_app
     jne .next
     mov al, [SCRATCH_ADDR + FS_PARENT_OFFSET]   ; and where it is
     mov edi, [dk_prog_count]
@@ -3812,6 +3826,11 @@ dk_ctx_do:
     ret
 .files_item:
     mov dword [dk_fm_msg], 0
+    cmp eax, DKC_EMPTY                    ; Empty trash: quietly, for good
+    jne .not_empty                        ; (src/dktrash.asm)
+    call dkt_empty_req
+    jmp .done
+.not_empty:
     cmp eax, DKC_OPEN
     jne .not_open
     mov eax, [dk_fm_sel]
@@ -5659,7 +5678,7 @@ dk_ctx_labels     dd dk_ctx_l_open, dk_ctx_l_rename, dk_ctx_l_copy, dk_ctx_l_del
                   dd dkx_l_create, dkx_l_newdir, dkx_l_newtxt, dkx_l_newhg
                   dd dkx_l_newlnk, dkx_l_iopen, dkx_l_irename, dkx_l_idelete
                   dd dkx_l_iprops, dkt_l_restore, dkt_l_edit, dkt_l_zip
-                  dd dkt_l_unzip
+                  dd dkt_l_unzip, dkt_l_tempty
 dk_ctx_l_open     db "Open", 0
 dk_ctx_l_rename   db "Rename...", 0
 dk_ctx_l_copy     db "Copy to...", 0
@@ -5813,7 +5832,8 @@ dk_ext_kinds      dd 'APP', IC_APP, 'COM', IC_APP, 'BIN', IC_APP, 'BMP', IC_IMAG
                   dd 'WAV', IC_SOUND, 'IMF', IC_SOUND, 'MOD', IC_SOUND, 'HG', IC_SCRIPT
                   dd 'BAS', IC_SCRIPT, 'TXT', IC_TEXT, 'C', IC_TEXT, 'ASM', IC_TEXT
                   dd 'CFG', IC_TEXT, 'TRG', IC_SCRIPT, 'CH8', IC_APP, 'H', IC_TEXT
-                  dd 'MD', IC_TEXT, 'HTM', IC_TEXT, 'LNK', IC_TEXT, 0, 0
+                  dd 'MD', IC_TEXT, 'HTM', IC_TEXT, 'LNK', IC_TEXT, 'ZIP', IC_ZIP
+                  dd 0, 0
 dk_ext_verbs      dd 'APP', dk_verb_run, 'COM', dk_verb_run, 'BIN', dk_verb_run
                   dd 'WAV', dk_verb_play, 'IMF', dk_verb_play, 'MOD', dk_verb_mod
                   dd 'HG', dk_verb_none, 'BAS', dk_verb_basic, 'TRG', dk_verb_turtle

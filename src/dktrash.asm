@@ -120,6 +120,10 @@ dkt_ctx_more:
     jne .not_unzip
     jmp dkt_unzip
 .not_unzip:
+    cmp eax, DKC_TEMPTY
+    jne .not_empty
+    jmp dkt_empty_req
+.not_empty:
     ret
 
 ; Files' menu, on something: Edit in Notepad - if it's a file - and
@@ -232,3 +236,325 @@ dkt_l_zip        db "Compress to ZIP", 0
 dkt_l_unzip      db "Extract here", 0
 dkt_l_edit       db "Edit in Notepad", 0
 dkt_m_restored   db "Restored.", 0
+
+; ============================================================
+; The trash on the desktop: an icon of its own - no file behind it -
+; top left, empty or full; a double click opens it in Files, what's
+; dropped on it goes into it, its menu: Open, Empty the trash
+; ============================================================
+
+DKN_EMPTY      equ 9                      ; (src/dkname.asm's dkn_do)
+DKC_TEMPTY     equ 43
+
+; dki_scan: the list read (ebp of them): the trash's icon after them
+dkt_icon_add:
+    cmp ebp, DKI_MAX
+    jae .done
+    pushad
+    mov edi, ebp
+    shl edi, 4
+    add edi, dki_new_file
+    mov esi, dkt_icon_name
+    call dki_copy
+    mov edi, ebp
+    shl edi, 6
+    add edi, dki_new_target
+    mov esi, dkt_path
+    call dki_copy                         ; "/TRASH", and after its 0: full?
+    call dkt_find                         ; -> al, carry: none
+    jc .empty
+    mov dl, al
+    xor ebx, ebx
+.slot:
+    cmp ebx, FS_TOTAL_SLOTS
+    jae .empty
+    mov eax, ebx
+    call fs_read_slot
+    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_FREE
+    je .next
+    cmp [SCRATCH_ADDR + FS_PARENT_OFFSET], dl
+    je .full
+.next:
+    inc ebx
+    jmp .slot
+.full:
+    mov byte [edi], 'F'
+.empty:
+    popad
+    inc ebp
+.done:
+    ret
+
+; -> al = /TRASH's slot byte; carry=1 if there's none (dk_shell_idle first)
+dkt_find:
+    push ebx
+    xor ebx, ebx
+.slot:
+    cmp ebx, FS_TOTAL_SLOTS
+    jae .none
+    mov eax, ebx
+    call fs_read_slot
+    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
+    jne .next
+    cmp byte [SCRATCH_ADDR + FS_PARENT_OFFSET], FS_ROOT_BYTE
+    jne .next
+    cmp dword [SCRATCH_ADDR], 'TRAS'
+    jne .next
+    cmp word [SCRATCH_ADDR + 4], 'H'
+    jne .next
+    mov eax, ebx
+    pop ebx
+    clc
+    ret
+.next:
+    inc ebx
+    jmp .slot
+.none:
+    pop ebx
+    stc
+    ret
+
+; ebx = an icon (dki_*): carry=0 if it's the trash's
+dkt_is_icon:
+    push esi
+    push edi
+    mov esi, ebx
+    shl esi, 4
+    add esi, dki_file
+    mov edi, dkt_icon_name
+    call dkx_str_eq
+    pop edi
+    pop esi
+    je .yes
+    stc
+    ret
+.yes:
+    clc
+    ret
+
+; dki_scan, the kinds set: the trash's, and its name
+dkt_icon_kinds:
+    pushad
+    xor ebx, ebx
+.each:
+    cmp ebx, [dki_n]
+    jae .done
+    call dkt_is_icon
+    jc .next
+    mov al, IC_TRASH
+    mov esi, ebx
+    shl esi, 6
+    cmp byte [dki_target + esi + 7], 'F'
+    jne .kind
+    mov al, IC_TRASH_FULL
+.kind:
+    mov [dki_kind + ebx], al
+    mov edi, ebx
+    shl edi, 4
+    add edi, dki_label
+    mov esi, dkt_l_trash
+    call dki_copy
+.next:
+    inc ebx
+    jmp .each
+.done:
+    popad
+    ret
+
+; dkg_default_place, a new one (ebx in dki_new_*): the trash's cell,
+; top left -> eax, edx, carry=0 (if it's free)
+dkt_icon_place:
+    push esi
+    push edi
+    mov esi, ebx
+    shl esi, 4
+    add esi, dki_new_file
+    mov edi, dkt_icon_name
+    call dkx_str_eq
+    pop edi
+    pop esi
+    jne .no
+    push ecx
+    push esi
+    push edi
+    push ebp
+    mov ecx, (DKG_COLS - 1) * DKG_ROWS    ; the leftmost column, the top
+    call dkg_cell_xy
+    mov esi, dki_new_x
+    mov edi, dki_new_y
+    mov ebp, [dki_new_n]
+    call dkg_taken
+    pop ebp
+    pop edi
+    pop esi
+    pop ecx
+    jc .no
+    clc
+    ret
+.no:
+    stc
+    ret
+
+; dki_open, the trash's icon: carry=1 (and said) if there's no /TRASH
+dkt_icon_open:
+    call dk_shell_idle
+    jc .busy
+    push eax
+    call dkt_find
+    pop eax
+    jnc .there
+    push esi
+    push edi
+    mov esi, dkt_m_empty
+    call tr_lookup
+    mov edi, dk_toast_buf
+    call dki_copy
+    call dk_toast
+    pop edi
+    pop esi
+.busy:
+    stc
+.there:
+    ret
+
+; The desktop's menu on an icon: the trash's own (Open, Empty the
+; trash) -> carry=0; carry=1 if it's another icon
+dkt_icon_menu:
+    push ebx
+    mov ebx, ecx
+    call dkt_is_icon
+    pop ebx
+    jc .no
+    push eax
+    mov al, DKC_IOPEN
+    call dk_ctx_add
+    mov al, DKC_TEMPTY
+    call dk_ctx_add
+    pop eax
+    clc
+.no:
+    ret
+
+; Empty the trash (its icon's menu, Files'): done by the desktop's task
+; (src/dkname.asm: dkn_do, the kernel lock held)
+dkt_empty_req:
+    cmp byte [dkn_open], 0
+    jne .done
+    mov byte [dkn_op], DKN_EMPTY
+    mov dword [dkn_len], 0
+    mov byte [dkn_req], 1
+.done:
+    ret
+
+; dkn_do's: everything in /TRASH gone for good (not what's read-only)
+dkt_empty_do:
+    pushad
+    mov dword [dkt_gone], 0
+    call dkt_find
+    jc .said
+    mov dl, al
+    mov ecx, 8
+    call dkt_del_in
+.said:
+    mov edi, dk_toast_buf                 ; "The trash is empty now (3)."
+    mov esi, dkt_m_emptied
+    call wget_append
+    mov eax, [dkt_gone]
+    call wget_append_num
+    mov esi, dkt_m_emptied2
+    call wget_append
+    mov byte [edi], 0
+    call dk_toast
+    mov byte [dk_fm_refresh], 1
+    mov byte [dki_rescan], 1
+    mov byte [dk_redraw_all], 1
+    popad
+    ret
+
+; dl = a folder's slot byte, ecx = how deep still: what's in it deleted
+; (a folder, when what was in it is gone)
+dkt_del_in:
+    pushad
+    xor ebx, ebx
+.slot:
+    cmp ebx, FS_TOTAL_SLOTS
+    jae .done
+    mov eax, ebx
+    call fs_read_slot
+    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_FREE
+    je .next
+    cmp [SCRATCH_ADDR + FS_PARENT_OFFSET], dl
+    jne .next
+    cmp bx, [user_cfg_slot]
+    je .next
+    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
+    jne .file
+    jecxz .next
+    push edx
+    push ecx
+    mov dl, bl                            ; what's in it first
+    dec ecx
+    call dkt_del_in
+    pop ecx
+    pop edx
+    push edx                              ; anything left in it? then it stays
+    mov dh, bl
+    call dkt_has_any
+    pop edx
+    jnc .next
+    jmp .free
+.file:
+    mov eax, ebx
+    call jnl_attr_of
+    test al, FS_ATTR_RO
+    jnz .next
+    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_FILE
+    jne .free
+    mov eax, ebx
+    call fs_free_chain
+.free:
+    mov eax, ebx
+    call fs_read_slot
+    mov byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_FREE
+    call fs_write_slot
+    inc dword [dkt_gone]
+.next:
+    inc ebx
+    jmp .slot
+.done:
+    popad
+    ret
+
+; dh = a folder's slot byte: carry=0 if anything's in it
+dkt_has_any:
+    pushad
+    xor ebx, ebx
+.slot:
+    cmp ebx, FS_TOTAL_SLOTS
+    jae .none
+    mov eax, ebx
+    call fs_read_slot
+    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_FREE
+    je .next
+    cmp [SCRATCH_ADDR + FS_PARENT_OFFSET], dh
+    je .some
+.next:
+    inc ebx
+    jmp .slot
+.some:
+    popad
+    clc
+    ret
+.none:
+    popad
+    stc
+    ret
+
+dkt_gone         dd 0
+dkt_icon_name    db "*TRASH", 0            ; (no file can be called that)
+dkt_path         db "/TRASH", 0
+dkt_l_trash      db "Trash", 0
+dkt_l_tempty     db "Empty the trash", 0
+dkt_m_empty      db "The trash is empty.", 0
+dkt_m_emptied    db "The trash is empty now (", 0
+dkt_m_emptied2   db " gone).", 0

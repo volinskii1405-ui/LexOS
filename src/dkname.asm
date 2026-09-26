@@ -221,6 +221,11 @@ dkn_do:
     call dkp_do
     jmp .out
 .not_props:
+    cmp eax, DKN_EMPTY                    ; (src/dktrash.asm)
+    jne .not_empty
+    call dkt_empty_do
+    jmp .out
+.not_empty:
     cmp eax, DKN_TRASH
     je .trash
     cmp dword [dkn_len], 0

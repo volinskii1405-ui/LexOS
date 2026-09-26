@@ -544,4 +544,5 @@ kext_start:
 %include "src/dktrash.asm"
 %include "src/dkdrop.asm"
 %include "src/appext.asm"
+%include "src/dkart.asm"
 kext_end:

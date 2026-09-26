@@ -49,6 +49,17 @@ dkd_files_drop:
     call dki_at                           ; -> ecx
     cmp ecx, -1
     je .have_dest
+    call dkd_is_trash                     ; onto the trash: Files' Delete
+    jc .not_trash
+    mov ebx, [dk_fm_press]                ; (what's dragged: what's deleted)
+    call dk_sel_test
+    jnc .chosen
+    call dk_sel_clear
+    call dk_sel_set
+.chosen:
+    call dk_files_trash
+    jmp .mine
+.not_trash:
     call dkd_icon_folder                  ; -> al, carry=1: not a folder
     jc .have_dest
     mov dl, al
@@ -192,7 +203,12 @@ dkd_icon_folder:
     push esi
     push edx
     cmp byte [dki_kind + ecx], IC_FOLDER
+    je .folder
+    cmp byte [dki_kind + ecx], IC_TRASH   ; (the trash too)
+    je .folder
+    cmp byte [dki_kind + ecx], IC_TRASH_FULL
     jne .no
+.folder:
     push ebx
     push ecx
     mov esi, ecx
@@ -259,6 +275,8 @@ dkd_icon_drop:
     sub eax, [dki_y + ecx*4]
     cmp eax, DKI_H
     jae .other
+    call dkd_is_trash                     ; onto the trash: its Delete
+    jnc .to_trash
     call dkd_icon_folder                  ; -> al
     jc .theirs
     mov dl, al
@@ -305,9 +323,51 @@ dkd_icon_drop:
     popad
     clc
     ret
+.to_trash:                                ; the icon's Delete (src/dkname.asm:
+    mov esi, dki_folder_path              ;  into TRASH, made if need be)
+    mov edi, dki_tmp_path
+    call dki_copy
+    mov byte [edi - 1], '/'
+    mov esi, ebx
+    shl esi, 4
+    add esi, dki_file
+    call dki_copy
+    push ebx
+    mov esi, dki_tmp_path
+    call dki_resolve                      ; -> eax
+    pop ebx
+    cmp eax, -1
+    je .theirs
+    mov byte [dkn_op], DKN_TRASH
+    mov cl, [dki_dir]
+    mov [dkn_dir], cl
+    mov [dkn_slot], eax
+    mov dword [dkn_len], 0
+    mov byte [dkn_req], 1
+    call dki_mark                         ; (back where it was, till it goes)
+    mov eax, [dki_start_x]
+    mov [dki_x + ebx*4], eax
+    mov eax, [dki_start_y]
+    mov [dki_y + ebx*4], eax
+    call dki_mark
+    popad
+    clc
+    ret
 .theirs:
     popad
     stc
+    ret
+
+; ecx = a desktop icon: carry=0 if it's the trash's
+dkd_is_trash:
+    cmp byte [dki_kind + ecx], IC_TRASH
+    je .yes
+    cmp byte [dki_kind + ecx], IC_TRASH_FULL
+    je .yes
+    stc
+    ret
+.yes:
+    clc
     ret
 
 ; Each frame: a drop to carry out

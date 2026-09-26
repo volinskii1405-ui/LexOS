@@ -115,6 +115,8 @@ dkg_covered:
 dkg_default_place:
     call dkd_place                        ; (just dropped there: src/dkdrop.asm)
     jnc .dropped
+    call dkt_icon_place                   ; (the trash: top left)
+    jnc .dropped
     push ecx
     push esi
     push edi

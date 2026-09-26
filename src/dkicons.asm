@@ -123,6 +123,7 @@ dki_scan:
     inc ebx
     jmp .slot
 .listed:
+    call dkt_icon_add                     ; (the trash's: src/dktrash.asm)
     pop word [fs_current_dir]
     mov [dki_new_n], ebp
     ; the same as shown?
@@ -194,6 +195,7 @@ dki_scan:
     inc ebx
     jmp .kind
 .kinds_done:
+    call dkt_icon_kinds
     mov dword [dki_sel], -1
     mov byte [dk_redraw_all], 1
 .done:
@@ -482,45 +484,12 @@ dki_draw:
     push edx
     movzx ecx, byte [dki_kind + ebx]
     add eax, (DKI_W - 32) / 2
-    lea ebx, [edx + 6]
+    lea ebx, [edx + 3]
     call dk_icon                          ; (src/dkwins.asm, as in Files)
     pop edx
     pop ebx
     pop eax
-    mov esi, ebx                          ; the name, centered, a shadow
-    shl esi, 4
-    add esi, dki_label
-    push eax
-    call dki_strlen                       ; -> ecx
-    cmp ecx, DKI_W / 8
-    jbe .fits
-    mov ecx, DKI_W / 8
-.fits:
-    pop eax
-    mov edi, ecx
-    shl ecx, 2                            ; (half its width)
-    add eax, DKI_W / 2
-    sub eax, ecx
-    add edx, 46
-    push eax
-    push ebx
-    mov ebx, edx
-    inc eax
-    inc ebx
-    mov edx, COL_BLACK                    ; (a shadow the other way round
-    cmp dword [dk_th + TH_BARTEXT], COL_WHITE   ; from the name: a light
-    je .shadow                            ;  theme's names are dark)
-    mov edx, COL_WHITE
-.shadow:
-    call dk_text_n
-    pop ebx
-    pop eax
-    push ebx
-    mov ebx, [dki_y + ebx*4]
-    add ebx, 46
-    mov edx, COL_BARTEXT
-    call dk_text_n
-    pop ebx
+    call dka_label                        ; its name, on two lines if long
 .next:
     inc ebx
     jmp .icon
@@ -745,7 +714,15 @@ dki_open:
     mov word [edi], '/'
 .have_folder:
     movzx eax, byte [dki_kind + ebx]
-    cmp al, IC_APP
+    cmp al, IC_TRASH                      ; the trash: in Files (if there's one)
+    jb .not_trash
+    cmp al, IC_TRASH_FULL
+    ja .not_trash
+    call dkt_icon_open
+    jc .done
+    jmp .folder
+.not_trash:
+    call dk_kind_app
     je .program
     cmp al, IC_FOLDER
     je .folder
