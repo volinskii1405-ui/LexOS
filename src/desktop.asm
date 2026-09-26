@@ -362,6 +362,7 @@ desktop_task:
     call dkx_startup_work                 ; (src/dkextra.asm: STARTUP)
     call dkx_power_work                   ; (src/dkextra.asm: shut down)
     call dkx_fc_work                      ; (src/dkextra.asm: Files' clipboard)
+    call dkd_work                         ; (src/dkdrop.asm: a drop)
     call dkx_cat_work                     ; (src/dkcat.asm: Lex)
     call dkt_work                         ; (src/dkextra.asm: the tooltip,
     call dkx_win_key                      ;  the Win key)

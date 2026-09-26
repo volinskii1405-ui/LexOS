@@ -1774,11 +1774,13 @@ dkx_fc_move_one:
     mov cl, [SCRATCH_ADDR + FS_PARENT_OFFSET]
     jmp .walk
 .not_dir:
+    push eax                              ; (dki_copy: al)
     mov esi, ebx                          ; its name free there?
     shl esi, 4
     add esi, dkx_fc_name
     mov edi, fs_tmp_name
     call dki_copy
+    pop eax
     push eax
     mov si, fs_tmp_name
     call fs_find_by_name
@@ -1786,6 +1788,7 @@ dkx_fc_move_one:
     pop eax
     jne .fail
     call fs_read_slot                     ; moved: its parent
+    call dkt_note_origin                  ; (Restore's: src/dktrash.asm)
     mov dl, [dk_fm_dir]
     mov [SCRATCH_ADDR + FS_PARENT_OFFSET], dl
     call fs_write_slot

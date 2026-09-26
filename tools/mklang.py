@@ -344,6 +344,8 @@ TR = {
 'dkx_l_iprops': ('Свойства...', 'Propiedades...'),
 'dkt_l_restore': ('Восстановить', 'Restaurar'),
 'dkt_m_restored': ('Восстановлено.', 'Restaurado.'),
+'dkd_m_moved': ('Перемещено: ', 'Movido: '),
+'dkd_m_copied': ('Скопировано: ', 'Copiado: '),
 'dkp_t_title': ('Свойства', 'Propiedades'),
 'dkp_l_where': ('Папка:', 'Carpeta:'),
 'dkp_l_kind': ('Тип:', 'Tipo:'),

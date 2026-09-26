@@ -2100,6 +2100,8 @@ dk_files_drag:
     jnz .done                             ; (dk_present draws it)
     mov byte [dk_fm_state], 0             ; dropped: onto a folder?
     mov byte [dk_redraw_all], 1
+    call dkd_files_drop                   ; (the desktop, Ctrl: src/dkdrop.asm)
+    jnc .done
     call dk_files_entry_at                ; -> edx = the entry, or -1
     cmp edx, -1
     je .done

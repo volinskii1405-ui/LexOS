@@ -631,6 +631,10 @@ dki_press:
     sub ebx, [dki_y + ecx*4]
     mov [dki_drag_dy], ebx
     mov byte [dki_moved], 0
+    mov eax, [dki_x + ecx*4]              ; (where it was: src/dkdrop.asm)
+    mov [dki_start_x], eax
+    mov eax, [dki_y + ecx*4]
+    mov [dki_start_y], eax
     jmp .done
 .nothing:
     mov edx, [timer_ms]                   ; the background clicked twice:
@@ -663,6 +667,8 @@ dki_drag_move:
     mov dword [dki_drag], -1              ; let go: into the nearest free
     cmp byte [dki_moved], 0               ; cell (src/dkgrid.asm), and kept
     je .done
+    call dkd_icon_drop                    ; (or into a folder: src/dkdrop.asm)
+    jnc .done
     call dkg_snap
     mov byte [dk_cfg_dirty], 1            ; (src/dkstyle.asm: saved)
     jmp .done

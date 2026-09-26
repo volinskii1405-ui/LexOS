@@ -113,6 +113,8 @@ dkg_covered:
 ; cell - the rows under the clock, column by column from the right (the
 ; default layout), then the rows above them
 dkg_default_place:
+    call dkd_place                        ; (just dropped there: src/dkdrop.asm)
+    jnc .dropped
     push ecx
     push esi
     push edi
@@ -163,6 +165,7 @@ dkg_default_place:
     pop edi
     pop esi
     pop ecx
+.dropped:
     ret
 
 ; ebx = an icon just let go of (dki_x/_y): into the nearest free cell
