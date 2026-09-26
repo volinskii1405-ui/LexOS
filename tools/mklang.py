@@ -345,6 +345,8 @@ TR = {
 'dkt_l_restore': ('Восстановить', 'Restaurar'),
 'dkt_m_restored': ('Восстановлено.', 'Restaurado.'),
 'dkt_l_edit': ('Изменить в Блокноте', 'Editar en el Bloc de notas'),
+'dkt_l_zip': ('Сжать в ZIP', 'Comprimir en ZIP'),
+'dkt_l_unzip': ('Распаковать сюда', 'Extraer aquí'),
 'dkd_m_moved': ('Перемещено: ', 'Movido: '),
 'dkd_m_copied': ('Скопировано: ', 'Copiado: '),
 'dkp_t_title': ('Свойства', 'Propiedades'),

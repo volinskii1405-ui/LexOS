@@ -2777,6 +2777,7 @@ dk_launch:
     mov byte [console_request], CONSOLE_REQ_NEW   ; (it'll be ebx)
     mov byte [dk_launch_state + ebx], 1
     mov byte [dk_launch_show + ebx], 0
+    mov byte [dk_launch_quiet + ebx], 1
     mov dword [dk_launch_seen + ebx*4], 0
     call dk_ext_dword                     ; a .BIN: always closes after
     cmp eax, 'BIN'
@@ -3520,6 +3521,8 @@ DKC_IDELETE  equ 37
 DKC_IPROPS   equ 38                   ; (src/dkprops.asm)
 DKC_TRESTORE equ 39                   ; the trash's (src/dktrash.asm)
 DKC_EDIT     equ 40                   ; Edit in Notepad (src/dktrash.asm)
+DKC_ZIP      equ 41                   ; Compress to ZIP
+DKC_UNZIP    equ 42                   ; Extract here
 DK_CTX_W    equ 160
 DK_CTX_ITEM equ 22
 
@@ -4325,9 +4328,9 @@ dk_inject_go:
 ; esi = an entry -> edx = the command that opens it ("run ", "play "...)
 dk_open_command:
     push eax
-    mov edx, dk_verb_edit                 ; (Edit in Notepad: src/dktrash.asm)
-    cmp byte [dkt_force_edit], 0
-    jne .done
+    mov edx, [dkt_force_verb]             ; (Edit in Notepad, ZIP: src/dktrash.asm)
+    or edx, edx
+    jnz .done
     call dk_ext_dword
     push esi
     mov esi, dk_ext_verbs
@@ -4349,6 +4352,8 @@ dk_gui_verb:
     cmp edx, dk_verb_edit
     je .yes
     cmp edx, dk_verb_web
+    je .yes
+    cmp edx, dkt_verb_unzip               ; (ZIP: src/dktrash.asm)
     je .yes
     pop edx
     pop eax
@@ -5653,7 +5658,8 @@ dk_ctx_labels     dd dk_ctx_l_open, dk_ctx_l_rename, dk_ctx_l_copy, dk_ctx_l_del
                   dd dkx_l_catfeed, dkx_l_catpet, dkx_l_catplay, dkx_l_cathow
                   dd dkx_l_create, dkx_l_newdir, dkx_l_newtxt, dkx_l_newhg
                   dd dkx_l_newlnk, dkx_l_iopen, dkx_l_irename, dkx_l_idelete
-                  dd dkx_l_iprops, dkt_l_restore, dkt_l_edit
+                  dd dkx_l_iprops, dkt_l_restore, dkt_l_edit, dkt_l_zip
+                  dd dkt_l_unzip
 dk_ctx_l_open     db "Open", 0
 dk_ctx_l_rename   db "Rename...", 0
 dk_ctx_l_copy     db "Copy to...", 0
@@ -5784,6 +5790,7 @@ dk_app_console    times DK_APPS db 0
 dk_launch_state   times CONSOLE_MAX db 0  ; a program started with a click
 dk_launch_bin     times CONSOLE_MAX db 0  ; closes after, whatever (a .BIN; [x])
 dk_launch_show    times CONSOLE_MAX db 0  ; its Terminal to be shown
+dk_launch_quiet   times CONSOLE_MAX db 0  ; (the keyboard back from it: nothing raised)
 dk_launch_seen    times CONSOLE_MAX dd 0  ; when text was first on its screen
 dk_launch_name    times CONSOLE_MAX * 16 db 0
 dk_app_win        times DK_APPS dd 0
@@ -5811,7 +5818,7 @@ dk_ext_verbs      dd 'APP', dk_verb_run, 'COM', dk_verb_run, 'BIN', dk_verb_run
                   dd 'WAV', dk_verb_play, 'IMF', dk_verb_play, 'MOD', dk_verb_mod
                   dd 'HG', dk_verb_none, 'BAS', dk_verb_basic, 'TRG', dk_verb_turtle
                   dd 'CH8', dk_verb_chip8, 'HTM', dk_verb_web, 'MD', dk_verb_web
-                  dd 0, 0
+                  dd 'ZIP', dkt_verb_unzip, 0, 0
 dk_state_names    dd dk_st_free, dk_st_ready, dk_st_waiting, dk_st_paused
 
 dk_verb_run       db "run ", 0

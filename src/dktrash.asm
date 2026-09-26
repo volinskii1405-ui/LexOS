@@ -112,24 +112,42 @@ dkt_ctx_more:
     jne .not_edit
     jmp dkt_edit
 .not_edit:
+    cmp eax, DKC_ZIP
+    jne .not_zip
+    jmp dkt_zip
+.not_zip:
+    cmp eax, DKC_UNZIP
+    jne .not_unzip
+    jmp dkt_unzip
+.not_unzip:
     ret
 
-; Files' menu, on something: Edit in Notepad - if it's a file
+; Files' menu, on something: Edit in Notepad - if it's a file - and
+; Compress to ZIP (Extract here, a .ZIP)
 dkt_ctx_edit_item:
-    push eax
-    mov eax, [dk_fm_sel]
-    shl eax, 5
-    movzx eax, byte [DESK_FILES + eax + 17]
+    pushad
+    mov esi, [dk_fm_sel]
+    shl esi, 5
+    add esi, DESK_FILES
+    movzx eax, byte [esi + 17]
     cmp eax, IC_FOLDER
-    je .no
+    je .no_edit
     cmp eax, IC_APP
-    je .no
+    je .no_edit
     cmp eax, IC_IMAGE
-    je .no
+    je .no_edit
     mov al, DKC_EDIT
     call dk_ctx_add
-.no:
-    pop eax
+.no_edit:
+    call dk_ext_dword                     ; (esi: its name)
+    mov bl, DKC_UNZIP
+    cmp eax, 'ZIP'
+    je .zip
+    mov bl, DKC_ZIP
+.zip:
+    mov al, bl
+    call dk_ctx_add
+    popad
     ret
 
 ; The selected file, into Notepad (as a program: no Terminal)
@@ -140,14 +158,73 @@ dkt_edit:
     je .done
     shl esi, 5
     add esi, DESK_FILES
-    mov byte [dkt_force_edit], 1
+    mov dword [dkt_force_verb], dk_verb_edit
     mov edi, dk_fm_path
     call dk_launch
-    mov byte [dkt_force_edit], 0
+    mov dword [dkt_force_verb], 0
 .done:
     popad
     ret
 
-dkt_force_edit   db 0
+; Compress to ZIP: "run zip.app -q NAME.ZIP NAME" (NAME.ZIP: its name up
+; to the ".", 11 at most), by itself - a line at the top says when done
+dkt_zip:
+    pushad
+    mov esi, [dk_fm_sel]
+    cmp esi, -1
+    je .done
+    shl esi, 5
+    add esi, DESK_FILES
+    cmp byte [esi + 17], IC_UP
+    je .done
+    mov edi, dkt_cmd
+    xor ecx, ecx
+.base:
+    mov al, [esi + ecx]
+    or al, al
+    jz .based
+    cmp al, '.'
+    je .based
+    mov [edi], al
+    inc edi
+    inc ecx
+    cmp ecx, 11
+    jb .base
+.based:
+    mov dword [edi], '.ZIP'
+    mov byte [edi + 4], ' '
+    add edi, 5
+    call dki_copy                         ; then the name itself
+    mov dword [dkt_force_verb], dkt_verb_zip
+    mov esi, dkt_cmd
+    mov edi, dk_fm_path
+    call dk_launch
+    mov dword [dkt_force_verb], 0
+.done:
+    popad
+    ret
+
+; Extract here: "run zip.app -x -q NAME.ZIP" - into a folder NAME
+dkt_unzip:
+    pushad
+    mov esi, [dk_fm_sel]
+    cmp esi, -1
+    je .done
+    shl esi, 5
+    add esi, DESK_FILES
+    mov dword [dkt_force_verb], dkt_verb_unzip
+    mov edi, dk_fm_path
+    call dk_launch
+    mov dword [dkt_force_verb], 0
+.done:
+    popad
+    ret
+
+dkt_force_verb   dd 0
+dkt_verb_zip     db "run zip.app -q ", 0
+dkt_verb_unzip   db "run zip.app -x -q ", 0
+dkt_cmd          times 40 db 0
+dkt_l_zip        db "Compress to ZIP", 0
+dkt_l_unzip      db "Extract here", 0
 dkt_l_edit       db "Edit in Notepad", 0
 dkt_m_restored   db "Restored.", 0

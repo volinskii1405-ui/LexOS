@@ -147,6 +147,9 @@ struct lx_dirent {
 #define LX_PROGRAM 3
 static inline int readdir(const char *path, int i, struct lx_dirent *e) { return lx_syscall3(37, (int)path, i, (int)e); }
 static inline int mkdir(const char *path)                 { return lx_syscall(38, (int)path, 0); }
+/* notify("Done: X.ZIP"): a line at the top of the desktop for a few
+ * seconds (Files and the desktop's icons look at the disk again). */
+static inline void notify(const char *text)               { lx_syscall(39, (int)text, 0); }
 
 /* keydown(scancode): 1 while that key is held - for games. */
 static inline int keydown(int scancode)                   { return lx_syscall(20, scancode, 0); }

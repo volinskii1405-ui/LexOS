@@ -10,9 +10,11 @@
 ;                             when it changed (+24: yy mm dd hh mi);
 ;                             0, or -1 past the last one
 ;   38 mkdir(path)            a new folder ("NAME", "/A/NAME") -> 0 / -1
+;   39 notify(text)           a line shown at the desktop's top for a few
+;                             seconds (and Files, the icons: read again)
 ;
 ; Arguments as every call's: ebx [ebp+16], ecx [ebp+24], edx [ebp+20].
-; Exports: sys_keymode, sys_readdir, sys_mkdir
+; Exports: sys_keymode, sys_readdir, sys_mkdir, sys_notify
 
 AEXT_PATH_MAX  equ 120
 
@@ -82,14 +84,42 @@ aext_folder:
     je .root
     push edx
     mov esi, aext_path
-    cmp byte [esi], '/'                   ; (relative: from the current one
-    je .absolute                          ;  - only its own name, "A")
+    cmp byte [esi], '/'                   ; (relative: from the current one,
+    je .absolute                          ;  a part at a time - "A/B")
     call fs_get_current_parent_byte       ; -> al
     mov dl, al
     push ebx
     push ecx
     push edi
-    call aext_find_in                     ; esi = a name, dl = the folder
+.part:
+    mov edi, aext_part                    ; this part
+    xor ecx, ecx
+.part_char:
+    mov al, [esi]
+    or al, al
+    jz .part_end
+    inc esi
+    cmp al, '/'
+    je .part_end
+    cmp ecx, FS_NAME_LEN
+    jae .part_char
+    mov [edi + ecx], al
+    inc ecx
+    jmp .part_char
+.part_end:
+    mov byte [edi + ecx], 0
+    push esi
+    mov esi, aext_part
+    call aext_find_in                     ; -> eax
+    pop esi
+    cmp eax, -1
+    je .parts_done
+    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
+    jne .parts_done
+    mov dl, al
+    cmp byte [esi], 0
+    jne .part
+.parts_done:
     pop edi
     pop ecx
     pop ebx
@@ -315,6 +345,34 @@ sys_mkdir:
     pop word [fs_current_dir]
     ret
 
+sys_notify:
+    mov esi, [ebp + 16]
+    mov edi, dk_toast_buf
+    xor ecx, ecx
+.char:
+    cmp esi, APP_BASE
+    jb .end
+    cmp esi, APP_STACK_TOP
+    jae .end
+    lodsb
+    or al, al
+    jz .end
+    mov [edi + ecx], al
+    inc ecx
+    cmp ecx, 62
+    jb .char
+.end:
+    mov byte [edi + ecx], 0
+    mov byte [dk_fm_refresh], 1
+    mov byte [dki_rescan], 1
+    cmp byte [dk_active], 0
+    je .done
+    call dk_toast
+.done:
+    xor eax, eax
+    ret
+
 aext_dir         db 0
 aext_path        times AEXT_PATH_MAX + 8 db 0
 aext_name        times AEXT_PATH_MAX + 8 db 0
+aext_part        times FS_NAME_LEN + 2 db 0

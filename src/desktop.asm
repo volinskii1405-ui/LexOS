@@ -738,6 +738,11 @@ dk_sync_consoles:
     mov byte [dk_redraw_all], 1           ; (the "kbd" marks, the cursor)
     cmp ecx, CONSOLE_MAX                  ; it moved because the console that
     jae .chosen                           ; had it ended (a program closed):
+    cmp byte [dk_launch_quiet + ecx], 0   ; (one started with a click: the
+    je .not_quiet                         ;  window it's back to stays as
+    mov byte [dk_launch_quiet + ecx], 0   ;  it is - a minimized Terminal
+    jmp .done                             ;  doesn't pop up)
+.not_quiet:
     cmp byte [console_used + ecx], 0      ; not asked for - a minimized
     je .done                              ; window stays where it is
 .chosen:
