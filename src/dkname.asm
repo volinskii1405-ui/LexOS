@@ -477,6 +477,8 @@ dkn_do:
     call dkt_note_origin                  ; (src/dktrash.asm: Restore's)
     mov [SCRATCH_ADDR + FS_PARENT_OFFSET], dl
     call fs_write_slot
+    mov eax, SND_TRASH                    ; (a whoosh)
+    call snd_play
     jmp .made
 
 .empty:

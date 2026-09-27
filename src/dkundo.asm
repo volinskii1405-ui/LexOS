@@ -210,7 +210,16 @@ dku_do:
     mov byte [dki_rescan], 1
     mov byte [dk_redraw_all], 1
     mov byte [dku_undoing], 0
+    cmp dword [dku_done], 0               ; (something back: a sound, Lex glad)
+    je .none_back
+    mov eax, SND_RESTORE
+    call snd_play
+    mov eax, CAT_R_BACK
+    call cat_react
+    jmp .undone
+.none_back:
     call snd_click
+.undone:
     popad
     ret
 

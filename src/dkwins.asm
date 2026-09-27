@@ -4041,6 +4041,8 @@ dk_files_trash:
     jmp .each
 .moved:
     mov dword [dk_fm_moved_msg], dk_fm_moved
+    mov eax, SND_TRASH                    ; (a whoosh: src/dksound.asm)
+    call snd_play
     jmp .done
 .busy:
     mov dword [dk_fm_msg], dk_fm_busy

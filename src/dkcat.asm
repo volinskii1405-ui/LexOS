@@ -70,6 +70,11 @@ dkx_cat_work:
 .not_sad:
     cmp byte [cat_energy], CAT_TIRED      ; tired: he sleeps
     jb .nap
+    call cat_is_night                     ; (and at night, mostly)
+    jnc .day
+    cmp eax, 80
+    jb .nap
+.day:
     cmp eax, 60
     jb .walk
     cmp eax, 85
@@ -182,6 +187,78 @@ dkx_cat_work:
 .done:
     popad
     ret
+
+; carry=1 at night (from 22:00 to 6:00, the user's time)
+cat_is_night:
+    pushad
+    call rtc_read_time                    ; bh = the hour (UTC)
+    movzx eax, bh
+    movsx edx, word [user_tz_offset]
+    add eax, edx
+    add eax, 24
+.hour:
+    cmp eax, 24
+    jl .hour_ok
+    sub eax, 24
+    jmp .hour
+.hour_ok:
+    cmp eax, 22
+    jae .night
+    cmp eax, 6
+    jb .night
+    popad
+    clc
+    ret
+.night:
+    popad
+    stc
+    ret
+
+; eax = what happened to the files: Lex sees it (awake again for it)
+;   CAT_R_TIDY   the trash emptied - pleased, a heart and a purr
+;   CAT_R_GONE   deleted for good - startled
+;   CAT_R_BACK   back from the trash, undone - glad
+cat_react:
+    cmp byte [cat_on], 0
+    je .off
+    pushad
+    call cat_mark
+    mov ebx, [timer_ms]
+    mov byte [cat_state], CAT_SIT
+    lea ecx, [ebx + 3000]
+    mov [cat_until], ecx
+    mov dword [cat_play_until], 0
+    cmp eax, CAT_R_TIDY
+    jne .not_tidy
+    lea ecx, [ebx + 2000]
+    mov [cat_heart_until], ecx
+    mov esi, cat_joy
+    mov eax, 5
+    call cat_adjust
+    mov eax, SND_PURR
+    call snd_play
+    mov esi, cat_msg_tidy
+    jmp .say
+.not_tidy:
+    cmp eax, CAT_R_GONE
+    jne .back
+    mov eax, SND_MEOW
+    call snd_play
+    mov esi, cat_msg_gone
+    jmp .say
+.back:
+    mov esi, cat_msg_back
+.say:
+    mov ecx, 2500
+    call cat_say
+    call cat_mark
+    popad
+.off:
+    ret
+
+CAT_R_TIDY     equ 1
+CAT_R_GONE     equ 2
+CAT_R_BACK     equ 3
 
 ; His rectangle (his Zs, the bowl, the heart, the panel) to be drawn again
 cat_mark:
@@ -886,6 +963,9 @@ cat_seed         dd 0x1E5
 cat_msg_z        db "z", 0
 cat_msg_zz       db "Z", 0
 cat_msg_meow     db "Meow!", 0
+cat_msg_tidy     db "Purr... nice and tidy!", 0
+cat_msg_gone     db "Eek! Gone for good?!", 0
+cat_msg_back     db "Welcome back!", 0
 cat_msg_nom      db "Nom nom!", 0
 cat_msg_full     db "Lex isn't hungry", 0
 cat_msg_play     db "Lex chases the pointer!", 0

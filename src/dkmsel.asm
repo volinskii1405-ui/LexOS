@@ -538,7 +538,8 @@ dkm_trash_do:
     mov byte [dki_rescan], 1
     mov byte [dk_fm_refresh], 1
     mov byte [dk_redraw_all], 1
-    call snd_click
+    mov eax, SND_TRASH                    ; (a whoosh)
+    call snd_play
     popad
     ret
 

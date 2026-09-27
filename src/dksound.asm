@@ -20,9 +20,12 @@ SND_NOTIFY     equ 3
 SND_MEOW       equ 4                      ; (Lex: src/dkcat.asm)
 SND_PURR       equ 5
 SND_NOM        equ 6
-SND_COUNT      equ 7                      ; (up to TR_BASE: 7 at most)
-SND_BASE       equ 0x3F10000              ; 64KB each (past HTTPD_REQ)
-SND_SLOT       equ 0x10000
+SND_TRASH      equ 7                      ; (files into the trash)
+SND_EMPTY      equ 8                      ; (the trash emptied, gone for good)
+SND_RESTORE    equ 9                      ; (back from the trash, undone)
+SND_COUNT      equ 10                     ; (up to TR_BASE: 14 at most)
+SND_BASE       equ 0x3F10000              ; 32KB each (past HTTPD_REQ)
+SND_SLOT       equ 0x8000
 
 ; eax = SND_*: to be played (from anywhere, any task, an ISR too)
 snd_play:
@@ -77,7 +80,7 @@ snd_work:
     jnc .next
     mov eax, [snd_voice]
     mov esi, edx
-    shl esi, 16                           ; (SND_SLOT)
+    shl esi, 15                           ; (SND_SLOT)
     add esi, SND_BASE
     mov ecx, [snd_len + edx*4]
     call mixer_write
@@ -136,7 +139,7 @@ snd_make:
     xor ebp, ebp                          ; the sound
 .sound:
     mov edi, ebp
-    shl edi, 16
+    shl edi, 15
     add edi, SND_BASE
     mov [snd_start_ptr], edi
 .note:
@@ -237,3 +240,7 @@ snd_notes:
     dw 70, 140, 9000, 1, 40, 0, 62, 180, 8000, 1, 40, 0          ; purr
     dw 70, 140, 9000, 1, 40, 0, 62, 180, 8000, 0
     dw 520, 45, 6000, 1, 45, 0, 520, 45, 6000, 1, 45, 0, 660, 70, 6000, 0 ; nom nom
+    dw 880, 30, 5000, 740, 30, 5500, 620, 35, 6000, 520, 40, 6000, 440, 60, 5000, 0 ; whoosh
+    dw 160, 30, 12000, 1, 15, 0, 120, 30, 12000, 1, 15, 0, 190, 30, 12000, 1, 15, 0
+    dw 100, 80, 10000, 0                                          ; crunch
+    dw 440, 40, 6000, 587, 40, 6500, 784, 70, 7000, 0             ; back again

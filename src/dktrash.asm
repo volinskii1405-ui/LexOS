@@ -72,6 +72,10 @@ dkt_restore:
     mov byte [dk_fm_refresh], 1
     mov byte [dki_rescan], 1
     mov byte [dk_redraw_all], 1
+    mov eax, SND_RESTORE                  ; (back again - Lex glad)
+    call snd_play
+    mov eax, CAT_R_BACK
+    call cat_react
     popad
     ret
 
@@ -527,6 +531,10 @@ dkt_empty_do:
     call wget_append
     mov byte [edi], 0
     call dk_toast
+    mov eax, SND_EMPTY                    ; a crunch, and Lex is pleased
+    call snd_play
+    mov eax, CAT_R_TIDY
+    call cat_react
     mov byte [dk_fm_refresh], 1
     mov byte [dki_rescan], 1
     mov byte [dk_redraw_all], 1
@@ -662,6 +670,10 @@ dkt_forever_do:
     call wget_append_num
     mov byte [edi], 0
     call dk_toast
+    mov eax, SND_EMPTY                    ; a crunch - Lex startled
+    call snd_play
+    mov eax, CAT_R_GONE
+    call cat_react
     call dk_sel_clear
     mov dword [dk_fm_sel], -1
     mov byte [dk_fm_refresh], 1
