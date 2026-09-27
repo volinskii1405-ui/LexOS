@@ -70,7 +70,10 @@ ifeq ($(UNAME_S),Darwin)
 else ifeq ($(OS),Windows_NT)
 	AUDIODEV ?= dsound
 else
-	AUDIODEV ?= pa
+	# PipeWire's own backend where QEMU has it (8.1+; Fedora and other
+	# PipeWire systems): through its PulseAudio stand-in ("pa") QEMU
+	# stalls the whole machine while a sound plays
+	AUDIODEV ?= $(shell qemu-system-i386 -audiodev help 2>/dev/null | grep -qx pipewire && echo pipewire || echo pa)
 endif
 
 # The host folder LexOS's `hostls`/`hostget` see (src/hostfs.asm): QEMU

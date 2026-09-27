@@ -1104,9 +1104,13 @@ qemu-system-i386 -m 128 -drive format=raw,file=os-image.bin \
     -device adlib,audiodev=snd0,iobase=0x220 -device sb16,audiodev=snd0
 ```
 
-(swap `pa` for `alsa`/`coreaudio`/`dsound` depending on your host; run
-`qemu-system-i386 -audiodev help` to see which backends your build
-supports.)
+(swap `pa` for `pipewire`/`alsa`/`coreaudio`/`dsound` depending on your
+host; run `qemu-system-i386 -audiodev help` to see which backends your
+build supports.) On a PipeWire system (Fedora, recent Ubuntu) use
+`pipewire` - through PipeWire's PulseAudio stand-in QEMU stalls the
+whole machine while a sound plays. `make run` picks `pipewire` by itself
+when QEMU has it (QEMU 8.1+; on Fedora the `qemu-audio-pipewire`
+package).
 
 **VirtualBox**: create a new VM (Type: Other, Version: Other/Unknown,
 no EFI), attach the image as an IDE hard disk (not as an optical
