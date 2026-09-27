@@ -59,6 +59,7 @@ kernel_start:
     mov si, welcome_msg
     call print_string
     call jnl_boot_note       ; (src/fsjournal.asm: a write finished at boot?)
+    call dkfs_boot_check     ; not shut down properly last time: fsck (src/dkfscheck.asm)
 
     call fs_ensure_readme    ; creates README.TXT in the root if it doesn't exist yet
 
@@ -554,4 +555,5 @@ kext_start:
 %include "src/dkusers.asm"
 %include "src/dkcpanel.asm"
 %include "src/dksaver.asm"
+%include "src/dkfscheck.asm"
 kext_end:

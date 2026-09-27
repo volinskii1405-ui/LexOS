@@ -885,6 +885,7 @@ fs_fsck:
 .slot_next:
     mov ebx, [jnl_slot]
     inc ebx
+    call dkfs_progress                    ; (at boot: its bar, src/dkfscheck.asm)
     jmp .slot
 .slots_done:
     ; the RAM slots' (TMP) chains are on the disk too: seen, not checked

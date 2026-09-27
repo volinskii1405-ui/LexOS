@@ -1138,6 +1138,7 @@ show_help:
 ; System shutdown (ACPI shutdown via the QEMU/Bochs port 0x604)
 ; ============================================================
 do_shutdown:
+    call dkfs_clean                ; (ended properly: src/dkfscheck.asm)
     call jnl_commit                ; (nothing left half written)
     call ata_flush                 ; (and all of it out of the disk's cache)
     mov ax, 0x2000
@@ -1157,6 +1158,7 @@ do_shutdown:
 ; reset line. Widely supported, including by QEMU.
 ; ============================================================
 do_reboot:
+    call dkfs_clean
     call jnl_commit
     call ata_flush                 ; (what's written: out of the disk's cache)
     cli
