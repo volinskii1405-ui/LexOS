@@ -381,6 +381,7 @@ desktop_task:
     call dk_vga_frame                     ; (src/dkwins.asm: mode 13h windows)
     call dk_check_changes
     call dki_work                         ; (src/dkicons.asm: /DESKTOP)
+    call dka_work                         ; (src/dkanim.asm: animations)
     pushfd
     cli                                   ; (dk_mark from programs' blits)
     mov al, [dk_redraw_all]
@@ -539,6 +540,7 @@ dk_win_open:
     inc dword [dk_zcount]
     mov byte [dk_redraw_all], 1
     mov eax, ecx
+    call dka_opened                       ; (src/dkanim.asm: it grows)
 .out:
     pop edi
     pop esi
@@ -1462,7 +1464,11 @@ dk_click:
     call dk_taskbar_window                ; -> eax = its window, or -1
     cmp eax, -1
     je .done
+    cmp byte [dkw_hidden + eax], 0
     mov byte [dkw_hidden + eax], 0
+    je .was_shown
+    call dka_restore                      ; (src/dkanim.asm: out of its button)
+.was_shown:
     call dk_mark_window                   ; (all of it: it was away)
     call dk_raise
     call dk_focus_console
@@ -1537,6 +1543,8 @@ dk_click:
 .minimize:
     mov byte [dkw_hidden + esi], 1
     mov byte [dk_redraw_all], 1
+    mov eax, esi
+    call dka_minimize                     ; (src/dkanim.asm: into its button)
     jmp .done
 .client:
     push eax                              ; the bottom-right corner of one
@@ -1972,6 +1980,8 @@ dk_render:
     movzx eax, byte [dk_zorder + ecx]
     cmp byte [dkw_hidden + eax], 0
     jne .win_next
+    cmp eax, [dka_hold]                   ; (still growing: src/dkanim.asm)
+    je .win_next
     call dk_draw_window
 .win_next:
     inc ecx
@@ -1993,6 +2003,7 @@ dk_render:
     call dk_draw_sub                      ; (src/dkname.asm: Create >)
 .no_ctx:
     call dk_snap_draw                     ; (src/dkextra.asm: an edge's outline)
+    call dka_draw                         ; (src/dkanim.asm: a window growing)
     call dk_draw_toast
     call dkt_draw                         ; (src/dkextra.asm: the tooltip)
     call dkn_draw                         ; (src/dkname.asm: a name dialog)

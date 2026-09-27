@@ -679,12 +679,15 @@ dkx_ctx_do:
     jne .not_min
     mov byte [dkw_hidden + ebp], 1
     mov byte [dk_redraw_all], 1
+    mov eax, ebp
+    call dka_minimize                     ; (src/dkanim.asm)
     jmp .done
 .not_min:
     cmp eax, DKC_RESTORE
     jne .not_restore
     mov byte [dkw_hidden + ebp], 0
     mov eax, ebp
+    call dka_restore                      ; (src/dkanim.asm)
     call dk_mark_window
     call dk_raise
     call dk_focus_console

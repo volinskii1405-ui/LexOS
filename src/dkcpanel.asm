@@ -379,6 +379,18 @@ dkc_set_sounds:
     mov byte [dk_cfg_dirty], 1
     ret
 
+dkc_get_anim:                             ; 0 On, 1 Off (src/dkanim.asm)
+    movzx eax, byte [dka_enabled]
+    or eax, eax
+    setz al
+    ret
+dkc_set_anim:
+    or eax, eax
+    setz al
+    mov [dka_enabled], al
+    mov byte [dk_cfg_dirty], 1
+    ret
+
 dkc_get_none:
     mov eax, -1
     ret
@@ -733,6 +745,13 @@ dkc_cfg_save:
     stosb
     mov ax, 0x0A0D
     stosw
+    mov esi, dkc_cfg_anim
+    call wget_append
+    mov al, [dka_enabled]
+    add al, '0'
+    stosb
+    mov ax, 0x0A0D
+    stosw
     pop esi
     pop eax
     ret
@@ -743,6 +762,7 @@ dkc_cfg_load:
     mov dword [dkc_mouse], 2              ; (as they are when there's none)
     mov dword [dk_dbl_ms], 450
     mov byte [dkss_delay_i], 1
+    mov byte [dka_enabled], 1
     mov esi, dkc_cfg_mouse
     call dk_cfg_value                     ; -> eax
     jc .no_mouse
@@ -759,6 +779,13 @@ dkc_cfg_load:
     jae .no_dbl
     call dkc_set_dbl
 .no_dbl:
+    mov esi, dkc_cfg_anim
+    call dk_cfg_value
+    jc .no_anim
+    cmp eax, 2
+    jae .no_anim
+    mov [dka_enabled], al
+.no_anim:
     mov esi, dkc_cfg_saver
     call dk_cfg_value
     jc .done
@@ -793,6 +820,7 @@ dkc_rows_look  dd dk_msg_theme, dkc_o_theme, DK_THEMES, 66, dkc_get_theme, dkc_s
                dd dkc_l_wall, dkc_o_wall, 3, 72, dkc_get_wall, dkc_set_wall
                dd dkc_l_lex, dkc_o_onoff, 2, 72, dkc_get_lex, dkc_set_lex
                dd dkc_l_saver, dkc_o_saver, 4, 72, dkc_get_saver, dkc_set_saver
+               dd dkc_l_anim, dkc_o_onoff, 2, 72, dkc_get_anim, dkc_set_anim
                dd 0
 dkc_rows_sound dd dk_msg_sounds, dkc_o_onoff, 2, 72, dkc_get_sounds, dkc_set_sounds
                dd dkc_l_volume, dkc_o_mixer, 1, 120, dkc_get_none, dkc_set_mixer
@@ -828,6 +856,7 @@ dkc_n_en       db "English ", 0                ; (a name: not translated)
 dkc_l_wall     db "Wallpaper", 0
 dkc_l_lex      db "Lex the cat", 0
 dkc_l_saver    db "Screen saver", 0
+dkc_l_anim     db "Animations", 0
 dkc_l_volume   db "Volume", 0
 dkc_l_lang     db "Language", 0
 dkc_l_ru       db "Russian keys", 0
@@ -865,3 +894,4 @@ dkc_m_users_hint db "Each has a desktop and settings of their own.", 0
 dkc_cfg_mouse  db "mouse=", 0
 dkc_cfg_dbl    db "dbl=", 0
 dkc_cfg_saver  db "saver=", 0
+dkc_cfg_anim   db "anim=", 0
