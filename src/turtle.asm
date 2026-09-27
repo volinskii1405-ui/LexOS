@@ -8,14 +8,10 @@
 ;   RIGHT 20
 ;   REPEAT 4 [ FORWARD 50 RIGHT 90 ]
 ; and draws whatever path the turtle traces on a VGA mode 13h canvas,
-; the same save-and-restore footing as PROGRAMS/SNAKE.BIN - shown
-; until any key is pressed, same as view_bmp_file (src/paint.asm).
+; saving and restoring the console around it (src/vga.asm) - shown
+; until any key is pressed, same as view_bmp_file (src/view.asm).
 ;
 ; Exports: turtle_run
-;
-; No PROGRAMS/TURTLE.BIN stub (unlike snake/tetris/2048/calc/convert):
-; this takes a filename argument, so it's a plain shell command like
-; `play`/`view`/`chip8`, not a zero-argument `run`-able program.
 ;
 ; Commands: FORWARD/FD, BACKWARD/BACK/BK, LEFT/LT, RIGHT/RT (all take
 ; a number), PENUP/PU, PENDOWN/PD, HOME, CLEARSCREEN/CS, COLOR <0-15>,
@@ -38,16 +34,11 @@
 ; real turtle's position would, instead of drifting from rounding
 ; every single step down to the nearest pixel.
 ;
-; Line drawing is integer Bresenham (turtle_draw_line) - the same
-; algorithm src/paint.asm's paint_draw_line already uses, just not
-; reused directly: that one is built around paint's own brush-size/
-; color tool state (paint_fill_brush), not a plain "draw a 1px line
-; between two points" primitive.
+; Line drawing is integer Bresenham (turtle_draw_line).
 ;
 ; All of this file's own data is reached through ordinary
 ; "[label + reg32]" memory operands or plain "mov e[sd]i, label" -
-; never a 16-bit "mov si/di, label" - for the same reason as
-; src/snake.asm: by this point in the kernel image, addresses are past
+; never a 16-bit "mov si/di, label": by this point in the kernel image, addresses are past
 ; the 0x10000 mark a 16-bit register can hold. The exceptions are the
 ; msg_turtle_*/turtle_token_buf/turtle_cmd_* labels and `fs_tmp_name`
 ; (src/data.asm - see the note there), and parse_dec_word's own `si`
@@ -601,10 +592,7 @@ turtle_move:
 ; ============================================================
 ; Draws a 1px line from (turtle_ln_x0,turtle_ln_y0) to
 ; (turtle_ln_x1,turtle_ln_y1) in turtle_ln_color, clipped to the
-; 320x200 canvas - standard integer Bresenham, the same algorithm as
-; paint_draw_line (src/paint.asm), just built around this file's own
-; scratch variables and a plain pixel write instead of that one's
-; brush-stamping.
+; 320x200 canvas - standard integer Bresenham.
 ; ============================================================
 turtle_draw_line:
     pusha

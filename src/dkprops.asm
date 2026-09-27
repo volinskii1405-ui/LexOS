@@ -2,7 +2,8 @@
 ;
 ; Files' "Properties" and a desktop icon's "Properties..." open it: the
 ; name (with its icon), what kind of thing it is, the folder it's in,
-; its size (a folder: how many things are in it), when it last changed,
+; its size (a folder: all that's in it, its folders' too, and how many
+; files and folders that is), when it last changed,
 ; and a Read-only box to tick (as `attrib +r`: rm, ren, mv, writing it -
 ; all refused). OK keeps the box's change, Cancel or Esc doesn't; space
 ; ticks it too.
@@ -30,9 +31,9 @@ DKP_CHG_X      equ DKP_X + DKP_W - DKP_CHG_W - 16
 DKP_CHG_Y      equ DKP_Y + 44
 DKP_GRID_X     equ DKP_X + 24
 DKP_GRID_Y     equ DKP_Y + 116
-DKP_CELL_W     equ 54
+DKP_CELL_W     equ 48
 DKP_CELL_H     equ 44
-DKP_GRID_COLS  equ 8
+DKP_GRID_COLS  equ 9
 
 ; ecx = the slot of what it's about
 dkp_ask:
@@ -206,38 +207,55 @@ dkp_load:
     mov esi, dkp_m_bytes
     call wget_append
     pop eax
-    cmp eax, 1024                         ; (and in KB, if it's that big)
+    cmp eax, 1024                         ; (and in KB, or MB, if it's that big)
     jb .sized
     mov esi, dkp_m_open
     call wget_append
+    cmp eax, 1024 * 1024
+    jae .mb
     add eax, 1023
     shr eax, 10
     call wget_append_num
     mov esi, dkp_m_kb
     call wget_append
     jmp .sized
-.folder_size:
-    xor ebx, ebx                          ; what's in it
+.mb:
+    shr eax, 10                           ; tenths of a MB, rounded (KB first:
+                                          ;  no overflow)
+    imul eax, eax, 10
+    add eax, 512
+    shr eax, 10
     xor edx, edx
-    mov ecx, [dkn_slot]
-.count:
-    cmp ebx, FS_TOTAL_SLOTS
-    jae .counted
-    mov eax, ebx
-    call fs_read_slot
-    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_FREE
-    je .count_next
-    cmp [SCRATCH_ADDR + FS_PARENT_OFFSET], cl
-    jne .count_next
-    inc edx
-.count_next:
-    inc ebx
-    jmp .count
-.counted:
-    mov eax, edx
+    mov ecx, 10
+    div ecx
+    push edx
     call wget_append_num
-    mov esi, dkp_m_items
+    pop edx
+    mov byte [edi], '.'
+    inc edi
+    mov al, dl
+    add al, '0'
+    mov [edi], al
+    inc edi
+    mov esi, dkp_m_mb
     call wget_append
+    jmp .sized
+.folder_size:
+    call dkp_folder_sum                   ; all that's in it, however deep
+    push edi                              ; "files: 12, folders: 3"
+    mov edi, dkp_inside_text
+    mov esi, dkp_m_files
+    call wget_append
+    mov eax, [dkp_sum_files]
+    call wget_append_num
+    mov esi, dkp_m_folders
+    call wget_append
+    mov eax, [dkp_sum_dirs]
+    call wget_append_num
+    mov byte [edi], 0
+    pop edi
+    mov eax, [dkp_sum_bytes]
+    jmp .bytes
 .sized:
     mov byte [edi], 0
     ; its kind, and its icon
@@ -279,6 +297,73 @@ dkp_load:
     call dka_slot_look                    ; -> al
     mov [dkp_look], al
     mov [dkp_look_was], al
+    popad
+    ret
+
+; dkn_slot, a folder -> dkp_sum_bytes, dkp_sum_files, dkp_sum_dirs: all
+; that's in it, in its folders too, however deep. Every slot is read
+; once (its parent, its kind, its size), then each one's folders are
+; followed up towards the root: does the way pass through this one?
+dkp_folder_sum:
+    pushad
+    xor eax, eax
+    mov [dkp_sum_bytes], eax
+    mov [dkp_sum_files], eax
+    mov [dkp_sum_dirs], eax
+    xor ebx, ebx
+.read:
+    cmp ebx, FS_TOTAL_SLOTS
+    jae .walk
+    mov eax, ebx
+    call fs_read_slot
+    mov al, [SCRATCH_ADDR + FS_TYPE_OFFSET]
+    mov [dkp_s_type + ebx], al
+    mov al, [SCRATCH_ADDR + FS_PARENT_OFFSET]
+    mov [dkp_s_parent + ebx], al
+    xor eax, eax
+    cmp byte [dkp_s_type + ebx], FS_TYPE_FILE
+    jne .not_file
+    call fs_get_size
+.not_file:
+    cmp byte [dkp_s_type + ebx], FS_TYPE_PROGRAM
+    jne .sized
+    movzx eax, byte [SCRATCH_ADDR + FS_CONTENT_OFFSET]
+.sized:
+    mov [dkp_s_size + ebx*4], eax
+    inc ebx
+    jmp .read
+.walk:
+    xor ebx, ebx
+.each:
+    cmp ebx, FS_TOTAL_SLOTS
+    jae .done
+    cmp byte [dkp_s_type + ebx], FS_TYPE_FREE
+    je .next
+    movzx eax, byte [dkp_s_parent + ebx]
+    mov ecx, 64                           ; (a loop in a broken disk: given up)
+.up:
+    cmp eax, FS_ROOT_BYTE
+    je .next
+    cmp eax, [dkn_slot]
+    je .inside
+    cmp byte [dkp_s_type + eax], FS_TYPE_DIR
+    jne .next
+    movzx eax, byte [dkp_s_parent + eax]
+    loop .up
+    jmp .next
+.inside:
+    cmp byte [dkp_s_type + ebx], FS_TYPE_DIR
+    jne .a_file
+    inc dword [dkp_sum_dirs]
+    jmp .next
+.a_file:
+    inc dword [dkp_sum_files]
+    mov eax, [dkp_s_size + ebx*4]
+    add [dkp_sum_bytes], eax
+.next:
+    inc ebx
+    jmp .each
+.done:
     popad
     ret
 
@@ -497,8 +582,8 @@ dkp_draw:
     mov edx, 1
     mov esi, COL_FRAME
     call dk_fill
-    cmp byte [dkp_type], FS_TYPE_DIR      ; the box (not for a folder)
-    je .error
+    cmp byte [dkp_type], FS_TYPE_DIR      ; the box (not for a folder:
+    je .inside                            ;  what's in it instead)
     mov eax, DKP_BOX_X
     mov ebx, DKP_BOX_Y
     mov ecx, 16
@@ -530,6 +615,20 @@ dkp_draw:
     mov ebx, DKP_BOX_Y + 20
     mov edx, COL_MUTED
     call dk_text
+    jmp .error
+.inside:
+    mov esi, dkp_l_inside
+    mov eax, DKP_X + 20
+    mov ebx, DKP_BOX_Y
+    mov edx, COL_MUTED
+    call dk_text
+    mov esi, dkp_inside_text
+    mov eax, DKP_VAL_X
+    mov edx, COL_TEXT
+    push edi
+    mov edi, DKP_VAL_MAX
+    call dk_text_raw
+    pop edi
 .error:
     mov esi, [dkn_err]
     or esi, esi
@@ -827,7 +926,7 @@ dkp_grid_at:
 dkp_picks        db IC_FOLDER, IC_FILE, IC_TEXT, IC_APP, IC_IMAGE, IC_SOUND
                  db IC_SCRIPT, IC_CSRC, IC_BAS, IC_TRG, IC_CH8, IC_CFG, IC_WEB
                  db IC_NOTEPAD, IC_ZIP, IC_GAME, IC_TERM, IC_CAT, IC_GEAR
-                 db IC_STAR, IC_MUSIC, IC_TRASH
+                 db IC_STAR, IC_MUSIC, IC_TRASH, IC_PAINT, IC_CALC
 DKP_PICKS        equ $ - dkp_picks
 dkp_link         times DKI_PATH + 2 db 0
 dkp_l_change     db "Change icon...", 0
@@ -847,6 +946,13 @@ dkp_up           times 8 dd 0
 dkp_name         times FS_NAME_LEN + 1 db 0
 dkp_where        times 128 db 0
 dkp_size_text    times 64 db 0
+dkp_inside_text  times 64 db 0
+dkp_sum_bytes    dd 0
+dkp_sum_files    dd 0
+dkp_sum_dirs     dd 0
+dkp_s_type       times FS_TOTAL_SLOTS db 0
+dkp_s_parent     times FS_TOTAL_SLOTS db 0
+dkp_s_size       times FS_TOTAL_SLOTS dd 0
 dkp_time_text    times 24 db 0
 dkp_labels       dd dkp_l_where, dkp_l_kind, dkp_l_size, dkp_l_time
 dkp_values       dd dkp_where, 0, dkp_size_text, dkp_time_text
@@ -869,7 +975,10 @@ dkp_m_reading    db "Reading...", 0
 dkp_m_bytes      db " bytes", 0
 dkp_m_open       db " (", 0
 dkp_m_kb         db " KB)", 0
-dkp_m_items      db " items", 0
+dkp_m_mb         db " MB)", 0
+dkp_l_inside     db "Inside:", 0
+dkp_m_files      db "files: ", 0
+dkp_m_folders    db ", folders: ", 0
 dkp_k_folder     db "Folder", 0
 dkp_k_program    db "Program", 0
 dkp_k_text       db "Text file", 0

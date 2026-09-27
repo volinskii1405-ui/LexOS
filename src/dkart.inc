@@ -1,7 +1,7 @@
 ; dkart.inc - made by tools/mkicons.py: the picture icons, 32x32,
 ; each row: how many runs, then (x, length, 0xRRGGBB) for each
 
-DKA_COUNT equ 25
+DKA_COUNT equ 29
 dka_table:
     dd dkart_folder
     dd dkart_up
@@ -28,6 +28,10 @@ dka_table:
     dd dkart_star
     dd dkart_music
     dd dkart_link
+    dd dkart_paint
+    dd dkart_calc
+    dd dkart_desk
+    dd dkart_disk
 
 dkart_folder:
     db 0
@@ -8030,3 +8034,1051 @@ dkart_link:
     db 1
     db 0, 13
     dd 0x39424F
+dkart_paint:
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 1
+    db 12, 8
+    dd 0x9A6A3A
+    db 3
+    db 9, 4
+    dd 0x9A6A3A
+    db 13, 6
+    dd 0xE9C48A
+    db 19, 4
+    dd 0x9A6A3A
+    db 6
+    db 7, 3
+    dd 0x9A6A3A
+    db 10, 2
+    dd 0xE9C48A
+    db 12, 3
+    dd 0xFDD835
+    db 15, 4
+    dd 0xE9C48A
+    db 19, 3
+    dd 0x43A047
+    db 22, 3
+    dd 0x9A6A3A
+    db 7
+    db 6, 2
+    dd 0x9A6A3A
+    db 8, 3
+    dd 0xE9C48A
+    db 11, 5
+    dd 0xFDD835
+    db 16, 2
+    dd 0xE9C48A
+    db 18, 5
+    dd 0x43A047
+    db 23, 1
+    dd 0xE9C48A
+    db 24, 2
+    dd 0x9A6A3A
+    db 7
+    db 5, 2
+    dd 0x9A6A3A
+    db 7, 4
+    dd 0xE9C48A
+    db 11, 5
+    dd 0xFDD835
+    db 16, 2
+    dd 0xE9C48A
+    db 18, 5
+    dd 0x43A047
+    db 23, 2
+    dd 0xE9C48A
+    db 25, 2
+    dd 0x9A6A3A
+    db 7
+    db 4, 2
+    dd 0x9A6A3A
+    db 6, 5
+    dd 0xE9C48A
+    db 11, 5
+    dd 0xFDD835
+    db 16, 2
+    dd 0xE9C48A
+    db 18, 5
+    dd 0x43A047
+    db 23, 3
+    dd 0xE9C48A
+    db 26, 2
+    dd 0x9A6A3A
+    db 7
+    db 3, 2
+    dd 0x9A6A3A
+    db 5, 7
+    dd 0xE9C48A
+    db 12, 3
+    dd 0xFDD835
+    db 15, 4
+    dd 0xE9C48A
+    db 19, 3
+    dd 0x43A047
+    db 22, 5
+    dd 0xE9C48A
+    db 27, 2
+    dd 0x9A6A3A
+    db 7
+    db 3, 1
+    dd 0x9A6A3A
+    db 4, 3
+    dd 0xE9C48A
+    db 7, 3
+    dd 0xE53935
+    db 10, 14
+    dd 0xE9C48A
+    db 24, 3
+    dd 0x1E88E5
+    db 27, 1
+    dd 0xE9C48A
+    db 28, 1
+    dd 0x9A6A3A
+    db 6
+    db 2, 2
+    dd 0x9A6A3A
+    db 4, 2
+    dd 0xE9C48A
+    db 6, 5
+    dd 0xE53935
+    db 11, 12
+    dd 0xE9C48A
+    db 23, 5
+    dd 0x1E88E5
+    db 28, 2
+    dd 0x9A6A3A
+    db 7
+    db 2, 1
+    dd 0x9A6A3A
+    db 3, 3
+    dd 0xE9C48A
+    db 6, 5
+    dd 0xE53935
+    db 11, 12
+    dd 0xE9C48A
+    db 23, 5
+    dd 0x1E88E5
+    db 28, 1
+    dd 0xE9C48A
+    db 29, 1
+    dd 0x9A6A3A
+    db 7
+    db 2, 1
+    dd 0x9A6A3A
+    db 3, 3
+    dd 0xE9C48A
+    db 6, 5
+    dd 0xE53935
+    db 11, 12
+    dd 0xE9C48A
+    db 23, 5
+    dd 0x1E88E5
+    db 28, 1
+    dd 0xE9C48A
+    db 29, 1
+    dd 0x9A6A3A
+    db 9
+    db 2, 1
+    dd 0x9A6A3A
+    db 3, 4
+    dd 0xE9C48A
+    db 7, 3
+    dd 0xE53935
+    db 10, 14
+    dd 0xE9C48A
+    db 24, 1
+    dd 0x1E88E5
+    db 25, 1
+    dd 0x5D4037
+    db 26, 1
+    dd 0x8D6E63
+    db 27, 2
+    dd 0xE9C48A
+    db 29, 1
+    dd 0x9A6A3A
+    db 6
+    db 1, 2
+    dd 0x9A6A3A
+    db 3, 21
+    dd 0xE9C48A
+    db 24, 1
+    dd 0x5D4037
+    db 25, 1
+    dd 0x8D6E63
+    db 26, 3
+    dd 0xE9C48A
+    db 29, 2
+    dd 0x9A6A3A
+    db 6
+    db 2, 1
+    dd 0x9A6A3A
+    db 3, 20
+    dd 0xE9C48A
+    db 23, 1
+    dd 0x5D4037
+    db 24, 1
+    dd 0x8D6E63
+    db 25, 4
+    dd 0xE9C48A
+    db 29, 1
+    dd 0x9A6A3A
+    db 8
+    db 2, 1
+    dd 0x9A6A3A
+    db 3, 5
+    dd 0xE9C48A
+    db 8, 3
+    dd 0x8E24AA
+    db 11, 11
+    dd 0xE9C48A
+    db 22, 1
+    dd 0x5D4037
+    db 23, 1
+    dd 0x8D6E63
+    db 24, 5
+    dd 0xE9C48A
+    db 29, 1
+    dd 0x9A6A3A
+    db 8
+    db 2, 1
+    dd 0x9A6A3A
+    db 3, 4
+    dd 0xE9C48A
+    db 7, 5
+    dd 0x8E24AA
+    db 12, 9
+    dd 0xE9C48A
+    db 21, 1
+    dd 0x5D4037
+    db 22, 1
+    dd 0x8D6E63
+    db 23, 6
+    dd 0xE9C48A
+    db 29, 1
+    dd 0x9A6A3A
+    db 8
+    db 2, 2
+    dd 0x9A6A3A
+    db 4, 3
+    dd 0xE9C48A
+    db 7, 5
+    dd 0x8E24AA
+    db 12, 8
+    dd 0xE9C48A
+    db 20, 1
+    dd 0x5D4037
+    db 21, 1
+    dd 0x8D6E63
+    db 23, 5
+    dd 0xE9C48A
+    db 28, 2
+    dd 0x9A6A3A
+    db 8
+    db 3, 1
+    dd 0x9A6A3A
+    db 4, 3
+    dd 0xE9C48A
+    db 7, 5
+    dd 0x8E24AA
+    db 12, 7
+    dd 0xE9C48A
+    db 19, 1
+    dd 0x5D4037
+    db 20, 1
+    dd 0x8D6E63
+    db 24, 4
+    dd 0xE9C48A
+    db 28, 1
+    dd 0x9A6A3A
+    db 8
+    db 3, 2
+    dd 0x9A6A3A
+    db 5, 3
+    dd 0xE9C48A
+    db 8, 3
+    dd 0x8E24AA
+    db 11, 7
+    dd 0xE9C48A
+    db 18, 1
+    dd 0x5D4037
+    db 19, 1
+    dd 0x8D6E63
+    db 24, 3
+    dd 0xE9C48A
+    db 27, 2
+    dd 0x9A6A3A
+    db 6
+    db 4, 2
+    dd 0x9A6A3A
+    db 6, 11
+    dd 0xE9C48A
+    db 17, 1
+    dd 0x5D4037
+    db 18, 1
+    dd 0x8D6E63
+    db 24, 2
+    dd 0xE9C48A
+    db 26, 2
+    dd 0x9A6A3A
+    db 7
+    db 5, 2
+    dd 0x9A6A3A
+    db 7, 9
+    dd 0xE9C48A
+    db 16, 1
+    dd 0x5D4037
+    db 17, 1
+    dd 0x8D6E63
+    db 18, 2
+    dd 0xE9C48A
+    db 23, 2
+    dd 0xE9C48A
+    db 25, 2
+    dd 0x9A6A3A
+    db 6
+    db 6, 2
+    dd 0x9A6A3A
+    db 8, 7
+    dd 0xE9C48A
+    db 15, 1
+    dd 0x5D4037
+    db 16, 1
+    dd 0x8D6E63
+    db 17, 7
+    dd 0xE9C48A
+    db 24, 2
+    dd 0x9A6A3A
+    db 6
+    db 7, 3
+    dd 0x9A6A3A
+    db 10, 1
+    dd 0xE9C48A
+    db 11, 4
+    dd 0x333333
+    db 15, 1
+    dd 0x8D6E63
+    db 16, 6
+    dd 0xE9C48A
+    db 22, 3
+    dd 0x9A6A3A
+    db 4
+    db 9, 2
+    dd 0x9A6A3A
+    db 11, 4
+    dd 0x333333
+    db 15, 4
+    dd 0xE9C48A
+    db 19, 4
+    dd 0x9A6A3A
+    db 2
+    db 11, 4
+    dd 0x333333
+    db 15, 5
+    dd 0x9A6A3A
+    db 1
+    db 11, 4
+    dd 0x333333
+    db 0
+dkart_calc:
+    db 0
+    db 1
+    db 6, 20
+    dd 0x39424F
+    db 3
+    db 6, 1
+    dd 0x39424F
+    db 7, 18
+    dd 0x5B6778
+    db 25, 1
+    dd 0x39424F
+    db 3
+    db 6, 1
+    dd 0x39424F
+    db 7, 18
+    dd 0x5B6778
+    db 25, 1
+    dd 0x39424F
+    db 5
+    db 6, 1
+    dd 0x39424F
+    db 7, 2
+    dd 0x5B6778
+    db 9, 14
+    dd 0xCFE8C8
+    db 23, 2
+    dd 0x5B6778
+    db 25, 1
+    dd 0x39424F
+    db 5
+    db 6, 1
+    dd 0x39424F
+    db 7, 2
+    dd 0x5B6778
+    db 9, 14
+    dd 0xCFE8C8
+    db 23, 2
+    dd 0x5B6778
+    db 25, 1
+    dd 0x39424F
+    db 7
+    db 6, 1
+    dd 0x39424F
+    db 7, 2
+    dd 0x5B6778
+    db 9, 7
+    dd 0xCFE8C8
+    db 16, 6
+    dd 0x2E4A2A
+    db 22, 1
+    dd 0xCFE8C8
+    db 23, 2
+    dd 0x5B6778
+    db 25, 1
+    dd 0x39424F
+    db 7
+    db 6, 1
+    dd 0x39424F
+    db 7, 2
+    dd 0x5B6778
+    db 9, 7
+    dd 0xCFE8C8
+    db 16, 6
+    dd 0x2E4A2A
+    db 22, 1
+    dd 0xCFE8C8
+    db 23, 2
+    dd 0x5B6778
+    db 25, 1
+    dd 0x39424F
+    db 7
+    db 6, 1
+    dd 0x39424F
+    db 7, 2
+    dd 0x5B6778
+    db 9, 7
+    dd 0xCFE8C8
+    db 16, 6
+    dd 0x2E4A2A
+    db 22, 1
+    dd 0xCFE8C8
+    db 23, 2
+    dd 0x5B6778
+    db 25, 1
+    dd 0x39424F
+    db 5
+    db 6, 1
+    dd 0x39424F
+    db 7, 2
+    dd 0x5B6778
+    db 9, 14
+    dd 0xCFE8C8
+    db 23, 2
+    dd 0x5B6778
+    db 25, 1
+    dd 0x39424F
+    db 5
+    db 6, 1
+    dd 0x39424F
+    db 7, 2
+    dd 0x5B6778
+    db 9, 14
+    dd 0xCFE8C8
+    db 23, 2
+    dd 0x5B6778
+    db 25, 1
+    dd 0x39424F
+    db 3
+    db 6, 1
+    dd 0x39424F
+    db 7, 18
+    dd 0x5B6778
+    db 25, 1
+    dd 0x39424F
+    db 3
+    db 6, 1
+    dd 0x39424F
+    db 7, 18
+    dd 0x5B6778
+    db 25, 1
+    dd 0x39424F
+    db 9
+    db 6, 1
+    dd 0x39424F
+    db 7, 2
+    dd 0x5B6778
+    db 9, 4
+    dd 0xE5E7EB
+    db 13, 1
+    dd 0x5B6778
+    db 14, 4
+    dd 0xE5E7EB
+    db 18, 1
+    dd 0x5B6778
+    db 19, 4
+    dd 0xE5E7EB
+    db 23, 2
+    dd 0x5B6778
+    db 25, 1
+    dd 0x39424F
+    db 9
+    db 6, 1
+    dd 0x39424F
+    db 7, 2
+    dd 0x5B6778
+    db 9, 4
+    dd 0xE5E7EB
+    db 13, 1
+    dd 0x5B6778
+    db 14, 4
+    dd 0xE5E7EB
+    db 18, 1
+    dd 0x5B6778
+    db 19, 4
+    dd 0xE5E7EB
+    db 23, 2
+    dd 0x5B6778
+    db 25, 1
+    dd 0x39424F
+    db 9
+    db 6, 1
+    dd 0x39424F
+    db 7, 2
+    dd 0x5B6778
+    db 9, 4
+    dd 0xE5E7EB
+    db 13, 1
+    dd 0x5B6778
+    db 14, 4
+    dd 0xE5E7EB
+    db 18, 1
+    dd 0x5B6778
+    db 19, 4
+    dd 0xE5E7EB
+    db 23, 2
+    dd 0x5B6778
+    db 25, 1
+    dd 0x39424F
+    db 3
+    db 6, 1
+    dd 0x39424F
+    db 7, 18
+    dd 0x5B6778
+    db 25, 1
+    dd 0x39424F
+    db 9
+    db 6, 1
+    dd 0x39424F
+    db 7, 2
+    dd 0x5B6778
+    db 9, 4
+    dd 0xE5E7EB
+    db 13, 1
+    dd 0x5B6778
+    db 14, 4
+    dd 0xE5E7EB
+    db 18, 1
+    dd 0x5B6778
+    db 19, 4
+    dd 0xF59E0B
+    db 23, 2
+    dd 0x5B6778
+    db 25, 1
+    dd 0x39424F
+    db 9
+    db 6, 1
+    dd 0x39424F
+    db 7, 2
+    dd 0x5B6778
+    db 9, 4
+    dd 0xE5E7EB
+    db 13, 1
+    dd 0x5B6778
+    db 14, 4
+    dd 0xE5E7EB
+    db 18, 1
+    dd 0x5B6778
+    db 19, 4
+    dd 0xF59E0B
+    db 23, 2
+    dd 0x5B6778
+    db 25, 1
+    dd 0x39424F
+    db 9
+    db 6, 1
+    dd 0x39424F
+    db 7, 2
+    dd 0x5B6778
+    db 9, 4
+    dd 0xE5E7EB
+    db 13, 1
+    dd 0x5B6778
+    db 14, 4
+    dd 0xE5E7EB
+    db 18, 1
+    dd 0x5B6778
+    db 19, 4
+    dd 0xF59E0B
+    db 23, 2
+    dd 0x5B6778
+    db 25, 1
+    dd 0x39424F
+    db 3
+    db 6, 1
+    dd 0x39424F
+    db 7, 18
+    dd 0x5B6778
+    db 25, 1
+    dd 0x39424F
+    db 9
+    db 6, 1
+    dd 0x39424F
+    db 7, 2
+    dd 0x5B6778
+    db 9, 4
+    dd 0xE5E7EB
+    db 13, 1
+    dd 0x5B6778
+    db 14, 4
+    dd 0xE5E7EB
+    db 18, 1
+    dd 0x5B6778
+    db 19, 4
+    dd 0xF59E0B
+    db 23, 2
+    dd 0x5B6778
+    db 25, 1
+    dd 0x39424F
+    db 9
+    db 6, 1
+    dd 0x39424F
+    db 7, 2
+    dd 0x5B6778
+    db 9, 4
+    dd 0xE5E7EB
+    db 13, 1
+    dd 0x5B6778
+    db 14, 4
+    dd 0xE5E7EB
+    db 18, 1
+    dd 0x5B6778
+    db 19, 4
+    dd 0xF59E0B
+    db 23, 2
+    dd 0x5B6778
+    db 25, 1
+    dd 0x39424F
+    db 9
+    db 6, 1
+    dd 0x39424F
+    db 7, 2
+    dd 0x5B6778
+    db 9, 4
+    dd 0xE5E7EB
+    db 13, 1
+    dd 0x5B6778
+    db 14, 4
+    dd 0xE5E7EB
+    db 18, 1
+    dd 0x5B6778
+    db 19, 4
+    dd 0xF59E0B
+    db 23, 2
+    dd 0x5B6778
+    db 25, 1
+    dd 0x39424F
+    db 3
+    db 6, 1
+    dd 0x39424F
+    db 7, 18
+    dd 0x5B6778
+    db 25, 1
+    dd 0x39424F
+    db 9
+    db 6, 1
+    dd 0x39424F
+    db 7, 2
+    dd 0x5B6778
+    db 9, 4
+    dd 0xE5E7EB
+    db 13, 1
+    dd 0x5B6778
+    db 14, 4
+    dd 0xE5E7EB
+    db 18, 1
+    dd 0x5B6778
+    db 19, 4
+    dd 0xF59E0B
+    db 23, 2
+    dd 0x5B6778
+    db 25, 1
+    dd 0x39424F
+    db 9
+    db 6, 1
+    dd 0x39424F
+    db 7, 2
+    dd 0x5B6778
+    db 9, 4
+    dd 0xE5E7EB
+    db 13, 1
+    dd 0x5B6778
+    db 14, 4
+    dd 0xE5E7EB
+    db 18, 1
+    dd 0x5B6778
+    db 19, 4
+    dd 0xF59E0B
+    db 23, 2
+    dd 0x5B6778
+    db 25, 1
+    dd 0x39424F
+    db 9
+    db 6, 1
+    dd 0x39424F
+    db 7, 2
+    dd 0x5B6778
+    db 9, 4
+    dd 0xE5E7EB
+    db 13, 1
+    dd 0x5B6778
+    db 14, 4
+    dd 0xE5E7EB
+    db 18, 1
+    dd 0x5B6778
+    db 19, 4
+    dd 0xF59E0B
+    db 23, 2
+    dd 0x5B6778
+    db 25, 1
+    dd 0x39424F
+    db 3
+    db 6, 1
+    dd 0x39424F
+    db 7, 18
+    dd 0x5B6778
+    db 25, 1
+    dd 0x39424F
+    db 3
+    db 6, 1
+    dd 0x39424F
+    db 7, 18
+    dd 0x5B6778
+    db 25, 1
+    dd 0x39424F
+    db 1
+    db 6, 20
+    dd 0x39424F
+    db 0
+dkart_desk:
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 1
+    db 3, 26
+    dd 0x39424F
+    db 1
+    db 3, 26
+    dd 0x39424F
+    db 3
+    db 3, 2
+    dd 0x39424F
+    db 5, 22
+    dd 0x2E6FD8
+    db 27, 2
+    dd 0x39424F
+    db 3
+    db 3, 2
+    dd 0x39424F
+    db 5, 22
+    dd 0x2E73D4
+    db 27, 2
+    dd 0x39424F
+    db 3
+    db 3, 2
+    dd 0x39424F
+    db 5, 22
+    dd 0x2E78D0
+    db 27, 2
+    dd 0x39424F
+    db 5
+    db 3, 2
+    dd 0x39424F
+    db 5, 3
+    dd 0x2F7DCD
+    db 8, 3
+    dd 0xFFFFFF
+    db 11, 16
+    dd 0x2F7DCD
+    db 27, 2
+    dd 0x39424F
+    db 5
+    db 3, 2
+    dd 0x39424F
+    db 5, 3
+    dd 0x2F82C9
+    db 8, 3
+    dd 0xFFFFFF
+    db 11, 16
+    dd 0x2F82C9
+    db 27, 2
+    dd 0x39424F
+    db 5
+    db 3, 2
+    dd 0x39424F
+    db 5, 3
+    dd 0x2F87C6
+    db 8, 3
+    dd 0xFFFFFF
+    db 11, 16
+    dd 0x2F87C6
+    db 27, 2
+    dd 0x39424F
+    db 3
+    db 3, 2
+    dd 0x39424F
+    db 5, 22
+    dd 0x308CC2
+    db 27, 2
+    dd 0x39424F
+    db 3
+    db 3, 2
+    dd 0x39424F
+    db 5, 22
+    dd 0x3091BF
+    db 27, 2
+    dd 0x39424F
+    db 5
+    db 3, 2
+    dd 0x39424F
+    db 5, 3
+    dd 0x3095BB
+    db 8, 3
+    dd 0xFDE68A
+    db 11, 16
+    dd 0x3095BB
+    db 27, 2
+    dd 0x39424F
+    db 5
+    db 3, 2
+    dd 0x39424F
+    db 5, 3
+    dd 0x319AB7
+    db 8, 3
+    dd 0xFDE68A
+    db 11, 16
+    dd 0x319AB7
+    db 27, 2
+    dd 0x39424F
+    db 5
+    db 3, 2
+    dd 0x39424F
+    db 5, 3
+    dd 0x319FB4
+    db 8, 3
+    dd 0xFDE68A
+    db 11, 16
+    dd 0x319FB4
+    db 27, 2
+    dd 0x39424F
+    db 3
+    db 3, 2
+    dd 0x39424F
+    db 5, 22
+    dd 0x31A4B0
+    db 27, 2
+    dd 0x39424F
+    db 3
+    db 3, 2
+    dd 0x39424F
+    db 5, 22
+    dd 0x32A9AD
+    db 27, 2
+    dd 0x39424F
+    db 3
+    db 3, 2
+    dd 0x39424F
+    db 5, 22
+    dd 0x32AEA9
+    db 27, 2
+    dd 0x39424F
+    db 3
+    db 3, 2
+    dd 0x39424F
+    db 5, 22
+    dd 0x33B3A6
+    db 27, 2
+    dd 0x39424F
+    db 1
+    db 3, 26
+    dd 0x39424F
+    db 1
+    db 3, 26
+    dd 0x39424F
+    db 1
+    db 13, 6
+    dd 0x5B6778
+    db 1
+    db 13, 6
+    dd 0x5B6778
+    db 1
+    db 13, 6
+    dd 0x5B6778
+    db 1
+    db 9, 14
+    dd 0x39424F
+    db 1
+    db 9, 14
+    dd 0x39424F
+    db 0
+    db 0
+    db 0
+dkart_disk:
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 1
+    db 3, 26
+    dd 0x39424F
+    db 3
+    db 3, 1
+    dd 0x39424F
+    db 4, 24
+    dd 0xD5DCE5
+    db 28, 1
+    dd 0x39424F
+    db 3
+    db 3, 1
+    dd 0x39424F
+    db 4, 24
+    dd 0xD5DCE5
+    db 28, 1
+    dd 0x39424F
+    db 3
+    db 3, 1
+    dd 0x39424F
+    db 4, 24
+    dd 0xD5DCE5
+    db 28, 1
+    dd 0x39424F
+    db 3
+    db 3, 1
+    dd 0x39424F
+    db 4, 24
+    dd 0xB8C2CF
+    db 28, 1
+    dd 0x39424F
+    db 3
+    db 3, 1
+    dd 0x39424F
+    db 4, 24
+    dd 0xB8C2CF
+    db 28, 1
+    dd 0x39424F
+    db 3
+    db 3, 1
+    dd 0x39424F
+    db 4, 24
+    dd 0xB8C2CF
+    db 28, 1
+    dd 0x39424F
+    db 3
+    db 3, 1
+    dd 0x39424F
+    db 4, 24
+    dd 0xB8C2CF
+    db 28, 1
+    dd 0x39424F
+    db 5
+    db 3, 1
+    dd 0x39424F
+    db 4, 19
+    dd 0xB8C2CF
+    db 23, 3
+    dd 0x22C55E
+    db 26, 2
+    dd 0xB8C2CF
+    db 28, 1
+    dd 0x39424F
+    db 7
+    db 3, 1
+    dd 0x39424F
+    db 4, 2
+    dd 0xB8C2CF
+    db 6, 16
+    dd 0x8A96A6
+    db 22, 1
+    dd 0xB8C2CF
+    db 23, 3
+    dd 0x22C55E
+    db 26, 2
+    dd 0xB8C2CF
+    db 28, 1
+    dd 0x39424F
+    db 7
+    db 3, 1
+    dd 0x39424F
+    db 4, 2
+    dd 0xB8C2CF
+    db 6, 16
+    dd 0x8A96A6
+    db 22, 1
+    dd 0xB8C2CF
+    db 23, 3
+    dd 0x22C55E
+    db 26, 2
+    dd 0xB8C2CF
+    db 28, 1
+    dd 0x39424F
+    db 5
+    db 3, 1
+    dd 0x39424F
+    db 4, 19
+    dd 0xB8C2CF
+    db 23, 3
+    dd 0x22C55E
+    db 26, 2
+    dd 0xB8C2CF
+    db 28, 1
+    dd 0x39424F
+    db 3
+    db 3, 1
+    dd 0x39424F
+    db 4, 24
+    dd 0xB8C2CF
+    db 28, 1
+    dd 0x39424F
+    db 3
+    db 3, 1
+    dd 0x39424F
+    db 4, 24
+    dd 0xB8C2CF
+    db 28, 1
+    dd 0x39424F
+    db 3
+    db 3, 1
+    dd 0x39424F
+    db 4, 24
+    dd 0xB8C2CF
+    db 28, 1
+    dd 0x39424F
+    db 1
+    db 3, 26
+    dd 0x39424F
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0

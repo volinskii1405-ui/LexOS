@@ -233,8 +233,8 @@ welcome_boot:
     jc .done
     cmp byte [wl_did_setup], 0
     jne .desktop
-    cmp dword [user_pass_hash], 0
-    je .desktop
+    call dkus_want_login                  ; (a password, or other users:
+    jc .desktop                           ;  src/dkusers.asm)
     call wl_login
 .desktop:
     call wl_desktop
@@ -258,14 +258,22 @@ welcome_relogin:
 wl_login:
     pushad
     call wl_begin
+    call dkus_login_start                 ; (the users: src/dkusers.asm)
     mov byte [wl_pass_len], 0
     mov dword [wl_wrong], 0
 .ask:
     call wl_draw_login
     call read_key
+    call dkus_login_key                   ; Left / Right: another user
+    jc .not_other
+    mov byte [wl_pass_len], 0
+    mov byte [wl_pass], 0
+    mov dword [wl_wrong], 0
+    jmp .ask
+.not_other:
     cmp al, 13
     je .check
-    cmp dword [user_pass_hash], 0         ; (none: nothing to type)
+    cmp dword [dkus_sel_hash], 0          ; (none: nothing to type)
     je .ask
     mov edi, wl_pass
     movzx ecx, byte [wl_pass_len]
@@ -274,12 +282,12 @@ wl_login:
     mov [wl_pass_len], cl
     jmp .ask
 .check:
-    cmp dword [user_pass_hash], 0
+    cmp dword [dkus_sel_hash], 0
     je .in
     movzx ecx, byte [wl_pass_len]
     mov esi, wl_pass
     call wl_hash
-    cmp eax, [user_pass_hash]
+    cmp eax, [dkus_sel_hash]
     je .in
     mov byte [wl_pass_len], 0             ; wrong: again, with a shake
     mov byte [wl_pass], 0
@@ -292,6 +300,7 @@ wl_login:
     mov byte [wl_pass_len], 0
     mov byte [wl_pass], 0
     mov dword [wl_wrong], 0
+    call dkus_login_done                  ; (another user: theirs swapped in)
     call wl_end
     popad
     ret
@@ -1096,7 +1105,7 @@ wl_draw_login:
     mov ebx, WL_CARD_Y + 70
     mov ecx, 40
     call wl_disc
-    movzx ecx, byte [user_nickname]       ; its letter
+    movzx ecx, byte [dkus_sel_nick]       ; its letter
     cmp cl, 'a'
     jb .upper
     cmp cl, 'z'
@@ -1114,7 +1123,7 @@ wl_draw_login:
     mov edi, wl_buf                       ; "Welcome back, NICK"
     mov esi, wl_msg_back
     call wget_append
-    mov esi, user_nickname
+    mov esi, dkus_sel_nick
     call wget_append
     mov byte [edi], 0
     mov esi, wl_buf
@@ -1125,7 +1134,7 @@ wl_draw_login:
     mov edx, WL_INK
     mov ecx, 2
     call wl_card_text
-    cmp dword [user_pass_hash], 0         ; no password: a button, and
+    cmp dword [dkus_sel_hash], 0          ; no password: a button, and
     jne .password                         ; Enter alone
     mov eax, WL_CARD_X + WL_CARD_W / 2 - 110
     add eax, [wl_shift]
@@ -1192,6 +1201,7 @@ wl_draw_login:
     mov ebx, 262
     mov ecx, 1
     call wl_card_text
+    call dkus_login_draw                  ; (the others: src/dkusers.asm)
     call wl_show_card
     popad
     ret

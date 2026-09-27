@@ -240,7 +240,8 @@ dk_video_on:
     call bga_write
     mov dword [mouse_max_x], DESK_W - 1
     mov dword [mouse_max_y], DESK_H - 1
-    mov dword [mouse_speed], 2
+    mov eax, [dkc_mouse]                  ; (the Control panel's Mouse)
+    mov [mouse_speed], eax
     mov byte [gfx_mouse_desk], 1          ; (dk_vga_frame feeds paint & co)
     mov dword [mouse_x], DESK_W / 2
     mov dword [mouse_y], DESK_H / 2
@@ -364,6 +365,11 @@ desktop_task:
     call dkx_fc_work                      ; (src/dkextra.asm: Files' clipboard)
     call dkd_work                         ; (src/dkdrop.asm: a drop)
     call dkt_del_work                     ; (src/dktrash.asm: Del)
+    call dku_work                         ; (src/dkundo.asm: Ctrl+Z)
+    call dkl_work                         ; (src/dklock.asm: Win+L)
+    call dkss_work                        ; (src/dksaver.asm: the screen saver)
+    call dkw_work                         ; (src/dkwall.asm: the wallpaper)
+    call dkf_thumb_work                   ; (src/dkfview.asm: thumbnails)
     call dkx_cat_work                     ; (src/dkcat.asm: Lex)
     call dkt_work                         ; (src/dkextra.asm: the tooltip,
     call dkx_win_key                      ;  the Win key)
@@ -586,6 +592,7 @@ dk_win_single:
 ; Window eax to the front of the z-order
 dk_raise:
     pushad
+    mov byte [dkt_desk_focus], 0          ; (Del: a window's, not the icons)
     mov ecx, [dk_zcount]
     xor esi, esi
 .find:
@@ -1164,6 +1171,8 @@ dk_mouse_event:
     pushad
     mov eax, [dk_ev_x]
     mov ebx, [dk_ev_y]
+    call dkl_mouse                        ; (locked: src/dklock.asm)
+    jnc .done
     mov cl, [dk_btn_now]
     shr cl, 1                             ; the right button pressed: a
     mov ch, [dk_last_right]               ; context menu
@@ -1317,6 +1326,8 @@ dk_mouse_event:
     call dkc_move
     jmp .done
 .no_select:
+    call dkm_band_move                    ; a rubber band (src/dkmsel.asm)
+    jnc .done
     cmp dword [dki_drag], -1              ; a desktop icon being carried
     je .no_icon_drag                      ; (src/dkicons.asm)
     call dki_drag_move
@@ -1371,7 +1382,7 @@ dk_click:
     jb .no_cal
     mov eax, [timer_ms]                   ; the time again, soon: a double
     sub eax, [dk_time_click_ms]           ; click opens the Clock
-    cmp eax, 450
+    cmp eax, [dk_dbl_ms]                  ; (the Control panel's Mouse)
     ja .done
     mov eax, K_CLOCK
     call dk_win_single
@@ -1480,7 +1491,7 @@ dk_click:
     jge .minimize
     mov edx, [timer_ms]                   ; a double click: maximize
     sub edx, [dk_title_click_ms]
-    cmp edx, 450
+    cmp edx, [dk_dbl_ms]
     ja .first_click
     cmp esi, [dk_title_click_win]
     jne .first_click
@@ -1508,6 +1519,7 @@ dk_click:
     call dk_win_x                         ; (src/dkwins.asm: by kind)
     jmp .done
 .background:
+    mov byte [dkt_desk_focus], 1          ; (Del: the desktop's icons now)
     call dki_press                        ; (src/dkicons.asm: an icon?)
     jmp .done
 .maximize:
@@ -1883,6 +1895,10 @@ dk_mark_menu:
 ; Drawing: everything inside the clip rectangle, into DESK_BACK
 ; ============================================================
 dk_render:
+    call dkl_draw                         ; (locked: only the lock screen -
+    jc .desktop                           ;  src/dklock.asm)
+    ret
+.desktop:
     pushad
     ; a window covering all of the clip hides everything below it
     mov ecx, [dk_zcount]
@@ -1908,6 +1924,8 @@ dk_render:
     jl .cover
     jmp .win                              ; ecx = the first to draw
 .uncovered:
+    call dkw_draw                         ; (a wallpaper: src/dkwall.asm)
+    jnc .bg_done
     ; the background: a vertical gradient, dark blue into teal
     mov ebx, [dk_clip_y0]
 .bg_row:
@@ -3032,10 +3050,10 @@ dk_zcount         dd 0
 
 ; each kind's place and size when it opens, and name
 ;                   term  clock pics  sys   files tasks mixer app
-dk_def_x          dd 30,   800,  240,  560,  60,   250,  420,  200
-dk_def_y          dd 24,   30,   120,  320,  90,   90,   260,  60
-dk_def_w          dd 640,  200,  320,  420,  560,  520,  400,  320
-dk_def_h          dd 400,  214,  200,  244,  380,  400,  210,  200
+dk_def_x          dd 30,   800,  240,  170,  40,   250,  420,  200
+dk_def_y          dd 24,   30,   120,  90,   90,   90,   260,  60
+dk_def_w          dd 640,  200,  320,  660,  680,  520,  400,  320
+dk_def_h          dd 400,  214,  200,  420,  380,  400,  210,  200
 dk_kind_names     dd dk_title_terminal, dk_title_clock, dk_title_pictures, dk_title_system
                   dd dk_title_files, dk_title_tasks, dk_title_mixer, dk_title_program
 dk_menu_labels    dd dk_menu_programs
@@ -3055,7 +3073,7 @@ dk_task_name        db "desktop", 0
 dk_title_terminal   db "Terminal", 0
 dk_title_clock      db "Clock", 0
 dk_title_pictures   db "Pictures", 0
-dk_title_system     db "System", 0
+dk_title_system     db "Control panel", 0
 dk_title_files      db "Files", 0
 dk_title_tasks      db "Tasks", 0
 dk_title_mixer      db "Mixer", 0

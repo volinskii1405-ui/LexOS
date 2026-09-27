@@ -8,6 +8,13 @@ DKA_LOOK         equ 156                  ; a file's own icon, in its slot:
 DKA_LOOK_MARK    equ 157                  ; the kind + 1, and DKA_MARK
 DKA_MARK         equ 0xC5
 
+; The same, half the size (16x16): every other row, runs halved
+dka_icon_small:
+    mov byte [dka_half], 1
+    call dka_icon
+    mov byte [dka_half], 0
+    ret
+
 ; ecx = an icon (IC_*), eax, ebx = where (32x32)
 dka_icon:
     pushad
@@ -22,14 +29,29 @@ dka_icon:
     jae .done
     movzx ebp, byte [esi]                 ; its runs
     inc esi
+    cmp byte [dka_half], 0
+    je .run
+    test byte [dka_row], 1                ; (half: odd rows skipped)
+    jz .run
+    imul ebp, ebp, 6
+    add esi, ebp
+    jmp .row_done
 .run:
     or ebp, ebp
     jz .row_done
     movzx eax, byte [esi]
-    add eax, [dka_x]
     movzx ecx, byte [esi + 1]
-    mov ebx, [dka_y]
-    add ebx, [dka_row]
+    mov ebx, [dka_row]
+    cmp byte [dka_half], 0
+    je .full
+    lea ecx, [eax + ecx + 1]              ; x / 2 .. (x + n + 1) / 2
+    shr ecx, 1
+    shr eax, 1
+    sub ecx, eax
+    shr ebx, 1
+.full:
+    add eax, [dka_x]
+    add ebx, [dka_y]
     mov edx, 1
     push esi
     mov esi, [esi + 2]
@@ -56,6 +78,26 @@ dka_name_look:
     call dkx_str_eq
     mov al, IC_NOTEPAD
     je .yes
+    mov edi, dka_n_paint
+    call dkx_str_eq
+    mov al, IC_PAINT
+    je .yes
+    mov edi, dka_n_calc
+    call dkx_str_eq
+    mov al, IC_CALC
+    je .yes
+    mov edi, dka_n_music
+    call dkx_str_eq
+    mov al, IC_MUSIC
+    je .yes
+    mov edi, dka_n_games                  ; the games: a gamepad
+    mov al, IC_GAME
+.game:
+    call dkx_str_eq
+    je .yes
+    add edi, 12
+    cmp byte [edi], 0
+    jne .game
     pop edi
     stc
     ret
@@ -72,6 +114,14 @@ dk_kind_app:
     cmp al, IC_WEB
     je .done
     cmp al, IC_CH8
+    je .done
+    cmp al, IC_PAINT
+    je .done
+    cmp al, IC_CALC
+    je .done
+    cmp al, IC_GAME
+    je .done
+    cmp al, IC_MUSIC
     je .done
     cmp al, IC_NOTEPAD
 .done:
@@ -97,7 +147,7 @@ dka_entry_look:
     call dka_slot_look
     mov [edi + 18], al
     pop eax
-    ret
+    jmp dkf_entry_extra                   ; (when it changed: src/dkfview.asm)
 
 ; esi = a Files entry -> ecx = the icon to draw: the one chosen, or its kind's
 dka_entry_kind:
@@ -273,7 +323,18 @@ dka_keep         db 0
 dka_x            dd 0
 dka_y            dd 0
 dka_row          dd 0
+dka_half         db 0
 dka_n_browser    db "BROWSER.APP", 0
 dka_n_notepad    db "NOTEPAD.APP", 0
+dka_n_paint      db "PAINT.APP", 0
+dka_n_calc       db "CALC.APP", 0
+dka_n_music      db "MUSIC.APP", 0
+dka_n_games      db "SNAKE.APP", 0, 0, 0     ; (12 bytes each)
+                 db "TETRIS.APP", 0, 0
+                 db "SWEEPER.APP", 0
+                 db "2048.APP", 0, 0, 0, 0
+                 db "PONG.APP", 0, 0, 0, 0
+                 db "MAZE.APP", 0, 0, 0, 0
+                 db 0
 
 %include "src/dkart.inc"

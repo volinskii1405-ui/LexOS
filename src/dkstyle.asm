@@ -97,6 +97,7 @@ dk_backdrop_set:
     pushad
     cmp eax, DK_BACKDROPS
     jae .done
+    call dkw_off                          ; (no wallpaper: src/dkwall.asm)
     mov [dk_bg_mode], eax
     call dk_theme_apply
     mov byte [dk_redraw_all], 1
@@ -204,6 +205,7 @@ dk_sys_button:
 
 ; A click at ecx, ebx in System's client area
 dk_system_click:
+    jmp dkc_click                         ; (the Control panel: src/dkcpanel.asm)
     pushad
     sub ecx, DK_SYS_BTN_X
     js .done
@@ -253,6 +255,11 @@ dk_system_click:
 ; choices, if there are any, then the theme
 dk_settings_load:
     pushad
+    mov byte [dk_cfg_buf], 0              ; (none read yet: as they start -
+    mov dword [dk_theme], 0               ;  another user's may be different)
+    mov dword [dk_bg_mode], 0
+    mov byte [snd_ui_on], 1
+    mov byte [cat_on], 1
     push word [fs_current_dir]
     mov word [fs_current_dir], FS_ROOT
     mov esi, dk_cfg_name                  ; (fs_find_by_name's si is 16-bit:
@@ -292,6 +299,7 @@ dk_settings_load:
     mov [dk_bg_mode], eax
 .apply:
     call dkx_recent_load                  ; (src/dkextra.asm)
+    call dkf_cfg_load                     ; (Files' Recent, the wallpaper)
     cmp dword [dk_theme], DK_THEMES
     jb .theme_ok
     mov dword [dk_theme], 0
@@ -385,6 +393,7 @@ dk_settings_work:
     mov ax, 0x0A0D
     stosw
     call dkx_recent_save                  ; (src/dkextra.asm: recent programs)
+    call dkf_cfg_save                     ; (Files' Recent, the wallpaper)
     call dki_save                         ; (src/dkicons.asm: where they are)
     sub edi, dk_cfg_buf
     mov [fs_stream_size], edi
@@ -412,7 +421,7 @@ dk_settings_work:
 ; ============================================================
 ; Data (shared)
 ; ============================================================
-DK_CFG_MAX     equ 1024
+DK_CFG_MAX     equ 4096
 dk_theme       dd 0
 dk_cfg_dirty   db 0
 dk_cfg_name    db "DESKTOP.CFG", 0

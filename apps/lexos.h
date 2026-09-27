@@ -150,6 +150,16 @@ static inline int mkdir(const char *path)                 { return lx_syscall(38
 /* notify("Done: X.ZIP"): a line at the top of the desktop for a few
  * seconds (Files and the desktop's icons look at the disk again). */
 static inline void notify(const char *text)               { lx_syscall(39, (int)text, 0); }
+/* inbox(buf, n): a file handed to this program while it's open - Files
+ * opening another text file with Notepad already there -> the path's
+ * length ("/DEMOS/README.MD"), 0 if there's none. */
+static inline int inbox(char *buf, int n)                 { return lx_syscall(40, (int)buf, n); }
+/* opl(reg, value): an AdLib (OPL2) register - for IMF music; the notes
+ * stop by themselves when the program ends. */
+static inline void opl(int reg, int value)                { lx_syscall(41, reg, value); }
+/* audio_queued(0): bytes of sound written but not played yet (keep it
+ * small for a quick pause); audio_queued(1) drops them at once. */
+static inline int audio_queued(int flush)                 { return lx_syscall(42, flush, 0); }
 
 /* keydown(scancode): 1 while that key is held - for games. */
 static inline int keydown(int scancode)                   { return lx_syscall(20, scancode, 0); }

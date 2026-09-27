@@ -127,6 +127,8 @@ dkn_work:
     jb .key
     cmp al, 127
     jae .key
+    cmp byte [dkn_op], DKN_ADDUSER        ; (a user's name, a password: as
+    jae .char                             ;  typed)
     cmp al, 'a'                           ; (names are capitals)
     jb .char
     cmp al, 'z'
@@ -231,6 +233,31 @@ dkn_do:
     call dkt_forever_do
     jmp .out
 .not_forever:
+    cmp eax, DKN_ADDUSER                  ; (src/dkusers.asm)
+    jne .not_adduser
+    call dkus_add_do
+    jmp .out
+.not_adduser:
+    cmp eax, DKN_PASSWORD
+    jne .not_password
+    call dkus_pass_do
+    jmp .out
+.not_password:
+    cmp eax, DKN_SAVEUSER                 ; (src/dkcpanel.asm)
+    jne .not_saveuser
+    call dkc_saveuser_do
+    jmp .out
+.not_saveuser:
+    cmp eax, DKN_UNDO                     ; (src/dkundo.asm)
+    jne .not_undo
+    call dku_do
+    jmp .out
+.not_undo:
+    cmp eax, DKN_TRASHN                   ; (src/dkmsel.asm)
+    jne .not_trashn
+    call dkm_trash_do
+    jmp .out
+.not_trashn:
     cmp eax, DKN_MKTRASH
     jne .not_mktrash
     call dkn_trash_dir
@@ -294,6 +321,7 @@ dkn_do:
     jnz .read_only
     mov eax, [dkn_slot]
     call fs_read_slot
+    call dku_note_rename                  ; (Undo's: src/dkundo.asm)
     mov edi, SCRATCH_ADDR
     mov ecx, FS_NAME_LEN
     xor eax, eax
@@ -449,6 +477,8 @@ dkn_do:
     call dkt_note_origin                  ; (src/dktrash.asm: Restore's)
     mov [SCRATCH_ADDR + FS_PARENT_OFFSET], dl
     call fs_write_slot
+    mov eax, SND_TRASH                    ; (a whoosh)
+    call snd_play
     jmp .made
 
 .empty:
@@ -709,6 +739,7 @@ dkn_draw:
     mov esi, COL_WHITE
     call dk_fill
     mov esi, dkn_text                     ; the text (its end, if long)
+    call dkus_masked                      ; (a password: dots)
     mov ecx, [dkn_len]
     sub ecx, (DKN_W - 50) / 8
     jle .whole
@@ -1023,9 +1054,15 @@ dkn_hg_template  db "@echo off", 13, 10
                  db "echo Hello from a script!", 13, 10
 dkn_hg_template_len equ $ - dkn_hg_template
 dkn_titles       dd dkn_t_rename, dkn_t_newdir, dkn_t_newtxt, dkn_t_newhg
-                 dd dkn_t_newlnk, dkn_t_copyto
+                 dd dkn_t_newlnk, dkn_t_copyto, 0, 0, 0, 0, 0, 0, 0
+                 dd dkn_t_adduser, dkn_t_password
 dkn_prompts      dd dkn_p_name, dkn_p_name, dkn_p_name, dkn_p_name
-                 dd dkn_p_target, dkn_p_folder
+                 dd dkn_p_target, dkn_p_folder, 0, 0, 0, 0, 0, 0, 0
+                 dd dkn_p_user, dkn_p_password
+dkn_t_adduser    db "Add a user", 0
+dkn_t_password   db "Password", 0
+dkn_p_user       db "Their name (up to 12 letters):", 0
+dkn_p_password   db "A new password (nothing: none):", 0
 dkn_sub_labels   dd dkx_l_newdir, dkx_l_newtxt, dkx_l_newhg, dkx_l_newlnk
 dkn_t_rename     db "Rename", 0
 dkn_t_newdir     db "New folder", 0

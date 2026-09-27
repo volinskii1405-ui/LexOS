@@ -20,16 +20,25 @@
  * The mouse: click a link, the wheel scrolls, the scrollbar drags. The
  * keys: arrows, PgUp/PgDn, Home/End, Space - scroll; Backspace - back;
  * Tab (or a click on it) - the address bar, Enter there goes; F5 -
- * reload; Esc - quit. */
+ * reload; Esc - quit.
+ *
+ * Tabs: up to 8 pages open at once, along the top - a click goes to one,
+ * its x closes it, + opens another (the start page); Ctrl+T, Ctrl+W,
+ * Ctrl+Tab do the same from the keys, and Ctrl+click on a link opens it
+ * in a new tab. Each keeps its address, its history and where it was
+ * scrolled to, and - while there's memory for it - the page itself;
+ * otherwise it's read again when it's gone back to. */
 #include "lexos.h"
 #include "tls.h"                         /* https:// - TLS 1.3 of its own */
 
 #define W 800
 #define H 600
+#define TABS_H 28                         /* the tabs */
 #define BAR 36                            /* the toolbar */
+#define BAR_Y TABS_H
 #define STATUS 20                         /* the status line */
-#define VIEW_Y BAR
-#define VIEW_H (H - BAR - STATUS)
+#define VIEW_Y (BAR_Y + BAR)
+#define VIEW_H (H - VIEW_Y - STATUS)
 #define SBW 14                            /* the scrollbar */
 #define MARGIN 18
 #define RIGHT (W - SBW - MARGIN)
@@ -93,6 +102,19 @@ static int nhist, hpos = -1;
 static int editing, edit_fresh, hover_link = -1, hover_btn = -1;
 static char status[URL_MAX + 40];
 static const char *home = "/DEMOS/SITE/INDEX.HTM";
+
+/* --- the tabs: the one in front lives in the globals above --- */
+#define TABS_MAX 8
+struct tab {
+    char url[URL_MAX];
+    char hist[HIST_MAX][URL_MAX];
+    int nhist, hpos, scroll;
+    char title[40];
+    char *src;                            /* the page, kept (0: read again) */
+    int srclen;
+};
+static struct tab tabs[TABS_MAX];
+static int ntabs = 1, cur_tab, hover_tab = -1, hover_close = -1;
 
 /* ============================================================
  * little helpers
@@ -1402,7 +1424,7 @@ static void layout(void)
 /* ============================================================
  * the window: toolbar, page, scrollbar, status
  * ============================================================ */
-#define BTN_Y 6
+#define BTN_Y (BAR_Y + 6)
 #define BTN_H 24
 static const int btn_x[] = { 8, 38, 68, 98 };
 #define ADDR_X 132
@@ -1419,8 +1441,8 @@ static void draw_bar(void)
 {
     static const char *labels[] = { "\x1b", "\x1a", "R", "\x7f" };
     int i;
-    fill(0, 0, W, BAR, C_BAR, 0, H);
-    fill(0, BAR - 1, W, 1, C_BAR_LO, 0, H);
+    fill(0, BAR_Y, W, BAR, C_BAR, 0, H);
+    fill(0, BAR_Y + BAR - 1, W, 1, C_BAR_LO, 0, H);
     for (i = 0; i < 4; i++) {
         int dim = (i == 0 && hpos <= 0) || (i == 1 && hpos >= nhist - 1);
         bevel(btn_x[i], BTN_Y, 26, BTN_H, hover_btn == i && !dim ? C_HOVER : C_BTN);
@@ -1500,8 +1522,129 @@ static void draw_status(void)
     text_at(W - 88, H - STATUS + 2, "LexOS Web", C_RULE, ST_BOLD, 88);
 }
 
+/* ============================================================
+ * the tabs
+ * ============================================================ */
+static int tab_w(void) { int w = (W - 44) / ntabs; return w > 190 ? 190 : w; }
+static const char *tab_label(int i)
+{
+    const char *t = i == cur_tab ? (title[0] ? title : url) : (tabs[i].title[0] ? tabs[i].title : tabs[i].url);
+    const char *b = t;
+    if (t != title && t != tabs[i].title) {            /* an address: its last part */
+        const char *q;
+        for (q = t; *q; q++) if (*q == '/' && q[1]) b = q + 1;
+    }
+    return *b ? b : "New tab";
+}
+static void draw_tabs(void)
+{
+    int i, w = tab_w();
+    fill(0, 0, W, TABS_H, C_BAR_LO, 0, H);
+    for (i = 0; i < ntabs; i++) {
+        int x = 4 + i * w, on = i == cur_tab;
+        unsigned face = on ? C_BAR : hover_tab == i ? C_HOVER : RGB(200, 208, 222);
+        fill(x, 4, w - 3, TABS_H - 4, face, 0, H);
+        if (on) fill(x, 4, w - 3, 2, C_LINK, 0, H);
+        text_at(x + 8, 9, tab_label(i), on ? C_TEXT : C_GRAY, on ? ST_BOLD : 0, w - 34);
+        if (ntabs > 1)
+            text_at(x + w - 20, 8, "x", hover_close == i ? RGB(200, 40, 60) : C_GRAY, ST_BOLD, 10);
+    }
+    i = 4 + ntabs * w;                                   /* + */
+    if (ntabs < TABS_MAX) {
+        fill(i + 2, 6, 24, TABS_H - 8, hover_tab == 100 ? C_HOVER : RGB(200, 208, 222), 0, H);
+        text_at(i + 10, 8, "+", C_TEXT, ST_BOLD, 10);
+    }
+}
+/* the pointer over the tabs -> the tab (100: +), *close set if on its x */
+static int tab_at(int mx, int my, int *close)
+{
+    int w = tab_w(), i;
+    *close = 0;
+    if (my >= TABS_H || my < 4) return -1;
+    i = (mx - 4) / w;
+    if (mx >= 4 && i < ntabs) {
+        if (ntabs > 1 && mx >= 4 + i * w + w - 24 && mx < 4 + i * w + w - 6) *close = 1;
+        return i;
+    }
+    if (ntabs < TABS_MAX && mx >= 6 + ntabs * w && mx < 30 + ntabs * w) return 100;
+    return -1;
+}
+
+static void go(const char *to, int remember);
+static void clamp_scroll(void);
+static void layout(void);
+/* the one in front, into its tab */
+static void tab_save(void)
+{
+    struct tab *t = &tabs[cur_tab];
+    copy(t->url, url, URL_MAX);
+    memcpy(t->hist, hist, sizeof hist);
+    t->nhist = nhist; t->hpos = hpos; t->scroll = scroll;
+    copy(t->title, title, sizeof t->title);
+    free(t->src);
+    t->src = malloc(srclen + 1);
+    if (t->src) { memcpy(t->src, src, srclen); t->srclen = srclen; }
+}
+/* tab i to the front: its page back - kept, or read again */
+static void tab_show(int i)
+{
+    struct tab *t = &tabs[i];
+    cur_tab = i;
+    copy(url, t->url, URL_MAX);
+    memcpy(hist, t->hist, sizeof hist);
+    nhist = t->nhist; hpos = t->hpos;
+    editing = 0; hover_link = -1;
+    if (t->src) {
+        memcpy(src, t->src, t->srclen);
+        srclen = t->srclen;
+        src[srclen] = 0;
+        free(t->src); t->src = 0;
+        layout();
+        scroll = t->scroll;
+        clamp_scroll();
+        status[0] = 0;
+    } else if (url[0]) {
+        int sc = t->scroll;
+        go(url, 0);
+        scroll = sc;
+        clamp_scroll();
+    }
+}
+static void tab_new(const char *to)
+{
+    if (ntabs >= TABS_MAX) return;
+    tab_save();
+    memset(&tabs[ntabs], 0, sizeof tabs[0]);
+    cur_tab = ntabs++;
+    url[0] = 0; nhist = 0; hpos = -1; scroll = 0; title[0] = 0;
+    go(to, 1);
+}
+static void tab_close(int i)
+{
+    int j;
+    if (ntabs < 2) return;
+    if (i != cur_tab) {                                  /* one behind: just gone */
+        free(tabs[i].src);
+        for (j = i; j < ntabs - 1; j++) tabs[j] = tabs[j + 1];
+        ntabs--;
+        if (cur_tab > i) cur_tab--;
+        return;
+    }
+    free(tabs[i].src);
+    for (j = i; j < ntabs - 1; j++) tabs[j] = tabs[j + 1];
+    ntabs--;
+    tab_show(i < ntabs ? i : ntabs - 1);
+}
+static void tab_go(int i)
+{
+    if (i == cur_tab || i < 0 || i >= ntabs) return;
+    tab_save();
+    tab_show(i);
+}
+
 static void redraw(void)
 {
+    draw_tabs();
     draw_bar();
     draw_page();
     draw_status();
@@ -1613,9 +1756,14 @@ int main(int argc, char **argv)
     int m[4], was_down = 0, drag = -1, drag_scroll = 0;
     if (gfx_mode_ex(W, H, 32) < 0) { puts("browser: needs 800x600 in 32 bits\n"); return 1; }
     font(glyphs);
+    keymode(1);                                          /* (Ctrl+T, W, Tab: ours) */
     go(argc > 1 ? argv[1] : home, 1);
     for (;;) {
         int k = pollkey(), changed = 0, over;
+        {                                                /* a page opened in Files */
+            char in[URL_MAX];                            /* while we're open: a tab */
+            if (inbox(in, sizeof in) > 0) { if (ntabs < TABS_MAX) tab_new(in); else go(in, 1); changed = 1; }
+        }
         if (k) {
             int ch = k & 0xFF, sc = (k >> 8) & 0xFF;
             if (editing) {
@@ -1630,6 +1778,9 @@ int main(int argc, char **argv)
                 }
                 changed = 1;
             } else if (ch == 27) break;
+            else if (ch == 20) { tab_new(home); continue; }                 /* Ctrl+T */
+            else if (ch == 23) { tab_close(cur_tab); changed = 1; }         /* Ctrl+W */
+            else if (ch == 9 && keydown(KEY_CTRL)) { tab_go((cur_tab + 1) % ntabs); changed = 1; }
             else if (ch == 9 || ch == 12) { press(5); }
             else if (ch == 8) press(0);
             else if (sc == 0x3F) press(2);                    /* F5 */
@@ -1656,8 +1807,14 @@ int main(int argc, char **argv)
             int down = m[2] & 1, mx = m[0], my = m[1];
             int hl = my >= VIEW_Y && my < VIEW_Y + VIEW_H && mx < W - SBW ? item_at(mx, my) : -1;
             int hb = button_at(mx, my);
+            int on_x, ht = tab_at(mx, my, &on_x), hx = on_x ? ht : -1;
             if (hl != hover_link || hb != hover_btn) { hover_link = hl; hover_btn = hb; changed = 1; }
-            if (down && !was_down) {
+            if (ht != hover_tab || hx != hover_close) { hover_tab = ht; hover_close = hx; changed = 1; }
+            if (down && !was_down && ht >= 0) {                     /* the tabs */
+                if (ht == 100) { tab_new(home); was_down = down; continue; }
+                if (on_x) tab_close(ht); else tab_go(ht);
+                changed = 1;
+            } else if (down && !was_down) {
                 if (mx >= W - SBW && my >= VIEW_Y && my < VIEW_Y + VIEW_H) {
                     drag = my;                             /* the scrollbar */
                     drag_scroll = scroll;
@@ -1680,7 +1837,9 @@ int main(int argc, char **argv)
                     char to[URL_MAX];
                     editing = 0;
                     resolve(url, lpool + link_off[hl], to);
-                    go(to, 1);
+                    if (keydown(KEY_CTRL)) tab_new(to);             /* Ctrl: a new tab */
+                    else go(to, 1);
+                    was_down = down;
                     continue;
                 } else if (editing) { editing = 0; changed = 1; }
             } else if (down && drag >= 0 && doc_h > VIEW_H) {

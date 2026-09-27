@@ -180,12 +180,6 @@ handle_command:
     je .do_run
 
     mov si, buffer
-    mov di, cmd_hex_prefix
-    call strcmp_prefix
-    cmp ax, 1
-    je .do_hex
-
-    mov si, buffer
     mov di, cmd_cd_prefix
     call strcmp_prefix
     cmp ax, 1
@@ -280,12 +274,6 @@ handle_command:
     call strcmp_prefix
     cmp ax, 1
     je .do_uranium
-
-    mov si, buffer
-    mov di, cmd_paint_prefix
-    call strcmp_prefix
-    cmp ax, 1
-    je .do_paint
 
     mov si, buffer
     mov di, cmd_view_prefix
@@ -692,12 +680,6 @@ handle_command:
     call fs_run
     jmp .done
 
-.do_hex:
-    mov si, buffer
-    add si, 4                  ; skip "hex "
-    call hex_editor
-    jmp .done
-
 .do_cd_arg:
     cmp word [buffer + 3], '-'  ; "cd -": back to the folder before
     je .do_cd_back
@@ -812,12 +794,6 @@ handle_command:
     add si, 8                  ; skip "uranium "
     call uranium_editor
     call dk_clear_prog_title
-    jmp .done
-
-.do_paint:
-    mov si, buffer
-    add si, 6                  ; skip "paint "
-    call paint_editor
     jmp .done
 
 .do_view:
@@ -1138,6 +1114,7 @@ show_help:
 ; System shutdown (ACPI shutdown via the QEMU/Bochs port 0x604)
 ; ============================================================
 do_shutdown:
+    call dkfs_clean                ; (ended properly: src/dkfscheck.asm)
     call jnl_commit                ; (nothing left half written)
     call ata_flush                 ; (and all of it out of the disk's cache)
     mov ax, 0x2000
@@ -1157,6 +1134,7 @@ do_shutdown:
 ; reset line. Widely supported, including by QEMU.
 ; ============================================================
 do_reboot:
+    call dkfs_clean
     call jnl_commit
     call ata_flush                 ; (what's written: out of the disk's cache)
     cli

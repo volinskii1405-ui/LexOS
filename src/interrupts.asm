@@ -313,11 +313,21 @@ keyboard_isr:
     mov cl, al
     movzx ecx, cl
     mov byte [key_held + ecx], 1
+    inc dword [dkss_keys]          ; (the screen saver: src/dksaver.asm)
 
     cmp byte [dk_active], 0        ; the desktop's own keys
     je .not_desk_keys              ; (src/dkextra.asm)
     cmp bh, 0
     jne .not_desk_keys
+    cmp byte [dkl_grab], 0         ; (locked, the saver out: theirs)
+    jne .not_desk_keys
+    cmp al, 0x2C                   ; Ctrl+Z: the last thing done to files,
+    jne .not_undo                  ; undone (src/dkundo.asm)
+    cmp byte [lang_ctrl_held], 0
+    je .not_undo
+    call dku_key
+    jnc .eoi
+.not_undo:
     cmp byte [dk_fm_typing], 0     ; Files in front: Ctrl+C / X / V are
     je .not_files_clip             ; its files' (src/dkextra.asm)
     cmp byte [lang_ctrl_held], 0
@@ -350,9 +360,9 @@ keyboard_isr:
     mov byte [dkx_files_req], 1
     jmp .eoi
 .not_win_e:
-    cmp al, 0x26                   ; L
+    cmp al, 0x26                   ; L: locked (src/dklock.asm)
     jne .eoi
-    mov byte [dkx_logout_req], 1
+    mov byte [dkl_req], 1
     jmp .eoi
 .not_win_combo:
     cmp al, 0x3E                   ; Alt+F4: the window in front closes
@@ -474,8 +484,8 @@ keyboard_isr:
     mov byte [dkx_win_combo], 0
     jmp .eoi
 .not_win_key:
-    cmp bl, 0x53                   ; Del over a file (Files, the desktop):
-    jne .not_del                   ; it goes into the trash (src/dktrash.asm)
+    cmp bl, 0x53                   ; Del: what's picked (Files, the desktop)
+    jne .not_del                   ; goes into the trash (src/dktrash.asm)
     call dkt_del_key
     jnc .eoi
 .not_del:
@@ -546,6 +556,8 @@ push_key_to_buffer:
     je .console                    ; is its search (src/dkwins.asm); Files
     cmp byte [dk_suspended], 0     ; in front: its search (src/dkfind.asm)
     jne .console
+    cmp byte [dkl_grab], 0         ; locked: the lock's (src/dklock.asm)
+    jne .lock
     cmp byte [dkn_open], 0         ; a name dialog: its (src/dkname.asm)
     jne .name
     cmp byte [dk_menu_open], 0
@@ -555,6 +567,8 @@ push_key_to_buffer:
     jmp dk_fm_key_in
 .menu:
     jmp dk_menu_key_in
+.lock:
+    jmp dkl_key_in
 .name:
     jmp dkn_key_in
 .console:

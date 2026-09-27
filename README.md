@@ -146,6 +146,34 @@ All taken in QEMU (1024x768) - more in [docs/screenshots](docs/screenshots).
 <td align="center" valign="top"><img src="docs/screenshots/56-custom-icons.png" alt="Icons chosen" width="400"><br><sub>Games with a gamepad, CUBE with Lex - chosen in Properties</sub></td>
 <td align="center" valign="top"><img src="docs/screenshots/57-trash-buttons.png" alt="The trash's buttons" width="400"><br><sub>In the trash: Restore all, Empty the trash; shortcuts marked with an arrow</sub></td>
 </tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/58-paint.png" alt="Paint" width="400"><br><sub>Paint: brush, shapes, fill, two colors, undo; saved as .BMP</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/59-calculator.png" alt="Calculator" width="400"><br><sub>Calculator, Scientific: an expression with brackets and functions</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/60-files-details.png" alt="Files, Details" width="400"><br><sub>Files: places on the left, the Details view - size, date, type</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/61-thumbnails.png" alt="Thumbnails" width="400"><br><sub>Pictures show as thumbnails of themselves</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/62-wallpaper.png" alt="Wallpaper" width="400"><br><sub>Any .BMP as the wallpaper (Files: Set as wallpaper)</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/63-desktop-select.png" alt="Several icons" width="400"><br><sub>A rubber band picks several icons: carried, deleted, undone together</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/64-lock-screen.png" alt="Lock screen" width="400"><br><sub>Win+L: the lock screen - a big clock, the password</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/65-control-panel.png" alt="Control panel" width="400"><br><sub>The Control panel: Appearance, Sound, Keyboard, Date & time, Mouse, Users</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/66-login-users.png" alt="Users" width="400"><br><sub>The login: Left / Right goes round the users, each with their own desktop</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/67-disk-check.png" alt="Disk check" width="400"><br><sub>Not shut down properly: the disk's checked at boot</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/68-screen-saver.png" alt="Screen saver" width="400"><br><sub>The screen saver: stars, and the time drifting</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/69-browser-tabs.png" alt="Browser tabs" width="400"><br><sub>LexOS Web with tabs</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/70-lex-tidy.png" alt="Lex" width="400"><br><sub>Lex is pleased when the trash is emptied</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/71-control-panel-ru.png" alt="In Russian" width="400"><br><sub>The language switched on the spot (Keyboard)</sub></td>
+</tr>
 </table>
 
 Every screenshot, described in Russian: [docs/screenshots/README.md](docs/screenshots/README.md).
@@ -570,6 +598,19 @@ tester@/PROGRAMS$
   and make folders; `keymode(1)` makes Ctrl+letters the program's own
   (coded 1-26 - on the desktop Ctrl+C would end it); `notify(text)` puts
   a line at the top of the desktop (src/appext.asm).
+- **Paint** (`apps/paint.c`, `/APPS/PAINT.APP`; Files' **Edit in Paint**
+  on a `.BMP`): pencil, brush, eraser, line, rectangle, filled box,
+  oval, disc, fill and color picker (P B E L R X O D F K); the left
+  button draws in the first color, the right in the second; four sizes
+  ([ ]), Shift keeps lines straight and shapes square; undo / redo
+  (Ctrl+Z / Ctrl+Y, each step packed as runs), the canvas resized by
+  its corner (up to 800x600), New / Open / Save (24-bit `.BMP`; opens
+  8-, 24- and 32-bit ones).
+- **Calculator** (`apps/calc.c`, `/APPS/CALC.APP`): Standard and
+  Scientific (Tab switches): what's pressed or typed builds an
+  expression - `12+3×(4−1)` - worked out with precedence as it's typed
+  (sin cos tan and their inverses in degrees or radians, ln log e^x
+  10^x x^y √ n! % π e), memory (MC MR M+ M-).
 - **ZIP** (`apps/zip.c`, `/APPS/ZIP.APP`): `zip X.ZIP NAME...` packs
   files and folders - deflate (LZ77 over a 32KB window, each block's own
   Huffman codes; stored if that's no smaller) with CRC-32s, archives any
@@ -585,7 +626,9 @@ tester@/PROGRAMS$
   on a `.ZIP`: they run by themselves, a line at the top says when
   they're done.
 - **LexOS Web** (`apps/browser.c`, `/APPS/BROWSER.APP`, the WEB icon):
-  a web browser in an 800x600 window. It opens pages from the disk - a
+  a web browser in an 800x600 window, with **tabs** (up to 8: a click,
+  its x, +; Ctrl+T, Ctrl+W, Ctrl+Tab; Ctrl+click opens a link in a new
+  one - each keeps its address, history and scroll). It opens pages from the disk - a
   demo site, `/DEMOS/SITE/INDEX.HTM`, with Lex's picture and pages in
   Russian and Spanish - or from the web over `http://` and **`https://`**
   (TLS 1.3 of its own, `apps/tls.h`: X25519, SHA-256/HKDF, AES-128-GCM
@@ -637,7 +680,7 @@ tester@/PROGRAMS$
   there, and pulling a maximized one away gives it its own size back.
   Keys: **Alt+F4** closes the window in front, **Win+D** (or the thin
   strip at the taskbar's right end) shows the desktop and brings the
-  windows back, **Win+E** opens Files, **Win+L** logs out,
+  windows back, **Win+E** opens Files, **Win+L** locks the screen,
   **Ctrl+Shift+Esc** opens Tasks. Right-click a taskbar button:
   Minimize / Restore, Maximize, Close; right-click the desktop: New
   Terminal, Files, Tasks, System, Arrange icons, Next backdrop.
@@ -693,12 +736,57 @@ tester@/PROGRAMS$
     buttons; **Delete forever** there is quiet too (no console), and
     `/TRASH` is made by itself if it's missing, so it always opens (with
     its "..").
-  - **Del** deletes what's under the pointer - a desktop icon, a file in
-    Files (or, with Files in front, what's selected there) - into the
-    trash; in the trash, for good. With a Terminal or a program in front
-    Del stays theirs.
+  - **Del** deletes what's selected - the picked desktop icons if the
+    desktop was clicked last, else what's selected in Files in front -
+    into the trash; in the trash, for good. What the pointer is merely
+    over is never touched. With a Terminal or a program in front Del
+    stays theirs.
   - **Shortcuts are marked**: a `.LNK`'s icon has a small arrow in its
     corner (on the desktop and in Files).
+  - **Files, more** (src/dkfview.asm): places down the left - Desktop,
+    Programs, Recent (what was opened lately; opened from there, it
+    opens where it is), Trash, This disk; the view button switches
+    Icons / **Details** (a table: name with a small icon, size, when it
+    changed, type - a click on a heading sorts by it; Sort: Date too);
+    a `.BMP` shows a **thumbnail** of itself (made in the background).
+  - **Wallpaper** (src/dkwall.asm): Files' menu on a `.BMP` - **Set as
+    wallpaper** (and **Edit in Paint**); it's made to cover the screen
+    (cut to its shape) a few rows a frame, kept in DESKTOP.CFG; two to
+    try in `/DEMOS/WALLS` (tools/mkwalls.py).
+  - **Several icons at once** (src/dkmsel.asm): a rubber band on the
+    desktop, or Ctrl+click - they're carried together, dropped together
+    (into a folder, onto Files, onto the trash), Del / Delete sends them
+    all to the trash.
+  - **Ctrl+Z** (src/dkundo.asm): with Files in front or on the desktop,
+    the last step undone - a move, a delete into the trash, a rename (a
+    step: all that happened at once - three files deleted come back
+    together).
+  - **Win+L locks the screen** (src/dklock.asm): the wallpaper darkened,
+    a big clock, the date, the user's letter and the password (Enter
+    alone with none); programs go on underneath.
+  - **Users** (src/dkusers.asm): each has a desktop, DESKTOP.CFG and
+    USER.CFG of their own - the one logged in keeps theirs in the root,
+    the others' wait in `/HOME/<NAME>` and are swapped in at the login,
+    where Left / Right goes round them. A new one (Control panel -
+    Users - Add...) starts with a few shortcuts and no password.
+  - **The Control panel** (src/dkcpanel.asm, the start menu's Control
+    panel): System (how it's running), Appearance (theme, backdrop,
+    wallpaper, Lex, the screen saver), Sound (on/off, the Mixer),
+    Keyboard (the system's language - at once - and the layouts), Date &
+    time (the time zone), Mouse (pointer speed, double-click speed),
+    Users (Add..., Password..., Switch user).
+  - **The screen saver** (src/dksaver.asm): after 1, 3 or 10 idle
+    minutes (or never), stars fly out of the middle and the time drifts
+    across; a key or the mouse brings the desktop back.
+  - **The disk checked at boot** (src/dkfscheck.asm): LexOS not shut
+    down properly the last time (the power, QEMU closed), `fsck fix`
+    runs before anything else, with a progress bar, and says what it
+    put right.
+  - **Lex notices** (src/dkcat.asm): the trash emptied - he purrs, a
+    heart; something deleted for good - he's startled; back from the
+    trash or undone - he's glad. At night (22:00-6:00) he mostly
+    sleeps. And files make sounds: a whoosh into the trash, a crunch
+    when it's emptied, a rising pop when they come back.
   - **Pictures for icons** (tools/mkicons.py -> src/dkart.inc,
     src/dkart.asm): folders, files, text, programs (a window), pictures,
     sounds, scripts (`.HG`), C (`.C .H`), BASIC (`.BAS`), turtle
@@ -788,7 +876,7 @@ tester@/PROGRAMS$
     band on empty space or Ctrl+click selects several, and dragging one
     of them moves them all. Right-click: Open, Rename..., Copy to...,
     Delete, Properties - or New folder..., Select all on empty space.
-    Delete (or Del over it) moves into /TRASH (Delete forever, Empty
+    Delete (or Del) moves into /TRASH (Delete forever, Empty
     trash, Restore all in there);
     Rename, Copy and New folder type the command into a Terminal and
     leave the new name to you.
@@ -1016,9 +1104,13 @@ qemu-system-i386 -m 128 -drive format=raw,file=os-image.bin \
     -device adlib,audiodev=snd0,iobase=0x220 -device sb16,audiodev=snd0
 ```
 
-(swap `pa` for `alsa`/`coreaudio`/`dsound` depending on your host; run
-`qemu-system-i386 -audiodev help` to see which backends your build
-supports.)
+(swap `pa` for `pipewire`/`alsa`/`coreaudio`/`dsound` depending on your
+host; run `qemu-system-i386 -audiodev help` to see which backends your
+build supports.) On a PipeWire system (Fedora, recent Ubuntu) use
+`pipewire` - through PipeWire's PulseAudio stand-in QEMU stalls the
+whole machine while a sound plays. `make run` picks `pipewire` by itself
+when QEMU has it (QEMU 8.1+; on Fedora the `qemu-audio-pipewire`
+package).
 
 **VirtualBox**: create a new VM (Type: Other, Version: Other/Unknown,
 no EFI), attach the image as an IDE hard disk (not as an optical
@@ -1176,7 +1268,8 @@ outside the kernel image need a full 32-bit linear address:
 | Video memory (VGA text mode) | `0xB8000` |
 | ATA scratch buffer (one sector) | `0x91000` |
 | BASIC program, arrays, strings (`basic`) | `0x200000` – `0x26FFFF` |
-| Big-file buffer (hostput, program files) | `0x6400000` – `0x73FFFFF` |
+| Big-file buffer (hostput, program files) | `0x6400000` – `0x6FFFFFF` |
+| Wallpaper (1024x768x4) / Files' thumbnails | `0x7000000` / `0x7300000` |
 | Filesystem slot + bitmap cache | `0x3E00000` |
 | IMF song buffer (`play`) | `0x310000` |
 | Task stacks (64KB each, 16 tasks) | `0x400000` – `0x4FFFFF` |
@@ -1227,7 +1320,8 @@ apps/                  example ring-3 programs (`make apps`): lexos.inc for
                        assembly, lexos.h + crt0.asm + app.ld for C;
                        browser.c (LexOS Web) and tls.h (its TLS 1.3),
                        cc.c (the C compiler), notepad.c (Notepad),
-                       zip.c (ZIP archives).
+                       zip.c (ZIP archives), paint.c (Paint), calc.c
+                       (the Calculator).
 disk/                  what LexOS's disk starts with: APPS/ (the built
                        programs), DEMOS/ (scripts, music, a CHIP-8 ROM,
                        SITE/ - the browser's demo site, C/ - C examples),
@@ -1326,6 +1420,16 @@ src/
                        forever, Restore all, the Del key.
   dkdrop.asm           dragging files between Files and the desktop.
   appext.asm           system calls: keymode, readdir, mkdir, notify.
+  dkfview.asm          Files: the places, Details, thumbnails, Recent.
+  dkwall.asm           the wallpaper, and reading .BMPs for it and
+                       the thumbnails.
+  dkmsel.asm           several desktop icons at once.
+  dkundo.asm           Ctrl+Z: moves, deletes, renames undone.
+  dklock.asm           Win+L: the lock screen.
+  dkusers.asm          users, each with their own desktop.
+  dkcpanel.asm         the Control panel.
+  dksaver.asm          the screen saver.
+  dkfscheck.asm        the disk checked at boot after a crash.
                        (These are the kernel's extension - KEXT:
                        assembled with the kernel, cut off by the
                        Makefile into /SYSTEM/KEXT.BIN, loaded at boot

@@ -612,6 +612,8 @@ dkx_ctx_items:
     mov [dk_ctx_icon], ecx
     call dkt_icon_menu                    ; (the trash's own: src/dktrash.asm)
     jnc .some
+    call dkm_ctx_items                    ; (several picked: src/dkmsel.asm)
+    jnc .some
     mov al, DKC_IOPEN
     call dk_ctx_add
     mov al, DKC_IRENAME
@@ -778,6 +780,11 @@ dkx_ctx_create:
     call dki_open
     jmp .done
 .not_open:
+    cmp eax, DKC_IDELETE                  ; Delete, several picked: them all
+    jne .not_group
+    call dkm_delete_group                 ; (src/dkmsel.asm)
+    jnc .done
+.not_group:
     push eax
     call dk_shell_idle                    ; (its slot: the disk's lists)
     pop eax

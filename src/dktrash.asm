@@ -15,6 +15,7 @@ DKT_MARK       equ 0xB7
 dkt_note_origin:
     cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_PROGRAM
     je .done                              ; (a program's bytes run past it)
+    call dku_note_move                    ; (Undo's: src/dkundo.asm)
     push eax
     mov al, [SCRATCH_ADDR + FS_PARENT_OFFSET]
     mov [SCRATCH_ADDR + DKT_ORIGIN], al
@@ -71,6 +72,10 @@ dkt_restore:
     mov byte [dk_fm_refresh], 1
     mov byte [dki_rescan], 1
     mov byte [dk_redraw_all], 1
+    mov eax, SND_RESTORE                  ; (back again - Lex glad)
+    call snd_play
+    mov eax, CAT_R_BACK
+    call cat_react
     popad
     ret
 
@@ -124,6 +129,22 @@ dkt_ctx_more:
     jne .not_empty
     jmp dkt_empty_req
 .not_empty:
+    cmp eax, DKC_PAINT
+    jne .not_paint
+    jmp dkt_paint
+.not_paint:
+    cmp eax, DKC_WALL
+    jne .not_wall
+    jmp dkw_ctx_set                       ; (src/dkwall.asm)
+.not_wall:
+    cmp eax, DKC_LOCATE
+    jne .not_locate
+    jmp dkf_locate                        ; (src/dkfview.asm)
+.not_locate:
+    cmp eax, DKC_HEX
+    jne .not_hex
+    jmp dkt_hex
+.not_hex:
     ret
 
 ; Files' menu, on something: Edit in Notepad - if it's a file - and
@@ -134,7 +155,20 @@ dkt_ctx_edit_item:
     shl esi, 5
     add esi, DESK_FILES
     movzx eax, byte [esi + 17]            ; (text: not folders, programs,
-    cmp eax, IC_TEXT                      ;  pictures, sounds, archives)
+    cmp eax, IC_IMAGE                     ;  pictures, sounds, archives)
+    jne .not_picture
+    push eax                              ; a .BMP: Edit in Paint, Set as
+    call dk_ext_dword                     ; wallpaper
+    cmp eax, 'BMP'
+    pop eax
+    jne .no_edit
+    mov al, DKC_PAINT
+    call dk_ctx_add
+    mov al, DKC_WALL
+    call dk_ctx_add
+    jmp .no_edit
+.not_picture:
+    cmp eax, IC_TEXT
     je .edit
     cmp eax, IC_SCRIPT
     je .edit
@@ -155,6 +189,13 @@ dkt_ctx_edit_item:
     mov al, DKC_EDIT
     call dk_ctx_add
 .no_edit:
+    cmp byte [esi + 17], IC_FOLDER        ; any file: its bytes, in the Hex
+    je .no_hex                            ; editor
+    cmp byte [esi + 17], IC_UP
+    je .no_hex
+    mov al, DKC_HEX
+    call dk_ctx_add
+.no_hex:
     call dk_ext_dword                     ; (esi: its name)
     mov bl, DKC_UNZIP
     cmp eax, 'ZIP'
@@ -175,6 +216,38 @@ dkt_edit:
     shl esi, 5
     add esi, DESK_FILES
     mov dword [dkt_force_verb], dk_verb_edit
+    mov edi, dk_fm_path
+    call dk_launch
+    mov dword [dkt_force_verb], 0
+.done:
+    popad
+    ret
+
+; The selected picture, into Paint (a program: no Terminal)
+dkt_paint:
+    pushad
+    mov esi, [dk_fm_sel]
+    cmp esi, -1
+    je .done
+    shl esi, 5
+    add esi, DESK_FILES
+    mov dword [dkt_force_verb], dkt_verb_paint
+    mov edi, dk_fm_path
+    call dk_launch
+    mov dword [dkt_force_verb], 0
+.done:
+    popad
+    ret
+
+; The selected file, into the Hex editor (a program: no Terminal)
+dkt_hex:
+    pushad
+    mov esi, [dk_fm_sel]
+    cmp esi, -1
+    je .done
+    shl esi, 5
+    add esi, DESK_FILES
+    mov dword [dkt_force_verb], dkt_verb_hex
     mov edi, dk_fm_path
     call dk_launch
     mov dword [dkt_force_verb], 0
@@ -240,6 +313,10 @@ dkt_force_verb   dd 0
 dkt_verb_zip     db "run zip.app -q ", 0
 dkt_verb_unzip   db "run zip.app -x -q ", 0
 dkt_verb_view    db "run zip.app -v ", 0
+dkt_verb_paint   db "run paint.app ", 0
+dkt_verb_hex     db "run hexedit.app ", 0
+dkt_n_hex        db "hexedit.app", 0
+dkt_l_hex        db "Hex editor", 0
 dkt_cmd          times 40 db 0
 dkt_l_zip        db "Compress to ZIP", 0
 dkt_l_unzip      db "Extract here", 0
@@ -484,6 +561,10 @@ dkt_empty_do:
     call wget_append
     mov byte [edi], 0
     call dk_toast
+    mov eax, SND_EMPTY                    ; a crunch, and Lex is pleased
+    call snd_play
+    mov eax, CAT_R_TIDY
+    call cat_react
     mov byte [dk_fm_refresh], 1
     mov byte [dki_rescan], 1
     mov byte [dk_redraw_all], 1
@@ -619,6 +700,10 @@ dkt_forever_do:
     call wget_append_num
     mov byte [edi], 0
     call dk_toast
+    mov eax, SND_EMPTY                    ; a crunch - Lex startled
+    call snd_play
+    mov eax, CAT_R_GONE
+    call cat_react
     call dk_sel_clear
     mov dword [dk_fm_sel], -1
     mov byte [dk_fm_refresh], 1
@@ -628,9 +713,10 @@ dkt_forever_do:
     ret
 
 ; ============================================================
-; Del: the file under the pointer (Files' or a desktop icon) - or, with
-; Files in front and the pointer on none, what's selected there - into
-; the trash (in the trash: gone for good)
+; Del: what's picked - the desktop's icons if the desktop was clicked
+; last (or no window's open), else Files' selection with Files in front
+; - into the trash (in the trash: gone for good). Never just what the
+; pointer happens to be over.
 ; ============================================================
 
 ; The keyboard's interrupt, Del: carry=0 if it's taken (the desktop's
@@ -642,44 +728,37 @@ dkt_del_key:
     jne .theirs
     cmp byte [dkn_open], 0
     jne .theirs
+    cmp byte [dkl_grab], 0
+    jne .theirs
     cmp byte [dk_ctx_open], 0
     jne .theirs
     cmp byte [dk_menu_open], 0
     jne .theirs
     pushad
-    call dk_top_window                    ; a Terminal, a program in front:
-    cmp eax, -1                           ; the key is theirs
-    je .pointer
-    cmp byte [dkw_kind + eax], K_TERM
-    je .not_mine
-    cmp byte [dkw_kind + eax], K_APP
-    je .not_mine
-.pointer:
-    mov eax, [dk_mx]
-    mov ebx, [dk_my]
-    call dk_window_at                     ; -> esi
-    cmp esi, -1
-    jne .window
-    call dki_at                           ; a desktop icon?
-    cmp ecx, -1
-    je .files_front
-    mov [dkt_del_what], ecx
+    call dk_top_window
+    cmp eax, -1
+    je .desk
+    cmp byte [dkt_desk_focus], 0
+    jne .desk
+    cmp byte [dkw_kind + eax], K_FILES    ; a Terminal, a program in front:
+    jne .not_mine                         ; the key is theirs
+    cmp byte [dkf_recent], 0              ; (Recent: nothing's deleted from
+    jne .mine                             ;  there - taken, ignored)
+    mov dword [dkt_del_what], -1          ; Files: its selection
+    mov byte [dkt_del_req], 2
+    jmp .mine
+.desk:
+    xor ebx, ebx                          ; the desktop: an icon picked?
+.pick:
+    cmp ebx, [dki_n]
+    jae .not_mine                         ; (none: not the desktop's key)
+    call dkm_is
+    jnc .picked
+    inc ebx
+    jmp .pick
+.picked:
+    mov [dkt_del_what], ebx
     mov byte [dkt_del_req], 1
-    jmp .mine
-.window:
-    cmp byte [dkw_kind + esi], K_FILES
-    jne .files_front
-    call dk_files_entry_at                ; -> edx
-    cmp edx, -1
-    je .files_front
-    mov [dkt_del_what], edx
-    mov byte [dkt_del_req], 2
-    jmp .mine
-.files_front:
-    cmp byte [dk_fm_typing], 0            ; Files in front: its selection
-    je .not_mine
-    mov dword [dkt_del_what], -1
-    mov byte [dkt_del_req], 2
 .mine:
     popad
     clc
@@ -704,26 +783,12 @@ dkt_del_work:
     jae .done
     call dkt_is_icon
     jnc .done
+    call dkm_pick_one                     ; (not picked: just it)
     mov [dk_ctx_icon], ebx
     mov eax, DKC_IDELETE
     call dkx_ctx_create
     jmp .done
-.files:
-    cmp ebx, -1                           ; the one pointed at: the selection
-    je .selected
-    cmp ebx, [dk_fm_count]
-    jae .done
-    mov esi, ebx
-    shl esi, 5
-    cmp byte [DESK_FILES + esi + 17], IC_UP
-    je .done
-    call dk_sel_test
-    jnc .chosen
-    call dk_sel_clear
-    call dk_sel_set
-.chosen:
-    mov [dk_fm_sel], ebx
-.selected:
+.files:                                   ; Files: its selection
     cmp byte [dkt_fm_in_trash], 0
     je .to_trash
     call dkt_forever_req
@@ -745,6 +810,8 @@ DKT_BAR_W2     equ 136
 dkt_note_where:
     pushad
     mov byte [dkt_fm_in_trash], 0
+    cmp byte [dkf_recent], 0              ; (Recent: not the trash)
+    jne .done
     call dkt_find                         ; -> al
     jc .done
     cmp al, [dk_fm_dir]
@@ -878,6 +945,7 @@ dkt_bar_click:
 
 dkt_del_req      db 0                     ; 1 a desktop icon, 2 Files'
 dkt_del_what     dd 0
+dkt_desk_focus   db 0                     ; the desktop clicked last (Del)
 dkt_fm_in_trash  db 0
 dkt_l_restore_all db "Restore all", 0
 dkt_m_gone       db "Deleted for good: ", 0
