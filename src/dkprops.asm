@@ -17,19 +17,12 @@
 DKN_PROPS      equ 8
 DKP_W          equ 480
 DKP_H          equ 292
-DKP_X          equ (DESK_W - DKP_W) / 2
 DKP_Y          equ 170
 DKP_BTN_Y      equ DKP_Y + DKP_H - DKN_BTN_H - 12
-DKP_OK_X       equ DKP_X + DKP_W - 2 * DKN_BTN_W - 24
-DKP_CANCEL_X   equ DKP_X + DKP_W - DKN_BTN_W - 14
-DKP_BOX_X      equ DKP_X + 20
 DKP_BOX_Y      equ DKP_Y + 214
-DKP_VAL_X      equ DKP_X + 136
-DKP_VAL_MAX    equ (DKP_X + DKP_W - 16 - DKP_VAL_X) / 8
+DKP_VAL_MAX    equ (DKP_W - 16 - 136) / 8
 DKP_CHG_W      equ 136
-DKP_CHG_X      equ DKP_X + DKP_W - DKP_CHG_W - 16
 DKP_CHG_Y      equ DKP_Y + 44
-DKP_GRID_X     equ DKP_X + 24
 DKP_GRID_Y     equ DKP_Y + 116
 DKP_CELL_W     equ 48
 DKP_CELL_H     equ 44
@@ -56,7 +49,8 @@ dkp_ask:
 
 dkp_mark:
     pushad
-    mov eax, DKP_X
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKP_W / 2 )
     mov ebx, DKP_Y
     mov ecx, DKP_W + 4
     mov edx, DKP_H + 4
@@ -485,13 +479,15 @@ dkp_dec2:
 ; ============================================================
 dkp_draw:
     pushad
-    mov eax, DKP_X + 4                    ; a shadow, the frame, the face
+    mov eax, [dk_w2] ; a shadow, the frame, the face
+    add eax, ( 0 - DKP_W / 2 ) + 4
     mov ebx, DKP_Y + 4
     mov ecx, DKP_W
     mov edx, DKP_H
     mov esi, 0x08101C
     call dk_fill
-    mov eax, DKP_X
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKP_W / 2 )
     mov ebx, DKP_Y
     mov esi, COL_FRAME
     call dk_fill
@@ -505,38 +501,44 @@ dkp_draw:
     mov esi, COL_TITLE_ON
     call dk_fill
     mov esi, dkp_t_title
-    mov eax, DKP_X + 10
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKP_W / 2 ) + 10
     mov ebx, DKP_Y + 6
     mov edx, COL_WHITE
     call dk_text
     cmp byte [dkp_loaded], 0
     jne .loaded
     mov esi, dkp_m_reading
-    mov eax, DKP_X + 20
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKP_W / 2 ) + 20
     mov ebx, DKP_Y + 50
     mov edx, COL_TEXT
     call dk_text
     jmp .buttons
 .loaded:
     mov dword [dk_icon_fill], dk_fill     ; its icon (as chosen), its name
-    mov eax, DKP_X + 20
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKP_W / 2 ) + 20
     mov ebx, DKP_Y + 40
     call dkp_shown_icon                   ; -> ecx
     call dk_icon
     cmp byte [dkp_can_look], 0            ; Change icon... (programs, shortcuts)
     je .no_change
-    mov eax, DKP_CHG_X
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKP_W / 2 + DKP_W - DKP_CHG_W - 16 )
     mov ebx, DKP_CHG_Y
     mov ecx, DKP_CHG_W
     mov esi, dkp_l_change
     call dkp_button
 .no_change:
     mov esi, dkp_name
-    mov eax, DKP_X + 66
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKP_W / 2 ) + 66
     mov ebx, DKP_Y + 48
     mov edx, COL_TEXT
     call dk_text_raw_all
-    mov eax, DKP_X + 16                   ; a line under
+    mov eax, [dk_w2] ; a line under
+    add eax, ( 0 - DKP_W / 2 ) + 16
     mov ebx, DKP_Y + 84
     mov ecx, DKP_W - 32
     mov edx, 1
@@ -554,19 +556,22 @@ dkp_draw:
     imul ebx, ecx, 26
     add ebx, DKP_Y + 98
     mov esi, [dkp_labels + ecx*4]
-    mov eax, DKP_X + 20
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKP_W / 2 ) + 20
     mov edx, COL_MUTED
     call dk_text
     mov esi, [dkp_values + ecx*4]
     cmp ecx, 1                            ; (the kind: a word to translate;
     jne .raw                              ;  the rest: as they are)
     mov esi, [dkp_kind]
-    mov eax, DKP_VAL_X
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKP_W / 2 + 136 )
     mov edx, COL_TEXT
     call dk_text
     jmp .row_next
 .raw:
-    mov eax, DKP_VAL_X
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKP_W / 2 + 136 )
     mov edx, COL_TEXT
     push edi
     mov edi, DKP_VAL_MAX
@@ -576,7 +581,8 @@ dkp_draw:
     inc ecx
     jmp .row
 .rows_done:
-    mov eax, DKP_X + 16
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKP_W / 2 ) + 16
     mov ebx, DKP_Y + 202
     mov ecx, DKP_W - 32
     mov edx, 1
@@ -584,7 +590,8 @@ dkp_draw:
     call dk_fill
     cmp byte [dkp_type], FS_TYPE_DIR      ; the box (not for a folder:
     je .inside                            ;  what's in it instead)
-    mov eax, DKP_BOX_X
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKP_W / 2 + 20 )
     mov ebx, DKP_BOX_Y
     mov ecx, 16
     mov edx, 16
@@ -606,24 +613,28 @@ dkp_draw:
     call dk_fill
 .unticked:
     mov esi, dkp_l_ro
-    mov eax, DKP_BOX_X + 26
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKP_W / 2 + 20 ) + 26
     mov ebx, DKP_BOX_Y
     mov edx, COL_TEXT
     call dk_text
     mov esi, dkp_m_ro_hint
-    mov eax, DKP_BOX_X + 26
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKP_W / 2 + 20 ) + 26
     mov ebx, DKP_BOX_Y + 20
     mov edx, COL_MUTED
     call dk_text
     jmp .error
 .inside:
     mov esi, dkp_l_inside
-    mov eax, DKP_X + 20
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKP_W / 2 ) + 20
     mov ebx, DKP_BOX_Y
     mov edx, COL_MUTED
     call dk_text
     mov esi, dkp_inside_text
-    mov eax, DKP_VAL_X
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKP_W / 2 + 136 )
     mov edx, COL_TEXT
     push edi
     mov edi, DKP_VAL_MAX
@@ -633,16 +644,19 @@ dkp_draw:
     mov esi, [dkn_err]
     or esi, esi
     jz .buttons
-    mov eax, DKP_X + 20
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKP_W / 2 ) + 20
     mov ebx, DKP_BTN_Y + 4
     mov edx, 0xE04848
     call dk_text
 .buttons:
-    mov eax, DKP_OK_X
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKP_W / 2 + DKP_W - 2 * DKN_BTN_W - 24 )
     mov ebx, DKP_BTN_Y
     mov esi, dkn_l_ok
     call dkn_button_at
-    mov eax, DKP_CANCEL_X
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKP_W / 2 + DKP_W - DKN_BTN_W - 14 )
     mov esi, dkn_l_cancel
     call dkn_button_at
     popad
@@ -655,9 +669,19 @@ dkp_click:
     je .not_change
     cmp byte [dkp_can_look], 0
     je .not_change
-    cmp eax, DKP_CHG_X                    ; Change icon...: the grid (again:
+    push edx
+    mov edx, [dk_w2]
+    add edx, ( 0 - DKP_W / 2 + DKP_W - DKP_CHG_W - 16 )
+    mov [dk_ctmp], edx
+    pop edx
+    cmp eax, [dk_ctmp] ; Change icon...: the grid (again:
     jl .not_change                        ;  away)
-    cmp eax, DKP_CHG_X + DKP_CHG_W
+    push edx
+    mov edx, [dk_w2]
+    add edx, ( 0 - DKP_W / 2 + DKP_W - DKP_CHG_W - 16 ) + DKP_CHG_W
+    mov [dk_ctmp], edx
+    pop edx
+    cmp eax, [dk_ctmp]
     jge .not_change
     cmp ebx, DKP_CHG_Y
     jl .not_change
@@ -680,16 +704,36 @@ dkp_click:
     jl .not_buttons
     cmp ebx, DKP_BTN_Y + DKN_BTN_H
     jge .done
-    cmp eax, DKP_OK_X
+    push edx
+    mov edx, [dk_w2]
+    add edx, ( 0 - DKP_W / 2 + DKP_W - 2 * DKN_BTN_W - 24 )
+    mov [dk_ctmp], edx
+    pop edx
+    cmp eax, [dk_ctmp]
     jl .done
-    cmp eax, DKP_OK_X + DKN_BTN_W
+    push edx
+    mov edx, [dk_w2]
+    add edx, ( 0 - DKP_W / 2 + DKP_W - 2 * DKN_BTN_W - 24 ) + DKN_BTN_W
+    mov [dk_ctmp], edx
+    pop edx
+    cmp eax, [dk_ctmp]
     jge .not_ok
     mov byte [dkn_req], 1
     jmp .done
 .not_ok:
-    cmp eax, DKP_CANCEL_X
+    push edx
+    mov edx, [dk_w2]
+    add edx, ( 0 - DKP_W / 2 + DKP_W - DKN_BTN_W - 14 )
+    mov [dk_ctmp], edx
+    pop edx
+    cmp eax, [dk_ctmp]
     jl .done
-    cmp eax, DKP_CANCEL_X + DKN_BTN_W
+    push edx
+    mov edx, [dk_w2]
+    add edx, ( 0 - DKP_W / 2 + DKP_W - DKN_BTN_W - 14 ) + DKN_BTN_W
+    mov [dk_ctmp], edx
+    pop edx
+    cmp eax, [dk_ctmp]
     jge .done
     call dkn_close
     jmp .done
@@ -700,9 +744,19 @@ dkp_click:
     jl .done
     cmp ebx, DKP_BOX_Y + 18
     jge .done
-    cmp eax, DKP_BOX_X - 2
+    push edx
+    mov edx, [dk_w2]
+    add edx, ( 0 - DKP_W / 2 + 20 ) - 2
+    mov [dk_ctmp], edx
+    pop edx
+    cmp eax, [dk_ctmp]
     jl .done
-    cmp eax, DKP_BOX_X + 26 + 12 * 8
+    push edx
+    mov edx, [dk_w2]
+    add edx, ( 0 - DKP_W / 2 + 20 ) + 26 + 12 * 8
+    mov [dk_ctmp], edx
+    pop edx
+    cmp eax, [dk_ctmp]
     jge .done
     call dkp_toggle
 .done:
@@ -812,7 +866,8 @@ dkp_button:
 dkp_draw_grid:
     pushad
     mov esi, dkp_m_choose
-    mov eax, DKP_X + 20
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKP_W / 2 ) + 20
     mov ebx, DKP_Y + 94
     mov edx, COL_MUTED
     call dk_text
@@ -876,7 +931,8 @@ dkp_cell_xy:
     imul ebx, eax, DKP_CELL_H
     add ebx, DKP_GRID_Y
     imul eax, edx, DKP_CELL_W
-    add eax, DKP_GRID_X
+    add eax, [dk_w2]
+    add eax, ( 0 - DKP_W / 2 + 24 )
     pop edx
     pop ecx
     ret
@@ -886,7 +942,8 @@ dkp_grid_at:
     push eax
     push ebx
     push edx
-    sub eax, DKP_GRID_X
+    sub eax, [dk_w2]
+    sub eax, ( 0 - DKP_W / 2 + 24 )
     js .none
     sub ebx, DKP_GRID_Y
     js .none

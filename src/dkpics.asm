@@ -224,17 +224,19 @@ dkv_pixels:
 .row_ok:
     mov edi, [dk_cy]
     add edi, ebp
-    imul edi, DESK_STRIDE
+    imul edi, [dk_stride]
     mov edx, [dk_cx]
     add edx, [dkv_c0]
-    lea edi, [edi + edx*4 + DESK_BACK]
+    lea edi, [edi + edx*4]
+    add edi, [dk_back]
     mov ecx, [dkv_c1]
     sub ecx, [dkv_c0]
     cmp eax, [dkv_last_row]               ; the same as the row above:
     jne .new_row                          ; copied
     cmp ebp, [dkv_r0]
     je .new_row
-    lea esi, [edi - DESK_STRIDE]
+    mov esi, edi
+    sub esi, [dk_stride]
     rep movsd
     jmp .next_row
 .new_row:
@@ -871,9 +873,9 @@ dkv_loaded:
     jge .w_min
     mov eax, DKV_MIN_W
 .w_min:
-    cmp eax, DESK_W - DK_BORDER * 2
+    cmp eax, [dk_max_cw]
     jle .w_max
-    mov eax, DESK_W - DK_BORDER * 2
+    mov eax, [dk_max_cw]
 .w_max:
     mov [dkw_w + esi*4], eax
     mov eax, [dk_pic_h]
@@ -882,9 +884,9 @@ dkv_loaded:
     mov eax, DKV_MIN_H
 .h_min:
     add eax, DKV_BAR
-    cmp eax, DESK_H - DK_TASKBAR_H - DK_TITLE_H - DK_BORDER * 2
+    cmp eax, [dk_max_ch]
     jle .h_max
-    mov eax, DESK_H - DK_TASKBAR_H - DK_TITLE_H - DK_BORDER * 2
+    mov eax, [dk_max_ch]
 .h_max:
     mov [dkw_h + esi*4], eax
     call dk_fit_window
@@ -999,4 +1001,4 @@ dkv_khead        db 0
 dkv_ktail        db 0
 dkv_keys         times 16 dw 0
 dkv_line         times 40 db 0
-dkv_cols         times DESK_W dd 0
+dkv_cols         times DESK_MAX_W dd 0

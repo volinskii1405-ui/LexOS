@@ -404,4 +404,5 @@ kext_start:
 %include "src/dkpics.asm"
 %include "src/dknotify.asm"
 %include "src/dkanim.asm"
+%include "src/dkres.asm"
 kext_end:

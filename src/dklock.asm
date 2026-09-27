@@ -11,7 +11,6 @@
 DKL_PASS_MAX   equ 16
 DKL_CARD_W     equ 440
 DKL_CARD_H     equ 200
-DKL_CARD_X     equ (DESK_W - DKL_CARD_W) / 2
 DKL_CARD_Y     equ 390
 
 ; Each frame: locked when asked; the keys typed at it; the clock kept
@@ -160,20 +159,22 @@ dkl_draw:
     cmp ebx, [dk_clip_y1]
     jae .bg_done
     mov edi, ebx
-    imul edi, DESK_STRIDE
+    imul edi, [dk_stride]
     mov eax, [dk_clip_x0]
-    lea edi, [edi + eax*4 + DESK_BACK]
+    lea edi, [edi + eax*4]
+    add edi, [dk_back]
     mov ecx, [dk_clip_x1]
     sub ecx, eax
-    cmp ebx, DESK_H - DK_TASKBAR_H
+    cmp ebx, [dk_task_y]
     jae .flat
     cmp byte [dkw_loaded], 0
     je .gradient
     cmp byte [dkw_on], 0
     je .gradient
     mov esi, ebx                          ; the wallpaper's row, halved
-    imul esi, DESK_STRIDE
-    lea esi, [esi + eax*4 + DKW_BUF]
+    imul esi, [dk_stride]
+    lea esi, [esi + eax*4]
+    add esi, [dkw_buf]
 .pixel:
     lodsd
     shr eax, 1
@@ -216,7 +217,8 @@ dkl_draw:
     call dkf_two
     mov byte [edi], 0
     mov esi, dkl_buf
-    mov eax, (DESK_W - 5 * 8 * 9) / 2
+    mov eax, [dk_w2]
+    sub eax, 5 * 8 * 9 / 2
     mov ebx, 110
     mov ecx, 9
     mov edx, 0xFFFFFF
@@ -240,19 +242,20 @@ dkl_draw:
     mov esi, dkl_buf
     call wl_strlen                        ; -> ecx
     imul eax, ecx, -12                    ; (centered, 24 a letter)
-    add eax, DESK_W / 2
+    add eax, [dk_w2]
     mov ebx, 270
     mov ecx, 3
     mov edx, 0xDDE6F2
     call wl_text_big
     ; the card
-    mov eax, DKL_CARD_X
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKL_CARD_W / 2 )
     mov ebx, DKL_CARD_Y
     mov ecx, DKL_CARD_W
     mov edx, DKL_CARD_H
     mov esi, 0x101826
     call dk_fill
-    mov eax, DESK_W / 2                   ; the user's letter in a circle
+    mov eax, [dk_w2] ; the user's letter in a circle
     mov ebx, DKL_CARD_Y + 44
     mov ecx, 30
     call wl_disc
@@ -266,7 +269,8 @@ dkl_draw:
     mov [dkl_buf], cl
     mov byte [dkl_buf + 1], 0
     mov esi, dkl_buf
-    mov eax, DESK_W / 2 - 8
+    mov eax, [dk_w2]
+    add eax, 0 - 8
     mov ebx, DKL_CARD_Y + 44 - 16
     mov ecx, 2
     mov edx, 0xFFFFFF
@@ -274,14 +278,15 @@ dkl_draw:
     mov esi, user_nickname                ; the name
     call wl_strlen
     imul eax, ecx, -8
-    add eax, DESK_W / 2
+    add eax, [dk_w2]
     mov ebx, DKL_CARD_Y + 84
     mov ecx, 2
     mov edx, 0xFFFFFF
     call wl_text_big
     cmp dword [user_pass_hash], 0
     je .no_password
-    mov eax, DKL_CARD_X + 60              ; the password's box, its dots
+    mov eax, [dk_w2] ; the password's box, its dots
+    add eax, ( 0 - DKL_CARD_W / 2 ) + 60
     mov ebx, DKL_CARD_Y + 124
     mov ecx, DKL_CARD_W - 120
     mov edx, 30
@@ -298,7 +303,8 @@ dkl_draw:
     mov esi, 0xF7FAF8
     call dk_fill
     movzx edi, byte [dkl_len]
-    mov eax, DKL_CARD_X + 72
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKL_CARD_W / 2 ) + 72
     mov ebx, DKL_CARD_Y + 134
 .dot:
     or edi, edi
@@ -322,7 +328,7 @@ dkl_draw:
     call tr_lookup
     call wl_strlen
     imul eax, ecx, -4
-    add eax, DESK_W / 2
+    add eax, [dk_w2]
     mov ebx, DKL_CARD_Y + 170
     mov edx, 0xAFBBCC
     cmp byte [dkl_wrong], 0

@@ -1235,8 +1235,9 @@ dkf_blit:
     sub edi, [dkf_bx0]
     lea esi, [esi + edi*4]
     mov edi, ebp
-    imul edi, DESK_STRIDE
-    lea edi, [edi + eax*4 + DESK_BACK]
+    imul edi, [dk_stride]
+    lea edi, [edi + eax*4]
+    add edi, [dk_back]
     sub ecx, eax
     cld
     rep movsd

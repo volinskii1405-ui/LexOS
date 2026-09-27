@@ -226,7 +226,8 @@ dka_button_rect:
     jc .none
     imul eax, [dk_btn_step]
     add eax, 96
-    mov ebx, DESK_H - DK_TASKBAR_H + 3
+    mov ebx, [dk_h]
+    add ebx, 0 - DK_TASKBAR_H + 3
     mov ecx, [dk_btn_step]
     sub ecx, 4
     mov edx, DK_TASKBAR_H - 6

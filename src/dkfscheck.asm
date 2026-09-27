@@ -13,9 +13,7 @@ DKFS_LBA       equ JNL_LBA + JNL_MAX + 8
 DKFS_BAR_W     equ 440
 DKFS_CARD_W    equ 520
 DKFS_CARD_H    equ 170
-DKFS_CARD_X    equ (DESK_W - DKFS_CARD_W) / 2
 DKFS_CARD_Y    equ 300
-DKFS_BAR_X     equ DKFS_CARD_X + (DKFS_CARD_W - DKFS_BAR_W) / 2
 DKFS_BAR_Y     equ DKFS_CARD_Y + 80
 
 ; At boot (the filesystem up, the journal replayed): checked if the last
@@ -157,7 +155,8 @@ dkfs_progress:
 ; The card, its title
 dkfs_card:
     pushad
-    mov eax, DKFS_CARD_X
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKFS_CARD_W / 2 )
     mov ebx, DKFS_CARD_Y
     mov ecx, DKFS_CARD_W
     mov edx, DKFS_CARD_H
@@ -170,12 +169,13 @@ dkfs_card:
     call tr_lookup
     call wl_strlen
     imul eax, ecx, -8
-    add eax, DESK_W / 2
+    add eax, [dk_w2]
     mov ebx, DKFS_CARD_Y + 22
     mov ecx, 2
     mov edx, WL_INK
     call wl_text_big
-    mov eax, DKFS_CARD_X
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKFS_CARD_W / 2 )
     mov ebx, DKFS_CARD_Y
     mov ecx, DKFS_CARD_W
     mov edx, DKFS_CARD_H
@@ -186,7 +186,8 @@ dkfs_card:
 ; The line under the bar: cleared
 dkfs_card_text_clear:
     pushad
-    mov eax, DKFS_CARD_X + 10
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKFS_CARD_W / 2 ) + 10
     mov ebx, DKFS_BAR_Y + 34
     mov ecx, DKFS_CARD_W - 20
     mov edx, 20
@@ -201,12 +202,13 @@ dkfs_line:
     call tr_lookup
     call wl_strlen
     imul eax, ecx, -4
-    add eax, DESK_W / 2
+    add eax, [dk_w2]
     mov ebx, DKFS_BAR_Y + 36
     mov edx, WL_MUTED
     mov edi, 70
     call dk_text_raw
-    mov eax, DKFS_CARD_X
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKFS_CARD_W / 2 )
     mov ebx, DKFS_BAR_Y + 30
     mov ecx, DKFS_CARD_W
     mov edx, 30
@@ -217,7 +219,8 @@ dkfs_line:
 ; ebx = the slot fsck's at: the bar that far
 dkfs_bar:
     pushad
-    mov eax, DKFS_BAR_X
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKFS_CARD_W / 2 + ( DKFS_CARD_W - DKFS_BAR_W ) / 2 )
     mov ebx, DKFS_BAR_Y
     mov ecx, DKFS_BAR_W
     mov edx, 18
@@ -233,12 +236,14 @@ dkfs_bar:
     mov eax, DKFS_BAR_W
 .w:
     mov ecx, eax
-    mov eax, DKFS_BAR_X
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKFS_CARD_W / 2 + ( DKFS_CARD_W - DKFS_BAR_W ) / 2 )
     mov ebx, DKFS_BAR_Y
     mov edx, 18
     mov esi, WL_GREEN
     call dk_fill
-    mov eax, DKFS_BAR_X
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKFS_CARD_W / 2 + ( DKFS_CARD_W - DKFS_BAR_W ) / 2 )
     mov ecx, DKFS_BAR_W
     call wl_show
     popad

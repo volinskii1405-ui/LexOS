@@ -391,6 +391,28 @@ dkc_set_anim:
     mov byte [dk_cfg_dirty], 1
     ret
 
+dkc_get_screen:                           ; (src/dkres.asm)
+    mov eax, [dk_res]
+    ret
+dkc_set_screen:
+    cmp eax, [dk_res]
+    je .same
+    call dk_res_apply
+    mov eax, [dk_res]
+    mov [dk_res_want], eax
+    jnc .same
+    push esi                              ; (not the memory for it)
+    push edi
+    mov esi, dkc_m_memory
+    mov edi, dk_toast_buf
+    call wget_append
+    mov byte [edi], 0
+    call dk_toast
+    pop edi
+    pop esi
+.same:
+    ret
+
 dkc_get_none:
     mov eax, -1
     ret
@@ -752,6 +774,13 @@ dkc_cfg_save:
     stosb
     mov ax, 0x0A0D
     stosw
+    mov esi, dkc_cfg_res
+    call wget_append
+    mov al, [dk_res_want]
+    add al, '0'
+    stosb
+    mov ax, 0x0A0D
+    stosw
     pop esi
     pop eax
     ret
@@ -763,6 +792,7 @@ dkc_cfg_load:
     mov dword [dk_dbl_ms], 450
     mov byte [dkss_delay_i], 1
     mov byte [dka_enabled], 1
+    mov dword [dk_res_want], 1
     mov esi, dkc_cfg_mouse
     call dk_cfg_value                     ; -> eax
     jc .no_mouse
@@ -779,6 +809,13 @@ dkc_cfg_load:
     jae .no_dbl
     call dkc_set_dbl
 .no_dbl:
+    mov esi, dkc_cfg_res
+    call dk_cfg_value
+    jc .no_res
+    cmp eax, DKR_N
+    jae .no_res
+    mov [dk_res_want], eax
+.no_res:
     mov esi, dkc_cfg_anim
     call dk_cfg_value
     jc .no_anim
@@ -821,6 +858,7 @@ dkc_rows_look  dd dk_msg_theme, dkc_o_theme, DK_THEMES, 66, dkc_get_theme, dkc_s
                dd dkc_l_lex, dkc_o_onoff, 2, 72, dkc_get_lex, dkc_set_lex
                dd dkc_l_saver, dkc_o_saver, 4, 72, dkc_get_saver, dkc_set_saver
                dd dkc_l_anim, dkc_o_onoff, 2, 72, dkc_get_anim, dkc_set_anim
+               dd dkc_l_screen, dkc_o_screen, 4, 84, dkc_get_screen, dkc_set_screen
                dd 0
 dkc_rows_sound dd dk_msg_sounds, dkc_o_onoff, 2, 72, dkc_get_sounds, dkc_set_sounds
                dd dkc_l_volume, dkc_o_mixer, 1, 120, dkc_get_none, dkc_set_mixer
@@ -839,6 +877,7 @@ dkc_rows_users dd dkc_l_users, dkc_o_users, 3, 110, dkc_get_none, dkc_set_users
 dkc_o_theme    times DK_THEMES dd 0
 dkc_o_wall     dd dkc_l_none, dkc_l_sunset, dkc_l_aurora
 dkc_o_onoff    dd dk_msg_on, dk_msg_off
+dkc_o_screen   dd dkc_l_800, dkc_l_1024, dkc_l_1280w, dkc_l_1280
 dkc_o_saver    dd dkc_l_off, dkc_l_1min, dkc_l_3min, dkc_l_10min
 dkc_o_mixer    dd dkc_l_mixer
 dkc_o_lang     dd dkc_n_en, lang_n_ru, lang_n_es
@@ -857,6 +896,12 @@ dkc_l_wall     db "Wallpaper", 0
 dkc_l_lex      db "Lex the cat", 0
 dkc_l_saver    db "Screen saver", 0
 dkc_l_anim     db "Animations", 0
+dkc_l_screen   db "Screen", 0
+dkc_l_800      db "800x600", 0
+dkc_l_1024     db "1024x768", 0
+dkc_l_1280w    db "1280x720", 0
+dkc_l_1280     db "1280x1024", 0
+dkc_m_memory   db "1280 wide needs 256 MB of memory (QEMU -m 256)", 0
 dkc_l_volume   db "Volume", 0
 dkc_l_lang     db "Language", 0
 dkc_l_ru       db "Russian keys", 0
@@ -895,3 +940,4 @@ dkc_cfg_mouse  db "mouse=", 0
 dkc_cfg_dbl    db "dbl=", 0
 dkc_cfg_saver  db "saver=", 0
 dkc_cfg_anim   db "anim=", 0
+dkc_cfg_res    db "res=", 0

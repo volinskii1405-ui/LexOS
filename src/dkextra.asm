@@ -5,7 +5,6 @@
 ;          dkx_relogin_check
 
 DKT_H          equ 22
-DKT_Y          equ DESK_H - DK_TASKBAR_H - DKT_H - 6
 DKT_HOVER_MS   equ 500
 DKX_DESK_W     equ 7                      ; the show-desktop strip
 DKX_RECENT_MAX equ 4
@@ -20,7 +19,11 @@ dkt_show:
     call dkt_mark                         ; (the old one away)
     mov edx, [dkt_y_req]                  ; (where: asked for, once)
     mov [dkt_y], edx
-    mov dword [dkt_y_req], DKT_Y
+    push eax
+    mov eax, [dk_h]
+    add eax, ( 0 - DK_TASKBAR_H - DKT_H - 6 )
+    mov [dkt_y_req], eax
+    pop eax
     mov edi, dkt_text
     mov edx, 63
 .copy:
@@ -43,7 +46,8 @@ dkt_show:
     jns .left
     xor eax, eax
 .left:
-    mov edx, DESK_W - 2
+    mov edx, [dk_w]
+    add edx, 0 - 2
     sub edx, [dkt_w]
     cmp eax, edx
     jle .right
@@ -98,9 +102,14 @@ dkt_work:
 .hover:
     mov eax, [dk_mx]                      ; on the clock?
     mov ebx, [dk_my]
-    cmp ebx, DESK_H - DK_TASKBAR_H
+    cmp ebx, [dk_task_y]
     jb .away
-    cmp eax, DESK_W - 64
+    push edx
+    mov edx, [dk_w]
+    add edx, 0 - 64
+    mov [dk_ctmp], edx
+    pop edx
+    cmp eax, [dk_ctmp]
     jb .away
     cmp byte [dk_cal_open], 0             ; (the calendar's out: no need)
     jne .away
@@ -121,7 +130,8 @@ dkt_work:
     mov byte [dkt_hovered], 1
     call dkt_date_text
     mov esi, dkt_date
-    mov eax, DESK_W - 40
+    mov eax, [dk_w]
+    add eax, 0 - 40
     xor ecx, ecx
     call dkt_show
     jmp .done
@@ -326,8 +336,10 @@ dkx_show_desktop:
 ; The taskbar's right end: a thin strip - a click there shows the desktop
 dkx_draw_desk_btn:
     pushad
-    mov eax, DESK_W - DKX_DESK_W
-    mov ebx, DESK_H - DK_TASKBAR_H + 4
+    mov eax, [dk_w]
+    add eax, 0 - DKX_DESK_W
+    mov ebx, [dk_h]
+    add ebx, 0 - DK_TASKBAR_H + 4
     mov ecx, 1
     mov edx, DK_TASKBAR_H - 8
     mov esi, COL_MUTED
@@ -391,7 +403,12 @@ dk_snap_zone:
     mov edx, 1
     jmp .done
 .not_left:
-    cmp eax, DESK_W - 2
+    push edx
+    mov edx, [dk_w]
+    add edx, 0 - 2
+    mov [dk_ctmp], edx
+    pop edx
+    cmp eax, [dk_ctmp]
     jl .not_right
     mov edx, 2
     jmp .done
@@ -427,18 +444,18 @@ dk_snap_rect:
     xor eax, eax
     cmp edx, 1
     je .half
-    mov eax, DESK_W / 2
+    mov eax, [dk_w2]
 .half:
     xor ebx, ebx
-    mov ecx, DESK_W / 2
-    mov edx, DESK_H - DK_TASKBAR_H
+    mov ecx, [dk_w2]
+    mov edx, [dk_task_y]
     pop esi
     ret
 .all:
     xor eax, eax
     xor ebx, ebx
-    mov ecx, DESK_W
-    mov edx, DESK_H - DK_TASKBAR_H
+    mov ecx, [dk_w]
+    mov edx, [dk_task_y]
     pop esi
     ret
 .fixed:
@@ -447,7 +464,7 @@ dk_snap_rect:
     xor eax, eax
     cmp edx, 1
     je .side
-    mov eax, DESK_W
+    mov eax, [dk_w]
     sub eax, ecx
 .side:
     xor ebx, ebx
@@ -527,13 +544,22 @@ dk_win_snap:
     mov dword [dk_area_x], 0
     cmp edx, 1
     je .area
-    mov dword [dk_area_x], DESK_W / 2
+    push eax
+    mov eax, [dk_w2]
+    mov [dk_area_x], eax
+    pop eax
 .area:
-    mov dword [dk_area_w], DESK_W / 2
+    push eax
+    mov eax, [dk_w2]
+    mov [dk_area_w], eax
+    pop eax
     mov eax, ebp
     call dk_win_maximize                  ; (into that half)
     mov dword [dk_area_x], 0
-    mov dword [dk_area_w], DESK_W
+    push eax
+    mov eax, [dk_w]
+    mov [dk_area_w], eax
+    pop eax
     jmp .done
 .top:
     cmp byte [dkw_max + ebp], 0
@@ -566,11 +592,18 @@ dkx_ctx_items:
     pushad
     mov dword [dk_ctx_n], 0
     mov eax, [dk_mx]
-    cmp dword [dk_my], DESK_H - DK_TASKBAR_H
+    push eax
+    mov eax, [dk_my]
+    cmp eax, [dk_task_y]
+    pop eax
     jb .desktop
     sub eax, 96                           ; a window's button?
     js .none
-    cmp dword [dk_mx], DESK_W - DK_TRAY_W
+    push eax
+    mov eax, [dk_w]
+    sub eax, DK_TRAY_W
+    cmp [dk_mx], eax
+    pop eax
     jae .none
     xor edx, edx
     div dword [dk_btn_step]
@@ -844,7 +877,8 @@ dkx_arrange_icons:
     mov ebx, DKI_ROWS
     div ebx
     imul eax, -(DKI_W + 10)               ; its column
-    add eax, DESK_W - DKI_W - 10
+    add eax, [dk_w]
+    add eax, 0 - DKI_W - 10
     imul edx, DKI_H + 8
     add edx, DKI_TOP
     mov [dki_x + ecx*4], eax
@@ -1255,8 +1289,9 @@ dkx_caps_work:
     cmp byte [dkx_caps_req], 0
     je .done
     mov byte [dkx_caps_req], 0
-    mov eax, DESK_W - DK_TRAY_W
-    mov ebx, DESK_H - DK_TASKBAR_H
+    mov eax, [dk_w]
+    add eax, 0 - DK_TRAY_W
+    mov ebx, [dk_task_y]
     mov ecx, DK_TRAY_W
     mov edx, DK_TASKBAR_H
     call dk_mark
@@ -1265,7 +1300,8 @@ dkx_caps_work:
     je .say
     mov esi, dkt_msg_caps_on
 .say:
-    mov eax, DK_TRAY_CAPS_X + 12
+    mov eax, [dk_w]
+    add eax, ( 0 - 182 ) + 12
     mov ecx, 1200
     call dkt_show
 .done:
@@ -1514,8 +1550,8 @@ dkx_bye_draw:
     je .done
     xor eax, eax
     xor ebx, ebx
-    mov ecx, DESK_W
-    mov edx, DESK_H
+    mov ecx, [dk_w]
+    mov edx, [dk_h]
     mov esi, 0x0B1026
     call dk_fill
     mov esi, dkx_msg_bye_off
@@ -1526,26 +1562,29 @@ dkx_bye_draw:
     call tr_lookup                        ; (src/langui.asm)
     call dki_strlen
     shl ecx, 2
-    mov eax, DESK_W / 2
+    mov eax, [dk_w2]
     sub eax, ecx
-    mov ebx, DESK_H / 2 - 40
+    mov ebx, [dk_h2]
+    add ebx, 0 - 40
     mov edx, 0xFFFFFF
     call dk_text
     mov esi, dkx_msg_bye_lex
     call tr_lookup
     call dki_strlen
     shl ecx, 2
-    mov eax, DESK_W / 2
+    mov eax, [dk_w2]
     sub eax, ecx
-    mov ebx, DESK_H / 2
+    mov ebx, [dk_h2]
     mov edx, 0xE0B040
     call dk_text
     mov esi, dkx_msg_bye_cat              ; (a little Lex, waving)
-    mov ebx, DESK_H / 2 + 40
+    mov ebx, [dk_h2]
+    add ebx, 0 + 40
 .cat:
     cmp byte [esi], 0
     je .done
-    mov eax, DESK_W / 2 - 40
+    mov eax, [dk_w2]
+    add eax, 0 - 40
     mov edx, 0xC0C8D8
     call dk_text
     call dki_strlen
@@ -1740,7 +1779,7 @@ dkx_fc_copy_one:
     pushad
     movzx eax, word [dkx_fc_slot + ebx*2]
     mov edi, DESK_IMG_FILE                ; its content (a picture's buffer:
-    mov ecx, DK_SHOT_SIZE                 ;  free between frames)
+    mov ecx, DESK_IMG_FILE_MAX            ;  free between frames)
     call fs_load_to
     mov [dkx_fc_size], ecx
     mov esi, ebx
@@ -1918,8 +1957,8 @@ dkx_l_fcut       db "Cut", 0
 dkx_l_fpaste     db "Paste", 0
 dkx_l_cathide    db "Hide Lex", 0
 dkx_l_catshow    db "Show Lex", 0
-dkt_y            dd DKT_Y                 ; where the tooltip is (dkt_show)
-dkt_y_req        dd DKT_Y
+dkt_y            dd 768 - DK_TASKBAR_H - DKT_H - 6 ; where the tooltip is (dkt_show)
+dkt_y_req        dd 768 - DK_TASKBAR_H - DKT_H - 6
 dkx_power_what   db 0                     ; 1 shutting down, 2 restarting
 dkx_power_since  dd 0
 dkx_msg_bye_off  db "LexOS is shutting down...", 0

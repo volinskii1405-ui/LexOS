@@ -176,9 +176,15 @@ dkm_follow:
     jge .x0
     xor eax, eax
 .x0:
-    cmp eax, DESK_W - DKI_W
+    push edx
+    mov edx, [dk_w]
+    add edx, 0 - DKI_W
+    mov [dk_ctmp], edx
+    pop edx
+    cmp eax, [dk_ctmp]
     jle .x1
-    mov eax, DESK_W - DKI_W
+    mov eax, [dk_w]
+    add eax, 0 - DKI_W
 .x1:
     mov [dki_x + ebx*4], eax
     mov eax, [dki_y + ebx*4]
@@ -187,9 +193,15 @@ dkm_follow:
     jge .y0
     xor eax, eax
 .y0:
-    cmp eax, DESK_H - DK_TASKBAR_H - DKI_H
+    push edx
+    mov edx, [dk_h]
+    add edx, 0 - DK_TASKBAR_H - DKI_H
+    mov [dk_ctmp], edx
+    pop edx
+    cmp eax, [dk_ctmp]
     jle .y1
-    mov eax, DESK_H - DK_TASKBAR_H - DKI_H
+    mov eax, [dk_h]
+    add eax, 0 - DK_TASKBAR_H - DKI_H
 .y1:
     mov [dki_y + ebx*4], eax
     call dki_mark

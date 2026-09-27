@@ -434,18 +434,18 @@ dkw_work:
     jc .bad_unlocked
     ; cut to the screen's shape: w * H against h * W
     mov eax, [dkb_w]
-    mov ecx, DESK_H
+    mov ecx, [dk_h]
     mul ecx
     mov ebx, eax
     mov eax, [dkb_h]
-    mov ecx, DESK_W
+    mov ecx, [dk_w]
     mul ecx
     cmp ebx, eax
     jbe .taller
     mov eax, [dkb_h]                      ; wider: its middle, as wide as
-    mov ecx, DESK_W                       ; the screen's shape allows
+    mov ecx, [dk_w] ; the screen's shape allows
     mul ecx
-    mov ecx, DESK_H
+    mov ecx, [dk_h]
     div ecx
     mov [dkb_sw], eax
     mov ecx, [dkb_w]
@@ -455,9 +455,9 @@ dkw_work:
     jmp .begin
 .taller:
     mov eax, [dkb_w]                      ; taller: its middle rows
-    mov ecx, DESK_H
+    mov ecx, [dk_h]
     mul ecx
-    mov ecx, DESK_W
+    mov ecx, [dk_w]
     div ecx
     mov [dkb_sh], eax
     mov ecx, [dkb_h]
@@ -465,10 +465,10 @@ dkw_work:
     shr ecx, 1
     mov [dkb_sy0], ecx
 .begin:
-    mov edi, DKW_BUF
-    mov ecx, DESK_W
-    mov edx, DESK_H - DK_TASKBAR_H
-    mov eax, DESK_STRIDE
+    mov edi, [dkw_buf]
+    mov ecx, [dk_w]
+    mov edx, [dk_task_y]
+    mov eax, [dk_stride]
     call dkb_scale_begin
     mov byte [dkw_busy], 1
     mov dword [dkw_row], 0
@@ -481,7 +481,10 @@ dkw_work:
     mov ecx, 8
     call dkb_rows
     add dword [dkw_row], 8
-    cmp dword [dkw_row], DESK_H - DK_TASKBAR_H
+    push eax
+    mov eax, [dkw_row]
+    cmp eax, [dk_task_y]
+    pop eax
     jae .made
     mov eax, [timer_ms]
     sub eax, [dkw_t0]
@@ -523,13 +526,15 @@ dkw_draw:
 .row:
     cmp ebx, [dk_clip_y1]
     jae .drawn
-    cmp ebx, DESK_H - DK_TASKBAR_H
+    cmp ebx, [dk_task_y]
     jae .drawn
     mov eax, [dk_clip_x0]
     mov esi, ebx
-    imul esi, DESK_STRIDE
-    lea edi, [esi + eax*4 + DESK_BACK]
-    lea esi, [esi + eax*4 + DKW_BUF]
+    imul esi, [dk_stride]
+    lea edi, [esi + eax*4]
+    add edi, [dk_back]
+    lea esi, [esi + eax*4]
+    add esi, [dkw_buf]
     mov ecx, [dk_clip_x1]
     sub ecx, eax
     cld
@@ -612,7 +617,7 @@ dkw_cfg_load:
 ; ============================================================
 ; Data
 ; ============================================================
-DKB_XS_MAX     equ 1024
+DKB_XS_MAX     equ DESK_MAX_W
 DKW_PATH_MAX   equ 64
 dkb_w          dd 0
 dkb_h          dd 0

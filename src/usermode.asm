@@ -50,7 +50,7 @@ PAGE_TABLE_APP  equ 0x501000
 PAGE_TABLE_LOW  equ 0x502000          ; the first 4MB in 4KB pages (so the
                                       ; VGA window can be moved: src/vga.asm)
 FPU_AREAS       equ 0x6300000         ; FXSAVE areas, 512 bytes per task
-PAGING_4MB_PAGES equ 32               ; identity-map 128MB (QEMU's -m 128)
+PAGING_4MB_PAGES equ 64               ; identity-map 256MB (QEMU's -m 256)
 
 SYS_EXIT        equ 0                 ; ebx = exit code
 SYS_WRITE       equ 1                 ; ebx = text, ecx = length

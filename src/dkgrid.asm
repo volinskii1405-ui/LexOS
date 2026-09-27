@@ -8,19 +8,19 @@
 ; the nearest free cell: never on top of another.
 ; Exports: dkg_default_place, dkg_snap
 
-DKG_COLS       equ (DESK_W - 10) / (DKI_W + 10)
 DKG_TOP        equ DKI_TOP - 3 * (DKI_H + 8)      ; (50)
-DKG_ROWS       equ (DESK_H - DK_TASKBAR_H - DKG_TOP) / (DKI_H + 8)
+; how many columns and rows: the screen's (dkg_resize, dk_res_set)
 
 ; ecx = a cell number (column * DKG_ROWS + row) -> eax, edx = its x, y
 dkg_cell_xy:
     push ecx
     mov eax, ecx
     xor edx, edx
-    mov ecx, DKG_ROWS
+    mov ecx, [dkg_rows]
     div ecx                               ; eax = the column, edx = the row
     imul eax, -(DKI_W + 10)
-    add eax, DESK_W - DKI_W - 10
+    add eax, [dk_w]
+    add eax, 0 - DKI_W - 10
     imul edx, DKI_H + 8
     add edx, DKG_TOP
     pop ecx
@@ -81,6 +81,8 @@ dkg_taken:
 ; eax, edx = a cell: carry=1 if a window's over any of its corners
 dkg_covered:
     pushad
+    cmp byte [dkg_no_cover], 0            ; (the screen's size changed: the
+    jne .none                             ;  windows don't count - dkres.asm)
     mov ecx, 4
 .corner:
     mov eax, [esp + 28]                   ; (pushad's eax, edx)
@@ -101,6 +103,7 @@ dkg_covered:
     cmp esi, -1
     jne .yes
     loop .corner
+.none:
     popad
     clc
     ret
@@ -128,7 +131,7 @@ dkg_default_place:
 .pass:
     xor ecx, ecx                          ; the column
 .column:
-    cmp ecx, DKG_COLS
+    cmp ecx, [dkg_cols]
     jae .pass_done
     push ecx
     mov ecx, dkg_rows_under
@@ -139,9 +142,14 @@ dkg_default_place:
     movzx eax, byte [ecx]
     cmp al, 0xFF
     je .row_end
+    cmp eax, [dkg_rows]                   ; (a small screen: fewer)
+    jb .row_in
+    inc ecx
+    jmp .row
+.row_in:
     push ecx
     mov ecx, [esp + 4]                    ; (the column)
-    imul ecx, DKG_ROWS
+    imul ecx, [dkg_rows]
     add ecx, eax
     call dkg_cell_xy
     pop ecx
@@ -157,7 +165,8 @@ dkg_default_place:
     inc dword [dkg_pass]
     cmp dword [dkg_pass], 2
     jb .pass
-    mov eax, DESK_W - DKI_W - 10          ; (full: where it always went)
+    mov eax, [dk_w] ; (full: where it always went)
+    add eax, 0 - DKI_W - 10
     mov edx, DKI_TOP
     jmp .out
 .found:
@@ -180,10 +189,15 @@ dkg_snap:
     mov dword [dkg_best_d], 0x7FFFFFFF
     xor ecx, ecx
 .cell:
-    cmp ecx, DKG_COLS * DKG_ROWS
+    cmp ecx, [dkg_cells]
     jae .chosen
     call dkg_cell_xy
-    cmp edx, DESK_H - DK_TASKBAR_H - DKI_H
+    push eax
+    mov eax, [dk_h]
+    add eax, 0 - DK_TASKBAR_H - DKI_H
+    mov [dk_ctmp], eax
+    pop eax
+    cmp edx, [dk_ctmp]
     jg .next
     call dkg_taken
     jc .next
@@ -217,7 +231,35 @@ dkg_snap:
     popad
     ret
 
-dkg_rows_under   db 3, 4, 5, 6, 7, 0xFF
+; The grid for the screen's size (dk_res_set)
+dkg_resize:
+    push eax
+    push edx
+    push ecx
+    mov eax, [dk_w]
+    sub eax, 10
+    xor edx, edx
+    mov ecx, DKI_W + 10
+    div ecx
+    mov [dkg_cols], eax
+    mov eax, [dk_h]                       ; (clear of the name in the
+    sub eax, DK_TASKBAR_H + DKG_TOP + 40  ;  corner, too)
+    xor edx, edx
+    mov ecx, DKI_H + 8
+    div ecx
+    mov [dkg_rows], eax
+    imul eax, [dkg_cols]
+    mov [dkg_cells], eax
+    pop ecx
+    pop edx
+    pop eax
+    ret
+
+dkg_cols         dd 11
+dkg_rows         dd 8
+dkg_cells        dd 88
+dkg_no_cover     db 0
+dkg_rows_under   db 3, 4, 5, 6, 7, 8, 9, 10, 11, 0xFF
 dkg_rows_above   db 2, 1, 0, 0xFF
 dkg_pass         dd 0
 dkg_best         dd -1

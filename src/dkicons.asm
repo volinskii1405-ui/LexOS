@@ -395,9 +395,19 @@ dki_saved_place:
     inc esi
     call dki_number
     xchg eax, edx
-    cmp eax, DESK_W - DKI_W
+    push edx
+    mov edx, [dk_w]
+    add edx, 0 - DKI_W
+    mov [dk_ctmp], edx
+    pop edx
+    cmp eax, [dk_ctmp]
     ja .none
-    cmp edx, DESK_H - DK_TASKBAR_H - DKI_H
+    push eax
+    mov eax, [dk_h]
+    add eax, 0 - DK_TASKBAR_H - DKI_H
+    mov [dk_ctmp], eax
+    pop eax
+    cmp edx, [dk_ctmp]
     ja .none
     pop edi
     pop esi
@@ -654,17 +664,29 @@ dki_drag_move:
     jge .x0
     xor eax, eax
 .x0:
-    cmp eax, DESK_W - DKI_W
+    push edx
+    mov edx, [dk_w]
+    add edx, 0 - DKI_W
+    mov [dk_ctmp], edx
+    pop edx
+    cmp eax, [dk_ctmp]
     jle .x1
-    mov eax, DESK_W - DKI_W
+    mov eax, [dk_w]
+    add eax, 0 - DKI_W
 .x1:
     cmp edx, 0
     jge .y0
     xor edx, edx
 .y0:
-    cmp edx, DESK_H - DK_TASKBAR_H - DKI_H
+    push eax
+    mov eax, [dk_h]
+    add eax, 0 - DK_TASKBAR_H - DKI_H
+    mov [dk_ctmp], eax
+    pop eax
+    cmp edx, [dk_ctmp]
     jle .y1
-    mov edx, DESK_H - DK_TASKBAR_H - DKI_H
+    mov edx, [dk_h]
+    add edx, 0 - DK_TASKBAR_H - DKI_H
 .y1:
     cmp eax, [dki_x + ebx*4]
     jne .moved

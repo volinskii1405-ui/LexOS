@@ -469,7 +469,8 @@ dkt_icon_place:
     push esi
     push edi
     push ebp
-    mov ecx, (DKG_COLS - 1) * DKG_ROWS    ; the leftmost column, the top
+    mov ecx, [dkg_cells]                  ; the leftmost column, the top
+    sub ecx, [dkg_rows]
     call dkg_cell_xy
     mov esi, dki_new_x
     mov edi, dki_new_y

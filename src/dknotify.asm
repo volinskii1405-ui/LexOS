@@ -74,8 +74,9 @@ dnc_seen:
 
 dnc_mark_dot:
     pushad
-    mov eax, DESK_W - 20
-    mov ebx, DESK_H - DK_TASKBAR_H
+    mov eax, [dk_w]
+    add eax, 0 - 20
+    mov ebx, [dk_task_y]
     mov ecx, 12
     mov edx, 12
     call dk_mark
@@ -87,8 +88,10 @@ dnc_draw_dot:
     pushad
     cmp byte [dnc_unread], 0
     je .done
-    mov eax, DESK_W - 18
-    mov ebx, DESK_H - DK_TASKBAR_H + 5
+    mov eax, [dk_w]
+    add eax, 0 - 18
+    mov ebx, [dk_h]
+    add ebx, 0 - DK_TASKBAR_H + 5
     mov ecx, 6
     mov edx, 6
     mov esi, 0x00E8553F
@@ -105,23 +108,29 @@ dnc_draw_dot:
 ; dk_draw_calendar's: the top part, DNC_H high
 dnc_draw:
     pushad
-    mov eax, DK_CAL_X + 12
-    mov ebx, DK_CAL_Y + 12
+    mov eax, [dk_w]
+    add eax, ( 0 - DK_CAL_W - 4 ) + 12
+    mov ebx, [dk_h]
+    add ebx, ( 0 - DK_TASKBAR_H - DK_CAL_H - 4 ) + 12
     mov esi, dnc_l_title
     mov edx, COL_TEXT
     call dk_text
-    mov eax, DK_CAL_X + DNC_QUIET_X
+    mov eax, [dk_w]
+    add eax, ( 0 - DK_CAL_W - 4 ) + DNC_QUIET_X
     mov ecx, DNC_QUIET_W
     mov esi, dnc_l_quiet
     mov dl, [dnc_quiet]
     call dnc_button
-    mov eax, DK_CAL_X + DNC_CLEAR_X
+    mov eax, [dk_w]
+    add eax, ( 0 - DK_CAL_W - 4 ) + DNC_CLEAR_X
     mov ecx, DNC_CLEAR_W
     mov esi, dnc_l_clear
     xor dl, dl
     call dnc_button
-    mov eax, DK_CAL_X + 8                 ; a line under it all
-    mov ebx, DK_CAL_Y + DNC_H - 2
+    mov eax, [dk_w] ; a line under it all
+    add eax, ( 0 - DK_CAL_W - 4 ) + 8
+    mov ebx, [dk_h]
+    add ebx, ( 0 - DK_TASKBAR_H - DK_CAL_H - 4 ) + DNC_H - 2
     mov ecx, DK_CAL_W - 16
     mov edx, 1
     mov esi, COL_FRAME
@@ -132,22 +141,26 @@ dnc_draw:
     call tr_lookup
     call dki_strlen
     shl ecx, 2
-    mov eax, DK_CAL_X + DK_CAL_W / 2
+    mov eax, [dk_w]
+    add eax, ( 0 - DK_CAL_W - 4 ) + DK_CAL_W / 2
     sub eax, ecx
-    mov ebx, DK_CAL_Y + (DNC_H + 40) / 2 - 8
+    mov ebx, [dk_h]
+    add ebx, ( 0 - DK_TASKBAR_H - DK_CAL_H - 4 ) + ( DNC_H + 40 ) / 2 - 8
     mov edx, COL_MUTED
     mov edi, 40
     call dk_text_raw
     jmp .done
 .list:
     xor ebp, ebp
-    mov ebx, DK_CAL_Y + 42
+    mov ebx, [dk_h]
+    add ebx, ( 0 - DK_TASKBAR_H - DK_CAL_H - 4 ) + 42
 .entry:
     cmp ebp, [dnc_count]
     jae .done
     imul esi, ebp, DNC_ENTRY
     add esi, dnc_list
-    mov eax, DK_CAL_X + 12                ; the time
+    mov eax, [dk_w] ; the time
+    add eax, ( 0 - DK_CAL_W - 4 ) + 12
     mov edx, COL_MUTED
     call dk_text
     add esi, 6                            ; the words: two lines at most,
@@ -165,7 +178,8 @@ dnc_draw:
     mov edi, DNC_CHARS
 .broken:
 .one_line:
-    mov eax, DK_CAL_X + 60
+    mov eax, [dk_w]
+    add eax, ( 0 - DK_CAL_W - 4 ) + 60
     mov edx, COL_TEXT
     call dk_text_raw
     add esi, edi
@@ -182,7 +196,8 @@ dnc_draw:
 .next:
     push ebx                              ; (a faint line between them)
     add ebx, DNC_ROW_H - 4
-    mov eax, DK_CAL_X + 12
+    mov eax, [dk_w]
+    add eax, ( 0 - DK_CAL_W - 4 ) + 12
     mov ecx, DK_CAL_W - 24
     mov edx, 1
     mov esi, COL_MENU
@@ -199,7 +214,8 @@ dnc_draw:
 dnc_button:
     pushad
     mov [dnc_lit], dl
-    mov ebx, DK_CAL_Y + DNC_BTN_Y
+    mov ebx, [dk_h]
+    add ebx, ( 0 - DK_TASKBAR_H - DK_CAL_H - 4 ) + DNC_BTN_Y
     push esi
     mov edx, DNC_BTN_H
     mov esi, COL_FRAME
@@ -237,17 +253,39 @@ dnc_button:
 ; A click at eax, ebx while the calendar's out: carry=0 if it was on
 ; the panel (its buttons do their thing; it stays)
 dnc_click:
-    cmp eax, DK_CAL_X
+    push edx
+    mov edx, [dk_w]
+    add edx, ( 0 - DK_CAL_W - 4 )
+    mov [dk_ctmp], edx
+    pop edx
+    cmp eax, [dk_ctmp]
     jb .out
-    cmp eax, DK_CAL_X + DK_CAL_W
+    push edx
+    mov edx, [dk_w]
+    add edx, ( 0 - DK_CAL_W - 4 ) + DK_CAL_W
+    mov [dk_ctmp], edx
+    pop edx
+    cmp eax, [dk_ctmp]
     jae .out
-    cmp ebx, DK_CAL_Y
+    push edx
+    mov edx, [dk_h]
+    add edx, ( 0 - DK_TASKBAR_H - DK_CAL_H - 4 )
+    mov [dk_ctmp], edx
+    pop edx
+    cmp ebx, [dk_ctmp]
     jb .out
-    cmp ebx, DK_CAL_Y + DK_CAL_H
+    push edx
+    mov edx, [dk_h]
+    add edx, ( 0 - DK_TASKBAR_H - DK_CAL_H - 4 ) + DK_CAL_H
+    mov [dk_ctmp], edx
+    pop edx
+    cmp ebx, [dk_ctmp]
     jae .out
     pushad
-    sub eax, DK_CAL_X
-    sub ebx, DK_CAL_Y
+    sub eax, [dk_w]
+    sub eax, ( 0 - DK_CAL_W - 4 )
+    sub ebx, [dk_h]
+    sub ebx, ( 0 - DK_TASKBAR_H - DK_CAL_H - 4 )
     cmp ebx, DNC_BTN_Y
     jb .done
     cmp ebx, DNC_BTN_Y + DNC_BTN_H

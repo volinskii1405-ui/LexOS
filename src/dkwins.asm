@@ -14,7 +14,6 @@ DESK_IMG_FILE_MAX equ 0x300000            ; a screenshot's, being saved
 DESK_IMG_PIX      equ 0x7700000           ; ... decoded, 32bpp (3MB)
 DESK_IMG_MAX_W    equ 1024
 DESK_IMG_MAX_H    equ 768
-DK_SHOT_SIZE      equ 54 + DESK_W * DESK_H * 3
 DK_APPS           equ 3                   ; programs' windows at once
 DK_APP_PIX        equ 0x5000000           ; their pixels, 2MB each
 DK_SB_BASE        equ 0x6340000           ; each console's lines scrolled
@@ -604,10 +603,11 @@ dk_copy_pixels:
     mov esi, eax
     mov edi, [dk_cy]
     add edi, edx
-    imul edi, DESK_STRIDE
+    imul edi, [dk_stride]
     mov eax, [dk_cx]
     add eax, [dk_cp_c0]
-    lea edi, [edi + eax*4 + DESK_BACK]
+    lea edi, [edi + eax*4]
+    add edi, [dk_back]
     mov ebx, [dk_cp_c0]
     mov ecx, [dk_cp_c1]
     sub ecx, ebx
@@ -624,7 +624,8 @@ dk_copy_pixels:
     pop edx
     pop eax
     jz .scaled
-    lea esi, [edi - DESK_STRIDE]
+    mov esi, edi
+    sub esi, [dk_stride]
     rep movsd
     jmp .next_row
 .straight:
@@ -785,13 +786,13 @@ dk_pictures_next:
 ; esi = a window: moved back onto the screen if it's outgrown it
 dk_fit_window:
     push eax
-    mov eax, DESK_W - DK_BORDER * 2
+    mov eax, [dk_max_cw]
     sub eax, [dkw_w + esi*4]
     cmp [dkw_x + esi*4], eax
     jle .x_fits
     mov [dkw_x + esi*4], eax
 .x_fits:
-    mov eax, DESK_H - DK_TASKBAR_H - DK_TITLE_H - DK_BORDER * 2
+    mov eax, [dk_max_ch]
     sub eax, [dkw_h + esi*4]
     jns .y_room
     xor eax, eax
@@ -2176,7 +2177,7 @@ dk_screen_fill:
     mov ebp, edx
     sub ebp, ebx
     mov edi, ebx
-    imul edi, DESK_STRIDE
+    imul edi, [dk_stride]
     lea edi, [edi + eax*4]
     add edi, [dk_page_lfb]
     mov eax, esi
@@ -2187,7 +2188,7 @@ dk_screen_fill:
     mov ecx, edx
     rep stosd
     pop edi
-    add edi, DESK_STRIDE
+    add edi, [dk_stride]
     dec ebp
     jnz .row
 .done:
@@ -2539,7 +2540,8 @@ dk_draw_search:
     cmp dword [dk_search_len], 0
     jne .typed
     xor eax, eax                          ; nothing yet: a hint
-    mov ebx, DESK_H - DK_TASKBAR_H - DK_MENU_ITEMS * DK_MENU_ITEM_H - DK_MENU_ITEM_H - 4
+    mov ebx, [dk_h]
+    add ebx, 0 - DK_TASKBAR_H - DK_MENU_ITEMS * DK_MENU_ITEM_H - DK_MENU_ITEM_H - 4
     mov ecx, DK_MENU_W
     mov edx, DK_MENU_ITEM_H + 4
     mov esi, COL_SUBMENU
@@ -2552,7 +2554,8 @@ dk_draw_search:
     jmp .done
 .typed:
     xor eax, eax
-    mov ebx, DESK_H - DK_TASKBAR_H - DK_MENU_ITEMS * DK_MENU_ITEM_H - DK_MENU_ITEM_H - 4
+    mov ebx, [dk_h]
+    add ebx, 0 - DK_TASKBAR_H - DK_MENU_ITEMS * DK_MENU_ITEM_H - DK_MENU_ITEM_H - 4
     mov ecx, DK_MENU_W
     mov edx, DK_MENU_ITEM_H + 4
     mov esi, COL_TITLE_ON
@@ -2634,7 +2637,7 @@ dk_draw_programs:
     mov eax, DK_MENU_W
     mov edx, [dk_prog_shown]
     imul edx, DK_MENU_ITEM_H
-    mov ebx, DESK_H - DK_TASKBAR_H
+    mov ebx, [dk_task_y]
     sub ebx, edx
     mov ecx, DK_PROG_W
     mov esi, COL_SUBMENU
@@ -2905,17 +2908,15 @@ dk_launch_text:
 ; The taskbar's tray: the volume (Mixer), the network (System), the
 ; time (a calendar)
 ; ============================================================
-DK_TRAY_VOL_X equ DESK_W - 118
-DK_TRAY_LANG_X equ DESK_W - 152
-DK_TRAY_CAPS_X equ DESK_W - 182
-DK_TRAY_NET_X equ DESK_W - 92
 
 dk_draw_tray:
     pushad
-    mov ebp, DESK_H - DK_TASKBAR_H + 7    ; (the icons' top)
+    mov ebp, [dk_h] ; (the icons' top)
+    add ebp, 0 - DK_TASKBAR_H + 7
     cmp byte [kbd_caps_on], 0             ; Caps Lock on: an "A" lit
     je .no_caps
-    mov eax, DK_TRAY_CAPS_X
+    mov eax, [dk_w]
+    add eax, ( 0 - 182 )
     lea ebx, [ebp - 2]
     mov ecx, 24
     mov edx, 18
@@ -2930,7 +2931,8 @@ dk_draw_tray:
     mov al, [lang_ru_enabled]             ; the keyboard's language (src/lang.asm)
     or al, [lang_es_enabled]
     jz .no_lang
-    mov eax, DK_TRAY_LANG_X
+    mov eax, [dk_w]
+    add eax, ( 0 - 152 )
     lea ebx, [ebp - 2]
     mov ecx, 24
     mov edx, 18
@@ -2948,37 +2950,45 @@ dk_draw_tray:
     call dk_text
 .no_lang:
     ; the volume: a speaker, and waves as loud as it is
-    mov eax, DK_TRAY_VOL_X
+    mov eax, [dk_w]
+    add eax, ( 0 - 118 )
     lea ebx, [ebp + 5]
     mov ecx, 4
     mov edx, 6
     mov esi, COL_BARTEXT
     call dk_fill
-    mov eax, DK_TRAY_VOL_X + 4            ; the cone
+    mov eax, [dk_w] ; the cone
+    add eax, ( 0 - 118 ) + 4
     lea ebx, [ebp + 3]
     mov ecx, 2
     mov edx, 10
     call dk_fill
-    mov eax, DK_TRAY_VOL_X + 6
+    mov eax, [dk_w]
+    add eax, ( 0 - 118 ) + 6
     lea ebx, [ebp + 1]
     mov edx, 14
     call dk_fill
     cmp dword [mix_master], 0
     jne .loud
-    mov eax, DK_TRAY_VOL_X + 10           ; muted: a red cross
+    mov eax, [dk_w] ; muted: a red cross
+    add eax, ( 0 - 118 ) + 10
     lea ebx, [ebp + 4]
     mov esi, 0xE04040
-    mov ecx, DK_TRAY_VOL_X + 16
+    mov ecx, [dk_w]
+    add ecx, ( 0 - 118 ) + 16
     lea edx, [ebp + 10]
     call dk_line_c
-    mov eax, DK_TRAY_VOL_X + 10
+    mov eax, [dk_w]
+    add eax, ( 0 - 118 ) + 10
     lea ebx, [ebp + 10]
-    mov ecx, DK_TRAY_VOL_X + 16
+    mov ecx, [dk_w]
+    add ecx, ( 0 - 118 ) + 16
     lea edx, [ebp + 4]
     call dk_line_c
     jmp .net
 .loud:
-    mov eax, DK_TRAY_VOL_X + 10
+    mov eax, [dk_w]
+    add eax, ( 0 - 118 ) + 10
     lea ebx, [ebp + 5]
     mov ecx, 2
     mov edx, 6
@@ -2986,7 +2996,8 @@ dk_draw_tray:
     call dk_fill
     cmp dword [mix_master], 50
     jb .net
-    mov eax, DK_TRAY_VOL_X + 14
+    mov eax, [dk_w]
+    add eax, ( 0 - 118 ) + 14
     lea ebx, [ebp + 2]
     mov edx, 12
     call dk_fill
@@ -2999,7 +3010,8 @@ dk_draw_tray:
 .bars:
     xor ecx, ecx
 .bar:
-    lea eax, [ecx*4 + DK_TRAY_NET_X]
+    lea eax, [ecx*4 - 92]
+    add eax, [dk_w]
     lea edx, [ecx*3 + 4]                  ; 4, 7, 10, 13 high
     mov ebx, ebp
     add ebx, 16
@@ -3022,23 +3034,43 @@ dk_line_c:
 ; eax = x of a click on the tray
 dk_tray_click:
     pushad
-    cmp eax, DK_TRAY_LANG_X - 4           ; Caps Lock's place: it toggles
+    push edx
+    mov edx, [dk_w]
+    add edx, ( 0 - 152 ) - 4
+    mov [dk_ctmp], edx
+    pop edx
+    cmp eax, [dk_ctmp] ; Caps Lock's place: it toggles
     jae .not_caps
     call kbd_caps_toggle                  ; (src/dkextra.asm)
     jmp .done
 .not_caps:
-    cmp eax, DK_TRAY_VOL_X - 6            ; EN / RU: the other one
+    push edx
+    mov edx, [dk_w]
+    add edx, ( 0 - 118 ) - 6
+    mov [dk_ctmp], edx
+    pop edx
+    cmp eax, [dk_ctmp] ; EN / RU: the other one
     jae .not_lang
     call lang_toggle
     jmp .done
 .not_lang:
-    cmp eax, DK_TRAY_NET_X - 4
+    push edx
+    mov edx, [dk_w]
+    add edx, ( 0 - 92 ) - 4
+    mov [dk_ctmp], edx
+    pop edx
+    cmp eax, [dk_ctmp]
     jae .not_volume
     mov eax, K_MIXER
     call dk_win_single
     jmp .done
 .not_volume:
-    cmp eax, DESK_W - 64
+    push edx
+    mov edx, [dk_w]
+    add edx, 0 - 64
+    mov [dk_ctmp], edx
+    pop edx
+    cmp eax, [dk_ctmp]
     jae .time
     mov eax, K_SYSTEM
     call dk_win_single
@@ -3057,12 +3089,15 @@ dk_tray_click:
 ; (ebp = the turns: - is up, louder)
 dk_tray_wheel:
     pushad
-    cmp dword [dk_my], DESK_H - DK_TASKBAR_H
+    mov eax, [dk_my]
+    cmp eax, [dk_task_y]
     jb .done
-    cmp dword [dk_mx], DK_TRAY_VOL_X - 4
-    jb .done
-    cmp dword [dk_mx], DK_TRAY_NET_X - 4
-    jae .done
+    mov eax, [dk_mx]
+    sub eax, [dk_w]
+    cmp eax, -118 - 4                     ; (the volume's, from the right)
+    jl .done
+    cmp eax, -92 - 4
+    jge .done
     imul eax, ebp, -5
     add eax, [mix_master]
     jns .low_ok
@@ -3086,11 +3121,13 @@ dk_tray_wheel:
     mov byte [edi], 0
     mov esi, dkt_vol_buf
 .say:
-    mov eax, DK_TRAY_VOL_X + 8
+    mov eax, [dk_w]
+    add eax, ( 0 - 118 ) + 8
     mov ecx, 1500
     call dkt_show                         ; (src/dkextra.asm)
-    mov eax, DESK_W - DK_TRAY_W           ; the icon, the Mixer: redrawn
-    mov ebx, DESK_H - DK_TASKBAR_H
+    mov eax, [dk_w] ; the icon, the Mixer: redrawn
+    add eax, 0 - DK_TRAY_W
+    mov ebx, [dk_task_y]
     mov ecx, DK_TRAY_W
     mov edx, DK_TASKBAR_H
     call dk_mark
@@ -3147,15 +3184,13 @@ dk_cal_today:
     ret
 
 ; ============================================================
-DK_CAL_X equ DESK_W - DK_CAL_W - 4
-DK_CAL_Y equ DESK_H - DK_TASKBAR_H - DK_CAL_H - 4
-DK_CALB_X equ DK_CAL_X + (DK_CAL_W - 244) / 2 ; (the calendar's own part,
-DK_CALB_Y equ DK_CAL_Y + DNC_H                ;  under the notifications)
 
 dk_mark_calendar:
     pushad
-    mov eax, DK_CAL_X
-    mov ebx, DK_CAL_Y
+    mov eax, [dk_w]
+    add eax, ( 0 - DK_CAL_W - 4 )
+    mov ebx, [dk_h]
+    add ebx, ( 0 - DK_TASKBAR_H - DK_CAL_H - 4 )
     mov ecx, DK_CAL_W
     mov edx, DK_CAL_H
     call dk_mark
@@ -3164,8 +3199,10 @@ dk_mark_calendar:
 
 dk_draw_calendar:
     pushad
-    mov eax, DK_CAL_X
-    mov ebx, DK_CAL_Y
+    mov eax, [dk_w]
+    add eax, ( 0 - DK_CAL_W - 4 )
+    mov ebx, [dk_h]
+    add ebx, ( 0 - DK_TASKBAR_H - DK_CAL_H - 4 )
     mov ecx, DK_CAL_W
     mov edx, DK_CAL_H
     mov esi, COL_FRAME
@@ -3188,13 +3225,17 @@ dk_draw_calendar:
     mov eax, [dk_cal_year]
     call wget_append_num
     mov byte [edi], 0
-    mov eax, DK_CALB_X + 12
-    mov ebx, DK_CALB_Y + 8
+    mov eax, [dk_w]
+    add eax, ( 0 - DK_CAL_W - 4 + ( DK_CAL_W - 244 ) / 2 ) + 12
+    mov ebx, [dk_h]
+    add ebx, ( 0 - DK_TASKBAR_H - DK_CAL_H - 4 + DNC_H ) + 8
     mov esi, dk_sys_buf
     mov edx, COL_TEXT
     call dk_text
-    mov eax, DK_CALB_X + 12
-    mov ebx, DK_CALB_Y + 32
+    mov eax, [dk_w]
+    add eax, ( 0 - DK_CAL_W - 4 + ( DK_CAL_W - 244 ) / 2 ) + 12
+    mov ebx, [dk_h]
+    add ebx, ( 0 - DK_TASKBAR_H - DK_CAL_H - 4 + DNC_H ) + 32
     mov esi, dk_cal_weekdays
     mov edx, COL_MUTED
     call dk_text
@@ -3238,9 +3279,11 @@ dk_draw_calendar:
     mov esi, 7
     div esi                               ; eax = row, edx = column
     imul ebx, eax, 22
-    add ebx, DK_CALB_Y + 54
+    add ebx, [dk_h]
+    add ebx, ( 0 - DK_TASKBAR_H - DK_CAL_H - 4 + DNC_H ) + 54
     imul eax, edx, 32
-    add eax, DK_CALB_X + 10
+    add eax, [dk_w]
+    add eax, ( 0 - DK_CAL_W - 4 + ( DK_CAL_W - 244 ) / 2 ) + 10
     mov edx, COL_TEXT
     cmp ecx, [dk_cal_day]
     jne .plain
@@ -3612,7 +3655,8 @@ dk_right_click:
     call dk_ctx_add
 .show:
     mov eax, [dk_mx]                      ; where: at the pointer, on screen
-    mov ecx, DESK_W - DK_CTX_W
+    mov ecx, [dk_w]
+    add ecx, 0 - DK_CTX_W
     cmp eax, ecx
     jle .x_ok
     mov eax, ecx
@@ -3620,7 +3664,7 @@ dk_right_click:
     mov [dk_ctx_x], eax
     mov eax, [dk_ctx_n]
     imul eax, DK_CTX_ITEM
-    mov ecx, DESK_H - DK_TASKBAR_H
+    mov ecx, [dk_task_y]
     sub ecx, eax
     mov eax, [dk_my]
     cmp eax, ecx
@@ -4089,29 +4133,43 @@ dk_shot_capture:
     mov byte [dk_shot_req], 0
     cmp byte [dk_shot_ready], 0           ; (one's still being written)
     jne .done
-    mov edi, DESK_IMG_FILE
-    mov word [edi], 'BM'
-    mov dword [edi + 2], DK_SHOT_SIZE
+    mov edi, [dk_shot_buf]                ; (DESK_IMG_FILE - or, a big
+    mov word [edi], 'BM'                  ;  screen's, above 128MB)
+    push eax
+    mov eax, [dk_shot_size]
+    mov [edi + 2], eax
+    pop eax
     mov dword [edi + 6], 0
     mov dword [edi + 10], 54
     mov dword [edi + 14], 40
-    mov dword [edi + 18], DESK_W
-    mov dword [edi + 22], DESK_H          ; (bottom-up)
+    push eax
+    mov eax, [dk_w]
+    mov [edi + 18], eax
+    pop eax
+    push eax
+    mov eax, [dk_h]
+    mov [edi + 22], eax ; (bottom-up)
+    pop eax
     mov word [edi + 26], 1
     mov word [edi + 28], 24
     mov dword [edi + 30], 0
-    mov dword [edi + 34], DESK_W * DESK_H * 3
+    push eax
+    mov eax, [dk_pixels]
+    lea eax, [eax + eax*2]
+    mov [edi + 34], eax
+    pop eax
     mov dword [edi + 38], 2835
     mov dword [edi + 42], 2835
     mov dword [edi + 46], 0
     mov dword [edi + 50], 0
     add edi, 54
-    mov edx, DESK_H - 1                   ; the rows, bottom first
+    mov edx, [dk_h] ; the rows, bottom first
+    add edx, 0 - 1
 .row:
     mov esi, edx
-    imul esi, DESK_STRIDE
-    add esi, DESK_BACK
-    mov ecx, DESK_W
+    imul esi, [dk_stride]
+    add esi, [dk_back]
+    mov ecx, [dk_w]
 .px:
     mov eax, [esi]                        ; 0x00RRGGBB -> B, G, R
     mov [edi], ax
@@ -4147,7 +4205,8 @@ dk_toast:
 
 dk_mark_toast:
     pushad
-    mov eax, (DESK_W - DK_TOAST_W) / 2
+    mov eax, [dk_w2]
+    sub eax, DK_TOAST_W / 2
     mov ebx, 8
     mov ecx, DK_TOAST_W + 3
     mov edx, 34
@@ -4173,7 +4232,8 @@ dk_draw_toast:
     pushad
     cmp byte [dk_toast_on], 0
     je .done
-    mov eax, (DESK_W - DK_TOAST_W) / 2
+    mov eax, [dk_w2]
+    sub eax, DK_TOAST_W / 2
     mov ebx, 8
     mov ecx, DK_TOAST_W
     mov edx, 30
