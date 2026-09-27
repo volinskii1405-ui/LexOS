@@ -22,7 +22,7 @@
 ;          dkf_up, dkf_ctx_items, dkf_rec_add, dkf_thumb_work,
 ;          dkf_cfg_save, dkf_cfg_load, dkf_entry_extra
 
-DKF_SIDE_W     equ 116                  ; the places' width
+DKF_SIDE_W     equ 128                  ; the places' width
 DKF_SIDE_MIN   equ 440                  ; (a window narrower: none)
 DKF_PLACE_H    equ 24
 DKF_ROW_H      equ 22                   ; Details: a row

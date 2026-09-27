@@ -45,6 +45,8 @@ endstruc
 dkc_draw:
     pushad
     call dkc_names                        ; (the themes' names, into a table)
+    call lang_patch_font                  ; ("Русский" shown as it is: the
+                                          ;  Cyrillic letters, if not yet)
     mov eax, [dk_cx]                      ; the tabs
     mov ebx, [dk_cy]
     mov ecx, DKC_TABS_W
@@ -811,7 +813,7 @@ dkc_o_wall     dd dkc_l_none, dkc_l_sunset, dkc_l_aurora
 dkc_o_onoff    dd dk_msg_on, dk_msg_off
 dkc_o_saver    dd dkc_l_off, dkc_l_1min, dkc_l_3min, dkc_l_10min
 dkc_o_mixer    dd dkc_l_mixer
-dkc_o_lang     dd lang_n_en, lang_n_ru, lang_n_es
+dkc_o_lang     dd dkc_n_en, lang_n_ru, lang_n_es
 dkc_o_tz       dd dkc_l_minus, dkc_l_plus
 dkc_o_speed    dd dkc_l_slow, dkc_l_normal, dkc_l_fast
 dkc_o_users    dd dkc_l_add, dkc_l_pass, dkc_l_switch
@@ -822,6 +824,7 @@ dkc_t_keys     db "Keyboard", 0
 dkc_t_time     db "Date & time", 0
 dkc_t_mouse    db "Mouse", 0
 dkc_t_users    db "Users", 0
+dkc_n_en       db "English ", 0                ; (a name: not translated)
 dkc_l_wall     db "Wallpaper", 0
 dkc_l_lex      db "Lex the cat", 0
 dkc_l_saver    db "Screen saver", 0
