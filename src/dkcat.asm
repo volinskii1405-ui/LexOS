@@ -20,9 +20,7 @@
 CAT_W          equ 16                     ; the sprite (CAT_SCALE pixels each)
 CAT_H          equ 12
 CAT_SCALE      equ 3
-CAT_Y          equ DESK_H - DK_TASKBAR_H - CAT_H * CAT_SCALE
 CAT_X_MIN      equ 100
-CAT_X_MAX      equ DESK_W - DK_TRAY_W - CAT_W * CAT_SCALE - 8
 CAT_WALK       equ 0
 CAT_SIT        equ 1
 CAT_SLEEP      equ 2
@@ -120,9 +118,15 @@ dkx_cat_work:
     jge .p_left_ok
     mov eax, CAT_X_MIN
 .p_left_ok:
-    cmp eax, CAT_X_MAX
+    push edx
+    mov edx, [dk_w]
+    add edx, ( 0 - DK_TRAY_W - CAT_W * CAT_SCALE - 8 )
+    mov [dk_ctmp], edx
+    pop edx
+    cmp eax, [dk_ctmp]
     jle .p_right_ok
-    mov eax, CAT_X_MAX
+    mov eax, [dk_w]
+    add eax, ( 0 - DK_TRAY_W - CAT_W * CAT_SCALE - 8 )
 .p_right_ok:
     mov [cat_x], eax
     xor byte [cat_frame], 1
@@ -176,9 +180,15 @@ dkx_cat_work:
     mov eax, CAT_X_MIN
     neg dword [cat_dir]
 .left_ok:
-    cmp eax, CAT_X_MAX
+    push edx
+    mov edx, [dk_w]
+    add edx, ( 0 - DK_TRAY_W - CAT_W * CAT_SCALE - 8 )
+    mov [dk_ctmp], edx
+    pop edx
+    cmp eax, [dk_ctmp]
     jle .right_ok
-    mov eax, CAT_X_MAX
+    mov eax, [dk_w]
+    add eax, ( 0 - DK_TRAY_W - CAT_W * CAT_SCALE - 8 )
     neg dword [cat_dir]
 .right_ok:
     mov [cat_x], eax
@@ -265,7 +275,8 @@ cat_mark:
     pushad
     mov eax, [cat_x]
     sub eax, 60
-    mov ebx, CAT_Y - CAT_PANEL_H - 16
+    mov ebx, [dk_h]
+    add ebx, ( 0 - DK_TASKBAR_H - CAT_H * CAT_SCALE ) - CAT_PANEL_H - 16
     mov ecx, CAT_W * CAT_SCALE + 120
     mov edx, CAT_H * CAT_SCALE + CAT_PANEL_H + 18
     call dk_mark
@@ -306,7 +317,11 @@ cat_say:
     call tr_lookup
     mov eax, [cat_x]
     add eax, CAT_W * CAT_SCALE / 2
-    mov dword [dkt_y_req], CAT_Y - DKT_H - 6  ; (over him)
+    push eax
+    mov eax, [dk_h]
+    add eax, ( 0 - DK_TASKBAR_H - CAT_H * CAT_SCALE ) - DKT_H - 6
+    mov [dkt_y_req], eax ; (over him)
+    pop eax
     call dkt_show
     popad
     ret
@@ -467,7 +482,8 @@ dkx_cat_draw:
     imul eax, CAT_SCALE
     add eax, [cat_x]
     imul ebx, CAT_SCALE
-    add ebx, CAT_Y
+    add ebx, [dk_h]
+    add ebx, ( 0 - DK_TASKBAR_H - CAT_H * CAT_SCALE )
     mov ecx, CAT_SCALE
     mov edx, CAT_SCALE
     call dk_fill
@@ -491,7 +507,8 @@ dkx_cat_draw:
     mov eax, [cat_x]
     sub eax, 4
 .z_side:
-    mov ebx, CAT_Y - 10
+    mov ebx, [dk_h]
+    add ebx, ( 0 - DK_TASKBAR_H - CAT_H * CAT_SCALE ) - 10
     mov esi, cat_msg_z
     mov edx, 0xC8D0E0
     call dk_text
@@ -522,7 +539,8 @@ cat_draw_bowl:
     mov eax, [cat_x]
     sub eax, 28
 .side:
-    mov ebx, CAT_Y + CAT_H * CAT_SCALE - 14
+    mov ebx, [dk_h]
+    add ebx, ( 0 - DK_TASKBAR_H - CAT_H * CAT_SCALE ) + CAT_H * CAT_SCALE - 14
     push eax
     push ebx
     add eax, 5                            ; the food
@@ -556,7 +574,8 @@ cat_draw_heart:
     xor edx, edx                          ; (up it goes: 0..40)
     mov ecx, 50
     div ecx
-    mov ebp, CAT_Y - 62
+    mov ebp, [dk_h]
+    add ebp, ( 0 - DK_TASKBAR_H - CAT_H * CAT_SCALE ) - 62
     add ebp, eax
     mov edi, [cat_x]
     add edi, 26
@@ -602,7 +621,8 @@ cat_draw_panel:
     jns .done
     mov eax, [cat_x]
     sub eax, 50
-    mov ebx, CAT_Y - CAT_PANEL_H - 14
+    mov ebx, [dk_h]
+    add ebx, ( 0 - DK_TASKBAR_H - CAT_H * CAT_SCALE ) - CAT_PANEL_H - 14
     mov ecx, CAT_PANEL_W
     mov edx, CAT_PANEL_H
     mov esi, 0x8090A0
@@ -668,9 +688,19 @@ cat_draw_panel:
 dkx_cat_hit:
     cmp byte [cat_on], 0
     je .no
-    cmp ebx, CAT_Y
+    push edx
+    mov edx, [dk_h]
+    add edx, ( 0 - DK_TASKBAR_H - CAT_H * CAT_SCALE )
+    mov [dk_ctmp], edx
+    pop edx
+    cmp ebx, [dk_ctmp]
     jl .no
-    cmp ebx, CAT_Y + CAT_H * CAT_SCALE
+    push edx
+    mov edx, [dk_h]
+    add edx, ( 0 - DK_TASKBAR_H - CAT_H * CAT_SCALE ) + CAT_H * CAT_SCALE
+    mov [dk_ctmp], edx
+    pop edx
+    cmp ebx, [dk_ctmp]
     jge .no
     push eax
     sub eax, [cat_x]
@@ -704,7 +734,11 @@ dkx_cat_click:
     mov eax, [cat_x]
     add eax, CAT_W * CAT_SCALE / 2
     mov ecx, 1500
-    mov dword [dkt_y_req], CAT_Y - DKT_H - 6  ; (over him)
+    push eax
+    mov eax, [dk_h]
+    add eax, ( 0 - DK_TASKBAR_H - CAT_H * CAT_SCALE ) - DKT_H - 6
+    mov [dkt_y_req], eax ; (over him)
+    pop eax
     call dkt_show
     popad
     clc

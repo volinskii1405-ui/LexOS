@@ -23,7 +23,10 @@
 
 WL_CARD_W      equ 600
 WL_CARD_H      equ 340
-WL_CARD_X      equ (DESK_W - WL_CARD_W) / 2
+WL_W           equ 1024                   ; (its screen: always this size)
+WL_H           equ 768
+WL_STRIDE      equ WL_W * 4
+WL_CARD_X      equ (WL_W - WL_CARD_W) / 2
 WL_CARD_Y      equ 250
 WL_PASS_MAX    equ 16
 WL_TZ_DEFAULT  equ 3
@@ -327,11 +330,13 @@ wl_desktop:
 ; ============================================================
 wl_begin:
     pushad
+    mov eax, 1                            ; (always 1024x768 - the desktop
+    call dk_res_set                       ;  its own size: src/dkres.asm)
     call dk_video_on                      ; (the text mode kept, to go back to)
     mov dword [dk_clip_x0], 0
     mov dword [dk_clip_y0], 0
-    mov dword [dk_clip_x1], DESK_W
-    mov dword [dk_clip_y1], DESK_H
+    mov dword [dk_clip_x1], WL_W
+    mov dword [dk_clip_y1], WL_H
     call wl_background
     popad
     ret
@@ -348,7 +353,7 @@ wl_show:
     pushad
     mov ebp, edx
     mov esi, ebx
-    imul esi, DESK_STRIDE
+    imul esi, WL_STRIDE
     lea esi, [esi + eax*4]
     mov edi, esi
     add esi, DESK_BACK
@@ -362,8 +367,8 @@ wl_show:
     rep movsd
     pop edi
     pop esi
-    add esi, DESK_STRIDE
-    add edi, DESK_STRIDE
+    add esi, WL_STRIDE
+    add edi, WL_STRIDE
     dec ebp
     jnz .row
     popad
@@ -377,7 +382,7 @@ wl_background:
     mov eax, ebx                          ; 0x0B3B1F at the top ->
     imul eax, 0x1F                        ; 0x2A8C4E at the bottom
     xor edx, edx
-    mov ecx, DESK_H
+    mov ecx, WL_H
     div ecx
     lea ebp, [eax + 0x0B]                 ; red
     mov eax, ebx
@@ -395,13 +400,13 @@ wl_background:
     or eax, ebp
     or eax, esi
     mov edi, ebx
-    imul edi, DESK_STRIDE
+    imul edi, WL_STRIDE
     add edi, DESK_BACK
-    mov ecx, DESK_W
+    mov ecx, WL_W
     cld
     rep stosd
     inc ebx
-    cmp ebx, DESK_H
+    cmp ebx, WL_H
     jb .row
     mov eax, 170                          ; light, through leaves
     mov ebx, 640
@@ -424,13 +429,13 @@ wl_background:
     mov edx, 12
     call wl_glow
     ; "LexOS", big, a shadow under it
-    mov eax, (DESK_W - 5 * 8 * 6) / 2 + 5
+    mov eax, (WL_W - 5 * 8 * 6) / 2 + 5
     mov ebx, 74 + 5
     mov esi, wl_msg_logo
     mov edx, 0x06240F
     mov ecx, 6
     call wl_text_big
-    mov eax, (DESK_W - 5 * 8 * 6) / 2
+    mov eax, (WL_W - 5 * 8 * 6) / 2
     mov ebx, 74
     mov edx, 0xFFFFFF
     call wl_text_big
@@ -439,7 +444,7 @@ wl_background:
     mov eax, ecx
     shl eax, 2
     neg eax
-    add eax, DESK_W / 2
+    add eax, WL_W / 2
     mov ebx, 184
     mov edx, 0xBFE8CF
     call dk_text
@@ -448,14 +453,14 @@ wl_background:
     mov eax, ecx
     shl eax, 2
     neg eax
-    add eax, DESK_W / 2
-    mov ebx, DESK_H - 36
+    add eax, WL_W / 2
+    mov ebx, WL_H - 36
     mov edx, 0x9CD3B2
     call dk_text
     xor eax, eax
     xor ebx, ebx
-    mov ecx, DESK_W
-    mov edx, DESK_H
+    mov ecx, WL_W
+    mov edx, WL_H
     call wl_show
     popad
     ret
@@ -479,7 +484,7 @@ wl_glow:
     jge .done
     cmp ebx, 0
     jl .next_row
-    cmp ebx, DESK_H
+    cmp ebx, WL_H
     jge .done
     mov eax, [wl_g_cx]
     sub eax, [wl_g_r]
@@ -490,7 +495,7 @@ wl_glow:
     jge .next_row
     cmp eax, 0
     jl .next_px
-    cmp eax, DESK_W
+    cmp eax, WL_W
     jge .next_row
     mov ecx, eax                          ; d2 = dx^2 + dy^2
     sub ecx, [wl_g_cx]
@@ -513,7 +518,7 @@ wl_glow:
     pop ebx
     pop eax
     mov edi, ebx
-    imul edi, DESK_STRIDE
+    imul edi, WL_STRIDE
     lea edi, [edi + eax*4 + DESK_BACK]
     push eax
     push ebx
@@ -646,13 +651,13 @@ wl_restore_bg:
     mov byte [wl_bg_kept], 1
     mov esi, DESK_BACK
     mov edi, WL_BG_COPY
-    mov ecx, DESK_W * DESK_H
+    mov ecx, WL_W * WL_H
     cld
     rep movsd
 .have:
     mov ebp, edx
     mov esi, ebx
-    imul esi, DESK_STRIDE
+    imul esi, WL_STRIDE
     lea esi, [esi + eax*4]
     lea edi, [esi + DESK_BACK]
     add esi, WL_BG_COPY
@@ -664,8 +669,8 @@ wl_restore_bg:
     rep movsd
     pop edi
     pop esi
-    add esi, DESK_STRIDE
-    add edi, DESK_STRIDE
+    add esi, WL_STRIDE
+    add edi, WL_STRIDE
     dec ebp
     jnz .row
     popad

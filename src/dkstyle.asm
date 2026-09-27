@@ -76,7 +76,8 @@ dk_theme_apply:
     mov eax, edx
     cdq
     push ecx
-    mov ecx, DESK_H - 1
+    mov ecx, [dk_h]
+    add ecx, 0 - 1
     idiv ecx
     pop ecx
     pop edx
@@ -87,7 +88,7 @@ dk_theme_apply:
     jns .channel
     mov [dk_bg_rows + ebx*4], edi
     inc ebx
-    cmp ebx, DESK_H
+    cmp ebx, [dk_h]
     jb .row
     popad
     ret
@@ -484,4 +485,4 @@ dk_themes:
     dd 0xF0EAF2, 0xE6DCEA, 0x1E1422, 0x8B7A92, 0xF7F3F8, 0xD3C8D8, 0xF6F2F7
     dd 0x7D6488, 0x2A1236, 0x8A4A6E, 0xC89AC0, 0xFFFFFF, dk_th_plum
 
-dk_bg_rows     times DESK_H dd 0
+dk_bg_rows     times DESK_MAX_H dd 0

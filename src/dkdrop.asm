@@ -41,7 +41,7 @@ dkd_files_drop:
     call dkd_from_files
     jmp .mine
 .desktop:
-    cmp ebx, DESK_H - DK_TASKBAR_H        ; (the taskbar: nothing)
+    cmp ebx, [dk_task_y] ; (the taskbar: nothing)
     jge .theirs
     call dk_shell_idle                    ; (the disk: to read)
     jc .theirs
@@ -480,10 +480,15 @@ dkd_place:
     mov dword [dkg_best_d], 0x7FFFFFFF
     xor ecx, ecx
 .cell:
-    cmp ecx, DKG_COLS * DKG_ROWS
+    cmp ecx, [dkg_cells]
     jae .chosen
     call dkg_cell_xy
-    cmp edx, DESK_H - DK_TASKBAR_H - DKI_H
+    push eax
+    mov eax, [dk_h]
+    add eax, 0 - DK_TASKBAR_H - DKI_H
+    mov [dk_ctmp], eax
+    pop eax
+    cmp edx, [dk_ctmp]
     jg .next
     call dkg_taken
     jc .next

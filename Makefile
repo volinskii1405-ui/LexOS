@@ -1,6 +1,6 @@
 ASM = nasm
 BUILD_DIR = build
-SRC_FILES = kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/serial.asm src/mouse.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/parse.asm src/vga.asm src/view.asm src/rtc.asm src/speaker.asm src/sound.asm src/mixer.asm src/chip8.asm src/turtle.asm src/hostfs.asm src/basic.asm src/net.asm src/inet.asm src/httpd.asm src/chat.asm src/sched.asm src/usermode.asm src/appsys.asm src/console.asm src/desktop.asm src/dkwins.asm src/dkstyle.asm src/dksound.asm src/dkicons.asm src/lang.asm src/font866.inc src/dkclip.asm src/dkfind.asm src/dkextra.asm src/neofetch.asm src/langui.asm src/dkcat.asm src/grep.asm src/headtail.asm src/uranium.asm src/user.asm src/welcome.asm src/tabcomplete.asm src/script.asm src/pipe.asm src/fsjournal.asm src/dkname.asm src/dkgrid.asm src/dkprops.asm src/dktrash.asm src/dkdrop.asm src/appext.asm src/dkart.asm src/dkshot.asm src/dkfview.asm src/dkwall.asm src/dkmsel.asm src/dkundo.asm src/dklock.asm src/dkusers.asm src/dkcpanel.asm src/dksaver.asm src/dkfscheck.asm src/dkart.inc
+SRC_FILES = kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/serial.asm src/mouse.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/parse.asm src/vga.asm src/view.asm src/rtc.asm src/speaker.asm src/sound.asm src/mixer.asm src/chip8.asm src/turtle.asm src/hostfs.asm src/basic.asm src/net.asm src/inet.asm src/httpd.asm src/chat.asm src/sched.asm src/usermode.asm src/appsys.asm src/console.asm src/desktop.asm src/dkwins.asm src/dkstyle.asm src/dksound.asm src/dkicons.asm src/lang.asm src/font866.inc src/dkclip.asm src/dkfind.asm src/dkextra.asm src/neofetch.asm src/langui.asm src/dkcat.asm src/grep.asm src/headtail.asm src/uranium.asm src/user.asm src/welcome.asm src/tabcomplete.asm src/script.asm src/pipe.asm src/fsjournal.asm src/dkname.asm src/dkgrid.asm src/dkprops.asm src/dktrash.asm src/dkdrop.asm src/appext.asm src/dkart.asm src/dkshot.asm src/dkfview.asm src/dkwall.asm src/dkmsel.asm src/dkundo.asm src/dklock.asm src/dkusers.asm src/dkcpanel.asm src/dksaver.asm src/dkfscheck.asm src/dkpng.asm src/dkpics.asm src/dknotify.asm src/dkanim.asm src/dkres.asm src/dkart.inc
 
 .PHONY: all run run-serial lan1 lan2 clean apps fresh-disk
 
@@ -24,9 +24,16 @@ $(BUILD_DIR)/kernel.bin: $(BUILD_DIR)/kernel.full
 disk/SYSTEM/KEXT.BIN: $(BUILD_DIR)/kernel.full
 	tail -c +294913 $< > $@
 
+# PNG pictures for the desktop (thumbnails, wallpaper, Pictures): apps/png.h
+# built as a piece of the kernel, loaded at boot from /SYSTEM/PNG.BIN
+# (src/dkpng.asm). The same C as the programs', only at a kernel address.
+disk/SYSTEM/PNG.BIN: apps/pngmod.c apps/png.h apps/pngmod.ld | $(BUILD_DIR)
+	gcc $(APP_CFLAGS) -c apps/pngmod.c -o $(BUILD_DIR)/pngmod.o
+	ld -m elf_i386 -T apps/pngmod.ld -o $@ $(BUILD_DIR)/pngmod.o
+
 # The files LexOS's own disk starts with (tools/mkdisk.py): disk/APPS -
 # the example programs, disk/DEMOS - scripts, music, a CHIP-8 ROM...
-DISK_FILES = $(wildcard disk/* disk/*/* disk/*/*/*) disk/SYSTEM/LANG.DAT disk/SYSTEM/KEXT.BIN
+DISK_FILES = $(wildcard disk/* disk/*/* disk/*/*/*) disk/SYSTEM/LANG.DAT disk/SYSTEM/KEXT.BIN disk/SYSTEM/PNG.BIN
 
 # The translations (src/langui.asm): made from tools/mklang.py's table
 disk/SYSTEM/LANG.DAT: tools/mklang.py $(wildcard src/*.asm)
@@ -91,7 +98,7 @@ NIC = -nic user,model=rtl8139,hostfwd=tcp::8080-:80
 
 run: $(BUILD_DIR)/os-image.bin
 	mkdir -p $(SHARED)
-	qemu-system-i386 -m 128 -drive format=raw,file=$(BUILD_DIR)/os-image.bin,if=ide,index=0 \
+	qemu-system-i386 -m 256 -drive format=raw,file=$(BUILD_DIR)/os-image.bin,if=ide,index=0 \
 		$(SHARED_DRIVE) $(NIC) \
 		-audiodev $(AUDIODEV),id=snd0 -machine pcspk-audiodev=snd0 \
 		-device adlib,audiodev=snd0,iobase=0x220 -device sb16,audiodev=snd0
@@ -103,7 +110,7 @@ run: $(BUILD_DIR)/os-image.bin
 SERIALPORT ?= 4444
 run-serial: $(BUILD_DIR)/os-image.bin
 	mkdir -p $(SHARED)
-	qemu-system-i386 -m 128 -drive format=raw,file=$(BUILD_DIR)/os-image.bin,if=ide,index=0 \
+	qemu-system-i386 -m 256 -drive format=raw,file=$(BUILD_DIR)/os-image.bin,if=ide,index=0 \
 		$(SHARED_DRIVE) $(NIC) \
 		-audiodev $(AUDIODEV),id=snd0 -machine pcspk-audiodev=snd0 \
 		-device adlib,audiodev=snd0,iobase=0x220 -device sb16,audiodev=snd0 \
@@ -116,7 +123,7 @@ run-serial: $(BUILD_DIR)/os-image.bin
 # on it, so each takes an address from its own MAC. lan2 boots its own
 # copy of the disk (made on first use), and neither mounts shared/.
 LAN_PORT ?= 5560
-LAN_QEMU = qemu-system-i386 -m 128 \
+LAN_QEMU = qemu-system-i386 -m 256 \
 	-audiodev $(AUDIODEV),id=snd0 -machine pcspk-audiodev=snd0 \
 	-device sb16,audiodev=snd0
 lan1: $(BUILD_DIR)/os-image.bin
@@ -149,7 +156,7 @@ $(BUILD_DIR)/crt0.o: apps/crt0.asm | $(BUILD_DIR)
 
 # one C program per file: apps/guess.c -> disk/APPS/GUESS.APP, and so on
 define C_APP_RULE
-disk/APPS/$(call upper,$(1)).APP: apps/$(1).c apps/lexos.h apps/gui.h apps/mod.h apps/app.ld $(BUILD_DIR)/crt0.o
+disk/APPS/$(call upper,$(1)).APP: apps/$(1).c apps/lexos.h apps/gui.h apps/mod.h apps/png.h apps/deflate.h apps/app.ld $(BUILD_DIR)/crt0.o
 	gcc $$(APP_CFLAGS) -c apps/$(1).c -o $(BUILD_DIR)/$(1).o
 	ld -m elf_i386 -T apps/app.ld --oformat binary -o $$@ $(BUILD_DIR)/crt0.o $(BUILD_DIR)/$(1).o
 endef

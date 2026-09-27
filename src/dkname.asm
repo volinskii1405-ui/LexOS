@@ -17,13 +17,10 @@
 
 DKN_W          equ 460
 DKN_H          equ 136
-DKN_X          equ (DESK_W - DKN_W) / 2
 DKN_Y          equ 250
 DKN_MAX        equ 63                     ; what can be typed
 DKN_BTN_W      equ 88
 DKN_BTN_H      equ 24
-DKN_OK_X       equ DKN_X + DKN_W - 2 * DKN_BTN_W - 24
-DKN_CANCEL_X   equ DKN_X + DKN_W - DKN_BTN_W - 14
 DKN_BTN_Y      equ DKN_Y + DKN_H - DKN_BTN_H - 12
 DK_SUB_W       equ 176
 DK_SUB_N       equ 4
@@ -90,7 +87,8 @@ dkn_mark:
     cmp byte [dkn_op], DKN_PROPS          ; (Properties: its own size)
     je dkp_mark
     pushad
-    mov eax, DKN_X
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKN_W / 2 )
     mov ebx, DKN_Y
     mov ecx, DKN_W + 4
     mov edx, DKN_H + 4
@@ -448,7 +446,7 @@ dkn_do:
     push eax
     mov eax, [dkn_slot]                   ; its content (the picture buffer:
     mov edi, DESK_IMG_FILE                ;  free between frames)
-    mov ecx, DK_SHOT_SIZE
+    mov ecx, DESK_IMG_FILE_MAX
     call fs_load_to
     mov [dkn_size], ecx
     pop eax
@@ -695,13 +693,15 @@ dkn_draw:
     call dkp_draw
     jmp .done
 .name_box:
-    mov eax, DKN_X + 4                    ; a shadow, the frame, the face
+    mov eax, [dk_w2] ; a shadow, the frame, the face
+    add eax, ( 0 - DKN_W / 2 ) + 4
     mov ebx, DKN_Y + 4
     mov ecx, DKN_W
     mov edx, DKN_H
     mov esi, 0x08101C
     call dk_fill
-    mov eax, DKN_X
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKN_W / 2 )
     mov ebx, DKN_Y
     mov esi, COL_FRAME
     call dk_fill
@@ -716,17 +716,20 @@ dkn_draw:
     call dk_fill
     movzx ecx, byte [dkn_op]
     mov esi, [dkn_titles + ecx*4 - 4]
-    mov eax, DKN_X + 10
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKN_W / 2 ) + 10
     mov ebx, DKN_Y + 6
     mov edx, COL_WHITE
     call dk_text
     movzx ecx, byte [dkn_op]              ; what to type
     mov esi, [dkn_prompts + ecx*4 - 4]
-    mov eax, DKN_X + 14
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKN_W / 2 ) + 14
     mov ebx, DKN_Y + 36
     mov edx, COL_TEXT
     call dk_text
-    mov eax, DKN_X + 14                   ; the box
+    mov eax, [dk_w2] ; the box
+    add eax, ( 0 - DKN_W / 2 ) + 14
     mov ebx, DKN_Y + 58
     mov ecx, DKN_W - 28
     mov edx, 24
@@ -745,7 +748,8 @@ dkn_draw:
     jle .whole
     add esi, ecx
 .whole:
-    mov eax, DKN_X + 22
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKN_W / 2 ) + 22
     mov ebx, DKN_Y + 62
     mov edx, COL_BLACK
     cmp byte [dkn_fresh], 0               ; chosen: white on the title's color
@@ -765,7 +769,9 @@ dkn_draw:
     pop esi
     call dki_strlen                       ; -> ecx (esi's length)
     shl ecx, 3
-    lea eax, [DKN_X + 22 + ecx]
+    mov eax, [dk_w2]
+    add eax, 22 - DKN_W / 2
+    add eax, ecx
     mov ebx, DKN_Y + 61
     mov ecx, 2
     mov edx, 18
@@ -774,15 +780,18 @@ dkn_draw:
     mov esi, [dkn_err]                    ; what went wrong
     or esi, esi
     jz .buttons
-    mov eax, DKN_X + 14
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKN_W / 2 ) + 14
     mov ebx, DKN_Y + DKN_H - 32
     mov edx, 0xE04848
     call dk_text
 .buttons:
-    mov eax, DKN_OK_X
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKN_W / 2 + DKN_W - 2 * DKN_BTN_W - 24 )
     mov esi, dkn_l_ok
     call dkn_button
-    mov eax, DKN_CANCEL_X
+    mov eax, [dk_w2]
+    add eax, ( 0 - DKN_W / 2 + DKN_W - DKN_BTN_W - 14 )
     mov esi, dkn_l_cancel
     call dkn_button
 .done:
@@ -840,16 +849,36 @@ dkn_click:
     jl .done
     cmp ebx, DKN_BTN_Y + DKN_BTN_H
     jge .done
-    cmp eax, DKN_OK_X
+    push edx
+    mov edx, [dk_w2]
+    add edx, ( 0 - DKN_W / 2 + DKN_W - 2 * DKN_BTN_W - 24 )
+    mov [dk_ctmp], edx
+    pop edx
+    cmp eax, [dk_ctmp]
     jl .done
-    cmp eax, DKN_OK_X + DKN_BTN_W
+    push edx
+    mov edx, [dk_w2]
+    add edx, ( 0 - DKN_W / 2 + DKN_W - 2 * DKN_BTN_W - 24 ) + DKN_BTN_W
+    mov [dk_ctmp], edx
+    pop edx
+    cmp eax, [dk_ctmp]
     jge .not_ok
     mov byte [dkn_req], 1
     jmp .done
 .not_ok:
-    cmp eax, DKN_CANCEL_X
+    push edx
+    mov edx, [dk_w2]
+    add edx, ( 0 - DKN_W / 2 + DKN_W - DKN_BTN_W - 14 )
+    mov [dk_ctmp], edx
+    pop edx
+    cmp eax, [dk_ctmp]
     jl .done
-    cmp eax, DKN_CANCEL_X + DKN_BTN_W
+    push edx
+    mov edx, [dk_w2]
+    add edx, ( 0 - DKN_W / 2 + DKN_W - DKN_BTN_W - 14 ) + DKN_BTN_W
+    mov [dk_ctmp], edx
+    pop edx
+    cmp eax, [dk_ctmp]
     jge .done
     call dkn_close
 .done:
@@ -916,7 +945,12 @@ dk_sub_place:
     pushad
     mov eax, [dk_ctx_x]
     add eax, DK_CTX_W - 2
-    cmp eax, DESK_W - DK_SUB_W
+    push edx
+    mov edx, [dk_w]
+    add edx, 0 - DK_SUB_W
+    mov [dk_ctmp], edx
+    pop edx
+    cmp eax, [dk_ctmp]
     jle .x_ok
     mov eax, [dk_ctx_x]
     sub eax, DK_SUB_W - 2
@@ -925,7 +959,8 @@ dk_sub_place:
     mov eax, [dk_ctx_hover]
     imul eax, DK_CTX_ITEM
     add eax, [dk_ctx_y]
-    mov ecx, DESK_H - DK_TASKBAR_H - DK_SUB_N * DK_CTX_ITEM
+    mov ecx, [dk_h]
+    add ecx, 0 - DK_TASKBAR_H - DK_SUB_N * DK_CTX_ITEM
     cmp eax, ecx
     jle .y_ok
     mov eax, ecx

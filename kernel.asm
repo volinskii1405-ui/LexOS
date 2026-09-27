@@ -52,6 +52,7 @@ kernel_start:
     call pm_init             ; paging, TSS, ring 3 (src/usermode.asm)
     call fs_cache_init       ; slot cache + extra-sector bitmap (src/fs_extra.asm)
     call kext_load           ; /SYSTEM/KEXT.BIN: the rest of the kernel (below)
+    call dkpng_load          ; /SYSTEM/PNG.BIN: PNG pictures (src/dkpng.asm)
     call console_init        ; (src/console.asm)
 
     call clear_screen
@@ -334,7 +335,7 @@ com_shift_held     db 0     ; com_poll_key's own Shift-key tracking
 ; into disk/SYSTEM/KEXT.BIN, which kext_load reads at boot. None of it
 ; is reached through 16-bit pointers (it's far above 0x10000).
 KEXT_BASE equ 0x5740000
-KEXT_MAX  equ 0xC0000                ; (up to the WAV buffer)
+KEXT_MAX  equ 0x80000                ; (then /SYSTEM/PNG.BIN: src/dkpng.asm)
 KEXT_STAMP equ ((kernel_image_end - $$) & 0xFFFF) * 65536 + ((kext_end - kext_start) & 0xFFFF) ; (a kernel and its own extension)
 kext_path db "/SYSTEM/KEXT.BIN", 0
 kext_msg_missing db "/SYSTEM/KEXT.BIN is missing or old: the desktop's newer parts are off.", 10, 0
@@ -399,4 +400,9 @@ kext_start:
 %include "src/dkcpanel.asm"
 %include "src/dksaver.asm"
 %include "src/dkfscheck.asm"
+%include "src/dkpng.asm"
+%include "src/dkpics.asm"
+%include "src/dknotify.asm"
+%include "src/dkanim.asm"
+%include "src/dkres.asm"
 kext_end:

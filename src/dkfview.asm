@@ -1120,6 +1120,9 @@ dkf_thumb_draw:
     push eax
     call dk_ext_dword
     cmp eax, 'BMP'
+    je .picture
+    cmp eax, 'PNG'
+.picture:
     pop eax
     jne .no
     mov [dkf_tx], eax
@@ -1232,8 +1235,9 @@ dkf_blit:
     sub edi, [dkf_bx0]
     lea esi, [esi + edi*4]
     mov edi, ebp
-    imul edi, DESK_STRIDE
-    lea edi, [edi + eax*4 + DESK_BACK]
+    imul edi, [dk_stride]
+    lea edi, [edi + eax*4]
+    add edi, [dk_back]
     sub ecx, eax
     cld
     rep movsd
@@ -1292,6 +1296,10 @@ dkf_thumb_work:
     mov edi, DESK_IMG_FILE
     mov ecx, DESK_IMG_FILE_MAX
     call fs_load_to                       ; -> ecx bytes
+    mov eax, 160                          ; (a PNG: a small BMP - src/dkpng.asm)
+    mov ebx, 160
+    call dkpng_convert
+    jc .made
     mov esi, DESK_IMG_FILE
     call dkb_open                         ; (src/dkwall.asm) -> dkb_*
     jc .made

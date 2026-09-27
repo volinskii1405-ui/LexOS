@@ -5,6 +5,7 @@
  * opens a TCP connection (the kernel's: tcp_open & co., lexos.h), does
  * a TLS 1.3 handshake, sends an HTTP/1.1 GET (Connection: close) and reads the whole answer
  * - headers and body - into buf: its length, or <0 (tls_error says why).
+ * tls_sink, if set, takes the answer a piece at a time instead.
  *
  * All of it is here, in C, from the standards: X25519 key exchange
  * (RFC 7748, after TweetNaCl), SHA-256, HMAC and HKDF (the TLS 1.3 key
@@ -23,6 +24,9 @@ typedef unsigned long long u64;
 typedef long long i64;
 
 static const char *tls_error = "";
+/* if set: the answer's bytes go to it as they come (not into out[]);
+ * nonzero stops it there (tls_get then returns -1, tls_error "Stopped.") */
+static int (*tls_sink)(const unsigned char *d, int n);
 
 /* ============================================================
  * SHA-256
@@ -794,6 +798,11 @@ static int tls_get(const char *host, int port, const char *path, char *out, int 
         }
         if (type == 21) break;                          /* close_notify */
         if (type != 23) continue;                       /* tickets and such */
+        if (tls_sink) {
+            if (tls_sink(d, len)) { tls_error = "Stopped."; goto fail; }
+            total += len;
+            continue;
+        }
         for (i = 0; i < len && total < max; i++) out[total++] = d[i];
     }
     tcp_close();

@@ -130,21 +130,31 @@ dkss_draw:
     imul eax, eax, 300
     cdq
     idiv ecx
-    add eax, DESK_W / 2
+    add eax, [dk_w2]
     mov ebx, eax
     mov eax, [dkss_y + edi*4]
     imul eax, eax, 300
     cdq
     idiv ecx
-    add eax, DESK_H / 2
+    add eax, [dk_h2]
     xchg eax, ebx                         ; eax, ebx = x, y
     cmp eax, 0
     jl .next
-    cmp eax, DESK_W - 3
+    push edx
+    mov edx, [dk_w]
+    add edx, 0 - 3
+    mov [dk_ctmp], edx
+    pop edx
+    cmp eax, [dk_ctmp]
     jg .next
     cmp ebx, 0
     jl .next
-    cmp ebx, DESK_H - 3
+    push edx
+    mov edx, [dk_h]
+    add edx, 0 - 3
+    mov [dk_ctmp], edx
+    pop edx
+    cmp ebx, [dk_ctmp]
     jg .next
     mov esi, DKSS_FAR                     ; nearer: brighter, bigger
     sub esi, ecx                          ; (80..255)
@@ -196,12 +206,21 @@ dkss_draw:
     mov eax, [dkss_t]                     ; (a triangle wave, each way)
     shr eax, 1
     xor edx, edx
-    mov ecx, 2 * (DESK_W - 160)
+    mov ecx, [dk_w]
+    sub ecx, 160
+    shl ecx, 1
     div ecx
-    cmp edx, DESK_W - 160
+    push eax
+    mov eax, [dk_w]
+    add eax, 0 - 160
+    mov [dk_ctmp], eax
+    pop eax
+    cmp edx, [dk_ctmp]
     jb .x
     neg edx
-    add edx, 2 * (DESK_W - 160)
+    add edx, [dk_w]
+    add edx, [dk_w]
+    sub edx, 2 * 160
 .x:
     mov eax, edx
     mov edx, [dkss_t]

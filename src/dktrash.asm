@@ -157,13 +157,8 @@ dkt_ctx_edit_item:
     movzx eax, byte [esi + 17]            ; (text: not folders, programs,
     cmp eax, IC_IMAGE                     ;  pictures, sounds, archives)
     jne .not_picture
-    push eax                              ; a .BMP: Edit in Paint, Set as
-    call dk_ext_dword                     ; wallpaper
-    cmp eax, 'BMP'
-    pop eax
-    jne .no_edit
-    mov al, DKC_PAINT
-    call dk_ctx_add
+    mov al, DKC_PAINT                     ; a picture (BMP, PNG): Edit in
+    call dk_ctx_add                       ; Paint, Set as wallpaper
     mov al, DKC_WALL
     call dk_ctx_add
     jmp .no_edit
@@ -474,7 +469,8 @@ dkt_icon_place:
     push esi
     push edi
     push ebp
-    mov ecx, (DKG_COLS - 1) * DKG_ROWS    ; the leftmost column, the top
+    mov ecx, [dkg_cells]                  ; the leftmost column, the top
+    sub ecx, [dkg_rows]
     call dkg_cell_xy
     mov esi, dki_new_x
     mov edi, dki_new_y

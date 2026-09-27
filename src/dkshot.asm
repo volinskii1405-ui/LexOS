@@ -125,7 +125,7 @@ dks_start:
     movzx eax, word [fs_tmp_slot]
     mov [dks_slot], eax
     call fs_read_slot                     ; its first bytes: in the slot
-    mov esi, DESK_IMG_FILE
+    mov esi, [dk_shot_buf]
     lea edi, [SCRATCH_ADDR + FS_CONTENT_OFFSET]
     mov ecx, FS_CONTENT_LEN - 1
     cld
@@ -174,14 +174,14 @@ dks_piece:
 .linked:
     mov ebp, DKS_BATCH
 .sector:
-    mov ecx, DK_SHOT_SIZE                 ; this one's bytes
+    mov ecx, [dk_shot_size] ; this one's bytes
     sub ecx, [dks_pos]
     cmp ecx, FS_EXTRA_CONTENT_LEN
     jbe .count
     mov ecx, FS_EXTRA_CONTENT_LEN
 .count:
     mov esi, [dks_pos]
-    add esi, DESK_IMG_FILE
+    add esi, [dk_shot_buf]
     mov edi, SCRATCH_ADDR
     mov [SCRATCH_ADDR + FS_EXTRA_USED_OFFSET], cx
     add [dks_pos], ecx
@@ -190,7 +190,10 @@ dks_piece:
     mov word [SCRATCH_ADDR + FS_EXTRA_NEXT_OFFSET], FS_NO_CHAIN
     dec ebp
     jz .last                              ; (this piece's last)
-    cmp dword [dks_pos], DK_SHOT_SIZE
+    push eax
+    mov eax, [dks_pos]
+    cmp eax, [dk_shot_size]
+    pop eax
     jae .last
     call fs_extra_alloc                   ; the next, first - so this one
     jc .last                              ; goes out pointing at it
@@ -210,7 +213,10 @@ dks_piece:
     call fs_set_size
     mov eax, [dks_slot]
     call fs_write_slot
-    cmp dword [dks_pos], DK_SHOT_SIZE
+    push eax
+    mov eax, [dks_pos]
+    cmp eax, [dk_shot_size]
+    pop eax
     jae .all
     popad
     clc

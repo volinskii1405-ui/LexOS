@@ -8,7 +8,7 @@
  * headings, paragraphs, line breaks, bold/italic/underlined text, links,
  * lists (bullets and numbers), <pre>, <hr>, <blockquote>, <center>,
  * tables as rows of cells, <font color>, <body bgcolor>, and pictures -
- * <img> of .BMP files (8, 24 or 32 bits, as `paint` saves them). Text in
+ * <img> of .BMP (8, 24 or 32 bits) and .PNG files (png.h). Text in
  * UTF-8 is shown in LexOS's font (Russian and Spanish letters too);
  * scripts and styles are skipped.
  *
@@ -22,6 +22,11 @@
  * Tab (or a click on it) - the address bar, Enter there goes; F5 -
  * reload; Esc - quit.
  *
+ * Downloads: a link to a file (not a page - a .ZIP, a .BMP, a .WAV...)
+ * saves it in /DOWNLOADS as it comes, the status line counting (Esc
+ * stops it); Ctrl+S saves the page itself; the arrow button by Go
+ * lists what's been downloaded.
+ *
  * Tabs: up to 8 pages open at once, along the top - a click goes to one,
  * its x closes it, + opens another (the start page); Ctrl+T, Ctrl+W,
  * Ctrl+Tab do the same from the keys, and Ctrl+click on a link opens it
@@ -30,6 +35,7 @@
  * otherwise it's read again when it's gone back to. */
 #include "lexos.h"
 #include "tls.h"                         /* https:// - TLS 1.3 of its own */
+#include "png.h"                         /* <img> of .PNG */
 
 #define W 800
 #define H 600
@@ -567,12 +573,37 @@ static unsigned *load_bmp(const unsigned char *b, int n, int *pw, int *ph)
     return pix;
 }
 
+/* a PNG -> its pixels (up to 760 wide - less if memory's short:
+ * shrunk), as load_bmp's */
+static unsigned *png_pix;
+static int png_pw;
+static void png_to_pix(int x, int y, int r, int g, int b) { png_pix[y * png_pw + x] = RGB(r, g, b); }
+static unsigned *load_png(unsigned char *b, int n, int *pw, int *ph)
+{
+    int w, h, mw = RIGHT - MARGIN, mh = 1024;
+    for (;;) {                                  /* as big as memory lets it be */
+        if (!png_size(b, n, mw, mh, &w, &h)) return 0;
+        png_pix = malloc(w * h * 4);
+        if (png_pix) break;
+        if (w < 48 || h < 48) return 0;
+        mw = w * 3 / 4; mh = h * 3 / 4;
+    }
+    png_pw = w;
+    png_sink = png_to_pix;
+    if (png_to_bmp(b, n, 0, 0, mw, mh) < 0) { png_sink = 0; free(png_pix); return 0; }
+    png_sink = 0;
+    *pw = w;
+    *ph = h;
+    return png_pix;
+}
+
 /* https://host[:port]/path -> buf, as fetch() does it for http (-3:
  * moved, the address in buf; -2: not the page; -4: TLS failed) */
+static int parse_answer(char *buf, int len, int max);
 static int https_fetch(const char *u, char *buf, int max)
 {
     char host[URL_MAX], path[URL_MAX];
-    int port = 443, n = 0, len, code, body, i;
+    int port = 443, n = 0, len;
     const char *p = u + 8;
     while (*p && *p != '/' && *p != ':' && n < URL_MAX - 1) host[n++] = *p++;
     host[n] = 0;
@@ -580,6 +611,14 @@ static int https_fetch(const char *u, char *buf, int max)
     copy(path, *p ? p : "/", URL_MAX);
     len = tls_get(host, port, path, buf, max - 1);
     if (len < 0) return -4;
+    return parse_answer(buf, len, max);
+}
+
+/* an HTTP answer in buf (len bytes, headers first) -> the body moved to
+ * buf's start, its length; -3 moved (the address in buf), -2 not 200 */
+static int parse_answer(char *buf, int len, int max)
+{
+    int code, body, i;
     buf[len] = 0;
     if (len < 12 || memcmp(buf, "HTTP/", 5)) return -2;
     code = atoi(buf + 9);
@@ -655,6 +694,264 @@ static int load(const char *where, char *buf, int max)
     return n;
 }
 
+/* ============================================================
+ * downloads: a file (not a page) from the web, straight into
+ * /DOWNLOADS as it comes (so as big as a file can be, 4MB), the status
+ * line showing how much has come; Esc stops it
+ * ============================================================ */
+#define DL_LIST 12
+#define HDR_MAX 8192
+static struct { char name[16]; int size, ok; } dls[DL_LIST];
+static int ndls, show_dls;
+static char dl_name[16], dl_path[64];
+static char dl_hdr[HDR_MAX + 1];
+static int dl_hlen, dl_in_body, dl_code, dl_total, dl_written, dl_fd = -1, dl_stop;
+static int dl_chunked, dl_chunk_left, dl_chunk_state;  /* 0 size, 1 data, 2 its CRLF, 3 the end */
+static char dl_moved[URL_MAX];
+static unsigned dl_shown;
+static void draw_status(void);
+static void redraw(void);
+
+/* a link to a file, not to a page? (by its name's extension) */
+static int is_download(const char *u)
+{
+    static const char *pages[] = { "HTM", "HTML", "MD", "PHP", "ASP", "ASPX", "JSP", "CGI", "SHTML", "TXT", "XHTML", 0 };
+    const char *p, *last = u, *ext = 0;
+    int i, n;
+    if (!is_http(u)) return 0;
+    for (p = u + 8; *p && *p != '?' && *p != '#'; p++) if (*p == '/') last = p;
+    if (last == u) return 0;                                 /* (just a host) */
+    for (p = last; *p && *p != '?' && *p != '#'; p++) if (*p == '.') ext = p + 1;
+    if (!ext) return 0;
+    n = p - ext;
+    if (n < 1 || n > 5) return 0;
+    for (i = 0; pages[i]; i++)
+        if ((int)strlen(pages[i]) == n && starts_ci(ext, pages[i])) return 0;
+    return 1;
+}
+/* the name to keep it under: the address's last part, as LexOS names
+ * are (upper case, 15 at most, the extension kept) */
+static void dl_name_of(const char *u, char *out)
+{
+    const char *p, *last = u, *end;
+    char base[16], ext[8];
+    int nb = 0, ne = 0, dot = 0;
+    for (p = u; *p && *p != '?' && *p != '#'; p++) if (*p == '/') last = p + 1;
+    end = p;
+    for (p = last; p < end; p++) if (*p == '.') dot = p - last;
+    for (p = last; p < end && (dot ? p < last + dot : 1); p++) {
+        int c = *p >= 'a' && *p <= 'z' ? *p - 32 : *p;
+        if (((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_') && nb < 10) base[nb++] = c;
+    }
+    if (dot) for (p = last + dot + 1; p < end && ne < 4; p++) {
+        int c = *p >= 'a' && *p <= 'z' ? *p - 32 : *p;
+        if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) ext[ne++] = c;
+    }
+    if (!nb) { memcpy(base, "DOWNLOAD", 8); nb = 8; }
+    base[nb] = 0; ext[ne] = 0;
+    copy(out, base, 16);
+    if (ne) { append(out, ".", 16); append(out, ext, 16); }
+}
+static void num_kb(char *t, int n, int size)
+{
+    char d[16];
+    int v = (n + 1023) / 1024, i = 15;
+    d[i] = 0;
+    do { d[--i] = '0' + v % 10; v /= 10; } while (v);
+    append(t, d + i, size);
+    append(t, " KB", size);
+}
+/* the status line: how much; Esc stops it */
+static void dl_show(void)
+{
+    int k;
+    while ((k = pollkey())) if ((k & 0xFF) == 27) dl_stop = 1;
+    if (millis() - dl_shown < 120) return;
+    dl_shown = millis();
+    copy(status, "Downloading ", sizeof status);
+    append(status, dl_name, sizeof status);
+    append(status, ": ", sizeof status);
+    num_kb(status, dl_written, sizeof status);
+    if (dl_total > 0) { append(status, " of ", sizeof status); num_kb(status, dl_total, sizeof status); }
+    append(status, "   (Esc stops)", sizeof status);
+    draw_status();
+    if (dl_total > 0) {
+        int w = (int)((double)(W - 16) * dl_written / dl_total);
+        if (w > W - 16) w = W - 16;
+        if (w > 0) fill(8, H - 3, w, 3, C_LINK, 0, H);
+    }
+    gfx_blit_rect(frame, 0, H - STATUS, W, STATUS);
+}
+/* the body's bytes: into the file (opened on the first) */
+static void dl_write(const char *d, int n)
+{
+    if (n <= 0 || dl_stop) return;
+    if (dl_fd < 0) {
+        dl_fd = open(dl_path, O_WRITE);
+        if (dl_fd < 0) { dl_stop = 2; return; }
+    }
+    if (dl_written + n > 4 * 1024 * 1024) { dl_stop = 3; return; }
+    fwrite(dl_fd, d, n);
+    dl_written += n;
+}
+/* a chunked body, a piece at a time */
+static void dl_chunks(const char *d, int n)
+{
+    int i = 0;
+    while (i < n && !dl_stop) {
+        if (dl_chunk_state == 0) {                             /* its size, in hex */
+            int c = d[i++];
+            if (hexval(c) >= 0) dl_chunk_left = dl_chunk_left * 16 + hexval(c);
+            else if (c == '\n') { dl_chunk_state = dl_chunk_left ? 1 : 3; }
+        } else if (dl_chunk_state == 1) {
+            int k = n - i < dl_chunk_left ? n - i : dl_chunk_left;
+            dl_write(d + i, k);
+            i += k;
+            dl_chunk_left -= k;
+            if (!dl_chunk_left) dl_chunk_state = 2;
+        } else if (dl_chunk_state == 2) {                      /* its CRLF */
+            if (d[i++] == '\n') { dl_chunk_state = 0; dl_chunk_left = 0; }
+        } else i = n;                                          /* the end */
+    }
+}
+/* the answer, as it comes: its headers, then its body */
+static int dl_feed(const unsigned char *d, int n)
+{
+    int i = 0;
+    while (!dl_in_body && i < n) {
+        if (dl_hlen < HDR_MAX) dl_hdr[dl_hlen++] = d[i];
+        i++;
+        if (dl_hlen >= 4 && !memcmp(dl_hdr + dl_hlen - 4, "\r\n\r\n", 4)) {
+            int j;
+            dl_hdr[dl_hlen] = 0;
+            dl_in_body = 1;
+            dl_code = dl_hlen > 12 && !memcmp(dl_hdr, "HTTP/", 5) ? atoi(dl_hdr + 9) : 0;
+            for (j = 0; j < dl_hlen; j++) {
+                if (dl_hdr[j] != '\n') continue;
+                if (starts_ci(dl_hdr + j + 1, "content-length:")) dl_total = atoi(dl_hdr + j + 16);
+                if (starts_ci(dl_hdr + j + 1, "transfer-encoding:") && starts_ci(dl_hdr + j + 20, "chunked")) dl_chunked = 1;
+                if (starts_ci(dl_hdr + j + 1, "location:")) {
+                    const char *l = dl_hdr + j + 10;
+                    int k = 0;
+                    while (*l == ' ') l++;
+                    while (*l && *l != '\r' && *l != '\n' && k < URL_MAX - 1) dl_moved[k++] = *l++;
+                    dl_moved[k] = 0;
+                }
+            }
+            if (dl_code != 200) return 1;                        /* moved, or not there */
+        }
+    }
+    if (i < n) { if (dl_chunked) dl_chunks((const char *)d + i, n - i); else dl_write((const char *)d + i, n - i); }
+    dl_show();
+    return dl_stop != 0;
+}
+static int dl_sink(const unsigned char *d, int n) { return dl_feed(d, n); }
+/* one try at u: 0 done, 1 moved (dl_moved), -1 failed */
+static int dl_get(const char *u)
+{
+    char host[URL_MAX], path[URL_MAX];
+    const char *p = u + (is_https(u) ? 8 : 7);
+    int port = is_https(u) ? 443 : 80, n = 0;
+    dl_hlen = dl_in_body = dl_code = dl_total = dl_written = dl_chunked = dl_chunk_left = dl_chunk_state = 0;
+    dl_moved[0] = 0; dl_shown = 0;
+    while (*p && *p != '/' && *p != ':' && n < URL_MAX - 1) host[n++] = *p++;
+    host[n] = 0;
+    if (*p == ':') { port = atoi(p + 1); while (*p && *p != '/') p++; }
+    copy(path, *p ? p : "/", URL_MAX);
+    if (is_https(u)) {
+        static char none[4];
+        tls_sink = dl_sink;
+        n = tls_get(host, port, path, none, 0);
+        tls_sink = 0;
+        if (n < 0 && !dl_in_body) return -1;
+    } else {
+        char req[URL_MAX * 2 + 120];
+        static unsigned char piece[4096];
+        if (tcp_open(host, port) < 0) return -1;
+        copy(req, "GET ", sizeof req);
+        append(req, path, sizeof req);
+        append(req, " HTTP/1.0\r\nHost: ", sizeof req);
+        append(req, host, sizeof req);
+        append(req, "\r\nUser-Agent: LexOS-Web/1.0\r\nConnection: close\r\n\r\n", sizeof req);
+        tcp_send(req, strlen(req));
+        for (;;) {
+            int got = tcp_recv(piece, sizeof piece, 15000);
+            if (got <= 0) break;
+            if (dl_feed(piece, got)) break;
+        }
+        tcp_close();
+    }
+    if (dl_code >= 300 && dl_code < 400 && dl_moved[0]) return 1;
+    return dl_code == 200 ? 0 : -1;
+}
+/* u -> /DOWNLOADS/NAME (NAME1, NAME2... if it's taken) */
+static void download(const char *u)
+{
+    char where[URL_MAX], name[16];
+    int r = -1, tries, fd, i;
+    copy(where, u, URL_MAX);
+    dl_name_of(where, dl_name);
+    hover_link = -1;                                              /* (the status line: ours) */
+    mkdir("/DOWNLOADS");
+    copy(name, dl_name, 16);
+    for (i = 1; i < 10; i++) {                                    /* a free name */
+        copy(dl_path, "/DOWNLOADS/", sizeof dl_path);
+        append(dl_path, name, sizeof dl_path);
+        fd = open(dl_path, O_READ);
+        if (fd < 0) break;
+        close(fd);
+        {
+            char b[16], e[8];
+            int k, dot = -1;
+            for (k = 0; dl_name[k]; k++) if (dl_name[k] == '.') dot = k;
+            copy(b, dl_name, dot >= 0 && dot < 9 ? dot + 1 : 10);
+            copy(e, dot >= 0 ? dl_name + dot : "", 8);
+            k = strlen(b);
+            b[k] = '0' + i; b[k + 1] = 0;
+            copy(name, b, 16);
+            append(name, e, 16);
+        }
+    }
+    dl_fd = -1; dl_stop = 0;
+    for (tries = 0; tries < 4; tries++) {
+        r = dl_get(where);
+        if (r != 1) break;
+        {
+            char moved[URL_MAX];
+            resolve(where, dl_moved, moved);
+            copy(where, moved, URL_MAX);
+        }
+        if (!is_http(where)) { r = -1; break; }
+    }
+    if (dl_fd >= 0) close(dl_fd);
+    dl_fd = -1;
+    if (r != 0 || dl_stop) {
+        copy(status, dl_stop == 1 ? "Download stopped." : dl_stop == 3 ? "Too big: 4MB at most." :
+                     dl_stop == 2 ? "Can't write it to /DOWNLOADS." : "The download didn't work.", sizeof status);
+        if (dl_written) { fd = open(dl_path, O_WRITE); if (fd >= 0) close(fd); }   /* (a part: emptied) */
+        redraw();
+        return;
+    }
+    if (dl_fd < 0 && !dl_written) { fd = open(dl_path, O_WRITE); if (fd >= 0) close(fd); }  /* (an empty file) */
+    if (ndls == DL_LIST) { memmove(&dls[0], &dls[1], sizeof dls[0] * (DL_LIST - 1)); ndls--; }
+    copy(dls[ndls].name, name, 16);
+    dls[ndls].size = dl_written;
+    dls[ndls].ok = 1;
+    ndls++;
+    copy(status, "Saved ", sizeof status);
+    append(status, dl_path, sizeof status);
+    append(status, " (", sizeof status);
+    num_kb(status, dl_written, sizeof status);
+    append(status, ")", sizeof status);
+    {
+        char t[64];
+        copy(t, "Downloaded: ", sizeof t);
+        append(t, name, sizeof t);
+        notify(t);
+    }
+    redraw();
+}
+
 static void emit_image(const char *srcattr, const char *alt)
 {
     char where[URL_MAX];
@@ -664,7 +961,8 @@ static void emit_image(const char *srcattr, const char *alt)
     resolve(url, srcattr, where);
     if (buf) {
         n = load(where, (char *)buf, 512 * 1024);
-        if (n > 0) pix = load_bmp(buf, n, &w, &h);
+        if (n > 0) pix = n > 8 && (unsigned char)buf[0] == 137 && buf[1] == 'P' ? load_png((unsigned char *)buf, n, &w, &h)
+                                                                   : load_bmp(buf, n, &w, &h);
         free(buf);
     }
     if (!pix) {                           /* not shown: its words instead */
@@ -1428,7 +1726,8 @@ static void layout(void)
 #define BTN_H 24
 static const int btn_x[] = { 8, 38, 68, 98 };
 #define ADDR_X 132
-#define GO_X (W - 44)
+#define GO_X (W - 78)
+#define DL_X (W - 36)
 #define ADDR_W (GO_X - 8 - ADDR_X)
 
 static void bevel(int bx, int by, int bw, int bh, unsigned face)
@@ -1467,6 +1766,26 @@ static void draw_bar(void)
     }
     bevel(GO_X, BTN_Y, 36, BTN_H, hover_btn == 4 ? C_HOVER : C_BTN);
     text_at(GO_X + 10, BTN_Y + 4, "Go", C_TEXT, ST_BOLD, 24);
+    bevel(DL_X, BTN_Y, 28, BTN_H, show_dls ? C_LINK : hover_btn == 6 ? C_HOVER : C_BTN);
+    text_at(DL_X + 10, BTN_Y + 4, "\x19", show_dls ? C_PAGE : C_TEXT, ST_BOLD, 16);
+}
+
+/* the downloads, over the page's top right */
+static void draw_downloads(void)
+{
+    int i, bw = 320, bh = 44 + (ndls ? ndls : 1) * 20, bx = W - SBW - bw - 6, by = VIEW_Y + 4;
+    fill(bx + 3, by + 3, bw, bh, RGB(150, 156, 170), 0, H);
+    fill(bx, by, bw, bh, C_BAR_LO, 0, H);
+    fill(bx + 1, by + 1, bw - 2, bh - 2, C_PAGE, 0, H);
+    text_at(bx + 10, by + 6, "Downloads (in /DOWNLOADS)", C_HEAD, ST_BOLD, bw - 20);
+    if (!ndls) text_at(bx + 10, by + 28, "None yet: a link to a file saves it.", C_GRAY, 0, bw - 20);
+    for (i = 0; i < ndls; i++) {
+        char t[32];
+        t[0] = 0;
+        num_kb(t, dls[i].size, sizeof t);
+        text_at(bx + 10, by + 28 + i * 20, dls[i].name, C_TEXT, 0, 150);
+        text_at(bx + bw - 10 - 8 * (int)strlen(t), by + 28 + i * 20, t, C_GRAY, 0, 100);
+    }
 }
 
 static void draw_page(void)
@@ -1647,6 +1966,7 @@ static void redraw(void)
     draw_tabs();
     draw_bar();
     draw_page();
+    if (show_dls) draw_downloads();
     draw_status();
     gfx_blit(frame);
 }
@@ -1689,6 +2009,7 @@ static void go(const char *to, int remember)
         append(t, where, URL_MAX);
         copy(where, t, URL_MAX);
     }
+    if (is_download(where)) { download(where); return; }
     copy(url, where, URL_MAX);
     copy(status, "Loading ", sizeof status);
     append(status, where, sizeof status);
@@ -1737,6 +2058,7 @@ static int button_at(int mx, int my)
     if (my < BTN_Y || my >= BTN_Y + BTN_H) return -1;
     for (i = 0; i < 4; i++) if (mx >= btn_x[i] && mx < btn_x[i] + 26) return i;
     if (mx >= GO_X && mx < GO_X + 36) return 4;
+    if (mx >= DL_X && mx < DL_X + 28) return 6;
     if (mx >= ADDR_X && mx < ADDR_X + ADDR_W) return 5;
     return -1;
 }
@@ -1749,6 +2071,7 @@ static void press(int b)
     else if (b == 3) go(home, 1);
     else if (b == 4) { editing = 0; go(edit_url, 1); }
     else if (b == 5 && !editing) { editing = 1; edit_fresh = 1; copy(edit_url, url, URL_MAX); redraw(); }
+    else if (b == 6) { show_dls = !show_dls; redraw(); }
 }
 
 int main(int argc, char **argv)
@@ -1779,6 +2102,10 @@ int main(int argc, char **argv)
                 changed = 1;
             } else if (ch == 27) break;
             else if (ch == 20) { tab_new(home); continue; }                 /* Ctrl+T */
+            else if (ch == 19) {                                            /* Ctrl+S: this page, kept */
+                if (is_http(url)) download(url);
+                else { copy(status, "It's on this disk already.", sizeof status); changed = 1; }
+            }
             else if (ch == 23) { tab_close(cur_tab); changed = 1; }         /* Ctrl+W */
             else if (ch == 9 && keydown(KEY_CTRL)) { tab_go((cur_tab + 1) % ntabs); changed = 1; }
             else if (ch == 9 || ch == 12) { press(5); }

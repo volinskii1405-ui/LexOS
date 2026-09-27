@@ -109,8 +109,8 @@ FS_SLOT_VALID     equ FS_SLOT_CACHE + FS_FILE_COUNT * 512   ; 1 bit per slot
 FS_BITMAP_CACHE   equ FS_SLOT_VALID + FS_FILE_COUNT / 8
 FS_SCRATCH_SAVE   equ FS_BITMAP_CACHE + FS_BITMAP_SECTORS * 512
 ; A big buffer for whole-file work (hostput, wget, a program's files)
-BIG_FILE_BUF      equ 0x6400000             ; 100MB, up to 12MB (then the
-BIG_FILE_MAX      equ 0xC00000              ;  wallpaper, thumbnails)
+BIG_FILE_BUF      equ 0x6400000             ; 100MB, up to 9MB (then a PNG's
+BIG_FILE_MAX      equ 0x900000              ;  BMP, the wallpaper, thumbnails)
 
 ; --- PROGRAM files (the old raw-code kind, src/programs.asm) ---
 ; content[0] of PROGRAM-type files stores the length (0..127), content[1..] -
