@@ -12,6 +12,10 @@
 ;   38 mkdir(path)            a new folder ("NAME", "/A/NAME") -> 0 / -1
 ;   39 notify(text)           a line shown at the desktop's top for a few
 ;                             seconds (and Files, the icons: read again)
+;   41 opl(reg, value)        an AdLib (OPL2) register written - for IMF
+;                             music; its notes stop when the program ends
+;   42 audio_queued(flush)    the bytes of sound still to play; flush 1:
+;                             dropped at once (a pause, a jump elsewhere)
 ;   40 inbox(buf, n)          a file handed to this program while it's open
 ;                             (Files opened another text file and Notepad
 ;                             is already there: a tab in it, not a second
@@ -19,7 +23,7 @@
 ;
 ; Arguments as every call's: ebx [ebp+16], ecx [ebp+24], edx [ebp+20].
 ; Exports: sys_keymode, sys_readdir, sys_mkdir, sys_notify, sys_inbox,
-;          aext_hand_over
+;          sys_opl, sys_audio_queued, aext_hand_over
 
 AEXT_PATH_MAX  equ 120
 
@@ -481,6 +485,36 @@ sys_inbox:
 .done:
     ret
 
+; SYS 41: ebx = an OPL2 register, ecx = its value
+sys_opl:
+    mov eax, [sched_current]
+    mov [aext_opl_task], eax
+    mov bl, [ebp + 16]
+    mov bh, [ebp + 24]
+    call opl2_write                       ; (src/sound.asm)
+    xor eax, eax
+    ret
+
+; SYS 42: ebx = 1: this program's queued sound dropped -> the bytes
+; still queued (-1: it has no voice)
+sys_audio_queued:
+    call app_audio_voice
+    jc .none
+    cmp dword [ebp + 16], 1
+    jne .count
+    pushfd                                ; (the card's interrupt reads it)
+    cli
+    mov edx, [mix_head + eax*4]
+    mov [mix_tail + eax*4], edx
+    popfd
+.count:
+    call mixer_queued
+    ret
+.none:
+    mov eax, -1
+    ret
+
+aext_opl_task    dd -1
 aext_inbox       times AEXT_PATH_MAX + 20 db 0
 aext_inbox_con   db 0xFF
 aext_dir         db 0

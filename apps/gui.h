@@ -88,6 +88,15 @@ GUI_FN void gui_round(int x, int y, int w, int h, int r, unsigned c)
     }
 }
 
+/* a filled circle, r pixels round (cx, cy) */
+GUI_FN void gui_disc(int cx, int cy, int r, unsigned c)
+{
+    int y, x;
+    for (y = -r; y <= r; y++) {
+        for (x = 0; (x + 1) * (x + 1) + y * y <= r * r; x++);
+        gui_fill(cx - x, cy + y, 2 * x + 1, 1, c);
+    }
+}
 GUI_FN void gui_glyph(int x, int y, unsigned char ch, unsigned c, int k)
 {
     int r, b;

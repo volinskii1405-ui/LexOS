@@ -5737,7 +5737,7 @@ dk_ext_kinds      dd 'APP', IC_APP, 'COM', IC_APP, 'BIN', IC_APP, 'BMP', IC_IMAG
                   dd 'CSV', IC_TEXT
                   dd 0, 0
 dk_ext_verbs      dd 'APP', dk_verb_run, 'COM', dk_verb_run, 'BIN', dk_verb_run
-                  dd 'WAV', dk_verb_play, 'IMF', dk_verb_play, 'MOD', dk_verb_mod
+                  dd 'WAV', dk_verb_music, 'IMF', dk_verb_music, 'MOD', dk_verb_music
                   dd 'HG', dk_verb_none, 'BAS', dk_verb_basic, 'TRG', dk_verb_turtle
                   dd 'CH8', dk_verb_chip8, 'HTM', dk_verb_web, 'MD', dk_verb_web
                   dd 'ZIP', dkt_verb_view, 'CSV', dk_verb_sheet, 0, 0
@@ -5749,12 +5749,11 @@ dk_win_verbs      dd dk_verb_edit, dk_n_notepad, 1
                   dd dkt_verb_paint, 0, 1           ; (Edit in Paint)
                   dd dkt_verb_hex, dkt_n_hex, 1     ; (Open in the Hex editor)
                   dd dk_verb_sheet, dk_n_sheet, 1
+                  dd dk_verb_music, dk_n_music, 1
                   dd 0
 dk_state_names    dd dk_st_free, dk_st_ready, dk_st_waiting, dk_st_paused
 
 dk_verb_run       db "run ", 0
-dk_verb_play      db "play ", 0
-dk_verb_mod       db "run modplay.app ", 0
 dk_verb_none      db 0
 dk_verb_basic     db "basic ", 0
 dk_verb_turtle    db "turtle ", 0
@@ -5764,6 +5763,8 @@ dk_n_notepad      db "notepad.app", 0
 dk_n_browser      db "browser.app", 0
 dk_verb_sheet     db "run sheet.app ", 0
 dk_n_sheet        db "sheet.app", 0
+dk_verb_music     db "run music.app ", 0
+dk_n_music        db "music.app", 0
 dk_verb_web       db "run browser.app ", 0
 dk_cmd_cd         db "cd ", 0
 dk_st_free        db "-", 0

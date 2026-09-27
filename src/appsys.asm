@@ -1469,6 +1469,11 @@ app_audio_off:
     push eax
     mov eax, [sched_current]
     call mixer_close_owner
+    cmp eax, [aext_opl_task]              ; (its AdLib notes too: src/appext.asm)
+    jne .no_opl
+    mov dword [aext_opl_task], -1
+    call opl2_silence
+.no_opl:
     pop eax
     ret
 

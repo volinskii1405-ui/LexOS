@@ -86,6 +86,10 @@ dka_name_look:
     call dkx_str_eq
     mov al, IC_CALC
     je .yes
+    mov edi, dka_n_music
+    call dkx_str_eq
+    mov al, IC_MUSIC
+    je .yes
     mov edi, dka_n_games                  ; the games: a gamepad
     mov al, IC_GAME
 .game:
@@ -116,6 +120,8 @@ dk_kind_app:
     cmp al, IC_CALC
     je .done
     cmp al, IC_GAME
+    je .done
+    cmp al, IC_MUSIC
     je .done
     cmp al, IC_NOTEPAD
 .done:
@@ -322,6 +328,7 @@ dka_n_browser    db "BROWSER.APP", 0
 dka_n_notepad    db "NOTEPAD.APP", 0
 dka_n_paint      db "PAINT.APP", 0
 dka_n_calc       db "CALC.APP", 0
+dka_n_music      db "MUSIC.APP", 0
 dka_n_games      db "SNAKE.APP", 0, 0, 0     ; (12 bytes each)
                  db "TETRIS.APP", 0, 0
                  db "SWEEPER.APP", 0
