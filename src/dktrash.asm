@@ -683,9 +683,10 @@ dkt_forever_do:
     ret
 
 ; ============================================================
-; Del: the file under the pointer (Files' or a desktop icon) - or, with
-; Files in front and the pointer on none, what's selected there - into
-; the trash (in the trash: gone for good)
+; Del: what's picked - the desktop's icons if the desktop was clicked
+; last (or no window's open), else Files' selection with Files in front
+; - into the trash (in the trash: gone for good). Never just what the
+; pointer happens to be over.
 ; ============================================================
 
 ; The keyboard's interrupt, Del: carry=0 if it's taken (the desktop's
@@ -704,44 +705,30 @@ dkt_del_key:
     cmp byte [dk_menu_open], 0
     jne .theirs
     pushad
+    call dk_top_window
+    cmp eax, -1
+    je .desk
+    cmp byte [dkt_desk_focus], 0
+    jne .desk
+    cmp byte [dkw_kind + eax], K_FILES    ; a Terminal, a program in front:
+    jne .not_mine                         ; the key is theirs
     cmp byte [dkf_recent], 0              ; (Recent: nothing's deleted from
-    je .not_recent                        ;  there - taken, ignored)
-    cmp byte [dk_fm_typing], 0
-    jne .mine
-.not_recent:
-    call dk_top_window                    ; a Terminal, a program in front:
-    cmp eax, -1                           ; the key is theirs
-    je .pointer
-    cmp byte [dkw_kind + eax], K_TERM
-    je .not_mine
-    cmp byte [dkw_kind + eax], K_APP
-    je .not_mine
-.pointer:
-    mov eax, [dk_mx]
-    mov ebx, [dk_my]
-    call dk_window_at                     ; -> esi
-    cmp esi, -1
-    jne .window
-    call dki_at                           ; a desktop icon?
-    cmp ecx, -1
-    je .files_front
-    mov [dkt_del_what], ecx
+    jne .mine                             ;  there - taken, ignored)
+    mov dword [dkt_del_what], -1          ; Files: its selection
+    mov byte [dkt_del_req], 2
+    jmp .mine
+.desk:
+    xor ebx, ebx                          ; the desktop: an icon picked?
+.pick:
+    cmp ebx, [dki_n]
+    jae .not_mine                         ; (none: not the desktop's key)
+    call dkm_is
+    jnc .picked
+    inc ebx
+    jmp .pick
+.picked:
+    mov [dkt_del_what], ebx
     mov byte [dkt_del_req], 1
-    jmp .mine
-.window:
-    cmp byte [dkw_kind + esi], K_FILES
-    jne .files_front
-    call dk_files_entry_at                ; -> edx
-    cmp edx, -1
-    je .files_front
-    mov [dkt_del_what], edx
-    mov byte [dkt_del_req], 2
-    jmp .mine
-.files_front:
-    cmp byte [dk_fm_typing], 0            ; Files in front: its selection
-    je .not_mine
-    mov dword [dkt_del_what], -1
-    mov byte [dkt_del_req], 2
 .mine:
     popad
     clc
@@ -771,22 +758,7 @@ dkt_del_work:
     mov eax, DKC_IDELETE
     call dkx_ctx_create
     jmp .done
-.files:
-    cmp ebx, -1                           ; the one pointed at: the selection
-    je .selected
-    cmp ebx, [dk_fm_count]
-    jae .done
-    mov esi, ebx
-    shl esi, 5
-    cmp byte [DESK_FILES + esi + 17], IC_UP
-    je .done
-    call dk_sel_test
-    jnc .chosen
-    call dk_sel_clear
-    call dk_sel_set
-.chosen:
-    mov [dk_fm_sel], ebx
-.selected:
+.files:                                   ; Files: its selection
     cmp byte [dkt_fm_in_trash], 0
     je .to_trash
     call dkt_forever_req
@@ -943,6 +915,7 @@ dkt_bar_click:
 
 dkt_del_req      db 0                     ; 1 a desktop icon, 2 Files'
 dkt_del_what     dd 0
+dkt_desk_focus   db 0                     ; the desktop clicked last (Del)
 dkt_fm_in_trash  db 0
 dkt_l_restore_all db "Restore all", 0
 dkt_m_gone       db "Deleted for good: ", 0

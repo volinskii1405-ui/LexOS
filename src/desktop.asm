@@ -592,6 +592,7 @@ dk_win_single:
 ; Window eax to the front of the z-order
 dk_raise:
     pushad
+    mov byte [dkt_desk_focus], 0          ; (Del: a window's, not the icons)
     mov ecx, [dk_zcount]
     xor esi, esi
 .find:
@@ -1518,6 +1519,7 @@ dk_click:
     call dk_win_x                         ; (src/dkwins.asm: by kind)
     jmp .done
 .background:
+    mov byte [dkt_desk_focus], 1          ; (Del: the desktop's icons now)
     call dki_press                        ; (src/dkicons.asm: an icon?)
     jmp .done
 .maximize:

@@ -736,10 +736,11 @@ tester@/PROGRAMS$
     buttons; **Delete forever** there is quiet too (no console), and
     `/TRASH` is made by itself if it's missing, so it always opens (with
     its "..").
-  - **Del** deletes what's under the pointer - a desktop icon, a file in
-    Files (or, with Files in front, what's selected there) - into the
-    trash; in the trash, for good. With a Terminal or a program in front
-    Del stays theirs.
+  - **Del** deletes what's selected - the picked desktop icons if the
+    desktop was clicked last, else what's selected in Files in front -
+    into the trash; in the trash, for good. What the pointer is merely
+    over is never touched. With a Terminal or a program in front Del
+    stays theirs.
   - **Shortcuts are marked**: a `.LNK`'s icon has a small arrow in its
     corner (on the desktop and in Files).
   - **Files, more** (src/dkfview.asm): places down the left - Desktop,
@@ -875,7 +876,7 @@ tester@/PROGRAMS$
     band on empty space or Ctrl+click selects several, and dragging one
     of them moves them all. Right-click: Open, Rename..., Copy to...,
     Delete, Properties - or New folder..., Select all on empty space.
-    Delete (or Del over it) moves into /TRASH (Delete forever, Empty
+    Delete (or Del) moves into /TRASH (Delete forever, Empty
     trash, Restore all in there);
     Rename, Copy and New folder type the command into a Terminal and
     leave the new name to you.

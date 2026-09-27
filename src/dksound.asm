@@ -39,14 +39,19 @@ snd_click:
     pop eax
     ret
 
-; The desktop's task, between frames: what's asked for, queued; the
-; voice given back once it has played it all
+; The desktop's task, between frames: what's asked for, queued. The
+; voice (and so the card's stream) is kept open from the first sound to
+; the desktop's end: opening the card anew for every click cost QEMU a
+; stop of the whole machine on some hosts (it opens the host's audio
+; each time) - the screen froze on each sound.
 snd_work:
     pushad
     cmp dword [snd_pending], 0
     jne .work
     cmp dword [snd_voice], -1
     je .done
+    cmp byte [snd_ui_on], 0               ; (open and on: nothing to do)
+    jne .done
 .work:
     pushfd                                ; (the mixer's the kernel's: only
     cli                                   ;  while no console is in it)
@@ -88,23 +93,11 @@ snd_work:
     inc edx
     cmp edx, SND_COUNT
     jb .each
-    mov eax, [timer_ms]
-    mov [snd_quiet_since], eax
 .playing:
-    cmp dword [snd_voice], -1             ; all played (and a moment more,
-    je .release                           ; for the card's own buffer)?
-    mov eax, [snd_voice]
-    call mixer_queued
-    or eax, eax
-    jz .empty
-    mov eax, [timer_ms]
-    mov [snd_quiet_since], eax
-    jmp .release
-.empty:
-    mov eax, [timer_ms]
-    sub eax, [snd_quiet_since]
-    cmp eax, 200
-    jb .release
+    cmp dword [snd_voice], -1             ; Sounds: Off - the voice given
+    je .release                           ; back (else it's kept: see above)
+    cmp byte [snd_ui_on], 0
+    jne .release
     call snd_close
 .release:
     mov dword [bkl_owner], -1
@@ -223,7 +216,6 @@ snd_ui_on        db 1                     ; System: Sounds On / Off
 snd_made         db 0
 snd_pending      dd 0                     ; a bit per SND_*
 snd_voice        dd -1
-snd_quiet_since  dd 0
 snd_len          times SND_COUNT dd 0
 snd_start_ptr    dd 0
 snd_amp          dd 0
