@@ -628,6 +628,25 @@ sys_gfx_mode:
     mov dword [app_gfx_bpp], 1
     ret
 .vbe:
+    cmp byte [app_gfx], 3                 ; a window already, the same depth:
+    jne .new_window                       ; that one, the new size, in place
+    mov ebx, edx
+    shr ebx, 3
+    cmp ebx, [app_gfx_bpp]
+    jne .new_window
+    push eax
+    push ecx
+    mov ebx, eax
+    mov eax, [app_win_slot]
+    call dk_app_resize
+    pop ecx
+    pop eax
+    jc .new_window
+    mov [app_gfx_w], eax
+    mov [app_gfx_h], ecx
+    xor eax, eax
+    ret
+.new_window:
     push eax                              ; the desktop's on: a window, if
     push ecx                              ; it fits in one
     push edx

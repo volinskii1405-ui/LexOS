@@ -6,8 +6,7 @@
 ;
 ; All of this file's own data is reached through ordinary
 ; "[label + reg32]" memory operands or plain "mov e[sd]i, label" -
-; never a 16-bit "mov si/di, label" - for the same reason as
-; src/paint.asm: by this point in the kernel image, addresses are past
+; never a 16-bit "mov si/di, label": by this point in the kernel image, addresses are past
 ; the 0x10000 mark a 16-bit register can hold. The exception is the
 ; small set of messages printed in text mode, which live in
 ; src/data.asm instead, and fs_tmp_name/fs_tmp_slot, which are shared

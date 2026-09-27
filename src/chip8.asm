@@ -8,7 +8,7 @@
 ; Exports: chip8_run
 ;
 ; Reuses rather than reimplements: vga_enter_mode13/vga_leave_mode13
-; (src/vga.asm, same save-and-restore footing as snake/tetris/2048),
+; (src/vga.asm, saving and restoring the console around it),
 ; speaker_set_freq/speaker_off (src/speaker.asm) for the sound timer,
 ; and - like play_imf_file/play_wav_file (src/sound.asm) - that same
 ; file's audio_timer_start/audio_timer_stop to reprogram the system's
@@ -1205,9 +1205,7 @@ chip8_fill_block:
     imul esi, ecx, 1
     imul esi, [chip8_scale]           ; esi = this block's fixed y origin,
     add esi, [chip8_org_y]            ; kept out of ecx - rep stosb needs
-                                        ; the loop counter there (see the
-                                        ; equivalent note in
-                                        ; g2048_fill_tile/tetris_fill_cell)
+                                        ; the loop counter there)
     xor ecx, ecx
 .row_loop:
     cmp ecx, [chip8_scale]

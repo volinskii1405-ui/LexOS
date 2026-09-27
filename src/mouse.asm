@@ -11,8 +11,8 @@
 ; needs to go to both controllers, not just one.
 ;
 ; mouse_x/mouse_y are pixel coordinates already clamped to a 320x200
-; mode 13h screen (see src/vga.asm) - the only thing that currently
-; uses this driver (src/paint.asm). A 3-byte packet's X/Y bytes are
+; mode 13h screen (see src/vga.asm); the desktop scales them to its
+; own (src/desktop.asm). A 3-byte packet's X/Y bytes are
 ; used as a plain signed 8-bit delta (movsx) rather than combining them
 ; with the extra sign bit in the packet's flags byte - the accepted
 ; simplification basically every bare-metal PS/2 mouse driver makes,

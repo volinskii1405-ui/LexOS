@@ -63,49 +63,7 @@ kernel_start:
 
     call fs_ensure_readme    ; creates README.TXT in the root if it doesn't exist yet
 
-    call fs_ensure_programs_dir  ; creates the PROGRAMS folder in the root if needed
-    cmp ax, -1
-    je .no_programs_dir           ; slot table full - nothing to seed it with
-    push word [fs_current_dir]
-    xor ah, ah
-    mov [fs_current_dir], ax      ; so fs_ensure_test_exe/fs_ensure_calc_exe land inside it
-    call fs_ensure_test_exe  ; creates PROGRAMS/TEST.BIN if it doesn't exist yet
-    call fs_ensure_calc_exe  ; creates PROGRAMS/CALC.BIN if it doesn't exist yet
-    call fs_ensure_snake_exe ; creates PROGRAMS/SNAKE.BIN if it doesn't exist yet
-    call fs_ensure_sweeper_exe ; creates PROGRAMS/SWEEPER.BIN if it doesn't exist yet
-    call fs_ensure_tetris_exe ; creates PROGRAMS/TETRIS.BIN if it doesn't exist yet
-    call fs_ensure_g2048_exe ; creates PROGRAMS/2048.BIN if it doesn't exist yet
-    call fs_ensure_convert_exe ; creates PROGRAMS/CONVERT.BIN if it doesn't exist yet
-    mov si, test_exe_name
-    mov ebx, test_exe_template
-    mov ecx, TEST_EXE_LENGTH
-    call fs_refresh_stub
-    mov si, calc_exe_name
-    mov ebx, calc_exe_template
-    mov ecx, CALC_EXE_LENGTH
-    call fs_refresh_stub
-    mov si, snake_exe_name
-    mov ebx, snake_exe_template
-    mov ecx, SNAKE_EXE_LENGTH
-    call fs_refresh_stub
-    mov si, sweeper_exe_name
-    mov ebx, sweeper_exe_template
-    mov ecx, SWEEPER_EXE_LENGTH
-    call fs_refresh_stub
-    mov si, tetris_exe_name
-    mov ebx, tetris_exe_template
-    mov ecx, TETRIS_EXE_LENGTH
-    call fs_refresh_stub
-    mov si, g2048_exe_name
-    mov ebx, g2048_exe_template
-    mov ecx, G2048_EXE_LENGTH
-    call fs_refresh_stub
-    mov si, convert_exe_name
-    mov ebx, convert_exe_template
-    mov ecx, CONVERT_EXE_LENGTH
-    call fs_refresh_stub
-    pop word [fs_current_dir]
-.no_programs_dir:
+    call fs_retire_programs_dir  ; an old disk's PROGRAMS (the games are .APPs now)
 
     call fs_ensure_tmp_dir   ; creates the TMP folder in the root if needed, and
                              ; caches its slot index so fs_find_free knows when
@@ -158,18 +116,13 @@ align 4096, db 0
 %include "src/filesystem.asm"
 %include "src/fs_extra.asm"
 %include "src/programs.asm"
+%include "src/parse.asm"
 align 4096, db 0
 shared_vga_start:
 %include "src/vga.asm"
 shared_vga_end:
 align 4096, db 0
-%include "src/snake.asm"
-%include "src/paint.asm"
-%include "src/sweeper.asm"
-%include "src/tetris.asm"
-%include "src/game2048.asm"
-%include "src/convert.asm"
-%include "src/assembler.asm"
+%include "src/view.asm"
 %include "src/rtc.asm"
 %include "src/speaker.asm"
 align 4096, db 0
@@ -315,116 +268,6 @@ fs_ram_slot_write:
     mov ecx, 512
     rep movsb
     popad
-    ret
-
-; --- src/assembler.asm's mnemonic table ---
-; Moved here from assembler.asm itself: with everything else added to
-; this kernel over time, that file's position had crept close enough to
-; 0x10000 that these ~20 short strings (the last things there still
-; reached through the 16-bit mov di/si most of this kernel uses) were
-; the tightest point below it - and the RAM-disk feature just above
-; this comment finally pushed them past it, silently truncating every
-; "mov di, mnem_xxx" in src/assembler.asm to garbage (confirmed by
-; searching build/kernel.bin for the encoded bytes directly - the
-; NASM listing's own displayed immediates for label references can be
-; stale; see the note at the top of src/devices.asm).
-;
-; Rather than re-litigate that margin every time this kernel grows,
-; match_mnemonic_exact and match_mnemonic_prefix32 below reach this
-; table through EDI/ESI (32-bit) instead, so - like everything else on
-; this page - it doesn't matter that it now sits past 0x10000: nothing
-; here needs that margin at all.
-mnem_ret         db "ret", 0
-mnem_nop         db "nop", 0
-mnem_hlt         db "hlt", 0
-mnem_cli         db "cli", 0
-mnem_sti         db "sti", 0
-mnem_int_prefix  db "int ", 0
-mnem_mov_prefix  db "mov ", 0
-mnem_push_prefix db "push ", 0
-mnem_pop_prefix  db "pop ", 0
-mnem_inc_prefix  db "inc ", 0
-mnem_dec_prefix  db "dec ", 0
-mnem_add_prefix  db "add ", 0
-mnem_sub_prefix  db "sub ", 0
-mnem_cmp_prefix  db "cmp ", 0
-mnem_and_prefix  db "and ", 0
-mnem_or_prefix   db "or ", 0
-mnem_xor_prefix  db "xor ", 0
-mnem_jmp_prefix  db "jmp ", 0
-mnem_je_prefix   db "je ", 0
-mnem_jne_prefix  db "jne ", 0
-mnem_jz_prefix   db "jz ", 0
-mnem_jnz_prefix  db "jnz ", 0
-mnem_loop_prefix db "loop ", 0
-
-; match_mnemonic_exact: like the old local version in src/assembler.asm
-; (si must match the null-terminated string at EDI, followed by end-of-
-; line or a space), but through EDI instead of DI, so - unlike that
-; version - the string it's matched against doesn't need to live below
-; 0x10000. si is zero-extended into esi first: callers only ever set
-; the 16-bit si (the typed-instruction buffer, always below 0x10000),
-; so esi's own upper bits can't be trusted to already be zero.
-; carry=1 if it doesn't match.
-match_mnemonic_exact:
-    push esi
-    push edi
-    movzx esi, si
-.loop:
-    mov al, [edi]
-    cmp al, 0
-    je .mnem_ended
-    mov ah, [esi]
-    cmp al, ah
-    jne .no_match
-    inc esi
-    inc edi
-    jmp .loop
-.mnem_ended:
-    mov al, [esi]
-    cmp al, 0
-    je .match
-    cmp al, ' '
-    je .match
-    jmp .no_match
-.match:
-    pop edi
-    pop esi
-    clc
-    ret
-.no_match:
-    pop edi
-    pop esi
-    stc
-    ret
-
-; match_mnemonic_prefix32: same job as strcmp_prefix (src/input.asm) -
-; does si start with the null-terminated prefix at EDI? - but through
-; EDI/ESI so the prefix can live anywhere, same reasoning as
-; match_mnemonic_exact above. si is not advanced; ax=1 on a match, 0
-; otherwise (matching strcmp_prefix's own contract).
-match_mnemonic_prefix32:
-    push esi
-    push edi
-    movzx esi, si
-.loop:
-    mov al, [edi]
-    cmp al, 0
-    je .match
-    mov ah, [esi]
-    cmp al, ah
-    jne .no_match
-    inc esi
-    inc edi
-    jmp .loop
-.match:
-    mov ax, 1
-    jmp .done
-.no_match:
-    xor ax, ax
-.done:
-    pop edi
-    pop esi
     ret
 
 ; --- src/dosrun.asm's (.com program support) extended GDT and saved

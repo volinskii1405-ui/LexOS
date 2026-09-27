@@ -5210,6 +5210,52 @@ dk_app_open:
     stc
     ret
 
+; eax = a slot, ebx x ecx = the program's new size (the same bytes per
+; pixel): its window that size where it is -> carry=1 if it's too big
+dk_app_resize:
+    pushad
+    imul edx, ebx, 1
+    imul edx, ecx
+    cmp edx, DK_APP_MAX_PIX
+    ja .fail
+    inc dword [sched_lock]
+    mov edx, eax
+    mov [dk_app_w + edx*4], ebx
+    mov [dk_app_h + edx*4], ecx
+    mov dword [dk_app_scale + edx*4], 1   ; (small ones doubled, as opened)
+    cmp ebx, 400
+    ja .scaled
+    cmp ecx, 300
+    ja .scaled
+    mov dword [dk_app_scale + edx*4], 2
+.scaled:
+    mov edi, edx                          ; black again
+    shl edi, 21
+    add edi, DK_APP_PIX
+    imul ecx, ebx
+    xor eax, eax
+    cld
+    rep stosd
+    mov eax, [dk_app_win + edx*4]
+    mov ecx, [dk_app_w + edx*4]
+    imul ecx, [dk_app_scale + edx*4]
+    mov [dkw_w + eax*4], ecx
+    mov ecx, [dk_app_h + edx*4]
+    imul ecx, [dk_app_scale + edx*4]
+    mov [dkw_h + eax*4], ecx
+    mov byte [dkw_max + eax], 0
+    mov esi, eax
+    call dk_fit_window
+    mov byte [dk_redraw_all], 1
+    dec dword [sched_lock]
+    popad
+    clc
+    ret
+.fail:
+    popad
+    stc
+    ret
+
 ; eax = a slot: its window closed
 dk_app_close:
     pushad

@@ -384,8 +384,7 @@ fs_load_chain     dw 0
 ; one at a time from somewhere else - COM1 for `recv` (src/serial.asm),
 ; the host's shared folder for `hostget` (src/hostfs.asm) - straight
 ; into a slot's inline content and extra-sector chain as they come, one
-; sector's worth staged in FS_SCRATCH_ADDR at a time (the same streaming
-; shape src/paint.asm's paint_save_bmp uses), so content_buf's own 4KB
+; sector's worth staged in FS_SCRATCH_ADDR at a time, so content_buf's own 4KB
 ; size never caps the file. Split out of cmd_recv so both commands
 ; share one implementation; the byte source is a function pointer
 ; (fs_stream_source) rather than a hardcoded serial_read_byte.

@@ -86,6 +86,14 @@ dka_name_look:
     call dkx_str_eq
     mov al, IC_CALC
     je .yes
+    mov edi, dka_n_games                  ; the games: a gamepad
+    mov al, IC_GAME
+.game:
+    call dkx_str_eq
+    je .yes
+    add edi, 12
+    cmp byte [edi], 0
+    jne .game
     pop edi
     stc
     ret
@@ -106,6 +114,8 @@ dk_kind_app:
     cmp al, IC_PAINT
     je .done
     cmp al, IC_CALC
+    je .done
+    cmp al, IC_GAME
     je .done
     cmp al, IC_NOTEPAD
 .done:
@@ -312,5 +322,12 @@ dka_n_browser    db "BROWSER.APP", 0
 dka_n_notepad    db "NOTEPAD.APP", 0
 dka_n_paint      db "PAINT.APP", 0
 dka_n_calc       db "CALC.APP", 0
+dka_n_games      db "SNAKE.APP", 0, 0, 0     ; (12 bytes each)
+                 db "TETRIS.APP", 0, 0
+                 db "SWEEPER.APP", 0
+                 db "2048.APP", 0, 0, 0, 0
+                 db "PONG.APP", 0, 0, 0, 0
+                 db "MAZE.APP", 0, 0, 0, 0
+                 db 0
 
 %include "src/dkart.inc"

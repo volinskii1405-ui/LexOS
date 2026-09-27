@@ -112,15 +112,11 @@ FS_SCRATCH_SAVE   equ FS_BITMAP_CACHE + FS_BITMAP_SECTORS * 512
 BIG_FILE_BUF      equ 0x6400000             ; 100MB, up to 12MB (then the
 BIG_FILE_MAX      equ 0xC00000              ;  wallpaper, thumbnails)
 
-; --- Programs and the hex editor ---
+; --- PROGRAM files (the old raw-code kind, src/programs.asm) ---
 ; content[0] of PROGRAM-type files stores the length (0..127), content[1..] -
 ; the actual machine code bytes (unlike text files, NOT zero-
 ; terminated, since 0x00 may be part of the real code).
 PROGRAM_MAX_LEN equ FS_CONTENT_LEN - 1   ; 127 bytes max per program
-HEX_GRID_COLS equ 8
-HEX_GRID_ROWS equ 16
-HEX_GRID_START_ROW equ 2               ; rows 0-1 are the header bar
-HEX_FOOTER_ROW equ HEX_GRID_START_ROW + HEX_GRID_ROWS + 1   ; one blank row after the grid
 
 FS_ROOT equ 0xFFFF          ; value of fs_current_dir when we're at the root
 FS_ROOT_BYTE equ 0xFF       ; value of the parent byte for records at the root
@@ -202,7 +198,6 @@ help_l21 db "  tree          - show all files and folders as a tree", 13, 10, 0
 help_l22 db "  reboot        - restart the system", 13, 10, 0
 help_l23 db "  about         - show system info", 13, 10, 0
 help_l24 db "  devices       - list devices and their status", 13, 10, 0
-help_l25 db "  hex <n>       - hex/asm editor, auto-adds .BIN if no dot in name", 13, 10, 0
 help_l26 db "  run <n>       - execute a program file", 13, 10, 0
 help_l27 db "  ataread <lba> - read a disk sector via ATA driver (bypasses BIOS)", 13, 10, 0
 help_l28 db "  shutdown      - power off the system", 13, 10, 0
@@ -224,8 +219,7 @@ help_l44 db "  df / free     - show directory slot / extra sector usage", 13, 10
 help_l45 db "  run <n>.com   - run a small MS-DOS .com program", 13, 10, 0
 help_l62 db "  run <n>.app [args] - run a protected program (files, graphics: apps/)", 13, 10, 0
 help_l46 db "  recv <n> <hex size> - receive a file over COM1 (serial)", 13, 10, 0
-help_l47 db "  paint <n> [w] [h] - mouse picture editor, saves to n.BMP (default 320x200)", 13, 10, 0
-help_l48 db "  view <n>      - display a picture saved by paint (.BMP)", 13, 10, 0
+help_l48 db "  view <n>      - show a .BMP picture (8 bits, up to 320x200) full-screen", 13, 10, 0
 help_l49 db "  play <n.imf | n.wav> - play AdLib music or 8-bit mono PCM audio", 13, 10, 0
 help_l50 db "  chip8 <n> [s] - run a CHIP-8/SUPER-CHIP ROM (keys 1234/qwer/asdf/zxcv)", 13, 10, 0
 help_l51 db "  turtle <n>   - run a turtle-graphics script (FORWARD/LEFT/...)", 13, 10, 0
@@ -256,11 +250,11 @@ help_lines:
     dw help_l06, help_l08, help_l10, help_l11, help_l12
     dw help_l14, help_l61, help_l15, help_l16, help_l17, help_l18
     dw help_l71, help_l19, help_l20, help_l21, help_l22, help_l23
-    dw help_l24, help_l25, help_l26, help_l27, help_l28
+    dw help_l24, help_l26, help_l27, help_l28
     dw help_l29, help_l30, help_l31, help_l32, help_l33
     dw help_l34, help_l35, help_l38, help_l65, help_l39, help_l40
     dw help_l41, help_l42, help_l43, help_l44, help_l45, help_l62, help_l76
-    dw help_l46, help_l47, help_l48, help_l49, help_l50, help_l51
+    dw help_l46, help_l48, help_l49, help_l50, help_l51
     dw help_l52, help_l53, help_l55, help_l54, help_l56, help_l57, help_l63, help_l64, help_l66, help_l67, help_l68, help_l69
     dw help_l58, help_l59, help_l70, help_l72, help_l73, help_l74, help_l75, help_l60
 help_lines_end:
@@ -310,10 +304,6 @@ msg_grep_space       db " ", 0
 msg_head_usage       db "Usage: head <n> [lines]", 13, 10, 0
 msg_tail_usage       db "Usage: tail <n> [lines]", 13, 10, 0
 msg_uranium_usage    db "Usage: uranium <n>", 13, 10, 0
-msg_paint_usage      db "Usage: paint <n> [width] [height]", 13, 10, 0
-msg_paint_intro      db "PAINT - mouse draw, 1-9/A-F color, W/S size, K fill, N clear, ESC save & quit.", 13, 10, 0
-msg_paint_size_clamped db "Canvas size clamped to the 320x200 screen.", 13, 10, 0
-msg_paint_saved      db "Saved ", 0
 msg_view_usage       db "Usage: view <n>", 13, 10, 0
 msg_play_usage       db "Usage: play <n.imf | n.wav>", 13, 10, 0
 msg_play_bad_wav     db "Not a supported WAV (need uncompressed PCM, 8 or 16-bit, mono or stereo).", 13, 10, 0
@@ -395,7 +385,7 @@ turtle_cmd_clearscreen db "CLEARSCREEN", 0
 turtle_cmd_cs          db "CS", 0
 turtle_cmd_color       db "COLOR", 0
 turtle_cmd_repeat      db "REPEAT", 0
-msg_uranium_not_text db "That is a program file. Use hex to edit it.", 13, 10, 0
+msg_uranium_not_text db "That is a program file, not text.", 13, 10, 0
 msg_uranium_header1  db "LexOS Editor - ", 0
 msg_uranium_header2  db "  (", 0
 msg_uranium_header3  db " bytes)", 13, 10, 13, 10, 0
@@ -441,108 +431,14 @@ msg_fs_path_notfound db "Path not found.", 13, 10, 0
 slash_string db "/", 0
 
 msg_run_usage      db "Usage: run <n>", 13, 10, 0
-msg_run_notprogram db "Not a program. Use 'hex' to create one.", 13, 10, 0
-
-msg_hex_usage        db "Usage: hex <n>", 13, 10, 0
-msg_hex_not_program  db "That file is not a program. Use a new name.", 13, 10, 0
-msg_hex_saved        db "Saved.", 13, 10, 0
-msg_hex_header1      db "LexOS Hex Editor - ", 0
-msg_hex_header2      db "  (", 0
-msg_hex_header3      db " bytes)", 13, 10, 13, 10, 0
-msg_hex_footer       db "Hex digits=Edit  Arrows=Move  S=Assemble  Ctrl+B=Save&Exit  ESC=Cancel", 0
-msg_hex_dashes       db "-- ", 0
-msg_asm_prompt       db "asm> ", 0
-msg_asm_error        db 13, 10, "Bad instruction. Press any key...", 0
+msg_run_notprogram db "Not a program (.APP, .COM).", 13, 10, 0
 
 cmd_run_prefix db "run ", 0
-cmd_hex_prefix db "hex ", 0
 
-test_exe_name db "TEST.BIN", 0
-calc_exe_name db "CALC.BIN", 0
-snake_exe_name db "SNAKE.BIN", 0
-snake_hs_name db "SNAKE.HS", 0
-sweeper_exe_name db "SWEEPER.BIN", 0
-convert_exe_name db "CONVERT.BIN", 0
-tetris_exe_name db "TETRIS.BIN", 0
-tetris_hs_name db "TETRIS.HS", 0
-g2048_exe_name db "2048.BIN", 0
-g2048_hs_name db "2048.HS", 0
-programs_dir_name db "PROGRAMS", 0
+programs_dir_name db "PROGRAMS", 0     ; (an old disk's: fs_retire_programs_dir)
 tmp_dir_name       db "TMP", 0
 
 program_exec_buffer times PROGRAM_MAX_LEN db 0
-
-; src/assembler.asm's mini-assembler buffers - moved here from
-; assembler.asm itself, for the same reason as calc_num1 and friends
-; below: every one of these is handed to a callee as a plain
-; "mov si/di, <buffer>" pointer (read_asm_line, fs_assemble_line,
-; add_label, ...), so their own address needs to stay below 0x10000,
-; not just the code that touches them. Sizes are spelled out in bytes
-; rather than via assembler.asm's ASM_INPUT_MAX/LABEL_NAME_LEN/etc
-; equ's, to avoid a forward reference across files for no real benefit.
-asm_input_buffer times 21 db 0        ; ASM_INPUT_MAX(20) + 1
-asm_output_buffer times 3 db 0        ; ASM_OUTPUT_MAX
-asm_output_length db 0
-asm_saved_si dw 0
-asm_jump_opcode db 0
-asm_label_name_buf times 9 db 0       ; LABEL_NAME_LEN(8) + 1
-label_table times 80 db 0             ; LABEL_RECORD_SIZE(10) * LABEL_MAX_COUNT(8)
-label_count db 0
-
-; src/programs.asm's calc_run (the calculator behind PROGRAMS/CALC.BIN) -
-; kept here rather than as locals in programs.asm so their addresses
-; stay below 0x10000 (see the note at the top of this file), where
-; it's safe to load them into a 16-bit register.
-calc_num1  dw 0
-calc_num2  dw 0
-calc_op    db 0
-calc_result dw 0
-msg_calc_title    db "LexOS Calculator", 13, 10, 0
-msg_calc_prompt1  db "Number 1: ", 0
-msg_calc_prompt_op db "Operator (+ - * / ^): ", 0
-msg_calc_prompt2  db "Number 2: ", 0
-msg_calc_result   db "Result: ", 0
-msg_calc_bad_op   db "Unknown operator.", 13, 10, 0
-msg_calc_div_zero db "Division by zero.", 13, 10, 0
-msg_calc_overflow db "Overflow (result doesn't fit in 16 bits).", 13, 10, 0
-
-; src/convert.asm's convert_run (the base converter behind
-; PROGRAMS/CONVERT.BIN) - kept here for the same reason as the calc_*
-; messages above.
-msg_convert_title      db "LexOS Base Converter", 13, 10, 0
-msg_convert_prompt     db "Number (decimal, 0x hex, or 0b binary): ", 0
-msg_convert_dec_label  db "Decimal: ", 0
-msg_convert_hex_label  db "Hex:     0x", 0
-msg_convert_oct_label  db "Octal:   0o", 0
-msg_convert_bin_label  db "Binary:  0b", 0
-msg_convert_bad_hex    db "Bad hex value (1-4 digits, 0-FFFF).", 13, 10, 0
-
-; src/snake.asm's snake_run (the game behind PROGRAMS/SNAKE.BIN) - kept
-; here for the same reason as the calc_* messages above.
-msg_snake_intro    db "SNAKE - arrows or WASD to move, ESC to quit.", 13, 10, 0
-msg_snake_gameover db "Game over!", 13, 10, 0
-msg_snake_quit     db "Quit.", 13, 10, 0
-msg_snake_score    db "Score: ", 0
-msg_snake_highscore db "Best:  ", 0
-
-; src/sweeper.asm's sweeper_run (the game behind PROGRAMS/SWEEPER.BIN) -
-; kept here for the same reason as the snake_* messages above.
-msg_sweeper_intro  db "SWEEPER - left click reveal, right click flag, R restart, ESC quit.", 13, 10, 0
-msg_sweeper_quit   db "Quit.", 13, 10, 0
-
-; src/tetris.asm's tetris_run (the game behind PROGRAMS/TETRIS.BIN) -
-; kept here for the same reason as the snake_* messages above.
-msg_tetris_intro   db "TETRIS - arrows move/rotate, space hard drop, ESC quit.", 13, 10, 0
-msg_tetris_quit    db "Quit.", 13, 10, 0
-msg_tetris_score   db "Score: ", 0
-msg_tetris_highscore db "Best:  ", 0
-
-; src/game2048.asm's g2048_run (the game behind PROGRAMS/2048.BIN) -
-; kept here for the same reason as the snake_* messages above.
-msg_g2048_intro    db "2048 - arrows or WASD to slide, ESC to quit.", 13, 10, 0
-msg_g2048_quit     db "Quit.", 13, 10, 0
-msg_g2048_score    db "Score: ", 0
-msg_g2048_highscore db "Best:  ", 0
 
 ; --- content_buf: the buffer that grep/head/tail/uranium read the whole
 ; file content into (not streamed, like cat/batch) via fs_load_content
@@ -556,13 +452,6 @@ content_buf_len dw 0
 
 GREP_NEEDLE_LEN equ 32
 grep_needle times (GREP_NEEDLE_LEN + 1) db 0
-
-hex_edit_buffer times PROGRAM_MAX_LEN db 0
-hex_edit_length db 0
-hex_cursor_offset dw 0
-hex_edit_nibble_state db 0
-hex_saved_color db 0
-hex_is_highlighted db 0
 
 msg_about db "LexOS 1.0 i386 protected-mode  fs=ATA PIO  boot drive=0x", 0
 
@@ -664,7 +553,6 @@ cmd_grep_prefix  db "grep ", 0
 cmd_head_prefix  db "head ", 0
 cmd_tail_prefix  db "tail ", 0
 cmd_uranium_prefix db "uranium ", 0
-cmd_paint_prefix db "paint ", 0
 cmd_view_prefix  db "view ", 0
 cmd_play_prefix  db "play ", 0
 cmd_chip8_prefix db "chip8 ", 0

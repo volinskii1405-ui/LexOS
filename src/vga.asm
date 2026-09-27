@@ -401,7 +401,7 @@ vga_draw_string:
 ; width that narrow. Halving only the height keeps every glyph fully
 ; recognizable - it's letter shape that carries readability, not row
 ; count - while still shrinking a HUD line's vertical footprint,
-; which was the actual point (see src/snake.asm's Score/High lines).
+; which was the actual point.
 ; Each output row is the OR of the two source rows it replaces,
 ; rather than simply dropping one of them, so a horizontal stroke
 ; that only happens to fall on an odd source row doesn't just vanish.
