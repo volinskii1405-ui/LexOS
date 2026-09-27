@@ -87,6 +87,8 @@ dkn_key_in:
     ret
 
 dkn_mark:
+    cmp byte [dkn_op], DKN_PROPS          ; (Properties: its own size)
+    je dkp_mark
     pushad
     mov eax, DKN_X
     mov ebx, DKN_Y
@@ -109,6 +111,11 @@ dkn_work:
     inc bl
     and bl, 15
     mov [dkn_ktail], bl
+    cmp byte [dkn_op], DKN_PROPS          ; (Properties: src/dkprops.asm)
+    jne .typing
+    call dkp_key
+    jmp .key
+.typing:
     mov ecx, [dkn_len]
     cmp al, 27
     je .cancel
@@ -209,6 +216,27 @@ dkn_do:
     mov [fs_current_dir], ax
     mov dword [dkn_err], 0
     movzx eax, byte [dkn_op]
+    cmp eax, DKN_PROPS                    ; (src/dkprops.asm)
+    jne .not_props
+    call dkp_do
+    jmp .out
+.not_props:
+    cmp eax, DKN_EMPTY                    ; (src/dktrash.asm)
+    jne .not_empty
+    call dkt_empty_do
+    jmp .out
+.not_empty:
+    cmp eax, DKN_FOREVER
+    jne .not_forever
+    call dkt_forever_do
+    jmp .out
+.not_forever:
+    cmp eax, DKN_MKTRASH
+    jne .not_mktrash
+    call dkn_trash_dir
+    mov byte [dki_rescan], 1
+    jmp .out
+.not_mktrash:
     cmp eax, DKN_TRASH
     je .trash
     cmp dword [dkn_len], 0
@@ -387,6 +415,8 @@ dkn_do:
     cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
     jne .not_a_folder
 .dest:
+    cmp byte [dk_shot_ready], 0           ; (a screenshot being written in
+    jne .busy_shot                        ;  that buffer: in a moment)
     push eax
     mov eax, [dkn_slot]                   ; its content (the picture buffer:
     mov edi, DESK_IMG_FILE                ;  free between frames)
@@ -416,6 +446,7 @@ dkn_do:
     mov dl, al
     mov eax, [dkn_slot]
     call fs_read_slot
+    call dkt_note_origin                  ; (src/dktrash.asm: Restore's)
     mov [SCRATCH_ADDR + FS_PARENT_OFFSET], dl
     call fs_write_slot
     jmp .made
@@ -443,6 +474,9 @@ dkn_do:
     jmp .out
 .files_only:
     mov dword [dkn_err], dkn_m_files_only
+    jmp .out
+.busy_shot:
+    mov dword [dkn_err], dkn_m_busy
     jmp .out
 .made:
     mov byte [dk_fm_refresh], 1           ; Files and the icons: again
@@ -626,6 +660,11 @@ dkn_draw:
     pushad
     cmp byte [dkn_open], 0
     je .done
+    cmp byte [dkn_op], DKN_PROPS
+    jne .name_box
+    call dkp_draw
+    jmp .done
+.name_box:
     mov eax, DKN_X + 4                    ; a shadow, the frame, the face
     mov ebx, DKN_Y + 4
     mov ecx, DKN_W
@@ -721,8 +760,10 @@ dkn_draw:
 
 ; eax = its x, esi = its words
 dkn_button:
-    pushad
     mov ebx, DKN_BTN_Y
+; the same at ebx
+dkn_button_at:
+    pushad
     mov ecx, DKN_BTN_W
     mov edx, DKN_BTN_H
     push esi
@@ -759,6 +800,11 @@ dkn_click:
     ret
 .open:
     pushad
+    cmp byte [dkn_op], DKN_PROPS
+    jne .name_box
+    call dkp_click
+    jmp .done
+.name_box:
     cmp ebx, DKN_BTN_Y
     jl .done
     cmp ebx, DKN_BTN_Y + DKN_BTN_H
@@ -1000,6 +1046,8 @@ dkx_l_newlnk     db "Create a Link", 0
 dkx_l_iopen      db "Open", 0
 dkx_l_irename    db "Rename...", 0
 dkx_l_idelete    db "Delete", 0
+dkx_l_iprops     db "Properties...", 0
+dkt_l_restore    db "Restore", 0
 dkn_m_empty      db "Type a name first.", 0
 dkn_m_taken      db "That name is taken here.", 0
 dkn_m_full       db "No room for it on the disk.", 0
@@ -1008,5 +1056,6 @@ dkn_m_read_only  db "It's read-only (attrib -r).", 0
 dkn_m_nothing    db "There's nothing at that path.", 0
 dkn_m_not_folder db "That isn't a folder.", 0
 dkn_m_files_only db "Only files can be copied.", 0
+dkn_m_busy       db "A screenshot is being saved - in a moment.", 0
 dkn_m_long       db "At most 15 characters.", 0
 dkn_m_invalid    db "Not in a name: / \ | < > * ? : or a space.", 0

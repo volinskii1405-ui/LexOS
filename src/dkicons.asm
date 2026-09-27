@@ -101,7 +101,7 @@ dki_scan:
     jne .plain
     push edi                              ; its text: the target
     mov ax, bx
-    mov ecx, DKI_PATH - 1
+    mov ecx, DKI_PATH - 2                 ; (its last byte: the icon chosen)
     call fs_load_to
     pop edi
     mov byte [edi + ecx], 0
@@ -118,11 +118,13 @@ dki_scan:
     add esi, dki_new_file
     call dki_copy
 .have:
+    call dka_scan_look                    ; (an icon chosen for it)
     inc ebp
 .next:
     inc ebx
     jmp .slot
 .listed:
+    call dkt_icon_add                     ; (the trash's: src/dktrash.asm)
     pop word [fs_current_dir]
     mov [dki_new_n], ebp
     ; the same as shown?
@@ -143,7 +145,7 @@ dki_scan:
     xor ebx, ebx
 .place:
     cmp ebx, [dki_new_n]
-    jae .placed
+    jae .placed_old
     mov esi, ebx
     shl esi, 4
     add esi, dki_new_file
@@ -151,12 +153,26 @@ dki_scan:
     jnc .put
     call dki_saved_place
     jnc .put
-    call dki_default_place
+    mov eax, -1                           ; (a new one: once the others are in)
+    mov edx, -1
 .put:
     mov [dki_new_x + ebx*4], eax
     mov [dki_new_y + ebx*4], edx
     inc ebx
     jmp .place
+.placed_old:
+    xor ebx, ebx                          ; the new ones: free cells
+.place_new:
+    cmp ebx, [dki_new_n]
+    jae .placed
+    cmp dword [dki_new_x + ebx*4], -1
+    jne .next_new
+    call dki_default_place
+    mov [dki_new_x + ebx*4], eax
+    mov [dki_new_y + ebx*4], edx
+.next_new:
+    inc ebx
+    jmp .place_new
 .placed:
     mov esi, dki_new_file                 ; they're the ones now
     mov edi, dki_file
@@ -180,6 +196,7 @@ dki_scan:
     inc ebx
     jmp .kind
 .kinds_done:
+    call dkt_icon_kinds
     mov dword [dki_sel], -1
     mov byte [dk_redraw_all], 1
 .done:
@@ -426,39 +443,7 @@ dki_number:
 ; ebx = which (in the new list) -> eax, edx: the first default place
 ; no icon (new or shown) is in yet
 dki_default_place:
-    push ecx
-    push esi
-    xor ecx, ecx                          ; the place, down then left
-.try:
-    mov eax, ecx
-    xor edx, edx
-    push ecx
-    mov ecx, DKI_ROWS
-    div ecx
-    pop ecx
-    imul eax, -(DKI_W + 10)               ; the column
-    add eax, DESK_W - DKI_W - 10
-    imul edx, DKI_H + 8
-    add edx, DKI_TOP
-    xor esi, esi                          ; taken by one placed before?
-.taken:
-    cmp esi, ebx
-    jae .free
-    cmp eax, [dki_new_x + esi*4]
-    jne .other
-    cmp edx, [dki_new_y + esi*4]
-    je .next
-.other:
-    inc esi
-    jmp .taken
-.next:
-    inc ecx
-    cmp ecx, 40
-    jb .try
-.free:
-    pop esi
-    pop ecx
-    ret
+    jmp dkg_default_place                 ; (src/dkgrid.asm: the first free cell)
 
 ; ============================================================
 ; Drawing (dk_render, the background's part)
@@ -498,47 +483,15 @@ dki_draw:
     push eax
     push ebx
     push edx
-    movzx ecx, byte [dki_kind + ebx]
+    call dka_icon_look                    ; -> ecx (its own, or chosen)
     add eax, (DKI_W - 32) / 2
-    lea ebx, [edx + 6]
+    lea ebx, [edx + 3]
     call dk_icon                          ; (src/dkwins.asm, as in Files)
     pop edx
     pop ebx
     pop eax
-    mov esi, ebx                          ; the name, centered, a shadow
-    shl esi, 4
-    add esi, dki_label
-    push eax
-    call dki_strlen                       ; -> ecx
-    cmp ecx, DKI_W / 8
-    jbe .fits
-    mov ecx, DKI_W / 8
-.fits:
-    pop eax
-    mov edi, ecx
-    shl ecx, 2                            ; (half its width)
-    add eax, DKI_W / 2
-    sub eax, ecx
-    add edx, 46
-    push eax
-    push ebx
-    mov ebx, edx
-    inc eax
-    inc ebx
-    mov edx, COL_BLACK                    ; (a shadow the other way round
-    cmp dword [dk_th + TH_BARTEXT], COL_WHITE   ; from the name: a light
-    je .shadow                            ;  theme's names are dark)
-    mov edx, COL_WHITE
-.shadow:
-    call dk_text_n
-    pop ebx
-    pop eax
-    push ebx
-    mov ebx, [dki_y + ebx*4]
-    add ebx, 46
-    mov edx, COL_BARTEXT
-    call dk_text_n
-    pop ebx
+    call dka_icon_badge                   ; (a shortcut: its mark)
+    call dka_label                        ; its name, on two lines if long
 .next:
     inc ebx
     jmp .icon
@@ -649,6 +602,10 @@ dki_press:
     sub ebx, [dki_y + ecx*4]
     mov [dki_drag_dy], ebx
     mov byte [dki_moved], 0
+    mov eax, [dki_x + ecx*4]              ; (where it was: src/dkdrop.asm)
+    mov [dki_start_x], eax
+    mov eax, [dki_y + ecx*4]
+    mov [dki_start_y], eax
     jmp .done
 .nothing:
     mov edx, [timer_ms]                   ; the background clicked twice:
@@ -678,9 +635,12 @@ dki_drag_move:
     mov ebx, [dki_drag]
     or cl, cl
     jnz .held
-    mov dword [dki_drag], -1              ; let go: there it stays
-    cmp byte [dki_moved], 0
+    mov dword [dki_drag], -1              ; let go: into the nearest free
+    cmp byte [dki_moved], 0               ; cell (src/dkgrid.asm), and kept
     je .done
+    call dkd_icon_drop                    ; (or into a folder: src/dkdrop.asm)
+    jnc .done
+    call dkg_snap
     mov byte [dk_cfg_dirty], 1            ; (src/dkstyle.asm: saved)
     jmp .done
 .held:
@@ -756,12 +716,23 @@ dki_open:
     mov word [edi], '/'
 .have_folder:
     movzx eax, byte [dki_kind + ebx]
-    cmp al, IC_APP
+    cmp al, IC_TRASH                      ; the trash: in Files (if there's one)
+    jb .not_trash
+    cmp al, IC_TRASH_FULL
+    ja .not_trash
+    call dkt_icon_open
+    jc .done
+    jmp .folder
+.not_trash:
+    call dk_kind_app
     je .program
     cmp al, IC_FOLDER
     je .folder
     cmp al, IC_IMAGE
     je .picture
+    mov esi, dki_tmp_name                 ; Notepad, the browser: as programs
+    call dk_gui_verb
+    jnc .program
     ; the rest: as Files would - typed into a Terminal
     call dk_pick_terminal                 ; -> bl
     jc .done

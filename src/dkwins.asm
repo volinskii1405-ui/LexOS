@@ -681,6 +681,8 @@ dk_pictures_next:
     pushad
     call dk_shell_idle
     jc .done                              ; not now - next frame
+    cmp byte [dk_shot_ready], 0           ; (a screenshot's in its buffer,
+    jne .done                             ;  being written)
     mov byte [dk_pic_state], 0
     mov ecx, FS_TOTAL_SLOTS
     mov ebx, [dk_pic_slot]
@@ -1529,6 +1531,23 @@ IC_APP    equ 4
 IC_IMAGE  equ 5
 IC_SOUND  equ 6
 IC_SCRIPT equ 7
+IC_TRASH  equ 8                         ; (pictures: src/dkart.asm)
+IC_TRASH_FULL equ 9
+IC_WEB    equ 10
+IC_NOTEPAD equ 11
+IC_ZIP    equ 12
+IC_CSRC   equ 13
+IC_BAS    equ 14
+IC_TRG    equ 15
+IC_CH8    equ 16
+IC_CFG    equ 17
+IC_GAME   equ 18
+IC_TERM   equ 19
+IC_CAT    equ 20
+IC_GEAR   equ 21
+IC_STAR   equ 22
+IC_MUSIC  equ 23
+IC_LINKMARK equ 24                      ; (a shortcut's mark, over its icon)
 
 dk_draw_files:
     ; the toolbar: [Up], the path, [<] [>]
@@ -1609,9 +1628,10 @@ dk_draw_files:
     ; the icon, centered
     add eax, (FM_CELL_W - 32) / 2
     add ebx, 6
-    movzx ecx, byte [esi + 17]
+    call dka_entry_kind                   ; -> ecx (its own, or chosen)
     mov dword [dk_icon_fill], dk_fill
     call dk_icon
+    call dka_badge                        ; (a shortcut: its mark)
     ; the name below it (highlighted if selected)
     push esi
     xor ecx, ecx
@@ -1688,7 +1708,8 @@ dk_draw_files:
     mov esi, dk_sys_buf
     mov edx, COL_MUTED
 .say:
-    call dk_text
+    call dkt_bar_text                     ; (dk_text; in the trash, short of
+    call dkt_bar_draw                     ;  its buttons: Restore all, Empty)                     ; (in the trash: Restore all, Empty)
     jmp dk_contents_done
 
 ; esi = a 0-terminated name -> eax = its extension, uppercase, as a
@@ -1720,7 +1741,12 @@ dk_ext_dword:
     jz .have
     cmp ecx, 3
     jae .long
-    and al, 0xDF
+    cmp al, 'a'                           ; (letters in capitals - not digits:
+    jb .upper                             ;  .CH8)
+    cmp al, 'z'
+    ja .upper
+    sub al, 32
+.upper:
     mov [dk_ext_tmp + ecx], al
     inc ecx
     inc edx
@@ -1758,6 +1784,8 @@ dk_ext_lookup:
 
 ; esi = a 0-terminated name -> al = its icon (by extension)
 dk_name_kind:
+    call dka_name_look                    ; (the browser, Notepad: pictures)
+    jnc .looked
     push esi
     call dk_ext_dword
     or eax, eax
@@ -1771,12 +1799,18 @@ dk_name_kind:
     mov al, IC_TEXT
 .done:
     pop esi
+.looked:
     ret
 
 ; Icon ecx at eax, ebx (32x32), through [dk_icon_fill] (the back
 ; buffer's dk_fill, or the screen's dk_screen_fill)
 dk_icon:
     pushad
+    cmp ecx, DKA_COUNT                    ; (a picture: src/dkart.asm)
+    jae .drawn
+    call dka_icon
+    jmp .done
+.drawn:
     cmp ecx, IC_FOLDER
     je .folder
     cmp ecx, IC_UP
@@ -1931,6 +1965,8 @@ dk_icon:
 ; Files: the window's own clicks - ecx, ebx = where in its client area
 dk_files_click:
     mov byte [dk_fm_msg_clear], 1
+    call dkt_bar_click                    ; (the trash's buttons)
+    jnc .done
     cmp ebx, FM_TOP - 4
     jae .grid
     cmp ecx, 50                           ; [Up]
@@ -2100,6 +2136,8 @@ dk_files_drag:
     jnz .done                             ; (dk_present draws it)
     mov byte [dk_fm_state], 0             ; dropped: onto a folder?
     mov byte [dk_redraw_all], 1
+    call dkd_files_drop                   ; (the desktop, Ctrl: src/dkdrop.asm)
+    jnc .done
     call dk_files_entry_at                ; -> edx = the entry, or -1
     cmp edx, -1
     je .done
@@ -2191,9 +2229,10 @@ dk_files_entry_at:
 ; The dragged entry's icon under the pointer, straight onto the screen
 dk_files_draw_drag:
     pushad
-    mov ecx, [dk_fm_press]
-    shl ecx, 5
-    movzx ecx, byte [DESK_FILES + ecx + 17]
+    mov esi, [dk_fm_press]
+    shl esi, 5
+    add esi, DESK_FILES
+    call dka_entry_kind
     mov eax, [dk_mx]
     sub eax, 16
     mov ebx, [dk_my]
@@ -2291,8 +2330,12 @@ dk_files_open:
     call dk_win_single
     jmp .done
 .command:
-    cmp ecx, IC_APP                       ; a program: started by itself
-    jne .typed_in
+    mov al, cl                            ; a program: started by itself
+    call dk_kind_app
+    je .launch
+    call dk_gui_verb                      ; (Notepad, the browser: too)
+    jc .typed_in
+.launch:
     mov edi, dk_fm_path
     call dk_launch
     jmp .done
@@ -2360,7 +2403,7 @@ dk_prog_scan:
     sub edi, FS_NAME_LEN
     mov esi, edi
     call dk_name_kind
-    cmp al, IC_APP
+    call dk_kind_app
     jne .next
     mov al, [SCRATCH_ADDR + FS_PARENT_OFFSET]   ; and where it is
     mov edi, [dk_prog_count]
@@ -2772,6 +2815,7 @@ dk_launch:
     mov byte [console_request], CONSOLE_REQ_NEW   ; (it'll be ebx)
     mov byte [dk_launch_state + ebx], 1
     mov byte [dk_launch_show + ebx], 0
+    mov byte [dk_launch_quiet + ebx], 1
     mov dword [dk_launch_seen + ebx*4], 0
     call dk_ext_dword                     ; a .BIN: always closes after
     cmp eax, 'BIN'
@@ -2799,11 +2843,27 @@ dk_launch:
     mov al, 13
     stosb
     pop esi
+    push edx                              ; (the folder)
     call dk_open_command                  ; -> edx = the verb
     push esi
     mov esi, edx
     call wget_append
     pop esi
+    pop eax
+    cmp edx, dk_verb_edit                 ; Notepad, the browser: the whole
+    je .whole                             ; path
+    cmp edx, dk_verb_web
+    jne .named
+.whole:
+    push esi
+    mov esi, eax
+    call wget_append
+    pop esi
+    cmp byte [edi - 1], '/'
+    je .named
+    mov al, '/'
+    stosb
+.named:
     call wget_append
     mov al, 13
     stosb
@@ -3496,6 +3556,11 @@ DKC_NEW_LNK  equ 34
 DKC_IOPEN    equ 35                   ; a desktop icon's
 DKC_IRENAME  equ 36
 DKC_IDELETE  equ 37
+DKC_IPROPS   equ 38                   ; (src/dkprops.asm)
+DKC_TRESTORE equ 39                   ; the trash's (src/dktrash.asm)
+DKC_EDIT     equ 40                   ; Edit in Notepad (src/dktrash.asm)
+DKC_ZIP      equ 41                   ; Compress to ZIP
+DKC_UNZIP    equ 42                   ; Extract here
 DK_CTX_W    equ 160
 DK_CTX_ITEM equ 22
 
@@ -3554,6 +3619,7 @@ dk_right_click:
     jne .trash_item
     mov al, DKC_OPEN
     call dk_ctx_add
+    call dkt_ctx_edit_item                ; (a file: Edit in Notepad)
     mov al, DKC_FCOPY                     ; (src/dkextra.asm)
     call dk_ctx_add
     mov al, DKC_FCUT
@@ -3568,6 +3634,8 @@ dk_right_click:
     call dk_ctx_add
     jmp .show
 .trash_item:
+    mov al, DKC_TRESTORE                  ; (back where it was)
+    call dk_ctx_add
     mov al, DKC_FOREVER
     call dk_ctx_add
     mov al, DKC_PROPS
@@ -3768,6 +3836,13 @@ dk_text_raw_all:
 ; eax = a context menu item (DKC_*): done
 dk_ctx_do:
     pushad
+    cmp eax, DKC_TRESTORE                 ; (src/dktrash.asm: Restore,
+    jb .not_more                          ;  Edit, ...)
+    mov dword [dk_fm_msg], 0
+    call dkt_ctx_more
+    popad
+    ret
+.not_more:
     cmp eax, DKC_MINIMIZE                 ; (the taskbar's and the desktop's:
     jb .files_item                        ;  src/dkextra.asm)
     call dkx_ctx_do
@@ -3775,6 +3850,16 @@ dk_ctx_do:
     ret
 .files_item:
     mov dword [dk_fm_msg], 0
+    cmp eax, DKC_FOREVER                  ; Delete forever: quietly too
+    jne .not_forever
+    call dkt_forever_req
+    jmp .done
+.not_forever:
+    cmp eax, DKC_EMPTY                    ; Empty trash: quietly, for good
+    jne .not_empty                        ; (src/dktrash.asm)
+    call dkt_empty_req
+    jmp .done
+.not_empty:
     cmp eax, DKC_OPEN
     jne .not_open
     mov eax, [dk_fm_sel]
@@ -3938,34 +4023,14 @@ dk_ctx_do:
 ; Properties: the selected one's size / kind, on the status line
 dk_files_props:
     pushad
-    mov esi, [dk_fm_sel]
-    cmp esi, -1
+    mov esi, [dk_fm_sel]                  ; a window of its own
+    cmp esi, -1                           ; (src/dkprops.asm)
     je .done
     shl esi, 5
-    add esi, DESK_FILES
-    mov edi, dk_fm_propbuf
-    push esi
-    call wget_append                      ; the name
-    pop esi
-    cmp byte [esi + 17], IC_FOLDER
-    jne .file
-    push esi
-    mov esi, dk_fm_is_folder
-    call wget_append
-    pop esi
-    jmp .said
-.file:
-    push esi
-    mov esi, dk_fm_sep
-    call wget_append
-    pop esi
-    mov eax, [esi + 24]
-    call wget_append_num
-    mov esi, dk_fm_bytes
-    call wget_append
-.said:
-    mov byte [edi], 0
-    mov dword [dk_fm_msg], dk_fm_propbuf
+    cmp byte [DESK_FILES + esi + 17], IC_UP
+    je .done
+    movzx ecx, word [DESK_FILES + esi + 20]
+    call dkp_ask
 .done:
     popad
     ret
@@ -4107,101 +4172,6 @@ dk_shot_capture:
     popad
     ret
 
-dk_shot_save:
-    pushad
-    cmp byte [dk_shot_ready], 0
-    je .done
-    pushfd                                ; the kernel, while no console's
-    cli                                   ; in it (src/sched.asm)
-    cmp dword [bkl_owner], -1
-    jne .later
-    mov eax, [sched_current]
-    mov [bkl_owner], eax
-    popfd
-    push word [fs_current_dir]            ; (the console on screen's -
-    push dword [fs_tmp_slot]              ;  put back after)
-    ; where: PICS, if there is one
-    mov word [fs_current_dir], FS_ROOT
-    mov byte [dk_shot_where], 0
-    xor ebx, ebx
-.pics:
-    cmp ebx, FS_TOTAL_SLOTS
-    jae .named_dir
-    mov ax, bx
-    call fs_read_slot
-    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
-    jne .pics_next
-    cmp byte [SCRATCH_ADDR + FS_PARENT_OFFSET], FS_ROOT_BYTE
-    jne .pics_next
-    cmp dword [SCRATCH_ADDR], 'PICS'
-    jne .pics_next
-    cmp byte [SCRATCH_ADDR + 4], 0
-    jne .pics_next
-    mov [fs_current_dir], bx
-    mov byte [dk_shot_where], 1
-    jmp .named_dir
-.pics_next:
-    inc ebx
-    jmp .pics
-.named_dir:
-    ; the first SHOTnn.BMP that isn't there yet
-    mov ecx, 1
-.name:
-    mov dword [fs_tmp_name], 'SHOT'
-    mov eax, ecx
-    mov edi, fs_tmp_name + 4
-    call dk_two_digits
-    mov dword [fs_tmp_name + 6], '.BMP'
-    mov byte [fs_tmp_name + 10], 0
-    push ecx
-    mov si, fs_tmp_name
-    call fs_find_by_name
-    pop ecx
-    cmp ax, -1
-    je .free
-    inc ecx
-    cmp ecx, 99
-    jbe .name
-    jmp .failed
-.free:
-    mov dword [fs_stream_size], DK_SHOT_SIZE
-    call fs_stream_prepare
-    jc .failed
-    mov dword [fh_src_ptr], DESK_IMG_FILE
-    mov dword [fs_stream_source], fh_stream_byte
-    call fs_stream_write
-    jc .failed
-    mov edi, dk_toast_buf                 ; "Saved PICS/SHOT01.BMP"
-    mov esi, dk_shot_saved
-    call wget_append
-    cmp byte [dk_shot_where], 0
-    je .in_root
-    mov esi, dk_shot_pics
-    call wget_append
-.in_root:
-    mov esi, fs_tmp_name
-    call wget_append
-    mov byte [edi], 0
-    jmp .said
-.failed:
-    mov edi, dk_toast_buf
-    mov esi, dk_shot_failed
-    call wget_append
-    mov byte [edi], 0
-.said:
-    pop dword [fs_tmp_slot]
-    pop word [fs_current_dir]
-    mov dword [bkl_owner], -1
-    mov byte [dk_shot_ready], 0
-    mov byte [dk_fm_refresh], 1           ; (Files shows it)
-    call dk_toast
-    jmp .done
-.later:
-    popfd
-.done:
-    popad
-    ret
-
 ; dk_toast_buf shown at the top for a few seconds
 DK_TOAST_W equ 420
 dk_toast:
@@ -4311,6 +4281,9 @@ dk_inject_go:
 ; esi = an entry -> edx = the command that opens it ("run ", "play "...)
 dk_open_command:
     push eax
+    mov edx, [dkt_force_verb]             ; (Edit in Notepad, ZIP: src/dktrash.asm)
+    or edx, edx
+    jnz .done
     call dk_ext_dword
     push esi
     mov esi, dk_ext_verbs
@@ -4321,6 +4294,28 @@ dk_open_command:
     mov edx, dk_verb_edit                 ; the rest: into the editor
 .done:
     pop eax
+    ret
+
+; esi = a file's name: carry=0 if what opens it is a window of its own
+; (Notepad, the browser) - started like a program, no Terminal
+dk_gui_verb:
+    push eax
+    push edx
+    call dk_open_command                  ; -> edx
+    cmp edx, dk_verb_edit
+    je .yes
+    cmp edx, dk_verb_web
+    je .yes
+    cmp edx, dkt_verb_view                ; (a ZIP, looked into: src/dktrash.asm)
+    je .yes
+    pop edx
+    pop eax
+    stc
+    ret
+.yes:
+    pop edx
+    pop eax
+    clc
     ret
 
 ; Up to the parent folder
@@ -4469,6 +4464,7 @@ dk_move_entry:
     ; move it
     movzx eax, word [esi + 20]
     call fs_read_slot
+    call dkt_note_origin                  ; (where it was: src/dktrash.asm)
     mov bl, [dk_fm_dest]
     mov [SCRATCH_ADDR + FS_PARENT_OFFSET], bl
     call fs_write_slot
@@ -4502,6 +4498,7 @@ dk_files_refresh:
     je .pass
     mov dword [edi], '..'                 ; ".."
     mov byte [edi + 17], IC_UP
+    mov byte [edi + 18], 0
     add edi, FM_ENTRY
     inc edx
 .pass:
@@ -4552,6 +4549,7 @@ dk_files_refresh:
     pop esi
     mov [edi + 17], al
 .kind_set:
+    call dka_entry_look                   ; (an icon chosen for it: src/dkart.asm)
     add edi, FM_ENTRY
     inc edx
 .next:
@@ -4564,6 +4562,7 @@ dk_files_refresh:
 .listed:
     call dk_fm_arrange                    ; (the search, the order: edx)
     mov [dk_fm_count], edx
+    call dkt_note_where                   ; (the trash? its buttons: src/dktrash.asm)
     mov eax, [dk_fm_page]                 ; (a page that's gone: back to one)
     imul eax, [dk_fm_page_n]
     cmp eax, edx
@@ -5593,7 +5592,6 @@ dk_fm_br          dd 0
 dk_fm_bt          dd 0
 dk_fm_bb          dd 0
 dk_fm_moved_msg   dd dk_fm_moved
-dk_fm_propbuf     times 64 db 0
 dk_ctx_open       db 0                    ; the context menu
 dk_ctx_in_trash   db 0
 dk_fm_name_tmp    times FS_NAME_LEN + 1 db 0
@@ -5616,6 +5614,8 @@ dk_ctx_labels     dd dk_ctx_l_open, dk_ctx_l_rename, dk_ctx_l_copy, dk_ctx_l_del
                   dd dkx_l_catfeed, dkx_l_catpet, dkx_l_catplay, dkx_l_cathow
                   dd dkx_l_create, dkx_l_newdir, dkx_l_newtxt, dkx_l_newhg
                   dd dkx_l_newlnk, dkx_l_iopen, dkx_l_irename, dkx_l_idelete
+                  dd dkx_l_iprops, dkt_l_restore, dkt_l_edit, dkt_l_zip
+                  dd dkt_l_unzip, dkt_l_tempty
 dk_ctx_l_open     db "Open", 0
 dk_ctx_l_rename   db "Rename...", 0
 dk_ctx_l_copy     db "Copy to...", 0
@@ -5630,9 +5630,6 @@ dk_cmd_ren        db "ren ", 0
 dk_cmd_cp         db "cp ", 0
 dk_cmd_rm         db "rm ", 0
 dk_fm_trashed     db "Moved to the trash (/TRASH).", 0
-dk_fm_is_folder   db " - a folder", 0
-dk_fm_sep         db " - ", 0
-dk_fm_bytes       db " bytes", 0
 dk_cal_day        dd 0
 dk_cal_month      dd 0
 dk_cal_year       dd 0
@@ -5749,6 +5746,7 @@ dk_app_console    times DK_APPS db 0
 dk_launch_state   times CONSOLE_MAX db 0  ; a program started with a click
 dk_launch_bin     times CONSOLE_MAX db 0  ; closes after, whatever (a .BIN; [x])
 dk_launch_show    times CONSOLE_MAX db 0  ; its Terminal to be shown
+dk_launch_quiet   times CONSOLE_MAX db 0  ; (the keyboard back from it: nothing raised)
 dk_launch_seen    times CONSOLE_MAX dd 0  ; when text was first on its screen
 dk_launch_name    times CONSOLE_MAX * 16 db 0
 dk_app_win        times DK_APPS dd 0
@@ -5769,12 +5767,15 @@ dk_sin60 dw 0, 105, 208, 309, 407, 500, 588, 669, 743, 809, 866, 914, 951, 978, 
 ; extensions (uppercase, zero padded) -> icons, and the verbs that open them
 dk_ext_kinds      dd 'APP', IC_APP, 'COM', IC_APP, 'BIN', IC_APP, 'BMP', IC_IMAGE
                   dd 'WAV', IC_SOUND, 'IMF', IC_SOUND, 'MOD', IC_SOUND, 'HG', IC_SCRIPT
-                  dd 'BAS', IC_SCRIPT, 'TXT', IC_TEXT, 'C', IC_TEXT, 'ASM', IC_TEXT
-                  dd 'CFG', IC_TEXT, 'TRG', IC_SCRIPT, 'CH8', IC_APP, 0, 0
+                  dd 'BAS', IC_BAS, 'TXT', IC_TEXT, 'C', IC_CSRC, 'ASM', IC_TEXT
+                  dd 'CFG', IC_CFG, 'TRG', IC_TRG, 'CH8', IC_CH8, 'H', IC_CSRC
+                  dd 'MD', IC_TEXT, 'HTM', IC_TEXT, 'LNK', IC_TEXT, 'ZIP', IC_ZIP
+                  dd 0, 0
 dk_ext_verbs      dd 'APP', dk_verb_run, 'COM', dk_verb_run, 'BIN', dk_verb_run
                   dd 'WAV', dk_verb_play, 'IMF', dk_verb_play, 'MOD', dk_verb_mod
                   dd 'HG', dk_verb_none, 'BAS', dk_verb_basic, 'TRG', dk_verb_turtle
-                  dd 'CH8', dk_verb_chip8, 0, 0
+                  dd 'CH8', dk_verb_chip8, 'HTM', dk_verb_web, 'MD', dk_verb_web
+                  dd 'ZIP', dkt_verb_view, 0, 0
 dk_state_names    dd dk_st_free, dk_st_ready, dk_st_waiting, dk_st_paused
 
 dk_verb_run       db "run ", 0
@@ -5784,7 +5785,8 @@ dk_verb_none      db 0
 dk_verb_basic     db "basic ", 0
 dk_verb_turtle    db "turtle ", 0
 dk_verb_chip8     db "chip8 ", 0
-dk_verb_edit      db "uranium ", 0
+dk_verb_edit      db "run notepad.app ", 0
+dk_verb_web       db "run browser.app ", 0
 dk_cmd_cd         db "cd ", 0
 dk_st_free        db "-", 0
 dk_st_ready       db "ready", 0

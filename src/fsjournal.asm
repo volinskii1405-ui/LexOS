@@ -218,7 +218,8 @@ jnl_flush:
     inc ebx
     jmp .to_journal
 .header:                                  ; 2. the header: now it counts
-    call jnl_scratch_zero
+    call ata_flush                        ; (what's before it: on the disk -
+    call jnl_scratch_zero                 ;  the files' own sectors too)
     mov dword [SCRATCH_ADDR], 'LXJN'
     mov eax, [jnl_count]
     mov [SCRATCH_ADDR + JNL_HDR_COUNT], eax
@@ -234,6 +235,7 @@ jnl_flush:
     mov eax, JNL_LBA
     call ata_write_sector
     jc .fail
+    call ata_flush
     xor ebx, ebx                          ; 3. each where it belongs
 .home:
     cmp ebx, [jnl_count]
@@ -245,6 +247,7 @@ jnl_flush:
     inc ebx
     jmp .home
 .clear:                                   ; 4. done: the header cleared
+    call ata_flush                        ; (a replay of it now: harmless)
     call jnl_scratch_zero
     mov eax, JNL_LBA
     call ata_write_sector

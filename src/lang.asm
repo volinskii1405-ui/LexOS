@@ -302,6 +302,7 @@ lang_patched    db 0
 lang_alt_held   db 0                      ; (the keyboard's, shared by all)
 lang_shift_held db 0
 lang_ctrl_held  db 0
+kbd_raw_now     db 0                ; (src/interrupts.asm: Ctrl+letter coded)
 lang_codes:                               ; font866_glyphs' characters
 %assign c 0x80
 %rep 0x30

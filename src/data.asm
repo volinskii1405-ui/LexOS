@@ -697,6 +697,7 @@ vga_windowed       db 0               ; mode 13h shown in a desktop window
 vga_win_slot       dd 0               ; (its program window: src/dkwins.asm)
 prog_title         times 32 db 0      ; a text program's name for its Terminal
 app_abort_request  db 0
+app_raw_ctrl       db 0               ; Ctrl+letters: the program's (keymode)
 cmd_kill_prefix  db "kill ", 0
 cmd_clock        db "clock", 0
 play_bg_arg      times (BUFFER_MAX + 1) db 0   ; src/sound.asm's play_spawn

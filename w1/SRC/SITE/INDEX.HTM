@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head><title>LexOS Web - home</title></head>
+<body>
+<h1>Welcome to LexOS Web</h1>
+<p>This page is a file on LexOS's own disk: <b>/DEMOS/SITE/INDEX.HTM</b>.
+LexOS Web reads it, lays it out and draws it - all inside LexOS, in a
+program running in <i>ring 3</i> (<a href="ABOUT.HTM">how it works</a>).</p>
+
+<h2>Around the site</h2>
+<ul>
+<li><a href="LEX.HTM">Lex the cat</a> - who LexOS is named after (with a picture)</li>
+<li><a href="ABOUT.HTM">About this browser</a> - what it can show</li>
+<li><a href="RU.HTM">Русская страница</a> - text in Russian</li>
+<li><a href="ES.HTM">Página en español</a> - and in Spanish</li>
+<li><a href="TEST.HTM">A test page</a> - tables, lists, colors, code</li>
+</ul>
+
+<h2>Out on the web</h2>
+<p>Type an address in the bar at the top and press <b>Enter</b>. LexOS
+speaks plain <b>http://</b> (there's no encryption for https). Under QEMU
+the host is <b>10.0.2.2</b>: run</p>
+<pre>  cd some/folder
+  python3 -m http.server 8000</pre>
+<p>on it and open <a href="http://10.0.2.2:8000/">http://10.0.2.2:8000/</a>.
+Or try <a href="http://example.com/">http://example.com/</a>.</p>
+
+<hr>
+<p><font color="#6070A0">Keys: arrows, PgUp/PgDn, Space - scroll;
+Backspace - back; Tab - the address bar; F5 - reload; Esc - quit.</font></p>
+</body>
+</html>

@@ -610,11 +610,15 @@ dkx_ctx_items:
     cmp ecx, -1
     je .desk_items
     mov [dk_ctx_icon], ecx
+    call dkt_icon_menu                    ; (the trash's own: src/dktrash.asm)
+    jnc .some
     mov al, DKC_IOPEN
     call dk_ctx_add
     mov al, DKC_IRENAME
     call dk_ctx_add
     mov al, DKC_IDELETE
+    call dk_ctx_add
+    mov al, DKC_IPROPS
     call dk_ctx_add
     jmp .some
 .lex_items:
@@ -797,6 +801,11 @@ dkx_ctx_create:
     shl esi, 4
     add esi, dki_file
     mov bl, [dki_dir]
+    cmp eax, DKC_IPROPS                   ; (src/dkprops.asm)
+    jne .not_props
+    call dkp_ask
+    jmp .done
+.not_props:
     cmp eax, DKC_IRENAME
     jne .delete
     mov al, DKN_RENAME
@@ -1405,7 +1414,7 @@ dkx_startup_scan:
 .named:
     mov esi, edi
     call dk_name_kind
-    cmp al, IC_APP
+    call dk_kind_app
     jne .next
     inc dword [dkx_st_n]
 .next:
@@ -1426,6 +1435,8 @@ dkx_esc_closes:
     cmp byte [dk_ctx_open], 0
     jne .no
     cmp byte [dk_fm_typing], 0
+    jne .no
+    cmp byte [dkn_open], 0                ; (a dialog: Esc's its)
     jne .no
     call dk_top_window
     cmp eax, -1
@@ -1765,11 +1776,13 @@ dkx_fc_move_one:
     mov cl, [SCRATCH_ADDR + FS_PARENT_OFFSET]
     jmp .walk
 .not_dir:
+    push eax                              ; (dki_copy: al)
     mov esi, ebx                          ; its name free there?
     shl esi, 4
     add esi, dkx_fc_name
     mov edi, fs_tmp_name
     call dki_copy
+    pop eax
     push eax
     mov si, fs_tmp_name
     call fs_find_by_name
@@ -1777,6 +1790,7 @@ dkx_fc_move_one:
     pop eax
     jne .fail
     call fs_read_slot                     ; moved: its parent
+    call dkt_note_origin                  ; (Restore's: src/dktrash.asm)
     mov dl, [dk_fm_dir]
     mov [SCRATCH_ADDR + FS_PARENT_OFFSET], dl
     call fs_write_slot

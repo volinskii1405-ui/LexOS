@@ -266,13 +266,7 @@ ata_write_sector:
     add esi, 2
     a16 loop .write_loop
 
-    call ata_wait_bsy_clear
-
-    ; FLUSH CACHE - good practice after a write
-    mov dx, ATA_COMMAND
-    mov al, 0xE7
-    out dx, al
-    call ata_wait_bsy_clear
+    call ata_wait_bsy_clear            ; (the cache: ata_flush, below)
 
     pop esi
     pop dx
@@ -289,6 +283,28 @@ ata_write_sector:
     pop bx
     pop ax
     stc
+    ret
+
+; ============================================================
+; FLUSH CACHE: what's been written, on the disk for good. Not after
+; every sector (under QEMU each is the host syncing the image file - a
+; whole screenshot's worth took seconds): the journal calls it at its
+; barriers (src/fsjournal.asm), and shutting down does.
+; ============================================================
+ata_flush:
+    push ax
+    push dx
+    call ata_wait_bsy_clear
+    mov dx, ATA_DRIVE_HEAD             ; (the master: our disk)
+    mov al, 0xE0
+    out dx, al
+    call ata_wait_bsy_clear
+    mov dx, ATA_COMMAND
+    mov al, 0xE7
+    out dx, al
+    call ata_wait_bsy_clear
+    pop dx
+    pop ax
     ret
 
 ; ============================================================

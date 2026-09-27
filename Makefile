@@ -1,6 +1,6 @@
 ASM = nasm
 BUILD_DIR = build
-SRC_FILES = kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/serial.asm src/mouse.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/vga.asm src/snake.asm src/paint.asm src/sweeper.asm src/tetris.asm src/game2048.asm src/convert.asm src/assembler.asm src/rtc.asm src/speaker.asm src/sound.asm src/mixer.asm src/chip8.asm src/turtle.asm src/hostfs.asm src/basic.asm src/net.asm src/inet.asm src/httpd.asm src/chat.asm src/sched.asm src/usermode.asm src/appsys.asm src/console.asm src/desktop.asm src/dkwins.asm src/dkstyle.asm src/dksound.asm src/dkicons.asm src/lang.asm src/font866.inc src/dkclip.asm src/dkfind.asm src/dkextra.asm src/neofetch.asm src/langui.asm src/dkcat.asm src/grep.asm src/headtail.asm src/uranium.asm src/user.asm src/welcome.asm src/tabcomplete.asm src/script.asm src/pipe.asm src/fsjournal.asm src/dkname.asm
+SRC_FILES = kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/serial.asm src/mouse.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/vga.asm src/snake.asm src/paint.asm src/sweeper.asm src/tetris.asm src/game2048.asm src/convert.asm src/assembler.asm src/rtc.asm src/speaker.asm src/sound.asm src/mixer.asm src/chip8.asm src/turtle.asm src/hostfs.asm src/basic.asm src/net.asm src/inet.asm src/httpd.asm src/chat.asm src/sched.asm src/usermode.asm src/appsys.asm src/console.asm src/desktop.asm src/dkwins.asm src/dkstyle.asm src/dksound.asm src/dkicons.asm src/lang.asm src/font866.inc src/dkclip.asm src/dkfind.asm src/dkextra.asm src/neofetch.asm src/langui.asm src/dkcat.asm src/grep.asm src/headtail.asm src/uranium.asm src/user.asm src/welcome.asm src/tabcomplete.asm src/script.asm src/pipe.asm src/fsjournal.asm src/dkname.asm src/dkgrid.asm src/dkprops.asm src/dktrash.asm src/dkdrop.asm src/appext.asm src/dkart.asm src/dkshot.asm src/dkart.inc
 
 .PHONY: all run run-serial lan1 lan2 clean apps fresh-disk
 
@@ -12,12 +12,21 @@ $(BUILD_DIR):
 $(BUILD_DIR)/boot.bin: boot.asm | $(BUILD_DIR)
 	$(ASM) -f bin $< -o $@
 
-$(BUILD_DIR)/kernel.bin: $(SRC_FILES) | $(BUILD_DIR)
+# the kernel and its extension (kernel.asm's KEXT section) in one go,
+# then cut apart: 576 sectors for the boot sector to load, the rest onto
+# the disk as /SYSTEM/KEXT.BIN (kext_load reads it at boot).
+$(BUILD_DIR)/kernel.full: $(SRC_FILES) | $(BUILD_DIR)
 	$(ASM) -f bin -i. kernel.asm -o $@
+
+$(BUILD_DIR)/kernel.bin: $(BUILD_DIR)/kernel.full
+	head -c 294912 $< > $@
+
+disk/SYSTEM/KEXT.BIN: $(BUILD_DIR)/kernel.full
+	tail -c +294913 $< > $@
 
 # The files LexOS's own disk starts with (tools/mkdisk.py): disk/APPS -
 # the example programs, disk/DEMOS - scripts, music, a CHIP-8 ROM...
-DISK_FILES = $(wildcard disk/* disk/*/* disk/*/*/*) disk/SYSTEM/LANG.DAT
+DISK_FILES = $(wildcard disk/* disk/*/* disk/*/*/*) disk/SYSTEM/LANG.DAT disk/SYSTEM/KEXT.BIN
 
 # The translations (src/langui.asm): made from tools/mklang.py's table
 disk/SYSTEM/LANG.DAT: tools/mklang.py $(wildcard src/*.asm)
@@ -122,7 +131,7 @@ lan2: $(BUILD_DIR)/os-image.bin
 # committed, so plain `make` / `make run` never needs any of this.
 APP_CFLAGS = -m32 -ffreestanding -fno-pic -fno-pie -fno-stack-protector \
 	-fno-asynchronous-unwind-tables -nostdlib -O2 -Wall
-C_APPS = guess wc note fire pong mandel modplay ftest cube maze browser cc
+C_APPS = guess wc note fire pong mandel modplay ftest cube maze browser cc notepad zip
 upper = $(shell echo $(1) | tr a-z A-Z)
 apps: disk/APPS/HELLO.APP disk/APPS/CRASH.APP $(foreach a,$(C_APPS),disk/APPS/$(call upper,$(a)).APP)
 

@@ -18,7 +18,8 @@ where there's a Bus Master IDE controller), a folder-aware filesystem, a
 command shell with line editing and history, preemptive multitasking and
 virtual consoles, protected (ring 3) programs in C or assembly, a windowed
 desktop, networking, sound, pipes, a journaled filesystem, a web browser
-(https too - its own TLS 1.3) and a C compiler that both run inside it - and Lex, the cat it's named
+(https too - its own TLS 1.3; Markdown), a text editor with colors for C,
+ZIP archives and a C compiler that all run inside it - and Lex, the cat it's named
 after (feed him). No libc,
 no bootloader framework, no BIOS calls once the kernel starts — every byte
 that touches the screen, keyboard, mouse, disk, clock, sound or network
@@ -119,7 +120,31 @@ All taken in QEMU (1024x768) - more in [docs/screenshots](docs/screenshots).
 </tr>
 <tr>
 <td align="center" valign="top"><img src="docs/screenshots/43-name-dialog.png" alt="A name dialog" width="400"><br><sub>Names asked in a dialog - no Terminal needed</sub></td>
-<td></td>
+<td align="center" valign="top"><img src="docs/screenshots/45-properties.png" alt="Properties" width="400"><br><sub>Properties: where, what, how big, when; Read-only</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/46-drag-to-desktop.png" alt="A file dragged onto the desktop" width="400"><br><sub>Dragged out of Files onto the desktop (Ctrl: a copy)</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/47-trash-restore.png" alt="Restore in TRASH" width="400"><br><sub>The trash remembers: Restore puts it back</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/48-notepad.png" alt="Notepad" width="400"><br><sub>Notepad: tabs, colors for C, find and replace</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/49-notepad-html.png" alt="Notepad with HTML" width="400"><br><sub>HTML colored too - UTF-8 read and written as UTF-8</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/50-markdown.png" alt="Markdown in LexOS Web" width="400"><br><sub>A <code>.MD</code> file shown as a page</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/51-zip.png" alt="A ZIP made from Files" width="400"><br><sub>Compress to ZIP - deflate, opens in any unzip</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/52-zip-extract.png" alt="Extract here" width="400"><br><sub>Extract here: any ZIP, from here or anywhere</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/53-zip-viewer.png" alt="Looking into a ZIP" width="400"><br><sub>A double click on a ZIP: its folders, a text or picture shown</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/54-desktop-trash.png" alt="The trash on the desktop" width="400"><br><sub>The trash, top left (full here); long names on two lines</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/55-change-icon.png" alt="Change icon" width="400"><br><sub>Properties: Change icon... - any of them, for any file</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/56-custom-icons.png" alt="Icons chosen" width="400"><br><sub>Games with a gamepad, CUBE with Lex - chosen in Properties</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/57-trash-buttons.png" alt="The trash's buttons" width="400"><br><sub>In the trash: Restore all, Empty the trash; shortcuts marked with an arrow</sub></td>
 </tr>
 </table>
 
@@ -186,6 +211,10 @@ tester@/PROGRAMS$
   file's data is written before the records pointing to it, and a sector
   a file lets go of isn't given to another until the change counts, so a
   file being replaced keeps its old content until the new one is safe.
+  The disk's cache is flushed (FLUSH CACHE) at the commit's barriers -
+  before the header, after it, before it's cleared - and when switching
+  off, not after every sector (under QEMU each flush is the host syncing
+  the image file: that was seconds for a screenshot).
   `tools/mkdisk.py` finishes a journal too before it adds files.
 - **Times and attributes.** Every slot keeps when it last changed (from
   the RTC) and its attributes. `ls -l` shows the kind (`d` folder, `x`
@@ -344,6 +373,22 @@ tester@/PROGRAMS$
   `qemu ... -serial stdio`.
 
 ### Editors
+- **Notepad** (`apps/notepad.c`, `/APPS/NOTEPAD.APP`; Files opens text
+  files in it, and has **Edit in Notepad** for the rest - scripts
+  too): a text editor in an 800x600 window. A tab per file (Ctrl+N,
+  Ctrl+O, Ctrl+W, Ctrl+Tab; `+` and the tabs' `x`), the mouse places the
+  cursor and drags a selection (a double click takes a word, Shift+click
+  extends it; Shift + arrows, Home, End, PgUp, PgDn too), Ctrl+A / C / X
+  / V, Ctrl+Z / Y (typing undone a word-run at a time, a Replace all at
+  once), Ctrl+F find and Ctrl+H replace (not minding capitals; F3 / Enter
+  the next), Ctrl+G a line, Tab / Shift+Tab indent the chosen lines,
+  Enter keeps the indent. **Colors as it's typed**: C (`.C .H` -
+  keywords, types, strings, numbers, comments, `#include`), LexOS
+  scripts (`.HG` - commands, `if`/`for`/`set`..., `$variables`,
+  comments, `:labels`) and HTML (`.HTM` - tags, attributes, values,
+  comments, entities). Open and Save as show the disk's folders; a file
+  in UTF-8 is shown and saved back as UTF-8 (Russian, Spanish), one with
+  CRLF keeps CRLF.
 - `uranium` is a full-screen, nano-style text editor: arrow keys move the
   cursor (with line wrapping and scrolling for content taller than the
   screen), typing inserts, Backspace/Delete remove. `Ctrl+B` saves and
@@ -521,7 +566,24 @@ tester@/PROGRAMS$
   kernel's own TCP and HTTP, as `wget`, following redirects); `font()`
   hands it the system's 8x16 font, Russian and Spanish letters included;
   `tcp_open`/`tcp_send`/`tcp_recv`/`tcp_close` give it a TCP connection
-  of its own (the browser's TLS runs on that).
+  of its own (the browser's TLS runs on that); `readdir`/`mkdir` walk
+  and make folders; `keymode(1)` makes Ctrl+letters the program's own
+  (coded 1-26 - on the desktop Ctrl+C would end it); `notify(text)` puts
+  a line at the top of the desktop (src/appext.asm).
+- **ZIP** (`apps/zip.c`, `/APPS/ZIP.APP`): `zip X.ZIP NAME...` packs
+  files and folders - deflate (LZ77 over a 32KB window, each block's own
+  Huffman codes; stored if that's no smaller) with CRC-32s, archives any
+  unzip opens; `zip -x X.ZIP [FOLDER]` unpacks (stored, fixed and
+  dynamic deflate - ZIPs from other computers too) into a folder named
+  after it, the names made LexOS names (capitals, 15 characters); `zip
+  -l X.ZIP` lists; **`zip -v X.ZIP`** - a double click on a `.ZIP` -
+  opens it in a window: its folders (double-click in, Backspace / Up
+  out), each file's size and how well it packed, the chosen one shown
+  before it's unpacked (a text - UTF-8 too - or a `.BMP` picture, fitted
+  in), **Extract all** or **Extract chosen** (into a folder named after
+  the archive). Files' menu has **Compress to ZIP**, and **Extract here**
+  on a `.ZIP`: they run by themselves, a line at the top says when
+  they're done.
 - **LexOS Web** (`apps/browser.c`, `/APPS/BROWSER.APP`, the WEB icon):
   a web browser in an 800x600 window. It opens pages from the disk - a
   demo site, `/DEMOS/SITE/INDEX.HTM`, with Lex's picture and pages in
@@ -541,6 +603,11 @@ tester@/PROGRAMS$
   scripts and styles are skipped. Back / forward / reload / home, an
   address bar (Tab, or click it), a scrollbar, the wheel, links lighting
   up under the pointer with their address in the status line.
+  **Markdown** (a `.MD` page, from the disk or the web - Files opens
+  them in it; `/DEMOS/README.MD` is one) is turned into a page first:
+  `#` and underlined headings, **bold**, *italic*, `code`, fenced and
+  indented code blocks, nested lists, quotes, tables, rules, links,
+  pictures and HTML in it.
 - **A C compiler inside LexOS** (`apps/cc.c`, `/APPS/CC.APP`): write C
   in `uranium`, then `run cc.app game.c` makes `GAME.APP` - one pass,
   straight to x86 machine code, no assembler or linker; `run game.app`.
@@ -610,8 +677,50 @@ tester@/PROGRAMS$
     chosen, so typing replaces it; Enter / Esc, OK / Cancel; what's wrong
     - a name taken, too long, read-only - said in it). Files' Rename...
     and Copy to... ask the same way, and an icon on the desktop has its
-    own menu: Open, Rename..., Delete (into TRASH). The desktop's task
-    does the work itself, with the kernel lock, through the journal.
+    own menu: Open, Rename..., Delete (into TRASH), Properties... The
+    desktop's task does the work itself, with the kernel lock, through
+    the journal.
+  - **Properties** (src/dkprops.asm): Files' Properties, or an icon's -
+    a window with the name and icon, the folder it's in, its kind, size
+    (a folder: how many things are in it), when it last changed, and a
+    **Read-only** box to tick (as `attrib +r`).
+  - **The trash on the desktop** (src/dktrash.asm), top left: an icon
+    of its own - papers stick out of it when there's something in it. A
+    double click opens it in Files; whatever's dropped on it (a desktop
+    icon, or out of Files) is deleted into it; its menu has **Empty the
+    trash** (done quietly, for good - not what's read-only). In Files,
+    the trash's bottom line has **Restore all** and **Empty the trash**
+    buttons; **Delete forever** there is quiet too (no console), and
+    `/TRASH` is made by itself if it's missing, so it always opens (with
+    its "..").
+  - **Del** deletes what's under the pointer - a desktop icon, a file in
+    Files (or, with Files in front, what's selected there) - into the
+    trash; in the trash, for good. With a Terminal or a program in front
+    Del stays theirs.
+  - **Shortcuts are marked**: a `.LNK`'s icon has a small arrow in its
+    corner (on the desktop and in Files).
+  - **Pictures for icons** (tools/mkicons.py -> src/dkart.inc,
+    src/dkart.asm): folders, files, text, programs (a window), pictures,
+    sounds, scripts (`.HG`), C (`.C .H`), BASIC (`.BAS`), turtle
+    graphics (`.TRG` - a turtle), CHIP-8 games (`.CH8` - a chip), settings
+    (`.CFG`), the trash, a globe for the browser, a pad and pencil for
+    Notepad, a zipper for `.ZIP`s - and a gamepad, a terminal, Lex, a
+    gear, a star and a note to choose from. **Change icon...** in
+    Properties shows them all: a program (`.APP`, `.COM`, `.BIN`, a
+    CHIP-8 game) or a shortcut (`.LNK`) can have any of them (kept in its
+    own slot, so it goes where the file goes; the first one in the list
+    is its own again). A desktop icon's name that's longer
+    than its cell goes on two lines.
+  - **The trash remembers** (src/dktrash.asm): whatever's deleted (or
+    moved) keeps the folder it came from; in TRASH, **Restore** puts it
+    back there - or in the root, if that folder's gone or the name's
+    taken.
+  - **Drag and drop** (src/dkdrop.asm): out of Files onto the desktop -
+    into `/DESKTOP`, the icon where it was let go of (onto a folder's
+    icon - STARTUP, a shortcut to `/DEMOS` - into that folder); a desktop
+    icon onto Files goes into the folder shown there (or the one under
+    the pointer), onto another icon that's a folder, into it. **Ctrl**
+    held when it's let go of: a copy instead - in Files too.
   - A double click on the empty desktop opens a Terminal; Esc closes a
     Clock, System, Tasks, Mixer or Pictures window in front.
   - **Icons on the desktop**: whatever's in `/DESKTOP` (src/dkicons.asm).
@@ -619,7 +728,10 @@ tester@/PROGRAMS$
     (`/APPS/FIRE.APP`, a folder like `/DEMOS`). Double-click opens,
     drag moves (the places are remembered). Whatever program (or
     `.LNK` to one) is in `/DESKTOP/STARTUP` starts by itself with the
-    desktop.
+    desktop. They sit on an **invisible grid** (src/dkgrid.asm): a new
+    one takes the first free cell (from the right, under the clock),
+    one let go of after a drag lands in the nearest free cell - never
+    on top of another, never under a window.
   - **Themes**: Classic, Dark, Light, Forest, Plum - System's buttons
     (src/dkstyle.asm); a **backdrop** - Night, Sunset, Ocean, Slate -
     can replace the theme's own gradient. With the sounds' switch
@@ -627,7 +739,8 @@ tester@/PROGRAMS$
   - **Sounds** (src/dksound.asm, through the Sound Blaster's mixer): a
     tune when the desktop starts, a click for the menu and buttons, a
     low tone for an error, a high one for news (a screenshot saved).
-  PrintScreen saves the desktop as PICS/SHOTnn.BMP. The mouse wheel
+  PrintScreen saves the desktop as PICS/SHOTnn.BMP (written some sectors
+  a frame, src/dkshot.asm - the desktop doesn't stop meanwhile). The mouse wheel
   works too (the IntelliMouse protocol).
   - **Terminals.** Every console has its own **Terminal** window -
     while the desktop is on, each console's text goes to a buffer in
@@ -675,7 +788,8 @@ tester@/PROGRAMS$
     band on empty space or Ctrl+click selects several, and dragging one
     of them moves them all. Right-click: Open, Rename..., Copy to...,
     Delete, Properties - or New folder..., Select all on empty space.
-    Delete moves into /TRASH (Delete forever, Empty trash in there);
+    Delete (or Del over it) moves into /TRASH (Delete forever, Empty
+    trash, Restore all in there);
     Rename, Copy and New folder type the command into a Terminal and
     leave the new name to you.
     While Files is in front, typing searches: only names with the text
@@ -1112,7 +1226,8 @@ kernel.asm             32-bit kernel entry point; %includes everything below.
 apps/                  example ring-3 programs (`make apps`): lexos.inc for
                        assembly, lexos.h + crt0.asm + app.ld for C;
                        browser.c (LexOS Web) and tls.h (its TLS 1.3),
-                       cc.c (the C compiler).
+                       cc.c (the C compiler), notepad.c (Notepad),
+                       zip.c (ZIP archives).
 disk/                  what LexOS's disk starts with: APPS/ (the built
                        programs), DEMOS/ (scripts, music, a CHIP-8 ROM,
                        SITE/ - the browser's demo site, C/ - C examples),
@@ -1120,6 +1235,7 @@ disk/                  what LexOS's disk starts with: APPS/ (the built
 docs/screenshots/      the screenshots, described in Russian in its README.
 tools/                 mkdisk.py (disk/ -> the image's filesystem),
                        mklang.py (the translations -> disk/SYSTEM/LANG.DAT),
+                       mkicons.py (the picture icons -> src/dkart.inc),
                        makemod.py (DEMO.MOD).
 src/
   data.asm             constants, messages, working variables.
@@ -1199,6 +1315,22 @@ src/
   dkcat.asm            Lex on the taskbar, and his food, joy, energy.
   dkname.asm           Create > and the name dialog: files made, renamed,
                        copied, deleted with the mouse.
+  dkgrid.asm           the desktop icons' invisible grid.
+  dkart.asm            picture icons (dkart.inc, made by tools/mkicons.py),
+                       desktop names on two lines.
+  dkshot.asm           PrintScreen's picture written a piece a frame.
+  dkprops.asm          the Properties window.
+  dktrash.asm          Restore (where things came from), Edit in
+                       Notepad, Compress to ZIP / Extract here, the
+                       trash's desktop icon, Empty the trash, Delete
+                       forever, Restore all, the Del key.
+  dkdrop.asm           dragging files between Files and the desktop.
+  appext.asm           system calls: keymode, readdir, mkdir, notify.
+                       (These are the kernel's extension - KEXT:
+                       assembled with the kernel, cut off by the
+                       Makefile into /SYSTEM/KEXT.BIN, loaded at boot
+                       at 0x5740000: the 576 sectors the boot sector
+                       loads are full.)
   fsjournal.asm        the filesystem's journal, file times and
                        attributes, `ls -l`, `attrib`, `fsck`.
   langui.asm           the system's language: /SYSTEM/LANG.DAT, tr_lookup.

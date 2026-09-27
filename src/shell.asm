@@ -1139,6 +1139,7 @@ show_help:
 ; ============================================================
 do_shutdown:
     call jnl_commit                ; (nothing left half written)
+    call ata_flush                 ; (and all of it out of the disk's cache)
     mov ax, 0x2000
     mov dx, 0x604                  ; QEMU
     out dx, ax
@@ -1157,6 +1158,7 @@ do_shutdown:
 ; ============================================================
 do_reboot:
     call jnl_commit
+    call ata_flush                 ; (what's written: out of the disk's cache)
     cli
 .wait_kbd:
     in al, 0x64

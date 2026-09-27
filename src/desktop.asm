@@ -362,6 +362,8 @@ desktop_task:
     call dkx_startup_work                 ; (src/dkextra.asm: STARTUP)
     call dkx_power_work                   ; (src/dkextra.asm: shut down)
     call dkx_fc_work                      ; (src/dkextra.asm: Files' clipboard)
+    call dkd_work                         ; (src/dkdrop.asm: a drop)
+    call dkt_del_work                     ; (src/dktrash.asm: Del)
     call dkx_cat_work                     ; (src/dkcat.asm: Lex)
     call dkt_work                         ; (src/dkextra.asm: the tooltip,
     call dkx_win_key                      ;  the Win key)
@@ -418,7 +420,7 @@ desktop_task:
                                           ; the next ones may come)
 .drawn:
     dec dword [sched_lock]
-    call dk_shot_save                     ; (src/dkwins.asm: outside a frame)
+    call dks_work                         ; (src/dkshot.asm: a screenshot, a piece a frame)
     call dk_settings_work                 ; (src/dkstyle.asm: DESKTOP.CFG)
     call jnl_idle                         ; (src/fsjournal.asm)
     call snd_work                         ; (src/dksound.asm: its sounds)
@@ -737,6 +739,11 @@ dk_sync_consoles:
     mov byte [dk_redraw_all], 1           ; (the "kbd" marks, the cursor)
     cmp ecx, CONSOLE_MAX                  ; it moved because the console that
     jae .chosen                           ; had it ended (a program closed):
+    cmp byte [dk_launch_quiet + ecx], 0   ; (one started with a click: the
+    je .not_quiet                         ;  window it's back to stays as
+    mov byte [dk_launch_quiet + ecx], 0   ;  it is - a minimized Terminal
+    jmp .done                             ;  doesn't pop up)
+.not_quiet:
     cmp byte [console_used + ecx], 0      ; not asked for - a minimized
     je .done                              ; window stays where it is
 .chosen:

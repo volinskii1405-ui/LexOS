@@ -1,0 +1,890 @@
+; dkprops.asm - a file's Properties, in a window of their own
+;
+; Files' "Properties" and a desktop icon's "Properties..." open it: the
+; name (with its icon), what kind of thing it is, the folder it's in,
+; its size (a folder: how many things are in it), when it last changed,
+; and a Read-only box to tick (as `attrib +r`: rm, ren, mv, writing it -
+; all refused). OK keeps the box's change, Cancel or Esc doesn't; space
+; ticks it too.
+;
+; It's the name dialog's (src/dkname.asm) other face: dkn_open with
+; dkn_op = DKN_PROPS - the same keys, the same clicks, carried out the
+; same way: by the desktop's task, holding the kernel lock. First it
+; reads what it shows (dkp_loaded 0), then, on OK, writes the box.
+; Exports: dkp_ask (ecx = a slot)
+
+DKN_PROPS      equ 8
+DKP_W          equ 480
+DKP_H          equ 292
+DKP_X          equ (DESK_W - DKP_W) / 2
+DKP_Y          equ 170
+DKP_BTN_Y      equ DKP_Y + DKP_H - DKN_BTN_H - 12
+DKP_OK_X       equ DKP_X + DKP_W - 2 * DKN_BTN_W - 24
+DKP_CANCEL_X   equ DKP_X + DKP_W - DKN_BTN_W - 14
+DKP_BOX_X      equ DKP_X + 20
+DKP_BOX_Y      equ DKP_Y + 214
+DKP_VAL_X      equ DKP_X + 136
+DKP_VAL_MAX    equ (DKP_X + DKP_W - 16 - DKP_VAL_X) / 8
+DKP_CHG_W      equ 136
+DKP_CHG_X      equ DKP_X + DKP_W - DKP_CHG_W - 16
+DKP_CHG_Y      equ DKP_Y + 44
+DKP_GRID_X     equ DKP_X + 24
+DKP_GRID_Y     equ DKP_Y + 116
+DKP_CELL_W     equ 54
+DKP_CELL_H     equ 44
+DKP_GRID_COLS  equ 8
+
+; ecx = the slot of what it's about
+dkp_ask:
+    pushad
+    cmp byte [dkn_open], 0                ; (one dialog at a time)
+    jne .done
+    mov byte [dkn_op], DKN_PROPS
+    mov [dkn_slot], ecx
+    mov dword [dkn_err], 0
+    mov byte [dkn_khead], 0
+    mov byte [dkn_ktail], 0
+    mov byte [dkp_loaded], 0
+    mov byte [dkp_picking], 0
+    mov byte [dkn_open], 1
+    mov byte [dkn_req], 1                 ; (what it shows: read first)
+    call dkn_mark
+.done:
+    popad
+    ret
+
+dkp_mark:
+    pushad
+    mov eax, DKP_X
+    mov ebx, DKP_Y
+    mov ecx, DKP_W + 4
+    mov edx, DKP_H + 4
+    call dk_mark
+    popad
+    ret
+
+; al = a key, while it's open: Esc, Enter, space
+dkp_key:
+    cmp al, 27
+    jne .not_esc
+    cmp byte [dkp_picking], 0             ; (choosing an icon: back from it)
+    je .close
+    mov byte [dkp_picking], 0
+    call dkp_mark
+    ret
+.close:
+    call dkn_close
+    ret
+.not_esc:
+    cmp al, 13
+    jne .not_enter
+    mov byte [dkn_req], 1
+    ret
+.not_enter:
+    cmp al, ' '
+    jne .done
+    call dkp_toggle
+.done:
+    ret
+
+dkp_toggle:
+    cmp byte [dkp_loaded], 0
+    je .done
+    cmp byte [dkp_type], FS_TYPE_DIR      ; (folders: it's files that are
+    je .done                              ;  read-only)
+    xor byte [dkp_ro], 1
+    mov dword [dkn_err], 0
+    call dkp_mark
+.done:
+    ret
+
+; ============================================================
+; The kernel lock held (dkn_do): what's shown read, or the box written
+; ============================================================
+dkp_do:
+    pushad
+    cmp byte [dkp_loaded], 0
+    jne .apply
+    call dkp_load
+    mov byte [dkp_loaded], 1
+    call dkp_mark
+    jmp .done
+.apply:
+    mov al, [dkp_look]                    ; its icon changed?
+    cmp al, [dkp_look_was]
+    jne .changed
+    mov al, [dkp_ro]
+    cmp al, [dkp_ro_was]
+    je .close
+.changed:
+    mov al, [dkp_ro]
+    cmp al, [dkp_ro_was]
+    je .may
+    mov eax, [dkn_slot]
+    cmp ax, [user_cfg_slot]
+    jne .may
+    mov dword [dkn_err], dkn_m_protected
+    jmp .done
+.may:
+    mov eax, [dkn_slot]
+    call fs_read_slot
+    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_PROGRAM
+    je .no_look                           ; (a program's bytes run past it)
+    mov al, [dkp_look]                    ; the icon: bytes 156, 157
+    mov [SCRATCH_ADDR + DKA_LOOK], al
+    mov byte [SCRATCH_ADDR + DKA_LOOK_MARK], 0
+    or al, al
+    jz .no_look
+    mov byte [SCRATCH_ADDR + DKA_LOOK_MARK], DKA_MARK
+.no_look:
+    mov al, [SCRATCH_ADDR + FS_ATTR_OFFSET]
+    mov ah, al
+    and ah, 0xF0
+    cmp ah, FS_ATTR_MAGIC
+    je .valid
+    xor al, al
+.valid:
+    or al, FS_ATTR_MAGIC | FS_ATTR_RO
+    cmp byte [dkp_ro], 0
+    jne .set
+    and al, ~FS_ATTR_RO
+.set:
+    mov [SCRATCH_ADDR + FS_ATTR_OFFSET], al
+    mov byte [jnl_no_stamp], 1            ; (its content didn't change)
+    mov eax, [dkn_slot]
+    call fs_write_slot
+    mov byte [jnl_no_stamp], 0
+    mov byte [dk_fm_refresh], 1
+    mov byte [dki_rescan], 1
+    mov byte [dk_redraw_all], 1
+    call snd_click
+.close:
+    call dkn_close
+.done:
+    popad
+    ret
+
+; dkn_slot -> dkp_name, dkp_type, dkp_icon, dkp_kind, dkp_where,
+; dkp_size_text, dkp_time_text, dkp_ro
+dkp_load:
+    pushad
+    mov eax, [dkn_slot]
+    call fs_read_slot
+    mov esi, SCRATCH_ADDR                 ; the name
+    mov edi, dkp_name
+    mov ecx, FS_NAME_LEN
+    cld
+    rep movsb
+    mov byte [dkp_name + FS_NAME_LEN], 0
+    mov al, [SCRATCH_ADDR + FS_TYPE_OFFSET]
+    mov [dkp_type], al
+    mov al, [SCRATCH_ADDR + FS_PARENT_OFFSET]
+    mov [dkp_parent], al
+    mov al, [SCRATCH_ADDR + FS_ATTR_OFFSET]   ; read-only?
+    mov ah, al
+    and ah, 0xF0
+    xor ecx, ecx
+    cmp ah, FS_ATTR_MAGIC
+    jne .ro
+    and al, FS_ATTR_RO
+    mov cl, al
+.ro:
+    mov [dkp_ro], cl
+    mov [dkp_ro_was], cl
+    call dkp_time                         ; (SCRATCH_ADDR's time)
+    ; its size: a file's bytes, a program's, or a folder's contents
+    mov edi, dkp_size_text
+    cmp byte [dkp_type], FS_TYPE_DIR
+    je .folder_size
+    movzx eax, byte [SCRATCH_ADDR + FS_CONTENT_OFFSET]
+    cmp byte [dkp_type], FS_TYPE_PROGRAM
+    je .bytes
+    call fs_get_size
+.bytes:
+    push eax
+    call wget_append_num
+    mov esi, dkp_m_bytes
+    call wget_append
+    pop eax
+    cmp eax, 1024                         ; (and in KB, if it's that big)
+    jb .sized
+    mov esi, dkp_m_open
+    call wget_append
+    add eax, 1023
+    shr eax, 10
+    call wget_append_num
+    mov esi, dkp_m_kb
+    call wget_append
+    jmp .sized
+.folder_size:
+    xor ebx, ebx                          ; what's in it
+    xor edx, edx
+    mov ecx, [dkn_slot]
+.count:
+    cmp ebx, FS_TOTAL_SLOTS
+    jae .counted
+    mov eax, ebx
+    call fs_read_slot
+    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_FREE
+    je .count_next
+    cmp [SCRATCH_ADDR + FS_PARENT_OFFSET], cl
+    jne .count_next
+    inc edx
+.count_next:
+    inc ebx
+    jmp .count
+.counted:
+    mov eax, edx
+    call wget_append_num
+    mov esi, dkp_m_items
+    call wget_append
+.sized:
+    mov byte [edi], 0
+    ; its kind, and its icon
+    mov esi, dkp_name
+    call dk_name_kind                     ; -> al (src/dkwins.asm)
+    movzx eax, al
+    mov [dkp_icon], eax
+    mov dword [dkp_kind], dkp_k_folder
+    cmp byte [dkp_type], FS_TYPE_DIR
+    jne .not_dir
+    mov dword [dkp_icon], IC_FOLDER
+    jmp .kinded
+.not_dir:
+    mov dword [dkp_kind], dkp_k_program
+    cmp byte [dkp_type], FS_TYPE_PROGRAM
+    jne .by_ext
+    mov dword [dkp_icon], IC_APP
+    jmp .kinded
+.by_ext:
+    mov dword [dkp_kind], dkp_k_text      ; (no extension: README, LICENSE)
+    mov esi, dkp_name
+    call dk_ext_dword                     ; -> eax
+    or eax, eax
+    jz .kinded
+    mov dword [dkp_kind], dkp_k_file
+    mov esi, dkp_kinds
+    call dk_ext_lookup
+    jc .kinded
+    mov [dkp_kind], eax
+.kinded:
+    ; the folder it's in
+    mov al, [dkp_parent]
+    mov edi, dkp_where
+    call dkp_path
+    call dkp_look_ok                      ; (an icon to choose: programs, shortcuts)
+    call dkp_link_icon                    ; (a shortcut: what it opens')
+    mov eax, [dkn_slot]                   ; the icon chosen for it, if one
+    call fs_read_slot
+    call dka_slot_look                    ; -> al
+    mov [dkp_look], al
+    mov [dkp_look_was], al
+    popad
+    ret
+
+; al = a folder's slot byte, edi = 128 bytes -> "/A/B/C" ("/": the root)
+dkp_path:
+    pushad
+    mov byte [edi], '/'
+    mov byte [edi + 1], 0
+    xor ecx, ecx                          ; the folders on the way up
+.up:
+    cmp al, FS_ROOT_BYTE
+    je .climbed
+    cmp ecx, 7
+    jae .climbed
+    movzx eax, al
+    mov [dkp_up + ecx*4], eax
+    inc ecx
+    call fs_read_slot
+    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
+    jne .climbed
+    mov al, [SCRATCH_ADDR + FS_PARENT_OFFSET]
+    jmp .up
+.climbed:
+    mov ebx, edi                          ; (where the text is)
+.down:
+    or ecx, ecx
+    jz .done
+    dec ecx
+    mov eax, [dkp_up + ecx*4]
+    call fs_read_slot
+    mov edi, ebx
+    xor al, al
+    push ecx
+    mov ecx, 128
+    repne scasb
+    pop ecx
+    dec edi
+    cmp byte [edi - 1], '/'
+    je .name
+    mov byte [edi], '/'
+    inc edi
+.name:
+    mov esi, SCRATCH_ADDR
+    push ecx
+    mov ecx, FS_NAME_LEN
+.char:
+    lodsb
+    or al, al
+    jz .named
+    stosb
+    loop .char
+.named:
+    mov byte [edi], 0
+    pop ecx
+    jmp .down
+.done:
+    popad
+    ret
+
+; SCRATCH_ADDR's time -> dkp_time_text: "DD.MM.20YY HH:MM" (the hour in
+; the user's time zone), or "-"
+dkp_time:
+    pushad
+    mov edi, dkp_time_text
+    cmp byte [SCRATCH_ADDR + FS_MTIME_OFFSET + 1], 0
+    jne .have
+    mov word [edi], '-'
+    jmp .done
+.have:
+    mov al, [SCRATCH_ADDR + FS_MTIME_OFFSET + 2]
+    call dkp_dec2
+    mov al, '.'
+    stosb
+    mov al, [SCRATCH_ADDR + FS_MTIME_OFFSET + 1]
+    call dkp_dec2
+    mov ax, '.2'
+    stosw
+    mov al, '0'
+    stosb
+    mov al, [SCRATCH_ADDR + FS_MTIME_OFFSET]
+    call dkp_dec2
+    mov al, ' '
+    stosb
+    movzx eax, byte [SCRATCH_ADDR + FS_MTIME_OFFSET + 3]
+    movsx edx, word [user_tz_offset]
+    add eax, edx
+    add eax, 24
+.hour:
+    cmp eax, 24
+    jl .hour_ok
+    sub eax, 24
+    jmp .hour
+.hour_ok:
+    call dkp_dec2
+    mov al, ':'
+    stosb
+    mov al, [SCRATCH_ADDR + FS_MTIME_OFFSET + 4]
+    call dkp_dec2
+    mov byte [edi], 0
+.done:
+    popad
+    ret
+
+; al (0..99) -> two digits at edi
+dkp_dec2:
+    push eax
+    push ecx
+    movzx eax, al
+    mov cl, 10
+    div cl
+    add ax, '00'
+    stosw
+    pop ecx
+    pop eax
+    ret
+
+; ============================================================
+; On the screen
+; ============================================================
+dkp_draw:
+    pushad
+    mov eax, DKP_X + 4                    ; a shadow, the frame, the face
+    mov ebx, DKP_Y + 4
+    mov ecx, DKP_W
+    mov edx, DKP_H
+    mov esi, 0x08101C
+    call dk_fill
+    mov eax, DKP_X
+    mov ebx, DKP_Y
+    mov esi, COL_FRAME
+    call dk_fill
+    inc eax
+    inc ebx
+    sub ecx, 2
+    sub edx, 2
+    mov esi, COL_MENU
+    call dk_fill
+    mov edx, 26                           ; its title bar
+    mov esi, COL_TITLE_ON
+    call dk_fill
+    mov esi, dkp_t_title
+    mov eax, DKP_X + 10
+    mov ebx, DKP_Y + 6
+    mov edx, COL_WHITE
+    call dk_text
+    cmp byte [dkp_loaded], 0
+    jne .loaded
+    mov esi, dkp_m_reading
+    mov eax, DKP_X + 20
+    mov ebx, DKP_Y + 50
+    mov edx, COL_TEXT
+    call dk_text
+    jmp .buttons
+.loaded:
+    mov dword [dk_icon_fill], dk_fill     ; its icon (as chosen), its name
+    mov eax, DKP_X + 20
+    mov ebx, DKP_Y + 40
+    call dkp_shown_icon                   ; -> ecx
+    call dk_icon
+    cmp byte [dkp_can_look], 0            ; Change icon... (programs, shortcuts)
+    je .no_change
+    mov eax, DKP_CHG_X
+    mov ebx, DKP_CHG_Y
+    mov ecx, DKP_CHG_W
+    mov esi, dkp_l_change
+    call dkp_button
+.no_change:
+    mov esi, dkp_name
+    mov eax, DKP_X + 66
+    mov ebx, DKP_Y + 48
+    mov edx, COL_TEXT
+    call dk_text_raw_all
+    mov eax, DKP_X + 16                   ; a line under
+    mov ebx, DKP_Y + 84
+    mov ecx, DKP_W - 32
+    mov edx, 1
+    mov esi, COL_FRAME
+    call dk_fill
+    cmp byte [dkp_picking], 0             ; choosing an icon: the grid
+    je .rows
+    call dkp_draw_grid
+    jmp .buttons
+.rows:
+    xor ecx, ecx                          ; the rows: label, value
+.row:
+    cmp ecx, 4
+    jae .rows_done
+    imul ebx, ecx, 26
+    add ebx, DKP_Y + 98
+    mov esi, [dkp_labels + ecx*4]
+    mov eax, DKP_X + 20
+    mov edx, COL_MUTED
+    call dk_text
+    mov esi, [dkp_values + ecx*4]
+    cmp ecx, 1                            ; (the kind: a word to translate;
+    jne .raw                              ;  the rest: as they are)
+    mov esi, [dkp_kind]
+    mov eax, DKP_VAL_X
+    mov edx, COL_TEXT
+    call dk_text
+    jmp .row_next
+.raw:
+    mov eax, DKP_VAL_X
+    mov edx, COL_TEXT
+    push edi
+    mov edi, DKP_VAL_MAX
+    call dk_text_raw
+    pop edi
+.row_next:
+    inc ecx
+    jmp .row
+.rows_done:
+    mov eax, DKP_X + 16
+    mov ebx, DKP_Y + 202
+    mov ecx, DKP_W - 32
+    mov edx, 1
+    mov esi, COL_FRAME
+    call dk_fill
+    cmp byte [dkp_type], FS_TYPE_DIR      ; the box (not for a folder)
+    je .error
+    mov eax, DKP_BOX_X
+    mov ebx, DKP_BOX_Y
+    mov ecx, 16
+    mov edx, 16
+    mov esi, COL_TITLE_ON
+    call dk_fill
+    inc eax
+    inc ebx
+    sub ecx, 2
+    sub edx, 2
+    mov esi, COL_WHITE
+    call dk_fill
+    cmp byte [dkp_ro], 0
+    je .unticked
+    add eax, 3                            ; ticked: a mark in it
+    add ebx, 3
+    mov ecx, 8
+    mov edx, 8
+    mov esi, COL_TITLE_ON
+    call dk_fill
+.unticked:
+    mov esi, dkp_l_ro
+    mov eax, DKP_BOX_X + 26
+    mov ebx, DKP_BOX_Y
+    mov edx, COL_TEXT
+    call dk_text
+    mov esi, dkp_m_ro_hint
+    mov eax, DKP_BOX_X + 26
+    mov ebx, DKP_BOX_Y + 20
+    mov edx, COL_MUTED
+    call dk_text
+.error:
+    mov esi, [dkn_err]
+    or esi, esi
+    jz .buttons
+    mov eax, DKP_X + 20
+    mov ebx, DKP_BTN_Y + 4
+    mov edx, 0xE04848
+    call dk_text
+.buttons:
+    mov eax, DKP_OK_X
+    mov ebx, DKP_BTN_Y
+    mov esi, dkn_l_ok
+    call dkn_button_at
+    mov eax, DKP_CANCEL_X
+    mov esi, dkn_l_cancel
+    call dkn_button_at
+    popad
+    ret
+
+; A left press at eax, ebx while it's open (every click is its)
+dkp_click:
+    pushad
+    cmp byte [dkp_loaded], 0
+    je .not_change
+    cmp byte [dkp_can_look], 0
+    je .not_change
+    cmp eax, DKP_CHG_X                    ; Change icon...: the grid (again:
+    jl .not_change                        ;  away)
+    cmp eax, DKP_CHG_X + DKP_CHG_W
+    jge .not_change
+    cmp ebx, DKP_CHG_Y
+    jl .not_change
+    cmp ebx, DKP_CHG_Y + 24
+    jge .not_change
+    xor byte [dkp_picking], 1
+    call dkp_mark
+    jmp .done
+.not_change:
+    cmp byte [dkp_picking], 0             ; a cell of the grid?
+    je .not_grid
+    call dkp_grid_at                      ; -> ecx, carry=1: none
+    jc .not_grid
+    mov [dkp_look], cl
+    mov byte [dkp_picking], 0
+    call dkp_mark
+    jmp .done
+.not_grid:
+    cmp ebx, DKP_BTN_Y
+    jl .not_buttons
+    cmp ebx, DKP_BTN_Y + DKN_BTN_H
+    jge .done
+    cmp eax, DKP_OK_X
+    jl .done
+    cmp eax, DKP_OK_X + DKN_BTN_W
+    jge .not_ok
+    mov byte [dkn_req], 1
+    jmp .done
+.not_ok:
+    cmp eax, DKP_CANCEL_X
+    jl .done
+    cmp eax, DKP_CANCEL_X + DKN_BTN_W
+    jge .done
+    call dkn_close
+    jmp .done
+.not_buttons:
+    cmp byte [dkp_picking], 0             ; (the grid's over the box)
+    jne .done
+    cmp ebx, DKP_BOX_Y - 2                ; the box, or its words
+    jl .done
+    cmp ebx, DKP_BOX_Y + 18
+    jge .done
+    cmp eax, DKP_BOX_X - 2
+    jl .done
+    cmp eax, DKP_BOX_X + 26 + 12 * 8
+    jge .done
+    call dkp_toggle
+.done:
+    popad
+    ret
+
+; dkp_can_look: 1 if an icon can be chosen for it - a program (.APP,
+; .COM, .BIN, a CHIP-8 game) or a shortcut (.LNK); not a folder, not a
+; document, not one of LexOS's own programs (their bytes fill the slot)
+dkp_look_ok:
+    pushad
+    mov byte [dkp_can_look], 0
+    cmp byte [dkp_type], FS_TYPE_FILE
+    jne .done
+    mov esi, dkp_name
+    call dk_ext_dword
+    cmp eax, 'LNK'
+    je .yes
+    mov eax, [dkp_icon]
+    call dk_kind_app
+    jne .done
+.yes:
+    mov byte [dkp_can_look], 1
+.done:
+    popad
+    ret
+
+; A shortcut (.LNK): its own icon is what it opens' (as on the desktop)
+dkp_link_icon:
+    pushad
+    mov esi, dkp_name
+    call dk_ext_dword
+    cmp eax, 'LNK'
+    jne .done
+    mov eax, [dkn_slot]
+    mov edi, dkp_link
+    mov ecx, DKI_PATH - 2
+    call fs_load_to                       ; -> ecx
+    mov byte [dkp_link + ecx], 0
+    mov edi, dkp_link
+    call dki_clean_path
+    mov esi, dkp_link
+    call dki_resolve                      ; -> eax, the target in scratch
+    cmp eax, -1
+    je .done
+    mov dword [dkp_icon], IC_FOLDER
+    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
+    je .done
+    mov esi, dkp_link                     ; its last part's kind
+    mov edi, esi
+.last:
+    lodsb
+    or al, al
+    jz .have
+    cmp al, '/'
+    jne .last
+    mov edi, esi
+    jmp .last
+.have:
+    mov esi, edi
+    call dk_name_kind
+    movzx eax, al
+    mov [dkp_icon], eax
+.done:
+    popad
+    ret
+
+; -> ecx = the icon shown for it: the one chosen, or its own
+dkp_shown_icon:
+    movzx ecx, byte [dkp_look]
+    dec ecx
+    jns .done
+    mov ecx, [dkp_icon]
+.done:
+    ret
+
+; eax, ebx = where, ecx = how wide, esi = its words: a button (24 high)
+dkp_button:
+    pushad
+    mov edx, 24
+    push esi
+    mov esi, COL_FRAME
+    call dk_fill
+    inc eax
+    inc ebx
+    sub ecx, 2
+    sub edx, 2
+    mov esi, COL_BUTTON
+    call dk_fill
+    pop esi
+    call tr_lookup
+    push ecx
+    call dki_strlen                       ; -> ecx
+    shl ecx, 2
+    pop edx
+    shr edx, 1
+    add eax, edx
+    sub eax, ecx
+    add ebx, 3
+    mov edx, COL_TEXT
+    mov edi, 1000
+    call dk_text_raw
+    popad
+    ret
+
+; The icons to choose from: its own first, then every picture
+dkp_draw_grid:
+    pushad
+    mov esi, dkp_m_choose
+    mov eax, DKP_X + 20
+    mov ebx, DKP_Y + 94
+    mov edx, COL_MUTED
+    call dk_text
+    xor ecx, ecx
+.cell:
+    cmp ecx, DKP_PICKS + 1
+    jae .done
+    call dkp_cell_xy                      ; -> eax, ebx
+    movzx edx, byte [dkp_look]            ; the one chosen: lit
+    or ecx, ecx
+    jz .own
+    movzx esi, byte [dkp_picks + ecx - 1]
+    inc esi
+    cmp esi, edx
+    jne .plain
+    jmp .lit
+.own:
+    or edx, edx
+    jnz .plain
+.lit:
+    push ecx
+    mov ecx, DKP_CELL_W - 4
+    mov edx, DKP_CELL_H - 2
+    mov esi, COL_TITLE_ON
+    call dk_fill
+    add eax, 2
+    add ebx, 2
+    sub ecx, 4
+    sub edx, 4
+    mov esi, COL_SUBMENU
+    call dk_fill
+    sub eax, 2
+    sub ebx, 2
+    pop ecx
+.plain:
+    push ecx
+    add eax, (DKP_CELL_W - 4 - 32) / 2
+    add ebx, 5
+    jecxz .its_own
+    movzx ecx, byte [dkp_picks + ecx - 1]
+    jmp .draw
+.its_own:
+    mov ecx, [dkp_icon]
+.draw:
+    call dk_icon
+    pop ecx
+    inc ecx
+    jmp .cell
+.done:
+    popad
+    ret
+
+; ecx = a cell -> eax, ebx = its corner
+dkp_cell_xy:
+    push ecx
+    push edx
+    mov eax, ecx
+    xor edx, edx
+    mov ecx, DKP_GRID_COLS
+    div ecx                               ; eax = its row, edx = its column
+    imul ebx, eax, DKP_CELL_H
+    add ebx, DKP_GRID_Y
+    imul eax, edx, DKP_CELL_W
+    add eax, DKP_GRID_X
+    pop edx
+    pop ecx
+    ret
+
+; eax, ebx = a click -> ecx = the look it picks (0: its own), carry=1 none
+dkp_grid_at:
+    push eax
+    push ebx
+    push edx
+    sub eax, DKP_GRID_X
+    js .none
+    sub ebx, DKP_GRID_Y
+    js .none
+    xor edx, edx
+    mov ecx, DKP_CELL_W
+    div ecx
+    cmp eax, DKP_GRID_COLS
+    jae .none
+    mov ecx, eax                          ; its column
+    mov eax, ebx
+    xor edx, edx
+    mov ebx, DKP_CELL_H
+    div ebx
+    imul eax, DKP_GRID_COLS
+    add ecx, eax
+    cmp ecx, DKP_PICKS
+    ja .none
+    jecxz .found                          ; (its own: 0)
+    movzx ecx, byte [dkp_picks + ecx - 1]
+    inc ecx
+.found:
+    pop edx
+    pop ebx
+    pop eax
+    clc
+    ret
+.none:
+    pop edx
+    pop ebx
+    pop eax
+    stc
+    ret
+
+; ============================================================
+; Data (shared)
+; ============================================================
+dkp_picks        db IC_FOLDER, IC_FILE, IC_TEXT, IC_APP, IC_IMAGE, IC_SOUND
+                 db IC_SCRIPT, IC_CSRC, IC_BAS, IC_TRG, IC_CH8, IC_CFG, IC_WEB
+                 db IC_NOTEPAD, IC_ZIP, IC_GAME, IC_TERM, IC_CAT, IC_GEAR
+                 db IC_STAR, IC_MUSIC, IC_TRASH
+DKP_PICKS        equ $ - dkp_picks
+dkp_link         times DKI_PATH + 2 db 0
+dkp_l_change     db "Change icon...", 0
+dkp_m_choose     db "Choose its icon (the first: its own):", 0
+dkp_loaded       db 0
+dkp_type         db 0
+dkp_parent       db 0
+dkp_ro           db 0
+dkp_ro_was       db 0
+dkp_look         db 0                     ; its icon: 0 its own, or a kind + 1
+dkp_look_was     db 0
+dkp_picking      db 0
+dkp_can_look     db 0
+dkp_icon         dd 0
+dkp_kind         dd 0
+dkp_up           times 8 dd 0
+dkp_name         times FS_NAME_LEN + 1 db 0
+dkp_where        times 128 db 0
+dkp_size_text    times 64 db 0
+dkp_time_text    times 24 db 0
+dkp_labels       dd dkp_l_where, dkp_l_kind, dkp_l_size, dkp_l_time
+dkp_values       dd dkp_where, 0, dkp_size_text, dkp_time_text
+; extensions -> what they are
+dkp_kinds        dd 'TXT', dkp_k_text, 'CFG', dkp_k_text, 'HG', dkp_k_script
+                 dd 'BAS', dkp_k_basic, 'TRG', dkp_k_script, 'C', dkp_k_c
+                 dd 'H', dkp_k_c, 'ASM', dkp_k_asm, 'APP', dkp_k_app
+                 dd 'COM', dkp_k_program, 'BIN', dkp_k_program, 'CH8', dkp_k_chip8
+                 dd 'BMP', dkp_k_bmp, 'WAV', dkp_k_sound, 'IMF', dkp_k_sound
+                 dd 'MOD', dkp_k_music, 'LNK', dkp_k_link, 'HTM', dkp_k_html
+                 dd 'MD', dkp_k_md, 'ZIP', dkp_k_zip, 'DAT', dkp_k_data, 0, 0
+dkp_t_title      db "Properties", 0
+dkp_l_where      db "Location:", 0
+dkp_l_kind       db "Kind:", 0
+dkp_l_size       db "Size:", 0
+dkp_l_time       db "Modified:", 0
+dkp_l_ro         db "Read-only", 0
+dkp_m_ro_hint    db "(can't be changed, renamed or deleted)", 0
+dkp_m_reading    db "Reading...", 0
+dkp_m_bytes      db " bytes", 0
+dkp_m_open       db " (", 0
+dkp_m_kb         db " KB)", 0
+dkp_m_items      db " items", 0
+dkp_k_folder     db "Folder", 0
+dkp_k_program    db "Program", 0
+dkp_k_text       db "Text file", 0
+dkp_k_file       db "File", 0
+dkp_k_script     db "Script (HG)", 0
+dkp_k_basic      db "BASIC program", 0
+dkp_k_c          db "C source", 0
+dkp_k_asm        db "Assembly source", 0
+dkp_k_app        db "Application (.APP)", 0
+dkp_k_chip8      db "CHIP-8 game", 0
+dkp_k_bmp        db "Picture (BMP)", 0
+dkp_k_sound      db "Sound", 0
+dkp_k_music      db "Music (MOD)", 0
+dkp_k_link       db "Shortcut", 0
+dkp_k_html       db "Web page", 0
+dkp_k_md         db "Markdown text", 0
+dkp_k_zip        db "ZIP archive", 0
+dkp_k_data       db "Data", 0
