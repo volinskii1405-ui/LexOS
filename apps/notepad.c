@@ -2,7 +2,8 @@
  *
  *   run notepad.app [file...]      (Files opens text files in it)
  *
- * Several files at once, one per tab. The mouse places the cursor,
+ * Several files at once, one per tab - a text file opened in Files
+ * while Notepad's open comes in as one more tab (inbox()). The mouse places the cursor,
  * drags a selection (a double click takes a word), the wheel and the
  * scrollbar scroll. Keys:
  *
@@ -1546,6 +1547,10 @@ int main(int argc, char **argv)
             k = pollkey();
         }
         if (quitting) break;
+        {                                           /* a file handed over: a tab */
+            char path[PATH_MAX];
+            if (inbox(path, sizeof path) > 0) { open_file(path); changed = 1; }
+        }
         over = mouse(m);
         if (m[3]) {
             if (dlg == DLG_OPEN || dlg == DLG_SAVE) {

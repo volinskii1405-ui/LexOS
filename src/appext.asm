@@ -12,9 +12,14 @@
 ;   38 mkdir(path)            a new folder ("NAME", "/A/NAME") -> 0 / -1
 ;   39 notify(text)           a line shown at the desktop's top for a few
 ;                             seconds (and Files, the icons: read again)
+;   40 inbox(buf, n)          a file handed to this program while it's open
+;                             (Files opened another text file and Notepad
+;                             is already there: a tab in it, not a second
+;                             Notepad) -> its path's length, 0 if none
 ;
 ; Arguments as every call's: ebx [ebp+16], ecx [ebp+24], edx [ebp+20].
-; Exports: sys_keymode, sys_readdir, sys_mkdir, sys_notify
+; Exports: sys_keymode, sys_readdir, sys_mkdir, sys_notify, sys_inbox,
+;          aext_hand_over
 
 AEXT_PATH_MAX  equ 120
 
@@ -372,6 +377,112 @@ sys_notify:
     xor eax, eax
     ret
 
+; ============================================================
+; A program's inbox: one path at a time, for the console it runs in
+; ============================================================
+
+; esi = a file's name, edi = its folder ("/A/B"), edx = a program's name
+; ("notepad.app"): is it open in a window? Then the path goes to it,
+; and its window comes to the front -> carry=0; carry=1 if it isn't
+aext_hand_over:
+    pushad
+    xor ebx, ebx
+.win:
+    cmp ebx, DK_MAX_WIN
+    jae .none
+    cmp byte [dkw_kind + ebx], K_APP
+    jne .next
+    push esi
+    push edi
+    imul esi, ebx, DK_TITLE_LEN
+    add esi, dkw_title
+    mov edi, edx
+.cmp:
+    mov al, [esi]
+    call to_upper_al
+    mov ah, al
+    mov al, [edi]
+    call to_upper_al
+    cmp al, ah
+    jne .differ
+    or al, al
+    jz .same
+    inc esi
+    inc edi
+    jmp .cmp
+.differ:
+    pop edi
+    pop esi
+.next:
+    inc ebx
+    jmp .win
+.same:
+    pop edi
+    pop esi
+    push esi                              ; the path: folder/name
+    push edi
+    mov esi, edi
+    mov edi, aext_inbox
+    call wget_append
+    cmp byte [edi - 1], '/'
+    je .slash
+    mov al, '/'
+    stosb
+.slash:
+    pop eax
+    pop esi
+    call wget_append
+    mov byte [edi], 0
+    mov eax, ebx
+    call dk_win_console
+    mov [aext_inbox_con], al
+    mov byte [dkw_hidden + ebx], 0        ; (it, in front)
+    mov eax, ebx
+    call dk_mark_window
+    call dk_raise
+    call dk_focus_console
+    popad
+    clc
+    ret
+.none:
+    popad
+    stc
+    ret
+
+; SYS 40: ebx = a buffer, ecx = its size -> the path handed to this
+; program (see aext_hand_over), and its length; 0 if there's none
+sys_inbox:
+    xor eax, eax
+    cmp byte [aext_inbox], 0
+    je .done
+    mov edx, [sched_current]
+    mov dl, [task_console + edx]
+    cmp dl, [aext_inbox_con]
+    jne .done
+    mov esi, aext_inbox                   ; its length (with the 0)
+    xor ecx, ecx
+.len:
+    cmp byte [esi + ecx], 0
+    je .counted
+    inc ecx
+    jmp .len
+.counted:
+    inc ecx
+    cmp ecx, [ebp + 24]
+    ja .done                              ; (it doesn't fit: left there)
+    mov [ebp + 24], ecx
+    call app_check_range
+    mov edi, [ebp + 16]
+    cld
+    rep movsb
+    mov byte [aext_inbox], 0
+    mov eax, [ebp + 24]
+    dec eax
+.done:
+    ret
+
+aext_inbox       times AEXT_PATH_MAX + 20 db 0
+aext_inbox_con   db 0xFF
 aext_dir         db 0
 aext_path        times AEXT_PATH_MAX + 8 db 0
 aext_name        times AEXT_PATH_MAX + 8 db 0

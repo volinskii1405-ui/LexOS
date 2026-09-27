@@ -2718,6 +2718,13 @@ dk_launch:
     pushad
     call dkx_recent_add                   ; (src/dkextra.asm: the menu's recent)
     call dkf_rec_add                      ; (Files' Recent: src/dkfview.asm)
+    call dk_open_command                  ; a text file, and Notepad's open:
+    cmp edx, dk_verb_edit                 ; a tab in it (src/appext.asm)
+    jne .new
+    mov edx, dk_n_notepad
+    call aext_hand_over
+    jnc .done
+.new:
     mov ebx, 1                            ; a free console
 .free:
     cmp ebx, CONSOLE_MAX
@@ -5732,6 +5739,7 @@ dk_verb_basic     db "basic ", 0
 dk_verb_turtle    db "turtle ", 0
 dk_verb_chip8     db "chip8 ", 0
 dk_verb_edit      db "run notepad.app ", 0
+dk_n_notepad      db "notepad.app", 0
 dk_verb_web       db "run browser.app ", 0
 dk_cmd_cd         db "cd ", 0
 dk_st_free        db "-", 0
