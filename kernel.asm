@@ -548,4 +548,6 @@ kext_start:
 %include "src/dkshot.asm"
 %include "src/dkfview.asm"
 %include "src/dkwall.asm"
+%include "src/dkmsel.asm"
+%include "src/dkundo.asm"
 kext_end:

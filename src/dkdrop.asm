@@ -313,6 +313,7 @@ dkd_icon_drop:
     shl esi, 4
     add esi, dki_file
     call dkd_add
+    call dkm_drop_add                     ; (the others picked: src/dkmsel.asm)
     mov byte [dkd_req], 1
     call dki_mark                         ; back where it was picked up
     mov eax, [dki_start_x]
@@ -324,7 +325,9 @@ dkd_icon_drop:
     clc
     ret
 .to_trash:                                ; the icon's Delete (src/dkname.asm:
-    mov esi, dki_folder_path              ;  into TRASH, made if need be)
+    call dkm_trash_group                  ;  into TRASH, made if need be) -
+    jnc .trash_back                       ;  or all those picked
+    mov esi, dki_folder_path
     mov edi, dki_tmp_path
     call dki_copy
     mov byte [edi - 1], '/'
@@ -344,6 +347,7 @@ dkd_icon_drop:
     mov [dkn_slot], eax
     mov dword [dkn_len], 0
     mov byte [dkn_req], 1
+.trash_back:
     call dki_mark                         ; (back where it was, till it goes)
     mov eax, [dki_start_x]
     mov [dki_x + ebx*4], eax

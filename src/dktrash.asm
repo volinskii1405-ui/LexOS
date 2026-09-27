@@ -15,6 +15,7 @@ DKT_MARK       equ 0xB7
 dkt_note_origin:
     cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_PROGRAM
     je .done                              ; (a program's bytes run past it)
+    call dku_note_move                    ; (Undo's: src/dkundo.asm)
     push eax
     mov al, [SCRATCH_ADDR + FS_PARENT_OFFSET]
     mov [SCRATCH_ADDR + DKT_ORIGIN], al
@@ -751,6 +752,7 @@ dkt_del_work:
     jae .done
     call dkt_is_icon
     jnc .done
+    call dkm_pick_one                     ; (not picked: just it)
     mov [dk_ctx_icon], ebx
     mov eax, DKC_IDELETE
     call dkx_ctx_create

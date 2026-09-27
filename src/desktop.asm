@@ -364,6 +364,7 @@ desktop_task:
     call dkx_fc_work                      ; (src/dkextra.asm: Files' clipboard)
     call dkd_work                         ; (src/dkdrop.asm: a drop)
     call dkt_del_work                     ; (src/dktrash.asm: Del)
+    call dku_work                         ; (src/dkundo.asm: Ctrl+Z)
     call dkw_work                         ; (src/dkwall.asm: the wallpaper)
     call dkf_thumb_work                   ; (src/dkfview.asm: thumbnails)
     call dkx_cat_work                     ; (src/dkcat.asm: Lex)
@@ -1319,6 +1320,8 @@ dk_mouse_event:
     call dkc_move
     jmp .done
 .no_select:
+    call dkm_band_move                    ; a rubber band (src/dkmsel.asm)
+    jnc .done
     cmp dword [dki_drag], -1              ; a desktop icon being carried
     je .no_icon_drag                      ; (src/dkicons.asm)
     call dki_drag_move

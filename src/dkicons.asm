@@ -15,7 +15,7 @@
 ; Exports: dki_work, dki_draw, dki_press, dki_drag_move, dki_save,
 ;          dki_forget
 
-DKI_MAX        equ 16
+DKI_MAX        equ 32
 DKI_W          equ 80                     ; an icon's cell
 DKI_H          equ 72
 DKI_TOP        equ 290                    ; the default places: columns from
@@ -197,7 +197,7 @@ dki_scan:
     jmp .kind
 .kinds_done:
     call dkt_icon_kinds
-    mov dword [dki_sel], -1
+    call dkm_clear                        ; (none picked: src/dkmsel.asm)
     mov byte [dk_redraw_all], 1
 .done:
     popad
@@ -467,8 +467,8 @@ dki_draw:
     cmp edx, [dk_clip_y1]
     jge .next
     push ebx
-    cmp ebx, [dki_sel]                    ; picked: a box around it
-    jne .picture
+    call dkm_is                           ; picked: a box around it
+    jc .picture
     push eax
     push edx
     mov ebx, edx
@@ -496,6 +496,7 @@ dki_draw:
     inc ebx
     jmp .icon
 .done:
+    call dkm_band_draw                    ; (a rubber band: src/dkmsel.asm)
     popad
     ret
 
@@ -584,6 +585,8 @@ dki_press:
     call dki_open
     jmp .done
 .pick:
+    call dkm_press                        ; (Ctrl, several: src/dkmsel.asm)
+    jnc .done
     mov edx, [timer_ms]
     mov [dki_click_ms], edx
     push ebx
@@ -620,12 +623,8 @@ dki_press:
     mov edx, [timer_ms]
     mov [dki_bg_click_ms], edx
 .unpick:
-    mov ebx, [dki_sel]                    ; the background: none picked
-    cmp ebx, -1
-    je .done
-    call dki_mark
-    mov dword [dki_sel], -1
-.done:
+    call dkm_band_press                   ; the background: none picked - a
+.done:                                    ; rubber band from here
     popad
     ret
 
@@ -637,10 +636,14 @@ dki_drag_move:
     jnz .held
     mov dword [dki_drag], -1              ; let go: into the nearest free
     cmp byte [dki_moved], 0               ; cell (src/dkgrid.asm), and kept
-    je .done
+    jne .was_moved
+    call dkm_released                     ; (a click on one of several)
+    jmp .done
+.was_moved:
     call dkd_icon_drop                    ; (or into a folder: src/dkdrop.asm)
     jnc .done
     call dkg_snap
+    call dkm_snap_others                  ; (the others carried with it)
     mov byte [dk_cfg_dirty], 1            ; (src/dkstyle.asm: saved)
     jmp .done
 .held:
@@ -668,6 +671,7 @@ dki_drag_move:
     cmp edx, [dki_y + ebx*4]
     je .done
 .moved:
+    call dkm_follow                       ; (the others picked: along)
     call dki_mark                         ; where it was...
     mov [dki_x + ebx*4], eax
     mov [dki_y + ebx*4], edx

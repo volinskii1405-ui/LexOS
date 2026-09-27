@@ -318,6 +318,13 @@ keyboard_isr:
     je .not_desk_keys              ; (src/dkextra.asm)
     cmp bh, 0
     jne .not_desk_keys
+    cmp al, 0x2C                   ; Ctrl+Z: the last thing done to files,
+    jne .not_undo                  ; undone (src/dkundo.asm)
+    cmp byte [lang_ctrl_held], 0
+    je .not_undo
+    call dku_key
+    jnc .eoi
+.not_undo:
     cmp byte [dk_fm_typing], 0     ; Files in front: Ctrl+C / X / V are
     je .not_files_clip             ; its files' (src/dkextra.asm)
     cmp byte [lang_ctrl_held], 0

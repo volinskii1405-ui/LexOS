@@ -231,6 +231,16 @@ dkn_do:
     call dkt_forever_do
     jmp .out
 .not_forever:
+    cmp eax, DKN_UNDO                     ; (src/dkundo.asm)
+    jne .not_undo
+    call dku_do
+    jmp .out
+.not_undo:
+    cmp eax, DKN_TRASHN                   ; (src/dkmsel.asm)
+    jne .not_trashn
+    call dkm_trash_do
+    jmp .out
+.not_trashn:
     cmp eax, DKN_MKTRASH
     jne .not_mktrash
     call dkn_trash_dir
@@ -294,6 +304,7 @@ dkn_do:
     jnz .read_only
     mov eax, [dkn_slot]
     call fs_read_slot
+    call dku_note_rename                  ; (Undo's: src/dkundo.asm)
     mov edi, SCRATCH_ADDR
     mov ecx, FS_NAME_LEN
     xor eax, eax
