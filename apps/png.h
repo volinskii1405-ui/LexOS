@@ -11,6 +11,9 @@
  * over white. png[] is used as working space (the compressed data is
  * gathered in it): it's not a PNG any more afterwards.
  *
+ * Or, with png_sink set, each pixel goes to it instead (out unused):
+ * png_size() says first how big the picture will come out.
+ *
  * All of PNG's kinds: grey, RGB, palette (with its transparency),
  * grey + alpha, RGBA; 1, 2, 4, 8 and 16 bits; Adam7 interlacing. Widths
  * up to 4096. It doesn't check the CRCs, nor use gamma or colour
@@ -34,6 +37,8 @@ static int pg_rowlen, pg_rowpos;                  /* this pass's row: its bytes,
 static int pg_pass, pg_py, pg_pw, pg_ph;          /* the pass, its row, its size */
 static unsigned pg_acc[1024 * 4];                 /* the shrunk row's sums (r g b n) */
 static int pg_done;
+/* if set: the pixels go here (x, y, r, g, b) and not into a BMP */
+static void (*png_sink)(int x, int y, int r, int g, int b);
 
 static const int adam_x0[7] = { 0, 4, 0, 2, 0, 1, 0 }, adam_dx[7] = { 8, 8, 4, 4, 2, 2, 1 };
 static const int adam_y0[7] = { 0, 0, 4, 0, 2, 0, 1 }, adam_dy[7] = { 8, 8, 8, 4, 4, 2, 2 };
@@ -111,6 +116,7 @@ static void png_put(int dx, int dy, int R, int G, int B)
 {
     png_u8 *p;
     if (dx >= pg_dw || dy >= pg_dh) return;
+    if (png_sink) { png_sink(dx, dy, R, G, B); return; }
     p = pg_out + 54 + (pg_dh - 1 - dy) * pg_stride + dx * 3;
     p[0] = B; p[1] = G; p[2] = R;
 }
@@ -350,8 +356,9 @@ static int png_to_bmp(png_u8 *in, int n, png_u8 *out, int max, int max_w, int ma
     pg_dh = (pg_h + pg_f - 1) / pg_f;
     pg_stride = (pg_dw * 3 + 3) & ~3;
     size = 54 + pg_stride * pg_dh;
-    if (size > max) return -4;
+    if (!png_sink && size > max) return -4;
     pg_out = out;
+    if (png_sink) goto header_done;
     for (i = 0; i < size; i++) out[i] = 255;               /* (white where nothing comes) */
     /* the header: BITMAPFILEHEADER, BITMAPINFOHEADER; 24 bits, bottom-up */
     for (i = 0; i < 54; i++) out[i] = 0;
@@ -361,6 +368,7 @@ static int png_to_bmp(png_u8 *in, int n, png_u8 *out, int max, int max_w, int ma
     out[18] = pg_dw; out[19] = pg_dw >> 8;
     out[22] = pg_dh; out[23] = pg_dh >> 8;
     out[26] = 1; out[28] = 24;
+header_done:
     for (i = 0; i < pg_dw * 4; i++) pg_acc[i] = 0;
     pg_pass = 0; pg_done = 0;
     if (!png_pass_setup()) return -3;
@@ -368,6 +376,23 @@ static int png_to_bmp(png_u8 *in, int n, png_u8 *out, int max, int max_w, int ma
     if ((in[0] & 15) != 8) return -3;
     if (pz_inflate(in + 2, z - 2) && !pg_done) return -5;
     return size;
+}
+
+/* the size png_to_bmp (or the sink) will give it, shrunk to fit
+ * max_w x max_h -> 1, or 0 if it isn't a PNG */
+static __attribute__((unused)) int png_size(const png_u8 *in, int n, int max_w, int max_h, int *w, int *h)
+{
+    static const png_u8 sig[8] = { 137, 80, 78, 71, 13, 10, 26, 10 };
+    int i, f = 1, pw, ph;
+    if (n < 33) return 0;
+    for (i = 0; i < 8; i++) if (in[i] != sig[i]) return 0;
+    pw = png_be32(in + 16); ph = png_be32(in + 20);
+    if (pw <= 0 || ph <= 0 || pw > PNG_MAX_W) return 0;
+    if (max_w > 1024) max_w = 1024;
+    while ((pw + f - 1) / f > max_w || (ph + f - 1) / f > max_h) f++;
+    *w = (pw + f - 1) / f;
+    *h = (ph + f - 1) / f;
+    return 1;
 }
 
 #endif

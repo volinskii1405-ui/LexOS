@@ -8,7 +8,7 @@
  * headings, paragraphs, line breaks, bold/italic/underlined text, links,
  * lists (bullets and numbers), <pre>, <hr>, <blockquote>, <center>,
  * tables as rows of cells, <font color>, <body bgcolor>, and pictures -
- * <img> of .BMP files (8, 24 or 32 bits, as `paint` saves them). Text in
+ * <img> of .BMP (8, 24 or 32 bits) and .PNG files (png.h). Text in
  * UTF-8 is shown in LexOS's font (Russian and Spanish letters too);
  * scripts and styles are skipped.
  *
@@ -35,6 +35,7 @@
  * otherwise it's read again when it's gone back to. */
 #include "lexos.h"
 #include "tls.h"                         /* https:// - TLS 1.3 of its own */
+#include "png.h"                         /* <img> of .PNG */
 
 #define W 800
 #define H 600
@@ -572,6 +573,30 @@ static unsigned *load_bmp(const unsigned char *b, int n, int *pw, int *ph)
     return pix;
 }
 
+/* a PNG -> its pixels (up to 760 wide - less if memory's short:
+ * shrunk), as load_bmp's */
+static unsigned *png_pix;
+static int png_pw;
+static void png_to_pix(int x, int y, int r, int g, int b) { png_pix[y * png_pw + x] = RGB(r, g, b); }
+static unsigned *load_png(unsigned char *b, int n, int *pw, int *ph)
+{
+    int w, h, mw = RIGHT - MARGIN, mh = 1024;
+    for (;;) {                                  /* as big as memory lets it be */
+        if (!png_size(b, n, mw, mh, &w, &h)) return 0;
+        png_pix = malloc(w * h * 4);
+        if (png_pix) break;
+        if (w < 48 || h < 48) return 0;
+        mw = w * 3 / 4; mh = h * 3 / 4;
+    }
+    png_pw = w;
+    png_sink = png_to_pix;
+    if (png_to_bmp(b, n, 0, 0, mw, mh) < 0) { png_sink = 0; free(png_pix); return 0; }
+    png_sink = 0;
+    *pw = w;
+    *ph = h;
+    return png_pix;
+}
+
 /* https://host[:port]/path -> buf, as fetch() does it for http (-3:
  * moved, the address in buf; -2: not the page; -4: TLS failed) */
 static int parse_answer(char *buf, int len, int max);
@@ -936,7 +961,8 @@ static void emit_image(const char *srcattr, const char *alt)
     resolve(url, srcattr, where);
     if (buf) {
         n = load(where, (char *)buf, 512 * 1024);
-        if (n > 0) pix = load_bmp(buf, n, &w, &h);
+        if (n > 0) pix = n > 8 && (unsigned char)buf[0] == 137 && buf[1] == 'P' ? load_png((unsigned char *)buf, n, &w, &h)
+                                                                   : load_bmp(buf, n, &w, &h);
         free(buf);
     }
     if (!pix) {                           /* not shown: its words instead */

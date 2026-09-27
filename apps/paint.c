@@ -1,6 +1,7 @@
-/* paint.c - LexOS Paint: drawing in a window of its own, saved as .BMP.
+/* paint.c - LexOS Paint: drawing in a window of its own, saved as .BMP
+ * or .PNG.
  *
- *   run paint.app [picture.bmp]      (Files: Edit in Paint)
+ *   run paint.app [picture.bmp|.png]      (Files: Edit in Paint)
  *
  * Tools (a key each): Pencil P, Brush B, Eraser E, Line L, Rectangle R,
  * Box (filled) X, Oval O, Disc (filled) D, Fill F, Pick a color K.
@@ -15,8 +16,12 @@
  *
  * The picture is kept as 16-bit color (5-6-5) - up to 800x600 - to
  * leave room for the undo steps (each packed as runs of one color). It
- * opens 8-, 24- and 32-bit uncompressed .BMPs and saves 24-bit ones. */
+ * opens 8-, 24- and 32-bit uncompressed .BMPs and any .PNG (png.h;
+ * bigger than 800x600: shrunk), and saves 24-bit BMPs or - a name
+ * ending in .PNG - PNGs (deflate.h, a piece at a time). */
 #include "lexos.h"
+#include "png.h"
+#include "deflate.h"
 
 #define W 800
 #define H 600
@@ -491,6 +496,136 @@ static int save_bmp(const char *p)
     return 1;
 }
 
+/* a PNG: its pixels straight onto the canvas (png.h's sink) */
+static void png_to_canvas(int x, int y, int r, int g, int b) { canvas[y * cw + x] = to565(RGB(r, g, b)); }
+static int load_png(const char *p)
+{
+    int fd = open(p, O_READ), n, w, h;
+    unsigned char *buf;
+    if (fd < 0) { say("Can't open it."); return 0; }
+    n = fsize(fd);
+    buf = malloc(n + 4);
+    while (!buf && (nundo || nredo)) {                 /* no room: fewer steps back */
+        if (nredo) drop_oldest(redo, &nredo); else drop_oldest(undo, &nundo);
+        buf = malloc(n + 4);
+    }
+    if (!buf) { close(fd); say("Too big to open."); return 0; }
+    n = read(fd, buf, n);
+    close(fd);
+    if (!png_size(buf, n, CMAX_W, CMAX_H, &w, &h)) { free(buf); say("Not a PNG Paint can open."); return 0; }
+    blank(w, h);
+    png_sink = png_to_canvas;
+    n = png_to_bmp(buf, n, 0, 0, CMAX_W, CMAX_H);
+    png_sink = 0;
+    free(buf);
+    if (n < 0) { say("That PNG couldn't be read (damaged?)."); return 0; }
+    set_path(p);
+    dirty = 0;
+    while (nundo) snap_free(&undo[--nundo]);
+    clear_redo();
+    say("Opened.");
+    return 1;
+}
+static int load_picture(const char *p)
+{
+    unsigned char sig[8];
+    int fd = open(p, O_READ), n = 0;
+    if (fd >= 0) { n = read(fd, sig, 8); close(fd); }
+    if (n == 8 && sig[0] == 137 && sig[1] == 'P' && sig[2] == 'N' && sig[3] == 'G') return load_png(p);
+    return load_bmp(p);
+}
+
+static void be32w(unsigned char *p, unsigned v) { p[0] = v >> 24; p[1] = v >> 16; p[2] = v >> 8; p[3] = v; }
+/* a chunk: its length, type, data, CRC */
+static int png_chunk(int fd, const char *type, const unsigned char *d, int n)
+{
+    unsigned char h[8], t[4];
+    unsigned c = 0xFFFFFFFF;
+    int i;
+    be32w(h, n);
+    memcpy(h + 4, type, 4);
+    for (i = 4; i < 8; i++) c = crc_table[(c ^ h[i]) & 0xFF] ^ (c >> 8);
+    for (i = 0; i < n; i++) c = crc_table[(c ^ d[i]) & 0xFF] ^ (c >> 8);
+    be32w(t, c ^ 0xFFFFFFFF);
+    if (fwrite(fd, h, 8) != 8) return 0;
+    if (n && fwrite(fd, d, n) != n) return 0;
+    return fwrite(fd, t, 4) == 4;
+}
+/* the canvas as a PNG: RGB, 8 bits; the rows Paeth-filtered, compressed
+ * 16 at a time, each piece its own IDAT */
+#define PNG_ROWS 16
+static int save_png(const char *p)
+{
+    static const unsigned char sig[8] = { 137, 80, 78, 71, 13, 10, 26, 10 };
+    static unsigned char raw[PNG_ROWS * (CMAX_W * 3 + 1)], zbuf[PNG_ROWS * (CMAX_W * 3 + 1) + 4096];
+    static unsigned char row[CMAX_W * 3], prev[CMAX_W * 3];
+    unsigned char ihdr[13];
+    unsigned a1 = 1, a2 = 0;
+    int fd, y, x, ok = 1, first = 1;
+    crc_init();
+    while (deflate_start(zbuf, sizeof zbuf) && (nundo || nredo)) {   /* its tables: room made */
+        if (nredo) drop_oldest(redo, &nredo); else drop_oldest(undo, &nundo);
+    }
+    if (!df_head) { say("Not enough memory to save a PNG - try .BMP."); return 0; }
+    fd = open(p, O_WRITE);
+    if (fd < 0) { deflate_free(); say("Can't save there (read-only, or no room?)."); return 0; }
+    be32w(ihdr, cw); be32w(ihdr + 4, ch);
+    ihdr[8] = 8; ihdr[9] = 2; ihdr[10] = ihdr[11] = ihdr[12] = 0;
+    fwrite(fd, sig, 8);
+    ok = png_chunk(fd, "IHDR", ihdr, 13);
+    memset(prev, 0, sizeof prev);
+    for (y = 0; y < ch && ok; ) {
+        int n = 0, rows, got, i;
+        for (rows = 0; rows < PNG_ROWS && y < ch; rows++, y++) {
+            for (x = 0; x < cw; x++) {
+                unsigned c = from565(canvas[y * cw + x]);
+                row[x * 3] = c >> 16; row[x * 3 + 1] = c >> 8; row[x * 3 + 2] = c;
+            }
+            raw[n++] = 4;                                  /* Paeth */
+            for (i = 0; i < cw * 3; i++) {
+                int a = i >= 3 ? row[i - 3] : 0, b = prev[i], c = i >= 3 ? prev[i - 3] : 0;
+                int pp = a + b - c, pa = pp > a ? pp - a : a - pp, pb = pp > b ? pp - b : b - pp, pc = pp > c ? pp - c : c - pp;
+                raw[n++] = row[i] - (pa <= pb && pa <= pc ? a : pb <= pc ? b : c);
+            }
+            memcpy(prev, row, cw * 3);
+        }
+        for (i = 0; i < n; i++) { a1 = (a1 + raw[i]) % 65521; a2 = (a2 + a1) % 65521; }
+        got = deflate_more(raw, n, y >= ch);
+        if (got < 0) { ok = 0; break; }
+        if (first) {                                        /* the zlib header, first */
+            unsigned char zh[2] = { 0x78, 0x01 };
+            unsigned char *both = malloc(got + 2);
+            if (!both) { ok = 0; break; }
+            memcpy(both, zh, 2); memcpy(both + 2, zbuf, got);
+            ok = png_chunk(fd, "IDAT", both, got + 2);
+            free(both);
+            first = 0;
+        } else if (got) ok = png_chunk(fd, "IDAT", zbuf, got);
+        deflate_taken();
+    }
+    if (ok) {                                               /* the checksum, the end */
+        unsigned char ad[4];
+        be32w(ad, a2 << 16 | a1);
+        ok = png_chunk(fd, "IDAT", ad, 4) && png_chunk(fd, "IEND", 0, 0);
+    }
+    close(fd);
+    deflate_free();
+    if (!ok) { say("The disk is full - not saved."); return 0; }
+    set_path(p);
+    dirty = 0;
+    {
+        char s[120] = "Saved: ";
+        append(s, name, sizeof s);
+        notify(s);
+        say(s);
+    }
+    return 1;
+}
+static int save_picture(const char *p)
+{
+    return ends_ci(p, ".PNG") ? save_png(p) : save_bmp(p);
+}
+
 /* ============================================================
  * the layout
  * ============================================================ */
@@ -809,7 +944,7 @@ static void list_dir(void)
     ndents = 0;
     if (strcmp(dlg_dir, "/")) { memset(&dents[0], 0, sizeof dents[0]); copy(dents[0].name, "..", 16); dents[0].type = LX_DIR; ndents = 1; }
     for (i = 0; ndents < 200 && readdir(dlg_dir, i, &e) == 0; i++)
-        if (e.type == LX_DIR || ends_ci(e.name, ".BMP")) dents[ndents++] = e;
+        if (e.type == LX_DIR || ends_ci(e.name, ".BMP") || ends_ci(e.name, ".PNG")) dents[ndents++] = e;
     for (i = 1; i < ndents; i++) {               /* folders first, by name */
         struct lx_dirent t = dents[i];
         int tk = t.type == LX_DIR ? 0 : 1;
@@ -884,7 +1019,7 @@ static void ask_first(int what)
 static void save(int as)
 {
     if (as || !path[0]) { open_dialog(DLG_SAVE); return; }
-    save_bmp(path);
+    save_picture(path);
 }
 static void dialog_ok(void)
 {
@@ -893,7 +1028,7 @@ static void dialog_ok(void)
     if (dlg == DLG_ASK) {                        /* Save */
         if (!path[0]) { open_dialog(DLG_SAVE); return; }
         dlg = 0;
-        if (save_bmp(path)) then_do(ask_then);
+        if (save_picture(path)) then_do(ask_then);
         ask_then = 0;
         return;
     }
@@ -904,10 +1039,10 @@ static void dialog_ok(void)
     else join(p, dlg_dir, dlg_name);
     for (i = 0; p[i]; i++) p[i] = upper(p[i]);
     copy(last_dir, dlg_dir, PATH_MAX);
-    if (dlg == DLG_OPEN) { dlg = 0; load_bmp(p); clamp_view(); return; }
-    if (!ends_ci(p, ".BMP") && strlen(p) + 4 < PATH_MAX) append(p, ".BMP", PATH_MAX);
+    if (dlg == DLG_OPEN) { dlg = 0; load_picture(p); clamp_view(); return; }
+    if (!ends_ci(p, ".BMP") && !ends_ci(p, ".PNG") && strlen(p) + 4 < PATH_MAX) append(p, ".BMP", PATH_MAX);
     dlg = 0;
-    if (save_bmp(p) && ask_then) then_do(ask_then);
+    if (save_picture(p) && ask_then) then_do(ask_then);
     ask_then = 0;
 }
 static void dialog_cancel(void) { dlg = 0; ask_then = 0; }
@@ -987,7 +1122,7 @@ int main(int argc, char **argv)
         int i;
         copy(p, argv[1], PATH_MAX);
         for (i = 0; p[i]; i++) p[i] = upper(p[i]);
-        if (!load_bmp(p)) set_path(p);                           /* (a new one, by that name) */
+        if (!load_picture(p)) set_path(p);                       /* (a new one, by that name) */
         if (p[0] == '/') { int l = base_name(p) - p - 1; copy(last_dir, p, (l < 1 ? 1 : l) + 1); }
     } else say("Draw with the left or right button. Ctrl+S saves.");
     redraw();
