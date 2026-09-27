@@ -419,7 +419,7 @@ desktop_task:
                                           ; the next ones may come)
 .drawn:
     dec dword [sched_lock]
-    call dk_shot_save                     ; (src/dkwins.asm: outside a frame)
+    call dks_work                         ; (src/dkshot.asm: a screenshot, a piece a frame)
     call dk_settings_work                 ; (src/dkstyle.asm: DESKTOP.CFG)
     call jnl_idle                         ; (src/fsjournal.asm)
     call snd_work                         ; (src/dksound.asm: its sounds)

@@ -211,6 +211,10 @@ tester@/PROGRAMS$
   file's data is written before the records pointing to it, and a sector
   a file lets go of isn't given to another until the change counts, so a
   file being replaced keeps its old content until the new one is safe.
+  The disk's cache is flushed (FLUSH CACHE) at the commit's barriers -
+  before the header, after it, before it's cleared - and when switching
+  off, not after every sector (under QEMU each flush is the host syncing
+  the image file: that was seconds for a screenshot).
   `tools/mkdisk.py` finishes a journal too before it adds files.
 - **Times and attributes.** Every slot keeps when it last changed (from
   the RTC) and its attributes. `ls -l` shows the kind (`d` folder, `x`
@@ -692,9 +696,10 @@ tester@/PROGRAMS$
     (`.CFG`), the trash, a globe for the browser, a pad and pencil for
     Notepad, a zipper for `.ZIP`s - and a gamepad, a terminal, Lex, a
     gear, a star and a note to choose from. **Change icon...** in
-    Properties shows them all: any file or shortcut can have any of them
-    (kept in its own slot, so it goes where the file goes; the first one
-    in the list is its own again). A desktop icon's name that's longer
+    Properties shows them all: a program (`.APP`, `.COM`, `.BIN`, a
+    CHIP-8 game) or a shortcut (`.LNK`) can have any of them (kept in its
+    own slot, so it goes where the file goes; the first one in the list
+    is its own again). A desktop icon's name that's longer
     than its cell goes on two lines.
   - **The trash remembers** (src/dktrash.asm): whatever's deleted (or
     moved) keeps the folder it came from; in TRASH, **Restore** puts it
@@ -724,7 +729,8 @@ tester@/PROGRAMS$
   - **Sounds** (src/dksound.asm, through the Sound Blaster's mixer): a
     tune when the desktop starts, a click for the menu and buttons, a
     low tone for an error, a high one for news (a screenshot saved).
-  PrintScreen saves the desktop as PICS/SHOTnn.BMP. The mouse wheel
+  PrintScreen saves the desktop as PICS/SHOTnn.BMP (written some sectors
+  a frame, src/dkshot.asm - the desktop doesn't stop meanwhile). The mouse wheel
   works too (the IntelliMouse protocol).
   - **Terminals.** Every console has its own **Terminal** window -
     while the desktop is on, each console's text goes to a buffer in
@@ -1301,6 +1307,7 @@ src/
   dkgrid.asm           the desktop icons' invisible grid.
   dkart.asm            picture icons (dkart.inc, made by tools/mkicons.py),
                        desktop names on two lines.
+  dkshot.asm           PrintScreen's picture written a piece a frame.
   dkprops.asm          the Properties window.
   dktrash.asm          Restore (where things came from), Edit in
                        Notepad, Compress to ZIP / Extract here, the

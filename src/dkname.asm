@@ -404,6 +404,8 @@ dkn_do:
     cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
     jne .not_a_folder
 .dest:
+    cmp byte [dk_shot_ready], 0           ; (a screenshot being written in
+    jne .busy_shot                        ;  that buffer: in a moment)
     push eax
     mov eax, [dkn_slot]                   ; its content (the picture buffer:
     mov edi, DESK_IMG_FILE                ;  free between frames)
@@ -461,6 +463,9 @@ dkn_do:
     jmp .out
 .files_only:
     mov dword [dkn_err], dkn_m_files_only
+    jmp .out
+.busy_shot:
+    mov dword [dkn_err], dkn_m_busy
     jmp .out
 .made:
     mov byte [dk_fm_refresh], 1           ; Files and the icons: again
@@ -1040,5 +1045,6 @@ dkn_m_read_only  db "It's read-only (attrib -r).", 0
 dkn_m_nothing    db "There's nothing at that path.", 0
 dkn_m_not_folder db "That isn't a folder.", 0
 dkn_m_files_only db "Only files can be copied.", 0
+dkn_m_busy       db "A screenshot is being saved - in a moment.", 0
 dkn_m_long       db "At most 15 characters.", 0
 dkn_m_invalid    db "Not in a name: / \ | < > * ? : or a space.", 0

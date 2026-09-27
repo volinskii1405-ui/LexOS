@@ -272,6 +272,7 @@ dkp_load:
     mov al, [dkp_parent]
     mov edi, dkp_where
     call dkp_path
+    call dkp_look_ok                      ; (an icon to choose: programs, shortcuts)
     call dkp_link_icon                    ; (a shortcut: what it opens')
     mov eax, [dkn_slot]                   ; the icon chosen for it, if one
     call fs_read_slot
@@ -437,7 +438,7 @@ dkp_draw:
     mov ebx, DKP_Y + 40
     call dkp_shown_icon                   ; -> ecx
     call dk_icon
-    cmp byte [dkp_type], FS_TYPE_PROGRAM  ; Change icon...
+    cmp byte [dkp_can_look], 0            ; Change icon... (programs, shortcuts)
     je .no_change
     mov eax, DKP_CHG_X
     mov ebx, DKP_CHG_Y
@@ -553,7 +554,7 @@ dkp_click:
     pushad
     cmp byte [dkp_loaded], 0
     je .not_change
-    cmp byte [dkp_type], FS_TYPE_PROGRAM
+    cmp byte [dkp_can_look], 0
     je .not_change
     cmp eax, DKP_CHG_X                    ; Change icon...: the grid (again:
     jl .not_change                        ;  away)
@@ -605,6 +606,27 @@ dkp_click:
     cmp eax, DKP_BOX_X + 26 + 12 * 8
     jge .done
     call dkp_toggle
+.done:
+    popad
+    ret
+
+; dkp_can_look: 1 if an icon can be chosen for it - a program (.APP,
+; .COM, .BIN, a CHIP-8 game) or a shortcut (.LNK); not a folder, not a
+; document, not one of LexOS's own programs (their bytes fill the slot)
+dkp_look_ok:
+    pushad
+    mov byte [dkp_can_look], 0
+    cmp byte [dkp_type], FS_TYPE_FILE
+    jne .done
+    mov esi, dkp_name
+    call dk_ext_dword
+    cmp eax, 'LNK'
+    je .yes
+    mov eax, [dkp_icon]
+    call dk_kind_app
+    jne .done
+.yes:
+    mov byte [dkp_can_look], 1
 .done:
     popad
     ret
@@ -818,6 +840,7 @@ dkp_ro_was       db 0
 dkp_look         db 0                     ; its icon: 0 its own, or a kind + 1
 dkp_look_was     db 0
 dkp_picking      db 0
+dkp_can_look     db 0
 dkp_icon         dd 0
 dkp_kind         dd 0
 dkp_up           times 8 dd 0

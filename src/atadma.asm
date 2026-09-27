@@ -228,14 +228,8 @@ ata_dma_write_sector:
     jc .error
 
     call ata_wait_bsy_clear
-
-    ; FLUSH CACHE, same as the PIO path - good practice after a write
-    mov dx, ATA_COMMAND
-    mov al, 0xE7
-    out dx, al
-    call ata_wait_bsy_clear
-
-    mov dx, ATA_STATUS
+                                       ; (no FLUSH CACHE here: ata_flush, at
+    mov dx, ATA_STATUS                 ;  the journal's barriers)
     in al, dx
     test al, ATA_STATUS_ERR
     jnz .error

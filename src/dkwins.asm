@@ -681,6 +681,8 @@ dk_pictures_next:
     pushad
     call dk_shell_idle
     jc .done                              ; not now - next frame
+    cmp byte [dk_shot_ready], 0           ; (a screenshot's in its buffer,
+    jne .done                             ;  being written)
     mov byte [dk_pic_state], 0
     mov ecx, FS_TOTAL_SLOTS
     mov ebx, [dk_pic_slot]
@@ -4156,101 +4158,6 @@ dk_shot_capture:
     dec edx
     jns .row
     mov byte [dk_shot_ready], 1
-.done:
-    popad
-    ret
-
-dk_shot_save:
-    pushad
-    cmp byte [dk_shot_ready], 0
-    je .done
-    pushfd                                ; the kernel, while no console's
-    cli                                   ; in it (src/sched.asm)
-    cmp dword [bkl_owner], -1
-    jne .later
-    mov eax, [sched_current]
-    mov [bkl_owner], eax
-    popfd
-    push word [fs_current_dir]            ; (the console on screen's -
-    push dword [fs_tmp_slot]              ;  put back after)
-    ; where: PICS, if there is one
-    mov word [fs_current_dir], FS_ROOT
-    mov byte [dk_shot_where], 0
-    xor ebx, ebx
-.pics:
-    cmp ebx, FS_TOTAL_SLOTS
-    jae .named_dir
-    mov ax, bx
-    call fs_read_slot
-    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
-    jne .pics_next
-    cmp byte [SCRATCH_ADDR + FS_PARENT_OFFSET], FS_ROOT_BYTE
-    jne .pics_next
-    cmp dword [SCRATCH_ADDR], 'PICS'
-    jne .pics_next
-    cmp byte [SCRATCH_ADDR + 4], 0
-    jne .pics_next
-    mov [fs_current_dir], bx
-    mov byte [dk_shot_where], 1
-    jmp .named_dir
-.pics_next:
-    inc ebx
-    jmp .pics
-.named_dir:
-    ; the first SHOTnn.BMP that isn't there yet
-    mov ecx, 1
-.name:
-    mov dword [fs_tmp_name], 'SHOT'
-    mov eax, ecx
-    mov edi, fs_tmp_name + 4
-    call dk_two_digits
-    mov dword [fs_tmp_name + 6], '.BMP'
-    mov byte [fs_tmp_name + 10], 0
-    push ecx
-    mov si, fs_tmp_name
-    call fs_find_by_name
-    pop ecx
-    cmp ax, -1
-    je .free
-    inc ecx
-    cmp ecx, 99
-    jbe .name
-    jmp .failed
-.free:
-    mov dword [fs_stream_size], DK_SHOT_SIZE
-    call fs_stream_prepare
-    jc .failed
-    mov dword [fh_src_ptr], DESK_IMG_FILE
-    mov dword [fs_stream_source], fh_stream_byte
-    call fs_stream_write
-    jc .failed
-    mov edi, dk_toast_buf                 ; "Saved PICS/SHOT01.BMP"
-    mov esi, dk_shot_saved
-    call wget_append
-    cmp byte [dk_shot_where], 0
-    je .in_root
-    mov esi, dk_shot_pics
-    call wget_append
-.in_root:
-    mov esi, fs_tmp_name
-    call wget_append
-    mov byte [edi], 0
-    jmp .said
-.failed:
-    mov edi, dk_toast_buf
-    mov esi, dk_shot_failed
-    call wget_append
-    mov byte [edi], 0
-.said:
-    pop dword [fs_tmp_slot]
-    pop word [fs_current_dir]
-    mov dword [bkl_owner], -1
-    mov byte [dk_shot_ready], 0
-    mov byte [dk_fm_refresh], 1           ; (Files shows it)
-    call dk_toast
-    jmp .done
-.later:
-    popfd
 .done:
     popad
     ret
