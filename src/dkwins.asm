@@ -2720,8 +2720,14 @@ dk_launch:
     call dkf_rec_add                      ; (Files' Recent: src/dkfview.asm)
     call dk_open_command                  ; a text file, and Notepad's open:
     cmp edx, dk_verb_edit                 ; a tab in it (src/appext.asm)
-    jne .new
+    jne .not_notepad
     mov edx, dk_n_notepad
+    call aext_hand_over
+    jnc .done
+.not_notepad:
+    cmp edx, dkt_verb_hex                 ; (the Hex editor's open: in it)
+    jne .new
+    mov edx, dkt_n_hex
     call aext_hand_over
     jnc .done
 .new:
@@ -2781,6 +2787,8 @@ dk_launch:
     cmp edx, dk_verb_edit                 ; Notepad, the browser, Paint: the
     je .whole                             ; whole path
     cmp edx, dkt_verb_paint
+    je .whole
+    cmp edx, dkt_verb_hex
     je .whole
     cmp edx, dk_verb_web
     jne .named
@@ -3491,6 +3499,7 @@ DKC_UNZIP    equ 42                   ; Extract here
 DKC_PAINT    equ 44                   ; Edit in Paint (src/dktrash.asm)
 DKC_WALL     equ 45                   ; Set as wallpaper (src/dkwall.asm)
 DKC_LOCATE   equ 46                   ; Recent: Open its folder (src/dkfview.asm)
+DKC_HEX      equ 47                   ; Open in the Hex editor (src/dktrash.asm)
 DK_CTX_W    equ 160
 DK_CTX_ITEM equ 22
 
@@ -4249,6 +4258,8 @@ dk_gui_verb:
     cmp edx, dkt_verb_view                ; (a ZIP, looked into: src/dktrash.asm)
     je .yes
     cmp edx, dkt_verb_paint               ; (Edit in Paint)
+    je .yes
+    cmp edx, dkt_verb_hex                 ; (Open in the Hex editor)
     je .yes
     pop edx
     pop eax
@@ -5568,7 +5579,7 @@ dk_ctx_labels     dd dk_ctx_l_open, dk_ctx_l_rename, dk_ctx_l_copy, dk_ctx_l_del
                   dd dkx_l_newlnk, dkx_l_iopen, dkx_l_irename, dkx_l_idelete
                   dd dkx_l_iprops, dkt_l_restore, dkt_l_edit, dkt_l_zip
                   dd dkt_l_unzip, dkt_l_tempty, dkw_l_paint, dkw_l_set
-                  dd dkf_l_locate
+                  dd dkf_l_locate, dkt_l_hex
 dk_ctx_l_open     db "Open", 0
 dk_ctx_l_rename   db "Rename...", 0
 dk_ctx_l_copy     db "Copy to...", 0

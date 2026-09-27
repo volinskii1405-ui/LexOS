@@ -141,6 +141,10 @@ dkt_ctx_more:
     jne .not_locate
     jmp dkf_locate                        ; (src/dkfview.asm)
 .not_locate:
+    cmp eax, DKC_HEX
+    jne .not_hex
+    jmp dkt_hex
+.not_hex:
     ret
 
 ; Files' menu, on something: Edit in Notepad - if it's a file - and
@@ -185,6 +189,13 @@ dkt_ctx_edit_item:
     mov al, DKC_EDIT
     call dk_ctx_add
 .no_edit:
+    cmp byte [esi + 17], IC_FOLDER        ; any file: its bytes, in the Hex
+    je .no_hex                            ; editor
+    cmp byte [esi + 17], IC_UP
+    je .no_hex
+    mov al, DKC_HEX
+    call dk_ctx_add
+.no_hex:
     call dk_ext_dword                     ; (esi: its name)
     mov bl, DKC_UNZIP
     cmp eax, 'ZIP'
@@ -221,6 +232,22 @@ dkt_paint:
     shl esi, 5
     add esi, DESK_FILES
     mov dword [dkt_force_verb], dkt_verb_paint
+    mov edi, dk_fm_path
+    call dk_launch
+    mov dword [dkt_force_verb], 0
+.done:
+    popad
+    ret
+
+; The selected file, into the Hex editor (a program: no Terminal)
+dkt_hex:
+    pushad
+    mov esi, [dk_fm_sel]
+    cmp esi, -1
+    je .done
+    shl esi, 5
+    add esi, DESK_FILES
+    mov dword [dkt_force_verb], dkt_verb_hex
     mov edi, dk_fm_path
     call dk_launch
     mov dword [dkt_force_verb], 0
@@ -287,6 +314,9 @@ dkt_verb_zip     db "run zip.app -q ", 0
 dkt_verb_unzip   db "run zip.app -x -q ", 0
 dkt_verb_view    db "run zip.app -v ", 0
 dkt_verb_paint   db "run paint.app ", 0
+dkt_verb_hex     db "run hexedit.app ", 0
+dkt_n_hex        db "hexedit.app", 0
+dkt_l_hex        db "Hex editor", 0
 dkt_cmd          times 40 db 0
 dkt_l_zip        db "Compress to ZIP", 0
 dkt_l_unzip      db "Extract here", 0

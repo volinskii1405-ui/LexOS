@@ -424,6 +424,7 @@ TR = {
 'dkt_l_restore': ('Восстановить', 'Restaurar'),
 'dkt_m_restored': ('Восстановлено.', 'Restaurado.'),
 'dkt_l_edit': ('Изменить в Блокноте', 'Editar en el Bloc de notas'),
+'dkt_l_hex': ('Hex-редактор', 'Editor hex'),
 'dkt_l_zip': ('Сжать в ZIP', 'Comprimir en ZIP'),
 'dkt_l_unzip': ('Распаковать сюда', 'Extraer aquí'),
 'dkt_l_trash': ('Корзина', 'Papelera'),
