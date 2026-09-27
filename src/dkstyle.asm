@@ -205,6 +205,7 @@ dk_sys_button:
 
 ; A click at ecx, ebx in System's client area
 dk_system_click:
+    jmp dkc_click                         ; (the Control panel: src/dkcpanel.asm)
     pushad
     sub ecx, DK_SYS_BTN_X
     js .done
@@ -254,6 +255,11 @@ dk_system_click:
 ; choices, if there are any, then the theme
 dk_settings_load:
     pushad
+    mov byte [dk_cfg_buf], 0              ; (none read yet: as they start -
+    mov dword [dk_theme], 0               ;  another user's may be different)
+    mov dword [dk_bg_mode], 0
+    mov byte [snd_ui_on], 1
+    mov byte [cat_on], 1
     push word [fs_current_dir]
     mov word [fs_current_dir], FS_ROOT
     mov esi, dk_cfg_name                  ; (fs_find_by_name's si is 16-bit:

@@ -913,6 +913,8 @@ dk_shell_idle:
 ; System: a few live numbers
 ; ============================================================
 dk_draw_system:
+    call dkc_draw                         ; (the Control panel's other pages:
+    jnc dk_contents_done                  ;  src/dkcpanel.asm)
     mov eax, [dk_cx]
     add eax, 12
     mov [dk_line_x], eax
@@ -986,7 +988,7 @@ dk_draw_system:
     mov esi, dk_sys_hint
     mov edx, COL_MUTED
     call dk_sys_line
-    call dk_sys_extras                    ; (src/dkstyle.asm: themes, sounds)
+    call dkc_about_end                    ; (the rest: the Control panel's pages)
     jmp dk_contents_done
 
 ; esi (color edx) at the next line
@@ -2048,7 +2050,7 @@ dk_files_drag:
     jne .first
     mov edx, [timer_ms]
     sub edx, [dk_fm_last_ms]
-    cmp edx, 500
+    cmp edx, [dk_dbl_ms]                  ; (the Control panel's Mouse)
     ja .first
     mov dword [dk_fm_last_idx], -1
     call dk_files_open

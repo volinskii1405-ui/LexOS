@@ -575,7 +575,7 @@ dki_press:
     ; ecx: this one
     mov edx, [timer_ms]
     sub edx, [dki_click_ms]
-    cmp edx, 450
+    cmp edx, [dk_dbl_ms]                  ; (the Control panel's Mouse)
     ja .pick
     cmp ecx, [dki_sel]
     jne .pick
@@ -613,7 +613,7 @@ dki_press:
 .nothing:
     mov edx, [timer_ms]                   ; the background clicked twice:
     sub edx, [dki_bg_click_ms]            ; a Terminal (as the start menu's)
-    cmp edx, 450
+    cmp edx, [dk_dbl_ms]                  ; (the Control panel's Mouse)
     ja .first_bg
     mov dword [dki_bg_click_ms], 0
     mov eax, 1

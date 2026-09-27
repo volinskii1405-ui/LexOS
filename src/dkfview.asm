@@ -1357,6 +1357,7 @@ dkf_cfg_save:
     push ebx
     push esi
     call dkw_cfg_save                     ; (src/dkwall.asm: "wallpaper=")
+    call dkc_cfg_save                     ; (src/dkcpanel.asm: the mouse...)
     mov ebx, [dkf_rec_n]                  ; (oldest first: added back in
 .each:                                    ;  order when it's read)
     dec ebx
@@ -1383,7 +1384,10 @@ dkf_cfg_save:
 ; dk_settings_load, dk_cfg_buf read: our lines back
 dkf_cfg_load:
     pushad
+    mov byte [dkw_on], 0                  ; (another user's: none till read)
+    mov byte [dkw_loaded], 0
     call dkw_cfg_load
+    call dkc_cfg_load
     mov dword [dkf_rec_n], 0
     mov esi, dk_cfg_buf
 .line:

@@ -550,4 +550,8 @@ kext_start:
 %include "src/dkwall.asm"
 %include "src/dkmsel.asm"
 %include "src/dkundo.asm"
+%include "src/dklock.asm"
+%include "src/dkusers.asm"
+%include "src/dkcpanel.asm"
+%include "src/dksaver.asm"
 kext_end:

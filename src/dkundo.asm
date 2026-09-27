@@ -84,6 +84,8 @@ dku_key:
     jne .theirs
     cmp byte [dkn_open], 0
     jne .theirs
+    cmp byte [dkl_grab], 0
+    jne .theirs
     cmp byte [dk_fm_typing], 0
     jne .ours
     push eax
