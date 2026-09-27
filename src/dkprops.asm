@@ -961,7 +961,7 @@ dkp_kinds        dd 'TXT', dkp_k_text, 'CFG', dkp_k_text, 'HG', dkp_k_script
                  dd 'BAS', dkp_k_basic, 'TRG', dkp_k_script, 'C', dkp_k_c
                  dd 'H', dkp_k_c, 'ASM', dkp_k_asm, 'APP', dkp_k_app
                  dd 'COM', dkp_k_program, 'BIN', dkp_k_program, 'CH8', dkp_k_chip8
-                 dd 'BMP', dkp_k_bmp, 'WAV', dkp_k_sound, 'IMF', dkp_k_sound
+                 dd 'BMP', dkp_k_bmp, 'PNG', dkp_k_png, 'WAV', dkp_k_sound, 'IMF', dkp_k_sound
                  dd 'MOD', dkp_k_music, 'LNK', dkp_k_link, 'HTM', dkp_k_html
                  dd 'MD', dkp_k_md, 'ZIP', dkp_k_zip, 'DAT', dkp_k_data, 0, 0
 dkp_t_title      db "Properties", 0
@@ -990,6 +990,7 @@ dkp_k_asm        db "Assembly source", 0
 dkp_k_app        db "Application (.APP)", 0
 dkp_k_chip8      db "CHIP-8 game", 0
 dkp_k_bmp        db "Picture (BMP)", 0
+dkp_k_png        db "Picture (PNG)", 0
 dkp_k_sound      db "Sound", 0
 dkp_k_music      db "Music (MOD)", 0
 dkp_k_link       db "Shortcut", 0

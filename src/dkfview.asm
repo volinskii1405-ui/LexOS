@@ -1120,6 +1120,9 @@ dkf_thumb_draw:
     push eax
     call dk_ext_dword
     cmp eax, 'BMP'
+    je .picture
+    cmp eax, 'PNG'
+.picture:
     pop eax
     jne .no
     mov [dkf_tx], eax
@@ -1292,6 +1295,10 @@ dkf_thumb_work:
     mov edi, DESK_IMG_FILE
     mov ecx, DESK_IMG_FILE_MAX
     call fs_load_to                       ; -> ecx bytes
+    mov eax, 160                          ; (a PNG: a small BMP - src/dkpng.asm)
+    mov ebx, 160
+    call dkpng_convert
+    jc .made
     mov esi, DESK_IMG_FILE
     call dkb_open                         ; (src/dkwall.asm) -> dkb_*
     jc .made

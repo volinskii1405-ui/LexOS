@@ -425,6 +425,10 @@ dkw_work:
     mov ecx, DESK_IMG_FILE_MAX
     call fs_load_to                       ; -> ecx bytes
     mov dword [bkl_owner], -1
+    mov eax, DESK_IMG_MAX_W               ; (a PNG: a BMP now - src/dkpng.asm)
+    mov ebx, DESK_IMG_MAX_H
+    call dkpng_convert
+    jc .bad_unlocked
     mov esi, DESK_IMG_FILE
     call dkb_open
     jc .bad_unlocked

@@ -754,6 +754,10 @@ dk_pictures_next:
     mov edi, DESK_IMG_FILE
     mov ecx, DESK_IMG_FILE_MAX
     call fs_load_to                       ; -> ecx bytes
+    mov eax, DESK_IMG_MAX_W               ; (a PNG: a BMP now - src/dkpng.asm)
+    mov ebx, DESK_IMG_MAX_H
+    call dkpng_convert
+    jc .bad
     call dk_decode_bmp
     jc .bad
     mov byte [dk_pic_state], 2
@@ -5730,6 +5734,7 @@ dk_sin60 dw 0, 105, 208, 309, 407, 500, 588, 669, 743, 809, 866, 914, 951, 978, 
 
 ; extensions (uppercase, zero padded) -> icons, and the verbs that open them
 dk_ext_kinds      dd 'APP', IC_APP, 'COM', IC_APP, 'BIN', IC_APP, 'BMP', IC_IMAGE
+                  dd 'PNG', IC_IMAGE
                   dd 'WAV', IC_SOUND, 'IMF', IC_SOUND, 'MOD', IC_SOUND, 'HG', IC_SCRIPT
                   dd 'BAS', IC_BAS, 'TXT', IC_TEXT, 'C', IC_CSRC, 'ASM', IC_TEXT
                   dd 'CFG', IC_CFG, 'TRG', IC_TRG, 'CH8', IC_CH8, 'H', IC_CSRC

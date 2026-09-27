@@ -463,6 +463,7 @@ TR = {
 'dkp_k_app': ('Приложение (.APP)', 'Aplicación (.APP)'),
 'dkp_k_chip8': ('Игра CHIP-8', 'Juego CHIP-8'),
 'dkp_k_bmp': ('Картинка (BMP)', 'Imagen (BMP)'),
+'dkp_k_png': ('Картинка (PNG)', 'Imagen (PNG)'),
 'dkp_k_sound': ('Звук', 'Sonido'),
 'dkp_k_music': ('Музыка (MOD)', 'Música (MOD)'),
 'dkp_k_link': ('Ярлык', 'Acceso directo'),
