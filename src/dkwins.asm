@@ -1534,6 +1534,17 @@ IC_TRASH_FULL equ 9
 IC_WEB    equ 10
 IC_NOTEPAD equ 11
 IC_ZIP    equ 12
+IC_CSRC   equ 13
+IC_BAS    equ 14
+IC_TRG    equ 15
+IC_CH8    equ 16
+IC_CFG    equ 17
+IC_GAME   equ 18
+IC_TERM   equ 19
+IC_CAT    equ 20
+IC_GEAR   equ 21
+IC_STAR   equ 22
+IC_MUSIC  equ 23
 
 dk_draw_files:
     ; the toolbar: [Up], the path, [<] [>]
@@ -1614,7 +1625,7 @@ dk_draw_files:
     ; the icon, centered
     add eax, (FM_CELL_W - 32) / 2
     add ebx, 6
-    movzx ecx, byte [esi + 17]
+    call dka_entry_kind                   ; -> ecx (its own, or chosen)
     mov dword [dk_icon_fill], dk_fill
     call dk_icon
     ; the name below it (highlighted if selected)
@@ -1725,7 +1736,12 @@ dk_ext_dword:
     jz .have
     cmp ecx, 3
     jae .long
-    and al, 0xDF
+    cmp al, 'a'                           ; (letters in capitals - not digits:
+    jb .upper                             ;  .CH8)
+    cmp al, 'z'
+    ja .upper
+    sub al, 32
+.upper:
     mov [dk_ext_tmp + ecx], al
     inc ecx
     inc edx
@@ -1785,8 +1801,8 @@ dk_name_kind:
 ; buffer's dk_fill, or the screen's dk_screen_fill)
 dk_icon:
     pushad
-    cmp ecx, IC_TRASH                     ; (a picture: src/dkart.asm)
-    jb .drawn
+    cmp ecx, DKA_COUNT                    ; (a picture: src/dkart.asm)
+    jae .drawn
     call dka_icon
     jmp .done
 .drawn:
@@ -2206,9 +2222,10 @@ dk_files_entry_at:
 ; The dragged entry's icon under the pointer, straight onto the screen
 dk_files_draw_drag:
     pushad
-    mov ecx, [dk_fm_press]
-    shl ecx, 5
-    movzx ecx, byte [DESK_FILES + ecx + 17]
+    mov esi, [dk_fm_press]
+    shl esi, 5
+    add esi, DESK_FILES
+    call dka_entry_kind
     mov eax, [dk_mx]
     sub eax, 16
     mov ebx, [dk_my]
@@ -4564,6 +4581,7 @@ dk_files_refresh:
     je .pass
     mov dword [edi], '..'                 ; ".."
     mov byte [edi + 17], IC_UP
+    mov byte [edi + 18], 0
     add edi, FM_ENTRY
     inc edx
 .pass:
@@ -4614,6 +4632,7 @@ dk_files_refresh:
     pop esi
     mov [edi + 17], al
 .kind_set:
+    call dka_entry_look                   ; (an icon chosen for it: src/dkart.asm)
     add edi, FM_ENTRY
     inc edx
 .next:
@@ -5830,8 +5849,8 @@ dk_sin60 dw 0, 105, 208, 309, 407, 500, 588, 669, 743, 809, 866, 914, 951, 978, 
 ; extensions (uppercase, zero padded) -> icons, and the verbs that open them
 dk_ext_kinds      dd 'APP', IC_APP, 'COM', IC_APP, 'BIN', IC_APP, 'BMP', IC_IMAGE
                   dd 'WAV', IC_SOUND, 'IMF', IC_SOUND, 'MOD', IC_SOUND, 'HG', IC_SCRIPT
-                  dd 'BAS', IC_SCRIPT, 'TXT', IC_TEXT, 'C', IC_TEXT, 'ASM', IC_TEXT
-                  dd 'CFG', IC_TEXT, 'TRG', IC_SCRIPT, 'CH8', IC_APP, 'H', IC_TEXT
+                  dd 'BAS', IC_BAS, 'TXT', IC_TEXT, 'C', IC_CSRC, 'ASM', IC_TEXT
+                  dd 'CFG', IC_CFG, 'TRG', IC_TRG, 'CH8', IC_CH8, 'H', IC_CSRC
                   dd 'MD', IC_TEXT, 'HTM', IC_TEXT, 'LNK', IC_TEXT, 'ZIP', IC_ZIP
                   dd 0, 0
 dk_ext_verbs      dd 'APP', dk_verb_run, 'COM', dk_verb_run, 'BIN', dk_verb_run

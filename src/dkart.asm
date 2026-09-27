@@ -4,10 +4,13 @@
 ; [dk_icon_fill] (the back buffer's, or the screen's), as dk_icon draws.
 ; Exports: dka_icon, dka_name_look, dk_kind_app
 
-; ecx = an icon (IC_TRASH on), eax, ebx = where (32x32)
+DKA_LOOK         equ 156                  ; a file's own icon, in its slot:
+DKA_LOOK_MARK    equ 157                  ; the kind + 1, and DKA_MARK
+DKA_MARK         equ 0xC5
+
+; ecx = an icon (IC_*), eax, ebx = where (32x32)
 dka_icon:
     pushad
-    sub ecx, IC_TRASH
     cmp ecx, DKA_COUNT
     jae .done
     mov esi, [dka_table + ecx*4]
@@ -61,13 +64,73 @@ dka_name_look:
     clc
     ret
 
-; al = a kind: ZF=1 if it's a program's (IC_APP, or one with a picture)
+; al = a kind: ZF=1 if it's a program's (IC_APP, one with a picture of
+; its own, a CHIP-8 game)
 dk_kind_app:
     cmp al, IC_APP
     je .done
     cmp al, IC_WEB
     je .done
+    cmp al, IC_CH8
+    je .done
     cmp al, IC_NOTEPAD
+.done:
+    ret
+
+; SCRATCH_ADDR = a slot -> al = the icon chosen for it (a kind + 1), or 0
+dka_slot_look:
+    xor al, al
+    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_PROGRAM
+    je .done
+    cmp byte [SCRATCH_ADDR + DKA_LOOK_MARK], DKA_MARK
+    jne .done
+    mov al, [SCRATCH_ADDR + DKA_LOOK]
+    cmp al, DKA_COUNT
+    jbe .done
+    xor al, al
+.done:
+    ret
+
+; Files' listing: edi = an entry, SCRATCH_ADDR its slot -> its byte 18
+dka_entry_look:
+    push eax
+    call dka_slot_look
+    mov [edi + 18], al
+    pop eax
+    ret
+
+; esi = a Files entry -> ecx = the icon to draw: the one chosen, or its kind's
+dka_entry_kind:
+    movzx ecx, byte [esi + 18]
+    dec ecx
+    jns .done
+    movzx ecx, byte [esi + 17]
+.done:
+    ret
+
+; dki_scan, a file listed (ebp: which, SCRATCH_ADDR its slot): its chosen
+; icon kept at the end of its target (so a change is a change)
+dka_scan_look:
+    push eax
+    push edi
+    call dka_slot_look
+    mov edi, ebp
+    shl edi, 6
+    mov [dki_new_target + edi + 63], al
+    pop edi
+    pop eax
+    ret
+
+; ebx = a desktop icon -> ecx = the icon to draw
+dka_icon_look:
+    push eax
+    mov eax, ebx
+    shl eax, 6
+    movzx ecx, byte [dki_target + eax + 63]
+    pop eax
+    dec ecx
+    jns .done
+    movzx ecx, byte [dki_kind + ebx]
 .done:
     ret
 
@@ -180,8 +243,6 @@ dka_line:
 
 dka_text         times 32 db 0
 dka_keep         db 0
-DKA_COUNT        equ 5
-dka_table        dd dkart_trash, dkart_trash_full, dkart_web, dkart_notepad, dkart_zip
 dka_x            dd 0
 dka_y            dd 0
 dka_row          dd 0

@@ -1,6 +1,1717 @@
 ; dkart.inc - made by tools/mkicons.py: the picture icons, 32x32,
 ; each row: how many runs, then (x, length, 0xRRGGBB) for each
 
+DKA_COUNT equ 24
+dka_table:
+    dd dkart_folder
+    dd dkart_up
+    dd dkart_file
+    dd dkart_text
+    dd dkart_app
+    dd dkart_image
+    dd dkart_sound
+    dd dkart_script
+    dd dkart_trash
+    dd dkart_trash_full
+    dd dkart_web
+    dd dkart_notepad
+    dd dkart_zip
+    dd dkart_csrc
+    dd dkart_bas
+    dd dkart_trg
+    dd dkart_ch8
+    dd dkart_cfg
+    dd dkart_game
+    dd dkart_term
+    dd dkart_cat
+    dd dkart_gear
+    dd dkart_star
+    dd dkart_music
+
+dkart_folder:
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 1
+    db 2, 12
+    dd 0xD9A21B
+    db 1
+    db 2, 12
+    dd 0xD9A21B
+    db 1
+    db 2, 28
+    dd 0xD9A21B
+    db 1
+    db 2, 28
+    dd 0xD9A21B
+    db 1
+    db 2, 28
+    dd 0xD9A21B
+    db 1
+    db 2, 28
+    dd 0xD9A21B
+    db 1
+    db 2, 28
+    dd 0xFFF0B0
+    db 1
+    db 2, 28
+    dd 0xFEE076
+    db 1
+    db 2, 28
+    dd 0xFDDE72
+    db 1
+    db 2, 28
+    dd 0xFDDD6E
+    db 1
+    db 2, 28
+    dd 0xFCDB6A
+    db 1
+    db 2, 28
+    dd 0xFCDA66
+    db 1
+    db 2, 28
+    dd 0xFBD862
+    db 1
+    db 2, 28
+    dd 0xFBD65E
+    db 1
+    db 2, 28
+    dd 0xFAD55A
+    db 1
+    db 2, 28
+    dd 0xFAD356
+    db 1
+    db 2, 28
+    dd 0xF9D252
+    db 1
+    db 2, 28
+    dd 0xF9D04E
+    db 1
+    db 2, 28
+    dd 0xF8CE4A
+    db 1
+    db 2, 28
+    dd 0xF8CD46
+    db 1
+    db 2, 28
+    dd 0xF7CB42
+    db 1
+    db 2, 28
+    dd 0xA8740A
+    db 0
+    db 0
+    db 0
+    db 0
+dkart_up:
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 1
+    db 2, 12
+    dd 0xD9A21B
+    db 1
+    db 2, 12
+    dd 0xD9A21B
+    db 1
+    db 2, 28
+    dd 0xD9A21B
+    db 1
+    db 2, 28
+    dd 0xD9A21B
+    db 1
+    db 2, 28
+    dd 0xD9A21B
+    db 1
+    db 2, 28
+    dd 0xD9A21B
+    db 1
+    db 2, 28
+    dd 0xFFF0B0
+    db 1
+    db 2, 28
+    dd 0xFEE076
+    db 1
+    db 2, 28
+    dd 0xFDDE72
+    db 3
+    db 2, 13
+    dd 0xFDDD6E
+    db 15, 2
+    dd 0x8A5A00
+    db 17, 13
+    dd 0xFDDD6E
+    db 3
+    db 2, 12
+    dd 0xFCDB6A
+    db 14, 4
+    dd 0x8A5A00
+    db 18, 12
+    dd 0xFCDB6A
+    db 3
+    db 2, 11
+    dd 0xFCDA66
+    db 13, 6
+    dd 0x8A5A00
+    db 19, 11
+    dd 0xFCDA66
+    db 3
+    db 2, 10
+    dd 0xFBD862
+    db 12, 8
+    dd 0x8A5A00
+    db 20, 10
+    dd 0xFBD862
+    db 3
+    db 2, 9
+    dd 0xFBD65E
+    db 11, 10
+    dd 0x8A5A00
+    db 21, 9
+    dd 0xFBD65E
+    db 3
+    db 2, 8
+    dd 0xFAD55A
+    db 10, 12
+    dd 0x8A5A00
+    db 22, 8
+    dd 0xFAD55A
+    db 3
+    db 2, 12
+    dd 0xFAD356
+    db 14, 4
+    dd 0x8A5A00
+    db 18, 12
+    dd 0xFAD356
+    db 3
+    db 2, 12
+    dd 0xF9D252
+    db 14, 4
+    dd 0x8A5A00
+    db 18, 12
+    dd 0xF9D252
+    db 3
+    db 2, 12
+    dd 0xF9D04E
+    db 14, 4
+    dd 0x8A5A00
+    db 18, 12
+    dd 0xF9D04E
+    db 3
+    db 2, 12
+    dd 0xF8CE4A
+    db 14, 4
+    dd 0x8A5A00
+    db 18, 12
+    dd 0xF8CE4A
+    db 3
+    db 2, 12
+    dd 0xF8CD46
+    db 14, 4
+    dd 0x8A5A00
+    db 18, 12
+    dd 0xF8CD46
+    db 1
+    db 2, 28
+    dd 0xF7CB42
+    db 1
+    db 2, 28
+    dd 0xA8740A
+    db 0
+    db 0
+    db 0
+    db 0
+dkart_file:
+    db 0
+    db 1
+    db 5, 15
+    dd 0x6B7280
+    db 4
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 1
+    dd 0x6B7280
+    db 20, 1
+    dd 0xD5DAE1
+    db 4
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 1
+    dd 0x6B7280
+    db 20, 2
+    dd 0xD5DAE1
+    db 4
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 1
+    dd 0x6B7280
+    db 20, 3
+    dd 0xD5DAE1
+    db 4
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 1
+    dd 0x6B7280
+    db 20, 4
+    dd 0xD5DAE1
+    db 4
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 1
+    dd 0x6B7280
+    db 20, 5
+    dd 0xD5DAE1
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 8
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 1
+    db 5, 22
+    dd 0x6B7280
+    db 0
+dkart_text:
+    db 0
+    db 1
+    db 5, 15
+    dd 0x6B7280
+    db 4
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 1
+    dd 0x6B7280
+    db 20, 1
+    dd 0xD5DAE1
+    db 4
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 1
+    dd 0x6B7280
+    db 20, 2
+    dd 0xD5DAE1
+    db 4
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 1
+    dd 0x6B7280
+    db 20, 3
+    dd 0xD5DAE1
+    db 4
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 1
+    dd 0x6B7280
+    db 20, 4
+    dd 0xD5DAE1
+    db 4
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 1
+    dd 0x6B7280
+    db 20, 5
+    dd 0xD5DAE1
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 8
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 3
+    dd 0xFFFFFF
+    db 9, 14
+    dd 0x8A93A3
+    db 23, 3
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 3
+    dd 0xFFFFFF
+    db 9, 14
+    dd 0x8A93A3
+    db 23, 3
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 3
+    dd 0xFFFFFF
+    db 9, 14
+    dd 0x8A93A3
+    db 23, 3
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 3
+    dd 0xFFFFFF
+    db 9, 14
+    dd 0x8A93A3
+    db 23, 3
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 3
+    dd 0xFFFFFF
+    db 9, 14
+    dd 0x8A93A3
+    db 23, 3
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 3
+    dd 0xFFFFFF
+    db 9, 14
+    dd 0x8A93A3
+    db 23, 3
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 3
+    dd 0xFFFFFF
+    db 9, 14
+    dd 0x8A93A3
+    db 23, 3
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 3
+    dd 0xFFFFFF
+    db 9, 14
+    dd 0x8A93A3
+    db 23, 3
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 3
+    dd 0xFFFFFF
+    db 9, 9
+    dd 0x8A93A3
+    db 18, 8
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 3
+    dd 0xFFFFFF
+    db 9, 9
+    dd 0x8A93A3
+    db 18, 8
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 1
+    db 5, 22
+    dd 0x6B7280
+    db 0
+dkart_app:
+    db 0
+    db 0
+    db 0
+    db 0
+    db 1
+    db 1, 30
+    dd 0x2B3A55
+    db 3
+    db 1, 1
+    dd 0x2B3A55
+    db 2, 28
+    dd 0x3B82F6
+    db 30, 1
+    dd 0x2B3A55
+    db 9
+    db 1, 1
+    dd 0x2B3A55
+    db 2, 2
+    dd 0x3B82F6
+    db 4, 2
+    dd 0xEF4444
+    db 6, 2
+    dd 0x3B82F6
+    db 8, 2
+    dd 0xF59E0B
+    db 10, 2
+    dd 0x3B82F6
+    db 12, 2
+    dd 0x22C55E
+    db 14, 16
+    dd 0x3B82F6
+    db 30, 1
+    dd 0x2B3A55
+    db 9
+    db 1, 1
+    dd 0x2B3A55
+    db 2, 2
+    dd 0x3B82F6
+    db 4, 2
+    dd 0xEF4444
+    db 6, 2
+    dd 0x3B82F6
+    db 8, 2
+    dd 0xF59E0B
+    db 10, 2
+    dd 0x3B82F6
+    db 12, 2
+    dd 0x22C55E
+    db 14, 16
+    dd 0x3B82F6
+    db 30, 1
+    dd 0x2B3A55
+    db 9
+    db 1, 1
+    dd 0x2B3A55
+    db 2, 2
+    dd 0x3B82F6
+    db 4, 2
+    dd 0xEF4444
+    db 6, 2
+    dd 0x3B82F6
+    db 8, 2
+    dd 0xF59E0B
+    db 10, 2
+    dd 0x3B82F6
+    db 12, 2
+    dd 0x22C55E
+    db 14, 16
+    dd 0x3B82F6
+    db 30, 1
+    dd 0x2B3A55
+    db 3
+    db 1, 1
+    dd 0x2B3A55
+    db 2, 28
+    dd 0x3B82F6
+    db 30, 1
+    dd 0x2B3A55
+    db 3
+    db 1, 1
+    dd 0x2B3A55
+    db 2, 28
+    dd 0xEEF2F8
+    db 30, 1
+    dd 0x2B3A55
+    db 3
+    db 1, 1
+    dd 0x2B3A55
+    db 2, 28
+    dd 0xEEF2F8
+    db 30, 1
+    dd 0x2B3A55
+    db 3
+    db 1, 1
+    dd 0x2B3A55
+    db 2, 28
+    dd 0xEEF2F8
+    db 30, 1
+    dd 0x2B3A55
+    db 7
+    db 1, 1
+    dd 0x2B3A55
+    db 2, 3
+    dd 0xEEF2F8
+    db 5, 9
+    dd 0x93C5FD
+    db 14, 2
+    dd 0xEEF2F8
+    db 16, 11
+    dd 0x94A3B8
+    db 27, 3
+    dd 0xEEF2F8
+    db 30, 1
+    dd 0x2B3A55
+    db 7
+    db 1, 1
+    dd 0x2B3A55
+    db 2, 3
+    dd 0xEEF2F8
+    db 5, 9
+    dd 0x93C5FD
+    db 14, 2
+    dd 0xEEF2F8
+    db 16, 11
+    dd 0x94A3B8
+    db 27, 3
+    dd 0xEEF2F8
+    db 30, 1
+    dd 0x2B3A55
+    db 5
+    db 1, 1
+    dd 0x2B3A55
+    db 2, 3
+    dd 0xEEF2F8
+    db 5, 9
+    dd 0x93C5FD
+    db 14, 16
+    dd 0xEEF2F8
+    db 30, 1
+    dd 0x2B3A55
+    db 5
+    db 1, 1
+    dd 0x2B3A55
+    db 2, 3
+    dd 0xEEF2F8
+    db 5, 9
+    dd 0x93C5FD
+    db 14, 16
+    dd 0xEEF2F8
+    db 30, 1
+    dd 0x2B3A55
+    db 7
+    db 1, 1
+    dd 0x2B3A55
+    db 2, 3
+    dd 0xEEF2F8
+    db 5, 9
+    dd 0x93C5FD
+    db 14, 2
+    dd 0xEEF2F8
+    db 16, 11
+    dd 0x94A3B8
+    db 27, 3
+    dd 0xEEF2F8
+    db 30, 1
+    dd 0x2B3A55
+    db 7
+    db 1, 1
+    dd 0x2B3A55
+    db 2, 3
+    dd 0xEEF2F8
+    db 5, 9
+    dd 0x93C5FD
+    db 14, 2
+    dd 0xEEF2F8
+    db 16, 11
+    dd 0x94A3B8
+    db 27, 3
+    dd 0xEEF2F8
+    db 30, 1
+    dd 0x2B3A55
+    db 5
+    db 1, 1
+    dd 0x2B3A55
+    db 2, 3
+    dd 0xEEF2F8
+    db 5, 9
+    dd 0x93C5FD
+    db 14, 16
+    dd 0xEEF2F8
+    db 30, 1
+    dd 0x2B3A55
+    db 5
+    db 1, 1
+    dd 0x2B3A55
+    db 2, 3
+    dd 0xEEF2F8
+    db 5, 9
+    dd 0x93C5FD
+    db 14, 16
+    dd 0xEEF2F8
+    db 30, 1
+    dd 0x2B3A55
+    db 7
+    db 1, 1
+    dd 0x2B3A55
+    db 2, 3
+    dd 0xEEF2F8
+    db 5, 9
+    dd 0x93C5FD
+    db 14, 2
+    dd 0xEEF2F8
+    db 16, 11
+    dd 0x94A3B8
+    db 27, 3
+    dd 0xEEF2F8
+    db 30, 1
+    dd 0x2B3A55
+    db 7
+    db 1, 1
+    dd 0x2B3A55
+    db 2, 3
+    dd 0xEEF2F8
+    db 5, 9
+    dd 0x93C5FD
+    db 14, 2
+    dd 0xEEF2F8
+    db 16, 11
+    dd 0x94A3B8
+    db 27, 3
+    dd 0xEEF2F8
+    db 30, 1
+    dd 0x2B3A55
+    db 5
+    db 1, 1
+    dd 0x2B3A55
+    db 2, 3
+    dd 0xEEF2F8
+    db 5, 9
+    dd 0x93C5FD
+    db 14, 16
+    dd 0xEEF2F8
+    db 30, 1
+    dd 0x2B3A55
+    db 5
+    db 1, 1
+    dd 0x2B3A55
+    db 2, 3
+    dd 0xEEF2F8
+    db 5, 9
+    dd 0x93C5FD
+    db 14, 16
+    dd 0xEEF2F8
+    db 30, 1
+    dd 0x2B3A55
+    db 3
+    db 1, 1
+    dd 0x2B3A55
+    db 2, 28
+    dd 0xEEF2F8
+    db 30, 1
+    dd 0x2B3A55
+    db 3
+    db 1, 1
+    dd 0x2B3A55
+    db 2, 28
+    dd 0xEEF2F8
+    db 30, 1
+    dd 0x2B3A55
+    db 3
+    db 1, 1
+    dd 0x2B3A55
+    db 2, 28
+    dd 0xEEF2F8
+    db 30, 1
+    dd 0x2B3A55
+    db 1
+    db 1, 30
+    dd 0x2B3A55
+    db 0
+    db 0
+    db 0
+dkart_image:
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 1
+    db 2, 28
+    dd 0x5B6475
+    db 3
+    db 2, 1
+    dd 0x5B6475
+    db 3, 26
+    dd 0x7CC4FA
+    db 29, 1
+    dd 0x5B6475
+    db 3
+    db 2, 1
+    dd 0x5B6475
+    db 3, 26
+    dd 0x80C6FA
+    db 29, 1
+    dd 0x5B6475
+    db 5
+    db 2, 1
+    dd 0x5B6475
+    db 3, 19
+    dd 0x85C8FA
+    db 22, 3
+    dd 0xFACC15
+    db 25, 4
+    dd 0x85C8FA
+    db 29, 1
+    dd 0x5B6475
+    db 5
+    db 2, 1
+    dd 0x5B6475
+    db 3, 18
+    dd 0x89CAFA
+    db 21, 5
+    dd 0xFACC15
+    db 26, 3
+    dd 0x89CAFA
+    db 29, 1
+    dd 0x5B6475
+    db 5
+    db 2, 1
+    dd 0x5B6475
+    db 3, 18
+    dd 0x8ECCFB
+    db 21, 5
+    dd 0xFACC15
+    db 26, 3
+    dd 0x8ECCFB
+    db 29, 1
+    dd 0x5B6475
+    db 5
+    db 2, 1
+    dd 0x5B6475
+    db 3, 18
+    dd 0x92CEFB
+    db 21, 5
+    dd 0xFACC15
+    db 26, 3
+    dd 0x92CEFB
+    db 29, 1
+    dd 0x5B6475
+    db 5
+    db 2, 1
+    dd 0x5B6475
+    db 3, 19
+    dd 0x97D0FB
+    db 22, 3
+    dd 0xFACC15
+    db 25, 4
+    dd 0x97D0FB
+    db 29, 1
+    dd 0x5B6475
+    db 3
+    db 2, 1
+    dd 0x5B6475
+    db 3, 26
+    dd 0x9BD2FB
+    db 29, 1
+    dd 0x5B6475
+    db 3
+    db 2, 1
+    dd 0x5B6475
+    db 3, 26
+    dd 0xA0D4FC
+    db 29, 1
+    dd 0x5B6475
+    db 4
+    db 2, 1
+    dd 0x5B6475
+    db 3, 20
+    dd 0xA4D6FC
+    db 23, 6
+    dd 0x4CAF50
+    db 29, 1
+    dd 0x5B6475
+    db 4
+    db 2, 1
+    dd 0x5B6475
+    db 3, 18
+    dd 0xA9D9FC
+    db 21, 8
+    dd 0x4CAF50
+    db 29, 1
+    dd 0x5B6475
+    db 4
+    db 2, 1
+    dd 0x5B6475
+    db 3, 17
+    dd 0xADDBFC
+    db 20, 9
+    dd 0x4CAF50
+    db 29, 1
+    dd 0x5B6475
+    db 5
+    db 2, 1
+    dd 0x5B6475
+    db 3, 1
+    dd 0x4CAF50
+    db 4, 13
+    dd 0xB2DDFD
+    db 17, 12
+    dd 0x4CAF50
+    db 29, 1
+    dd 0x5B6475
+    db 7
+    db 2, 1
+    dd 0x5B6475
+    db 3, 2
+    dd 0x4CAF50
+    db 5, 2
+    dd 0xB6DFFD
+    db 7, 6
+    dd 0x2E7D32
+    db 13, 3
+    dd 0xB6DFFD
+    db 16, 13
+    dd 0x4CAF50
+    db 29, 1
+    dd 0x5B6475
+    db 5
+    db 2, 1
+    dd 0x5B6475
+    db 3, 2
+    dd 0x4CAF50
+    db 5, 10
+    dd 0x2E7D32
+    db 15, 14
+    dd 0x4CAF50
+    db 29, 1
+    dd 0x5B6475
+    db 5
+    db 2, 1
+    dd 0x5B6475
+    db 3, 15
+    dd 0x2E7D32
+    db 18, 9
+    dd 0x4CAF50
+    db 27, 2
+    dd 0x2E7D32
+    db 29, 1
+    dd 0x5B6475
+    db 5
+    db 2, 1
+    dd 0x5B6475
+    db 3, 16
+    dd 0x2E7D32
+    db 19, 7
+    dd 0x4CAF50
+    db 26, 3
+    dd 0x2E7D32
+    db 29, 1
+    dd 0x5B6475
+    db 5
+    db 2, 1
+    dd 0x5B6475
+    db 3, 19
+    dd 0x2E7D32
+    db 22, 1
+    dd 0x4CAF50
+    db 23, 6
+    dd 0x2E7D32
+    db 29, 1
+    dd 0x5B6475
+    db 3
+    db 2, 1
+    dd 0x5B6475
+    db 3, 26
+    dd 0x2E7D32
+    db 29, 1
+    dd 0x5B6475
+    db 3
+    db 2, 1
+    dd 0x5B6475
+    db 3, 26
+    dd 0x2E7D32
+    db 29, 1
+    dd 0x5B6475
+    db 3
+    db 2, 1
+    dd 0x5B6475
+    db 3, 26
+    dd 0x2E7D32
+    db 29, 1
+    dd 0x5B6475
+    db 1
+    db 2, 28
+    dd 0x5B6475
+    db 0
+    db 0
+    db 0
+    db 0
+dkart_sound:
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 1
+    db 16, 1
+    dd 0x6D28D9
+    db 1
+    db 15, 2
+    dd 0x6D28D9
+    db 1
+    db 14, 3
+    dd 0x6D28D9
+    db 1
+    db 13, 4
+    dd 0x6D28D9
+    db 2
+    db 12, 5
+    dd 0x6D28D9
+    db 25, 3
+    dd 0xA78BFA
+    db 2
+    db 11, 6
+    dd 0x6D28D9
+    db 26, 3
+    dd 0xA78BFA
+    db 3
+    db 4, 13
+    dd 0x6D28D9
+    db 23, 2
+    dd 0x8B5CF6
+    db 27, 2
+    dd 0xA78BFA
+    db 3
+    db 4, 13
+    dd 0x6D28D9
+    db 23, 2
+    dd 0x8B5CF6
+    db 27, 3
+    dd 0xA78BFA
+    db 3
+    db 4, 13
+    dd 0x6D28D9
+    db 23, 3
+    dd 0x8B5CF6
+    db 28, 2
+    dd 0xA78BFA
+    db 3
+    db 4, 13
+    dd 0x6D28D9
+    db 24, 2
+    dd 0x8B5CF6
+    db 28, 2
+    dd 0xA78BFA
+    db 3
+    db 4, 13
+    dd 0x6D28D9
+    db 24, 2
+    dd 0x8B5CF6
+    db 28, 2
+    dd 0xA78BFA
+    db 3
+    db 4, 13
+    dd 0x6D28D9
+    db 24, 2
+    dd 0x8B5CF6
+    db 28, 2
+    dd 0xA78BFA
+    db 3
+    db 4, 13
+    dd 0x6D28D9
+    db 23, 3
+    dd 0x8B5CF6
+    db 28, 2
+    dd 0xA78BFA
+    db 3
+    db 4, 13
+    dd 0x6D28D9
+    db 23, 2
+    dd 0x8B5CF6
+    db 27, 3
+    dd 0xA78BFA
+    db 3
+    db 4, 13
+    dd 0x6D28D9
+    db 23, 2
+    dd 0x8B5CF6
+    db 27, 2
+    dd 0xA78BFA
+    db 2
+    db 11, 6
+    dd 0x6D28D9
+    db 26, 3
+    dd 0xA78BFA
+    db 2
+    db 12, 5
+    dd 0x6D28D9
+    db 25, 3
+    dd 0xA78BFA
+    db 1
+    db 13, 4
+    dd 0x6D28D9
+    db 1
+    db 14, 3
+    dd 0x6D28D9
+    db 1
+    db 15, 2
+    dd 0x6D28D9
+    db 1
+    db 16, 1
+    dd 0x6D28D9
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+dkart_script:
+    db 0
+    db 1
+    db 5, 15
+    dd 0x0F1320
+    db 4
+    db 5, 1
+    dd 0x0F1320
+    db 6, 13
+    dd 0x1E2433
+    db 19, 1
+    dd 0x0F1320
+    db 20, 1
+    dd 0xD5DAE1
+    db 4
+    db 5, 1
+    dd 0x0F1320
+    db 6, 13
+    dd 0x1E2433
+    db 19, 1
+    dd 0x0F1320
+    db 20, 2
+    dd 0xD5DAE1
+    db 4
+    db 5, 1
+    dd 0x0F1320
+    db 6, 13
+    dd 0x1E2433
+    db 19, 1
+    dd 0x0F1320
+    db 20, 3
+    dd 0xD5DAE1
+    db 4
+    db 5, 1
+    dd 0x0F1320
+    db 6, 13
+    dd 0x1E2433
+    db 19, 1
+    dd 0x0F1320
+    db 20, 4
+    dd 0xD5DAE1
+    db 4
+    db 5, 1
+    dd 0x0F1320
+    db 6, 13
+    dd 0x1E2433
+    db 19, 1
+    dd 0x0F1320
+    db 20, 5
+    dd 0xD5DAE1
+    db 3
+    db 5, 1
+    dd 0x0F1320
+    db 6, 13
+    dd 0x1E2433
+    db 19, 8
+    dd 0x0F1320
+    db 3
+    db 5, 1
+    dd 0x0F1320
+    db 6, 20
+    dd 0x1E2433
+    db 26, 1
+    dd 0x0F1320
+    db 3
+    db 5, 1
+    dd 0x0F1320
+    db 6, 20
+    dd 0x1E2433
+    db 26, 1
+    dd 0x0F1320
+    db 5
+    db 5, 1
+    dd 0x0F1320
+    db 6, 3
+    dd 0x1E2433
+    db 9, 2
+    dd 0x4ADE80
+    db 11, 15
+    dd 0x1E2433
+    db 26, 1
+    dd 0x0F1320
+    db 5
+    db 5, 1
+    dd 0x0F1320
+    db 6, 4
+    dd 0x1E2433
+    db 10, 2
+    dd 0x4ADE80
+    db 12, 14
+    dd 0x1E2433
+    db 26, 1
+    dd 0x0F1320
+    db 5
+    db 5, 1
+    dd 0x0F1320
+    db 6, 5
+    dd 0x1E2433
+    db 11, 2
+    dd 0x4ADE80
+    db 13, 13
+    dd 0x1E2433
+    db 26, 1
+    dd 0x0F1320
+    db 5
+    db 5, 1
+    dd 0x0F1320
+    db 6, 4
+    dd 0x1E2433
+    db 10, 2
+    dd 0x4ADE80
+    db 12, 14
+    dd 0x1E2433
+    db 26, 1
+    dd 0x0F1320
+    db 7
+    db 5, 1
+    dd 0x0F1320
+    db 6, 3
+    dd 0x1E2433
+    db 9, 2
+    dd 0x4ADE80
+    db 11, 4
+    dd 0x1E2433
+    db 15, 6
+    dd 0x4ADE80
+    db 21, 5
+    dd 0x1E2433
+    db 26, 1
+    dd 0x0F1320
+    db 5
+    db 5, 1
+    dd 0x0F1320
+    db 6, 9
+    dd 0x1E2433
+    db 15, 6
+    dd 0x4ADE80
+    db 21, 5
+    dd 0x1E2433
+    db 26, 1
+    dd 0x0F1320
+    db 3
+    db 5, 1
+    dd 0x0F1320
+    db 6, 20
+    dd 0x1E2433
+    db 26, 1
+    dd 0x0F1320
+    db 3
+    db 5, 1
+    dd 0x0F1320
+    db 6, 20
+    dd 0x1E2433
+    db 26, 1
+    dd 0x0F1320
+    db 3
+    db 5, 1
+    dd 0x0F1320
+    db 6, 20
+    dd 0x1E2433
+    db 26, 1
+    dd 0x0F1320
+    db 4
+    db 5, 1
+    dd 0x0F1320
+    db 6, 19
+    dd 0x16A34A
+    db 25, 1
+    dd 0x1E2433
+    db 26, 1
+    dd 0x0F1320
+    db 10
+    db 5, 1
+    dd 0x0F1320
+    db 6, 2
+    dd 0x16A34A
+    db 8, 2
+    dd 0xFFFFFF
+    db 10, 2
+    dd 0x16A34A
+    db 12, 2
+    dd 0xFFFFFF
+    db 14, 4
+    dd 0x16A34A
+    db 18, 4
+    dd 0xFFFFFF
+    db 22, 3
+    dd 0x16A34A
+    db 25, 1
+    dd 0x1E2433
+    db 26, 1
+    dd 0x0F1320
+    db 10
+    db 5, 1
+    dd 0x0F1320
+    db 6, 2
+    dd 0x16A34A
+    db 8, 2
+    dd 0xFFFFFF
+    db 10, 2
+    dd 0x16A34A
+    db 12, 2
+    dd 0xFFFFFF
+    db 14, 4
+    dd 0x16A34A
+    db 18, 4
+    dd 0xFFFFFF
+    db 22, 3
+    dd 0x16A34A
+    db 25, 1
+    dd 0x1E2433
+    db 26, 1
+    dd 0x0F1320
+    db 10
+    db 5, 1
+    dd 0x0F1320
+    db 6, 2
+    dd 0x16A34A
+    db 8, 2
+    dd 0xFFFFFF
+    db 10, 2
+    dd 0x16A34A
+    db 12, 2
+    dd 0xFFFFFF
+    db 14, 2
+    dd 0x16A34A
+    db 16, 2
+    dd 0xFFFFFF
+    db 18, 7
+    dd 0x16A34A
+    db 25, 1
+    dd 0x1E2433
+    db 26, 1
+    dd 0x0F1320
+    db 10
+    db 5, 1
+    dd 0x0F1320
+    db 6, 2
+    dd 0x16A34A
+    db 8, 2
+    dd 0xFFFFFF
+    db 10, 2
+    dd 0x16A34A
+    db 12, 2
+    dd 0xFFFFFF
+    db 14, 2
+    dd 0x16A34A
+    db 16, 2
+    dd 0xFFFFFF
+    db 18, 7
+    dd 0x16A34A
+    db 25, 1
+    dd 0x1E2433
+    db 26, 1
+    dd 0x0F1320
+    db 10
+    db 5, 1
+    dd 0x0F1320
+    db 6, 2
+    dd 0x16A34A
+    db 8, 6
+    dd 0xFFFFFF
+    db 14, 2
+    dd 0x16A34A
+    db 16, 2
+    dd 0xFFFFFF
+    db 18, 2
+    dd 0x16A34A
+    db 20, 2
+    dd 0xFFFFFF
+    db 22, 3
+    dd 0x16A34A
+    db 25, 1
+    dd 0x1E2433
+    db 26, 1
+    dd 0x0F1320
+    db 10
+    db 5, 1
+    dd 0x0F1320
+    db 6, 2
+    dd 0x16A34A
+    db 8, 6
+    dd 0xFFFFFF
+    db 14, 2
+    dd 0x16A34A
+    db 16, 2
+    dd 0xFFFFFF
+    db 18, 2
+    dd 0x16A34A
+    db 20, 2
+    dd 0xFFFFFF
+    db 22, 3
+    dd 0x16A34A
+    db 25, 1
+    dd 0x1E2433
+    db 26, 1
+    dd 0x0F1320
+    db 12
+    db 5, 1
+    dd 0x0F1320
+    db 6, 2
+    dd 0x16A34A
+    db 8, 2
+    dd 0xFFFFFF
+    db 10, 2
+    dd 0x16A34A
+    db 12, 2
+    dd 0xFFFFFF
+    db 14, 2
+    dd 0x16A34A
+    db 16, 2
+    dd 0xFFFFFF
+    db 18, 2
+    dd 0x16A34A
+    db 20, 2
+    dd 0xFFFFFF
+    db 22, 3
+    dd 0x16A34A
+    db 25, 1
+    dd 0x1E2433
+    db 26, 1
+    dd 0x0F1320
+    db 12
+    db 5, 1
+    dd 0x0F1320
+    db 6, 2
+    dd 0x16A34A
+    db 8, 2
+    dd 0xFFFFFF
+    db 10, 2
+    dd 0x16A34A
+    db 12, 2
+    dd 0xFFFFFF
+    db 14, 2
+    dd 0x16A34A
+    db 16, 2
+    dd 0xFFFFFF
+    db 18, 2
+    dd 0x16A34A
+    db 20, 2
+    dd 0xFFFFFF
+    db 22, 3
+    dd 0x16A34A
+    db 25, 1
+    dd 0x1E2433
+    db 26, 1
+    dd 0x0F1320
+    db 10
+    db 5, 1
+    dd 0x0F1320
+    db 6, 2
+    dd 0x16A34A
+    db 8, 2
+    dd 0xFFFFFF
+    db 10, 2
+    dd 0x16A34A
+    db 12, 2
+    dd 0xFFFFFF
+    db 14, 4
+    dd 0x16A34A
+    db 18, 4
+    dd 0xFFFFFF
+    db 22, 3
+    dd 0x16A34A
+    db 25, 1
+    dd 0x1E2433
+    db 26, 1
+    dd 0x0F1320
+    db 10
+    db 5, 1
+    dd 0x0F1320
+    db 6, 2
+    dd 0x16A34A
+    db 8, 2
+    dd 0xFFFFFF
+    db 10, 2
+    dd 0x16A34A
+    db 12, 2
+    dd 0xFFFFFF
+    db 14, 4
+    dd 0x16A34A
+    db 18, 4
+    dd 0xFFFFFF
+    db 22, 3
+    dd 0x16A34A
+    db 25, 1
+    dd 0x1E2433
+    db 26, 1
+    dd 0x0F1320
+    db 3
+    db 5, 1
+    dd 0x0F1320
+    db 6, 19
+    dd 0x16A34A
+    db 25, 2
+    dd 0x0F1320
+    db 0
 dkart_trash:
     db 0
     db 0
@@ -3681,4 +5392,2493 @@ dkart_zip:
     db 1
     db 5, 22
     dd 0x6B7280
+    db 0
+dkart_csrc:
+    db 0
+    db 1
+    db 5, 15
+    dd 0x6B7280
+    db 4
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 1
+    dd 0x6B7280
+    db 20, 1
+    dd 0xD5DAE1
+    db 4
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 1
+    dd 0x6B7280
+    db 20, 2
+    dd 0xD5DAE1
+    db 4
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 1
+    dd 0x6B7280
+    db 20, 3
+    dd 0xD5DAE1
+    db 4
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 1
+    dd 0x6B7280
+    db 20, 4
+    dd 0xD5DAE1
+    db 4
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 1
+    dd 0x6B7280
+    db 20, 5
+    dd 0xD5DAE1
+    db 4
+    db 5, 1
+    dd 0x6B7280
+    db 6, 7
+    dd 0xFFFFFF
+    db 13, 6
+    dd 0x2563EB
+    db 19, 8
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 6
+    dd 0xFFFFFF
+    db 12, 8
+    dd 0x2563EB
+    db 20, 6
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 5
+    dd 0xFFFFFF
+    db 11, 10
+    dd 0x2563EB
+    db 21, 5
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 7
+    db 5, 1
+    dd 0x6B7280
+    db 6, 4
+    dd 0xFFFFFF
+    db 10, 4
+    dd 0x2563EB
+    db 14, 4
+    dd 0xFFFFFF
+    db 18, 4
+    dd 0x2563EB
+    db 22, 4
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 3
+    dd 0xFFFFFF
+    db 9, 4
+    dd 0x2563EB
+    db 13, 13
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 3
+    dd 0xFFFFFF
+    db 9, 3
+    dd 0x2563EB
+    db 12, 14
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 3
+    dd 0xFFFFFF
+    db 9, 3
+    dd 0x2563EB
+    db 12, 14
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 3
+    dd 0xFFFFFF
+    db 9, 3
+    dd 0x2563EB
+    db 12, 14
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 3
+    dd 0xFFFFFF
+    db 9, 3
+    dd 0x2563EB
+    db 12, 14
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 3
+    dd 0xFFFFFF
+    db 9, 4
+    dd 0x2563EB
+    db 13, 13
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 7
+    db 5, 1
+    dd 0x6B7280
+    db 6, 4
+    dd 0xFFFFFF
+    db 10, 4
+    dd 0x2563EB
+    db 14, 4
+    dd 0xFFFFFF
+    db 18, 4
+    dd 0x2563EB
+    db 22, 4
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 5
+    dd 0xFFFFFF
+    db 11, 10
+    dd 0x2563EB
+    db 21, 5
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 6
+    dd 0xFFFFFF
+    db 12, 8
+    dd 0x2563EB
+    db 20, 6
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 7
+    dd 0xFFFFFF
+    db 13, 6
+    dd 0x2563EB
+    db 19, 7
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 3
+    dd 0xFFFFFF
+    db 9, 14
+    dd 0xA3AEC2
+    db 23, 3
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 3
+    dd 0xFFFFFF
+    db 9, 14
+    dd 0xA3AEC2
+    db 23, 3
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 1
+    db 5, 22
+    dd 0x6B7280
+    db 0
+dkart_bas:
+    db 0
+    db 1
+    db 5, 15
+    dd 0x6B7280
+    db 4
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 1
+    dd 0x6B7280
+    db 20, 1
+    dd 0xD5DAE1
+    db 4
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 1
+    dd 0x6B7280
+    db 20, 2
+    dd 0xD5DAE1
+    db 4
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 1
+    dd 0x6B7280
+    db 20, 3
+    dd 0xD5DAE1
+    db 4
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 1
+    dd 0x6B7280
+    db 20, 4
+    dd 0xD5DAE1
+    db 4
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 1
+    dd 0x6B7280
+    db 20, 5
+    dd 0xD5DAE1
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 8
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 3
+    dd 0xFFFFFF
+    db 9, 14
+    dd 0xA3AEC2
+    db 23, 3
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 3
+    dd 0xFFFFFF
+    db 9, 14
+    dd 0xA3AEC2
+    db 23, 3
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 1
+    db 2, 27
+    dd 0x9333EA
+    db 7
+    db 2, 2
+    dd 0x9333EA
+    db 4, 4
+    dd 0xFFFFFF
+    db 8, 6
+    dd 0x9333EA
+    db 14, 2
+    dd 0xFFFFFF
+    db 16, 6
+    dd 0x9333EA
+    db 22, 4
+    dd 0xFFFFFF
+    db 26, 3
+    dd 0x9333EA
+    db 7
+    db 2, 2
+    dd 0x9333EA
+    db 4, 4
+    dd 0xFFFFFF
+    db 8, 6
+    dd 0x9333EA
+    db 14, 2
+    dd 0xFFFFFF
+    db 16, 6
+    dd 0x9333EA
+    db 22, 4
+    dd 0xFFFFFF
+    db 26, 3
+    dd 0x9333EA
+    db 11
+    db 2, 2
+    dd 0x9333EA
+    db 4, 2
+    dd 0xFFFFFF
+    db 6, 2
+    dd 0x9333EA
+    db 8, 2
+    dd 0xFFFFFF
+    db 10, 2
+    dd 0x9333EA
+    db 12, 2
+    dd 0xFFFFFF
+    db 14, 2
+    dd 0x9333EA
+    db 16, 2
+    dd 0xFFFFFF
+    db 18, 2
+    dd 0x9333EA
+    db 20, 2
+    dd 0xFFFFFF
+    db 22, 7
+    dd 0x9333EA
+    db 11
+    db 2, 2
+    dd 0x9333EA
+    db 4, 2
+    dd 0xFFFFFF
+    db 6, 2
+    dd 0x9333EA
+    db 8, 2
+    dd 0xFFFFFF
+    db 10, 2
+    dd 0x9333EA
+    db 12, 2
+    dd 0xFFFFFF
+    db 14, 2
+    dd 0x9333EA
+    db 16, 2
+    dd 0xFFFFFF
+    db 18, 2
+    dd 0x9333EA
+    db 20, 2
+    dd 0xFFFFFF
+    db 22, 7
+    dd 0x9333EA
+    db 7
+    db 2, 2
+    dd 0x9333EA
+    db 4, 4
+    dd 0xFFFFFF
+    db 8, 4
+    dd 0x9333EA
+    db 12, 6
+    dd 0xFFFFFF
+    db 18, 4
+    dd 0x9333EA
+    db 22, 2
+    dd 0xFFFFFF
+    db 24, 5
+    dd 0x9333EA
+    db 7
+    db 2, 2
+    dd 0x9333EA
+    db 4, 4
+    dd 0xFFFFFF
+    db 8, 4
+    dd 0x9333EA
+    db 12, 6
+    dd 0xFFFFFF
+    db 18, 4
+    dd 0x9333EA
+    db 22, 2
+    dd 0xFFFFFF
+    db 24, 5
+    dd 0x9333EA
+    db 11
+    db 2, 2
+    dd 0x9333EA
+    db 4, 2
+    dd 0xFFFFFF
+    db 6, 2
+    dd 0x9333EA
+    db 8, 2
+    dd 0xFFFFFF
+    db 10, 2
+    dd 0x9333EA
+    db 12, 2
+    dd 0xFFFFFF
+    db 14, 2
+    dd 0x9333EA
+    db 16, 2
+    dd 0xFFFFFF
+    db 18, 6
+    dd 0x9333EA
+    db 24, 2
+    dd 0xFFFFFF
+    db 26, 3
+    dd 0x9333EA
+    db 11
+    db 2, 2
+    dd 0x9333EA
+    db 4, 2
+    dd 0xFFFFFF
+    db 6, 2
+    dd 0x9333EA
+    db 8, 2
+    dd 0xFFFFFF
+    db 10, 2
+    dd 0x9333EA
+    db 12, 2
+    dd 0xFFFFFF
+    db 14, 2
+    dd 0x9333EA
+    db 16, 2
+    dd 0xFFFFFF
+    db 18, 6
+    dd 0x9333EA
+    db 24, 2
+    dd 0xFFFFFF
+    db 26, 3
+    dd 0x9333EA
+    db 9
+    db 2, 2
+    dd 0x9333EA
+    db 4, 4
+    dd 0xFFFFFF
+    db 8, 4
+    dd 0x9333EA
+    db 12, 2
+    dd 0xFFFFFF
+    db 14, 2
+    dd 0x9333EA
+    db 16, 2
+    dd 0xFFFFFF
+    db 18, 2
+    dd 0x9333EA
+    db 20, 4
+    dd 0xFFFFFF
+    db 24, 5
+    dd 0x9333EA
+    db 9
+    db 2, 2
+    dd 0x9333EA
+    db 4, 4
+    dd 0xFFFFFF
+    db 8, 4
+    dd 0x9333EA
+    db 12, 2
+    dd 0xFFFFFF
+    db 14, 2
+    dd 0x9333EA
+    db 16, 2
+    dd 0xFFFFFF
+    db 18, 2
+    dd 0x9333EA
+    db 20, 4
+    dd 0xFFFFFF
+    db 24, 5
+    dd 0x9333EA
+    db 1
+    db 2, 27
+    dd 0x9333EA
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 1
+    db 5, 22
+    dd 0x6B7280
+    db 0
+dkart_trg:
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 1
+    db 14, 4
+    dd 0x14532D
+    db 3
+    db 12, 2
+    dd 0x16A34A
+    db 14, 4
+    dd 0x14532D
+    db 18, 3
+    dd 0x16A34A
+    db 3
+    db 10, 4
+    dd 0x16A34A
+    db 14, 4
+    dd 0x14532D
+    db 18, 5
+    dd 0x16A34A
+    db 3
+    db 9, 1
+    dd 0x16A34A
+    db 10, 12
+    dd 0x14532D
+    db 22, 2
+    dd 0x16A34A
+    db 5
+    db 8, 2
+    dd 0x16A34A
+    db 10, 4
+    dd 0x14532D
+    db 14, 4
+    dd 0x16A34A
+    db 18, 4
+    dd 0x14532D
+    db 22, 3
+    dd 0x16A34A
+    db 6
+    db 7, 3
+    dd 0x16A34A
+    db 10, 4
+    dd 0x14532D
+    db 14, 4
+    dd 0x16A34A
+    db 18, 4
+    dd 0x14532D
+    db 22, 4
+    dd 0x16A34A
+    db 26, 5
+    dd 0x86EFAC
+    db 6
+    db 7, 3
+    dd 0x16A34A
+    db 10, 12
+    dd 0x14532D
+    db 22, 4
+    dd 0x16A34A
+    db 26, 3
+    dd 0x86EFAC
+    db 29, 1
+    dd 0x000000
+    db 30, 1
+    dd 0x86EFAC
+    db 4
+    db 6, 8
+    dd 0x16A34A
+    db 14, 4
+    dd 0x14532D
+    db 18, 8
+    dd 0x16A34A
+    db 26, 5
+    dd 0x86EFAC
+    db 4
+    db 6, 8
+    dd 0x16A34A
+    db 14, 4
+    dd 0x14532D
+    db 18, 8
+    dd 0x16A34A
+    db 26, 5
+    dd 0x86EFAC
+    db 5
+    db 2, 4
+    dd 0x86EFAC
+    db 6, 8
+    dd 0x16A34A
+    db 14, 4
+    dd 0x14532D
+    db 18, 8
+    dd 0x16A34A
+    db 26, 5
+    dd 0x86EFAC
+    db 2
+    db 2, 4
+    dd 0x86EFAC
+    db 6, 21
+    dd 0x16A34A
+    db 1
+    db 5, 23
+    dd 0x14532D
+    db 1
+    db 5, 23
+    dd 0x14532D
+    db 2
+    db 8, 4
+    dd 0x86EFAC
+    db 22, 4
+    dd 0x86EFAC
+    db 2
+    db 8, 4
+    dd 0x86EFAC
+    db 22, 4
+    dd 0x86EFAC
+    db 2
+    db 8, 4
+    dd 0x86EFAC
+    db 22, 4
+    dd 0x86EFAC
+    db 2
+    db 8, 4
+    dd 0x86EFAC
+    db 22, 4
+    dd 0x86EFAC
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+dkart_ch8:
+    db 0
+    db 0
+    db 0
+    db 4
+    db 9, 2
+    dd 0xD1D5DB
+    db 13, 2
+    dd 0xD1D5DB
+    db 17, 2
+    dd 0xD1D5DB
+    db 21, 2
+    dd 0xD1D5DB
+    db 4
+    db 9, 2
+    dd 0xD1D5DB
+    db 13, 2
+    dd 0xD1D5DB
+    db 17, 2
+    dd 0xD1D5DB
+    db 21, 2
+    dd 0xD1D5DB
+    db 4
+    db 9, 2
+    dd 0xD1D5DB
+    db 13, 2
+    dd 0xD1D5DB
+    db 17, 2
+    dd 0xD1D5DB
+    db 21, 2
+    dd 0xD1D5DB
+    db 4
+    db 9, 2
+    dd 0xD1D5DB
+    db 13, 2
+    dd 0xD1D5DB
+    db 17, 2
+    dd 0xD1D5DB
+    db 21, 2
+    dd 0xD1D5DB
+    db 1
+    db 7, 18
+    dd 0x1F2937
+    db 3
+    db 7, 1
+    dd 0x1F2937
+    db 8, 16
+    dd 0x374151
+    db 24, 1
+    dd 0x1F2937
+    db 5
+    db 3, 4
+    dd 0xD1D5DB
+    db 7, 1
+    dd 0x1F2937
+    db 8, 16
+    dd 0x374151
+    db 24, 1
+    dd 0x1F2937
+    db 25, 4
+    dd 0xD1D5DB
+    db 5
+    db 3, 4
+    dd 0xD1D5DB
+    db 7, 1
+    dd 0x1F2937
+    db 8, 16
+    dd 0x374151
+    db 24, 1
+    dd 0x1F2937
+    db 25, 4
+    dd 0xD1D5DB
+    db 3
+    db 7, 1
+    dd 0x1F2937
+    db 8, 16
+    dd 0x374151
+    db 24, 1
+    dd 0x1F2937
+    db 7
+    db 7, 1
+    dd 0x1F2937
+    db 8, 3
+    dd 0x374151
+    db 11, 4
+    dd 0xFACC15
+    db 15, 4
+    dd 0x374151
+    db 19, 2
+    dd 0xFACC15
+    db 21, 3
+    dd 0x374151
+    db 24, 1
+    dd 0x1F2937
+    db 9
+    db 3, 4
+    dd 0xD1D5DB
+    db 7, 1
+    dd 0x1F2937
+    db 8, 3
+    dd 0x374151
+    db 11, 4
+    dd 0xFACC15
+    db 15, 4
+    dd 0x374151
+    db 19, 2
+    dd 0xFACC15
+    db 21, 3
+    dd 0x374151
+    db 24, 1
+    dd 0x1F2937
+    db 25, 4
+    dd 0xD1D5DB
+    db 11
+    db 3, 4
+    dd 0xD1D5DB
+    db 7, 1
+    dd 0x1F2937
+    db 8, 1
+    dd 0x374151
+    db 9, 2
+    dd 0xFACC15
+    db 11, 6
+    dd 0x374151
+    db 17, 2
+    dd 0xFACC15
+    db 19, 2
+    dd 0x374151
+    db 21, 2
+    dd 0xFACC15
+    db 23, 1
+    dd 0x374151
+    db 24, 1
+    dd 0x1F2937
+    db 25, 4
+    dd 0xD1D5DB
+    db 9
+    db 7, 1
+    dd 0x1F2937
+    db 8, 1
+    dd 0x374151
+    db 9, 2
+    dd 0xFACC15
+    db 11, 6
+    dd 0x374151
+    db 17, 2
+    dd 0xFACC15
+    db 19, 2
+    dd 0x374151
+    db 21, 2
+    dd 0xFACC15
+    db 23, 1
+    dd 0x374151
+    db 24, 1
+    dd 0x1F2937
+    db 7
+    db 7, 1
+    dd 0x1F2937
+    db 8, 1
+    dd 0x374151
+    db 9, 2
+    dd 0xFACC15
+    db 11, 8
+    dd 0x374151
+    db 19, 2
+    dd 0xFACC15
+    db 21, 3
+    dd 0x374151
+    db 24, 1
+    dd 0x1F2937
+    db 9
+    db 3, 4
+    dd 0xD1D5DB
+    db 7, 1
+    dd 0x1F2937
+    db 8, 1
+    dd 0x374151
+    db 9, 2
+    dd 0xFACC15
+    db 11, 8
+    dd 0x374151
+    db 19, 2
+    dd 0xFACC15
+    db 21, 3
+    dd 0x374151
+    db 24, 1
+    dd 0x1F2937
+    db 25, 4
+    dd 0xD1D5DB
+    db 11
+    db 3, 4
+    dd 0xD1D5DB
+    db 7, 1
+    dd 0x1F2937
+    db 8, 1
+    dd 0x374151
+    db 9, 2
+    dd 0xFACC15
+    db 11, 6
+    dd 0x374151
+    db 17, 2
+    dd 0xFACC15
+    db 19, 2
+    dd 0x374151
+    db 21, 2
+    dd 0xFACC15
+    db 23, 1
+    dd 0x374151
+    db 24, 1
+    dd 0x1F2937
+    db 25, 4
+    dd 0xD1D5DB
+    db 9
+    db 7, 1
+    dd 0x1F2937
+    db 8, 1
+    dd 0x374151
+    db 9, 2
+    dd 0xFACC15
+    db 11, 6
+    dd 0x374151
+    db 17, 2
+    dd 0xFACC15
+    db 19, 2
+    dd 0x374151
+    db 21, 2
+    dd 0xFACC15
+    db 23, 1
+    dd 0x374151
+    db 24, 1
+    dd 0x1F2937
+    db 7
+    db 7, 1
+    dd 0x1F2937
+    db 8, 3
+    dd 0x374151
+    db 11, 4
+    dd 0xFACC15
+    db 15, 4
+    dd 0x374151
+    db 19, 2
+    dd 0xFACC15
+    db 21, 3
+    dd 0x374151
+    db 24, 1
+    dd 0x1F2937
+    db 9
+    db 3, 4
+    dd 0xD1D5DB
+    db 7, 1
+    dd 0x1F2937
+    db 8, 3
+    dd 0x374151
+    db 11, 4
+    dd 0xFACC15
+    db 15, 4
+    dd 0x374151
+    db 19, 2
+    dd 0xFACC15
+    db 21, 3
+    dd 0x374151
+    db 24, 1
+    dd 0x1F2937
+    db 25, 4
+    dd 0xD1D5DB
+    db 5
+    db 3, 4
+    dd 0xD1D5DB
+    db 7, 1
+    dd 0x1F2937
+    db 8, 16
+    dd 0x374151
+    db 24, 1
+    dd 0x1F2937
+    db 25, 4
+    dd 0xD1D5DB
+    db 3
+    db 7, 1
+    dd 0x1F2937
+    db 8, 16
+    dd 0x374151
+    db 24, 1
+    dd 0x1F2937
+    db 1
+    db 7, 18
+    dd 0x1F2937
+    db 4
+    db 9, 2
+    dd 0xD1D5DB
+    db 13, 2
+    dd 0xD1D5DB
+    db 17, 2
+    dd 0xD1D5DB
+    db 21, 2
+    dd 0xD1D5DB
+    db 4
+    db 9, 2
+    dd 0xD1D5DB
+    db 13, 2
+    dd 0xD1D5DB
+    db 17, 2
+    dd 0xD1D5DB
+    db 21, 2
+    dd 0xD1D5DB
+    db 4
+    db 9, 2
+    dd 0xD1D5DB
+    db 13, 2
+    dd 0xD1D5DB
+    db 17, 2
+    dd 0xD1D5DB
+    db 21, 2
+    dd 0xD1D5DB
+    db 4
+    db 9, 2
+    dd 0xD1D5DB
+    db 13, 2
+    dd 0xD1D5DB
+    db 17, 2
+    dd 0xD1D5DB
+    db 21, 2
+    dd 0xD1D5DB
+    db 0
+    db 0
+    db 0
+dkart_cfg:
+    db 0
+    db 1
+    db 5, 15
+    dd 0x6B7280
+    db 4
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 1
+    dd 0x6B7280
+    db 20, 1
+    dd 0xD5DAE1
+    db 4
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 1
+    dd 0x6B7280
+    db 20, 2
+    dd 0xD5DAE1
+    db 4
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 1
+    dd 0x6B7280
+    db 20, 3
+    dd 0xD5DAE1
+    db 4
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 1
+    dd 0x6B7280
+    db 20, 4
+    dd 0xD5DAE1
+    db 4
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 1
+    dd 0x6B7280
+    db 20, 5
+    dd 0xD5DAE1
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 13
+    dd 0xFFFFFF
+    db 19, 8
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 9
+    dd 0xFFFFFF
+    db 15, 2
+    dd 0x64748B
+    db 17, 9
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 9
+    dd 0xFFFFFF
+    db 15, 2
+    dd 0x64748B
+    db 17, 9
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 9
+    db 5, 1
+    dd 0x6B7280
+    db 6, 5
+    dd 0xFFFFFF
+    db 11, 1
+    dd 0x64748B
+    db 12, 3
+    dd 0xFFFFFF
+    db 15, 2
+    dd 0x64748B
+    db 17, 3
+    dd 0xFFFFFF
+    db 20, 1
+    dd 0x64748B
+    db 21, 5
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 4
+    dd 0xFFFFFF
+    db 10, 12
+    dd 0x64748B
+    db 22, 4
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 5
+    dd 0xFFFFFF
+    db 11, 10
+    dd 0x64748B
+    db 21, 5
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 5
+    dd 0xFFFFFF
+    db 11, 10
+    dd 0x64748B
+    db 21, 5
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 7
+    db 5, 1
+    dd 0x6B7280
+    db 6, 5
+    dd 0xFFFFFF
+    db 11, 3
+    dd 0x64748B
+    db 14, 4
+    dd 0xFFFFFF
+    db 18, 3
+    dd 0x64748B
+    db 21, 5
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 7
+    db 5, 1
+    dd 0x6B7280
+    db 6, 2
+    dd 0xFFFFFF
+    db 8, 6
+    dd 0x64748B
+    db 14, 4
+    dd 0xFFFFFF
+    db 18, 6
+    dd 0x64748B
+    db 24, 2
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 7
+    db 5, 1
+    dd 0x6B7280
+    db 6, 2
+    dd 0xFFFFFF
+    db 8, 6
+    dd 0x64748B
+    db 14, 4
+    dd 0xFFFFFF
+    db 18, 6
+    dd 0x64748B
+    db 24, 2
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 7
+    db 5, 1
+    dd 0x6B7280
+    db 6, 5
+    dd 0xFFFFFF
+    db 11, 3
+    dd 0x64748B
+    db 14, 4
+    dd 0xFFFFFF
+    db 18, 3
+    dd 0x64748B
+    db 21, 5
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 5
+    dd 0xFFFFFF
+    db 11, 10
+    dd 0x64748B
+    db 21, 5
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 5
+    dd 0xFFFFFF
+    db 11, 10
+    dd 0x64748B
+    db 21, 5
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 4
+    dd 0xFFFFFF
+    db 10, 12
+    dd 0x64748B
+    db 22, 4
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 9
+    db 5, 1
+    dd 0x6B7280
+    db 6, 5
+    dd 0xFFFFFF
+    db 11, 1
+    dd 0x64748B
+    db 12, 3
+    dd 0xFFFFFF
+    db 15, 2
+    dd 0x64748B
+    db 17, 3
+    dd 0xFFFFFF
+    db 20, 1
+    dd 0x64748B
+    db 21, 5
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 9
+    dd 0xFFFFFF
+    db 15, 2
+    dd 0x64748B
+    db 17, 9
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 5
+    db 5, 1
+    dd 0x6B7280
+    db 6, 9
+    dd 0xFFFFFF
+    db 15, 2
+    dd 0x64748B
+    db 17, 9
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 3
+    db 5, 1
+    dd 0x6B7280
+    db 6, 20
+    dd 0xFFFFFF
+    db 26, 1
+    dd 0x6B7280
+    db 1
+    db 5, 22
+    dd 0x6B7280
+    db 0
+dkart_game:
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 1
+    db 6, 20
+    dd 0x4B5563
+    db 1
+    db 4, 24
+    dd 0x4B5563
+    db 1
+    db 3, 26
+    dd 0x4B5563
+    db 5
+    db 2, 4
+    dd 0x4B5563
+    db 6, 2
+    dd 0xE5E7EB
+    db 8, 14
+    dd 0x4B5563
+    db 22, 2
+    dd 0xEF4444
+    db 24, 6
+    dd 0x4B5563
+    db 5
+    db 2, 4
+    dd 0x4B5563
+    db 6, 2
+    dd 0xE5E7EB
+    db 8, 14
+    dd 0x4B5563
+    db 22, 2
+    dd 0xEF4444
+    db 24, 6
+    dd 0x4B5563
+    db 3
+    db 1, 5
+    dd 0x4B5563
+    db 6, 2
+    dd 0xE5E7EB
+    db 8, 23
+    dd 0x4B5563
+    db 7
+    db 1, 2
+    dd 0x4B5563
+    db 3, 8
+    dd 0xE5E7EB
+    db 11, 8
+    dd 0x4B5563
+    db 19, 2
+    dd 0xFACC15
+    db 21, 4
+    dd 0x4B5563
+    db 25, 2
+    dd 0x3B82F6
+    db 27, 4
+    dd 0x4B5563
+    db 7
+    db 1, 2
+    dd 0x4B5563
+    db 3, 8
+    dd 0xE5E7EB
+    db 11, 8
+    dd 0x4B5563
+    db 19, 2
+    dd 0xFACC15
+    db 21, 4
+    dd 0x4B5563
+    db 25, 2
+    dd 0x3B82F6
+    db 27, 4
+    dd 0x4B5563
+    db 3
+    db 1, 5
+    dd 0x4B5563
+    db 6, 2
+    dd 0xE5E7EB
+    db 8, 23
+    dd 0x4B5563
+    db 5
+    db 1, 5
+    dd 0x4B5563
+    db 6, 2
+    dd 0xE5E7EB
+    db 8, 14
+    dd 0x4B5563
+    db 22, 2
+    dd 0x22C55E
+    db 24, 7
+    dd 0x4B5563
+    db 5
+    db 2, 4
+    dd 0x4B5563
+    db 6, 2
+    dd 0xE5E7EB
+    db 8, 14
+    dd 0x4B5563
+    db 22, 2
+    dd 0x22C55E
+    db 24, 6
+    dd 0x4B5563
+    db 1
+    db 2, 28
+    dd 0x4B5563
+    db 2
+    db 3, 11
+    dd 0x4B5563
+    db 18, 11
+    dd 0x4B5563
+    db 2
+    db 4, 9
+    dd 0x4B5563
+    db 19, 9
+    dd 0x4B5563
+    db 2
+    db 6, 5
+    dd 0x4B5563
+    db 21, 5
+    dd 0x4B5563
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+dkart_term:
+    db 0
+    db 0
+    db 0
+    db 0
+    db 1
+    db 1, 30
+    dd 0x475569
+    db 3
+    db 1, 1
+    dd 0x475569
+    db 2, 28
+    dd 0x94A3B8
+    db 30, 1
+    dd 0x475569
+    db 3
+    db 1, 1
+    dd 0x475569
+    db 2, 28
+    dd 0x94A3B8
+    db 30, 1
+    dd 0x475569
+    db 3
+    db 1, 1
+    dd 0x475569
+    db 2, 28
+    dd 0x94A3B8
+    db 30, 1
+    dd 0x475569
+    db 3
+    db 1, 1
+    dd 0x475569
+    db 2, 28
+    dd 0x94A3B8
+    db 30, 1
+    dd 0x475569
+    db 3
+    db 1, 1
+    dd 0x475569
+    db 2, 28
+    dd 0x0B1220
+    db 30, 1
+    dd 0x475569
+    db 3
+    db 1, 1
+    dd 0x475569
+    db 2, 28
+    dd 0x0B1220
+    db 30, 1
+    dd 0x475569
+    db 3
+    db 1, 1
+    dd 0x475569
+    db 2, 28
+    dd 0x0B1220
+    db 30, 1
+    dd 0x475569
+    db 5
+    db 1, 1
+    dd 0x475569
+    db 2, 3
+    dd 0x0B1220
+    db 5, 2
+    dd 0x4ADE80
+    db 7, 23
+    dd 0x0B1220
+    db 30, 1
+    dd 0x475569
+    db 5
+    db 1, 1
+    dd 0x475569
+    db 2, 4
+    dd 0x0B1220
+    db 6, 2
+    dd 0x4ADE80
+    db 8, 22
+    dd 0x0B1220
+    db 30, 1
+    dd 0x475569
+    db 5
+    db 1, 1
+    dd 0x475569
+    db 2, 5
+    dd 0x0B1220
+    db 7, 2
+    dd 0x4ADE80
+    db 9, 21
+    dd 0x0B1220
+    db 30, 1
+    dd 0x475569
+    db 5
+    db 1, 1
+    dd 0x475569
+    db 2, 4
+    dd 0x0B1220
+    db 6, 2
+    dd 0x4ADE80
+    db 8, 22
+    dd 0x0B1220
+    db 30, 1
+    dd 0x475569
+    db 7
+    db 1, 1
+    dd 0x475569
+    db 2, 3
+    dd 0x0B1220
+    db 5, 2
+    dd 0x4ADE80
+    db 7, 5
+    dd 0x0B1220
+    db 12, 6
+    dd 0x4ADE80
+    db 18, 12
+    dd 0x0B1220
+    db 30, 1
+    dd 0x475569
+    db 5
+    db 1, 1
+    dd 0x475569
+    db 2, 10
+    dd 0x0B1220
+    db 12, 6
+    dd 0x4ADE80
+    db 18, 12
+    dd 0x0B1220
+    db 30, 1
+    dd 0x475569
+    db 3
+    db 1, 1
+    dd 0x475569
+    db 2, 28
+    dd 0x0B1220
+    db 30, 1
+    dd 0x475569
+    db 3
+    db 1, 1
+    dd 0x475569
+    db 2, 28
+    dd 0x0B1220
+    db 30, 1
+    dd 0x475569
+    db 3
+    db 1, 1
+    dd 0x475569
+    db 2, 28
+    dd 0x0B1220
+    db 30, 1
+    dd 0x475569
+    db 3
+    db 1, 1
+    dd 0x475569
+    db 2, 28
+    dd 0x0B1220
+    db 30, 1
+    dd 0x475569
+    db 3
+    db 1, 1
+    dd 0x475569
+    db 2, 28
+    dd 0x0B1220
+    db 30, 1
+    dd 0x475569
+    db 3
+    db 1, 1
+    dd 0x475569
+    db 2, 28
+    dd 0x0B1220
+    db 30, 1
+    dd 0x475569
+    db 3
+    db 1, 1
+    dd 0x475569
+    db 2, 28
+    dd 0x0B1220
+    db 30, 1
+    dd 0x475569
+    db 3
+    db 1, 1
+    dd 0x475569
+    db 2, 28
+    dd 0x0B1220
+    db 30, 1
+    dd 0x475569
+    db 3
+    db 1, 1
+    dd 0x475569
+    db 2, 28
+    dd 0x0B1220
+    db 30, 1
+    dd 0x475569
+    db 3
+    db 1, 1
+    dd 0x475569
+    db 2, 28
+    dd 0x0B1220
+    db 30, 1
+    dd 0x475569
+    db 1
+    db 1, 30
+    dd 0x475569
+    db 0
+    db 0
+    db 0
+dkart_cat:
+    db 0
+    db 0
+    db 2
+    db 5, 1
+    dd 0x111111
+    db 26, 1
+    dd 0x111111
+    db 2
+    db 4, 2
+    dd 0x111111
+    db 25, 2
+    dd 0x111111
+    db 6
+    db 4, 1
+    dd 0x111111
+    db 5, 1
+    dd 0xFAFAFA
+    db 6, 1
+    dd 0x111111
+    db 24, 1
+    dd 0x111111
+    db 25, 1
+    dd 0xFAFAFA
+    db 26, 1
+    dd 0x111111
+    db 6
+    db 4, 1
+    dd 0x111111
+    db 5, 2
+    dd 0xFAFAFA
+    db 7, 1
+    dd 0x111111
+    db 23, 1
+    dd 0x111111
+    db 24, 2
+    dd 0xFAFAFA
+    db 26, 1
+    dd 0x111111
+    db 9
+    db 4, 1
+    dd 0x111111
+    db 5, 1
+    dd 0xFAFAFA
+    db 6, 1
+    dd 0xF4A6B8
+    db 7, 1
+    dd 0xFAFAFA
+    db 8, 1
+    dd 0x111111
+    db 22, 1
+    dd 0x111111
+    db 23, 2
+    dd 0xFAFAFA
+    db 25, 1
+    dd 0xF4A6B8
+    db 26, 1
+    dd 0x111111
+    db 9
+    db 4, 1
+    dd 0x111111
+    db 5, 1
+    dd 0xFAFAFA
+    db 6, 1
+    dd 0xF4A6B8
+    db 7, 2
+    dd 0xFAFAFA
+    db 9, 1
+    dd 0x111111
+    db 22, 1
+    dd 0x111111
+    db 23, 1
+    dd 0xFAFAFA
+    db 24, 2
+    dd 0xF4A6B8
+    db 26, 1
+    dd 0x111111
+    db 9
+    db 4, 1
+    dd 0x111111
+    db 5, 1
+    dd 0xFAFAFA
+    db 6, 2
+    dd 0xF4A6B8
+    db 8, 1
+    dd 0xFAFAFA
+    db 9, 1
+    dd 0x111111
+    db 21, 1
+    dd 0x111111
+    db 22, 1
+    dd 0xFAFAFA
+    db 23, 3
+    dd 0xF4A6B8
+    db 26, 1
+    dd 0x111111
+    db 10
+    db 4, 1
+    dd 0x111111
+    db 5, 1
+    dd 0xFAFAFA
+    db 6, 3
+    dd 0xF4A6B8
+    db 9, 1
+    dd 0xFAFAFA
+    db 10, 1
+    dd 0x111111
+    db 16, 1
+    dd 0x111111
+    db 20, 1
+    dd 0x111111
+    db 21, 1
+    dd 0xFAFAFA
+    db 22, 4
+    dd 0xF4A6B8
+    db 26, 1
+    dd 0x111111
+    db 10
+    db 4, 1
+    dd 0x111111
+    db 5, 1
+    dd 0xFAFAFA
+    db 6, 4
+    dd 0xF4A6B8
+    db 10, 1
+    dd 0xFAFAFA
+    db 11, 5
+    dd 0x111111
+    db 16, 1
+    dd 0xFAFAFA
+    db 17, 3
+    dd 0x111111
+    db 20, 1
+    dd 0xFAFAFA
+    db 21, 5
+    dd 0xF4A6B8
+    db 26, 1
+    dd 0x111111
+    db 3
+    db 4, 1
+    dd 0x111111
+    db 5, 21
+    dd 0xFAFAFA
+    db 26, 1
+    dd 0x111111
+    db 3
+    db 4, 3
+    dd 0x111111
+    db 7, 19
+    dd 0xFAFAFA
+    db 26, 2
+    dd 0x111111
+    db 3
+    db 7, 1
+    dd 0x111111
+    db 8, 17
+    dd 0xFAFAFA
+    db 25, 1
+    dd 0x111111
+    db 3
+    db 6, 1
+    dd 0x111111
+    db 7, 19
+    dd 0xFAFAFA
+    db 26, 1
+    dd 0x111111
+    db 7
+    db 5, 1
+    dd 0x111111
+    db 6, 3
+    dd 0xFAFAFA
+    db 9, 4
+    dd 0x22C55E
+    db 13, 7
+    dd 0xFAFAFA
+    db 20, 4
+    dd 0x22C55E
+    db 24, 3
+    dd 0xFAFAFA
+    db 27, 1
+    dd 0x111111
+    db 11
+    db 5, 1
+    dd 0x111111
+    db 6, 3
+    dd 0xFAFAFA
+    db 9, 1
+    dd 0x22C55E
+    db 10, 2
+    dd 0x111111
+    db 12, 1
+    dd 0x22C55E
+    db 13, 7
+    dd 0xFAFAFA
+    db 20, 1
+    dd 0x22C55E
+    db 21, 2
+    dd 0x111111
+    db 23, 1
+    dd 0x22C55E
+    db 24, 3
+    dd 0xFAFAFA
+    db 27, 1
+    dd 0x111111
+    db 11
+    db 5, 1
+    dd 0x111111
+    db 6, 3
+    dd 0xFAFAFA
+    db 9, 1
+    dd 0x22C55E
+    db 10, 2
+    dd 0x111111
+    db 12, 1
+    dd 0x22C55E
+    db 13, 7
+    dd 0xFAFAFA
+    db 20, 1
+    dd 0x22C55E
+    db 21, 2
+    dd 0x111111
+    db 23, 1
+    dd 0x22C55E
+    db 24, 3
+    dd 0xFAFAFA
+    db 27, 1
+    dd 0x111111
+    db 7
+    db 5, 1
+    dd 0x111111
+    db 6, 3
+    dd 0xFAFAFA
+    db 9, 4
+    dd 0x22C55E
+    db 13, 7
+    dd 0xFAFAFA
+    db 20, 4
+    dd 0x22C55E
+    db 24, 3
+    dd 0xFAFAFA
+    db 27, 1
+    dd 0x111111
+    db 3
+    db 5, 1
+    dd 0x111111
+    db 6, 21
+    dd 0xFAFAFA
+    db 27, 1
+    dd 0x111111
+    db 5
+    db 5, 1
+    dd 0x111111
+    db 6, 9
+    dd 0xFAFAFA
+    db 15, 3
+    dd 0xF4A6B8
+    db 18, 9
+    dd 0xFAFAFA
+    db 27, 1
+    dd 0x111111
+    db 5
+    db 5, 1
+    dd 0x111111
+    db 6, 9
+    dd 0xFAFAFA
+    db 15, 3
+    dd 0xF4A6B8
+    db 18, 9
+    dd 0xFAFAFA
+    db 27, 1
+    dd 0x111111
+    db 5
+    db 5, 1
+    dd 0x111111
+    db 6, 10
+    dd 0xFAFAFA
+    db 16, 1
+    dd 0x111111
+    db 17, 10
+    dd 0xFAFAFA
+    db 27, 1
+    dd 0x111111
+    db 7
+    db 6, 1
+    dd 0x111111
+    db 7, 6
+    dd 0xFAFAFA
+    db 13, 3
+    dd 0x111111
+    db 16, 1
+    dd 0xFAFAFA
+    db 17, 3
+    dd 0x111111
+    db 20, 6
+    dd 0xFAFAFA
+    db 26, 1
+    dd 0x111111
+    db 3
+    db 7, 1
+    dd 0x111111
+    db 8, 17
+    dd 0xFAFAFA
+    db 25, 1
+    dd 0x111111
+    db 3
+    db 8, 1
+    dd 0x111111
+    db 9, 15
+    dd 0xFAFAFA
+    db 24, 1
+    dd 0x111111
+    db 3
+    db 9, 2
+    dd 0x111111
+    db 11, 11
+    dd 0xFAFAFA
+    db 22, 2
+    dd 0x111111
+    db 1
+    db 11, 11
+    dd 0x111111
+    db 0
+    db 0
+    db 0
+    db 0
+dkart_gear:
+    db 0
+    db 0
+    db 0
+    db 1
+    db 14, 4
+    dd 0x64748B
+    db 1
+    db 14, 4
+    dd 0x64748B
+    db 1
+    db 13, 6
+    dd 0x64748B
+    db 5
+    db 7, 2
+    dd 0x64748B
+    db 10, 4
+    dd 0x64748B
+    db 14, 4
+    dd 0x94A3B8
+    db 18, 4
+    dd 0x64748B
+    db 23, 2
+    dd 0x64748B
+    db 3
+    db 6, 9
+    dd 0x64748B
+    db 15, 2
+    dd 0x94A3B8
+    db 17, 9
+    dd 0x64748B
+    db 7
+    db 6, 3
+    dd 0x64748B
+    db 9, 2
+    dd 0x94A3B8
+    db 11, 2
+    dd 0x64748B
+    db 13, 6
+    dd 0x94A3B8
+    db 19, 2
+    dd 0x64748B
+    db 21, 2
+    dd 0x94A3B8
+    db 23, 3
+    dd 0x64748B
+    db 3
+    db 7, 1
+    dd 0x64748B
+    db 8, 16
+    dd 0x94A3B8
+    db 24, 1
+    dd 0x64748B
+    db 3
+    db 6, 2
+    dd 0x64748B
+    db 8, 16
+    dd 0x94A3B8
+    db 24, 2
+    dd 0x64748B
+    db 3
+    db 6, 3
+    dd 0x64748B
+    db 9, 14
+    dd 0x94A3B8
+    db 23, 3
+    dd 0x64748B
+    db 4
+    db 6, 3
+    dd 0x64748B
+    db 9, 6
+    dd 0x94A3B8
+    db 17, 6
+    dd 0x94A3B8
+    db 23, 3
+    dd 0x64748B
+    db 4
+    db 5, 3
+    dd 0x64748B
+    db 8, 5
+    dd 0x94A3B8
+    db 19, 5
+    dd 0x94A3B8
+    db 24, 3
+    dd 0x64748B
+    db 8
+    db 3, 3
+    dd 0x64748B
+    db 6, 1
+    dd 0x94A3B8
+    db 7, 1
+    dd 0x64748B
+    db 8, 5
+    dd 0x94A3B8
+    db 19, 5
+    dd 0x94A3B8
+    db 24, 1
+    dd 0x64748B
+    db 25, 1
+    dd 0x94A3B8
+    db 26, 3
+    dd 0x64748B
+    db 4
+    db 3, 3
+    dd 0x64748B
+    db 6, 6
+    dd 0x94A3B8
+    db 20, 6
+    dd 0x94A3B8
+    db 26, 3
+    dd 0x64748B
+    db 4
+    db 3, 3
+    dd 0x64748B
+    db 6, 6
+    dd 0x94A3B8
+    db 20, 6
+    dd 0x94A3B8
+    db 26, 3
+    dd 0x64748B
+    db 8
+    db 3, 3
+    dd 0x64748B
+    db 6, 1
+    dd 0x94A3B8
+    db 7, 1
+    dd 0x64748B
+    db 8, 5
+    dd 0x94A3B8
+    db 19, 5
+    dd 0x94A3B8
+    db 24, 1
+    dd 0x64748B
+    db 25, 1
+    dd 0x94A3B8
+    db 26, 3
+    dd 0x64748B
+    db 4
+    db 5, 3
+    dd 0x64748B
+    db 8, 5
+    dd 0x94A3B8
+    db 19, 5
+    dd 0x94A3B8
+    db 24, 3
+    dd 0x64748B
+    db 4
+    db 6, 3
+    dd 0x64748B
+    db 9, 6
+    dd 0x94A3B8
+    db 17, 6
+    dd 0x94A3B8
+    db 23, 3
+    dd 0x64748B
+    db 3
+    db 6, 3
+    dd 0x64748B
+    db 9, 14
+    dd 0x94A3B8
+    db 23, 3
+    dd 0x64748B
+    db 3
+    db 6, 2
+    dd 0x64748B
+    db 8, 16
+    dd 0x94A3B8
+    db 24, 2
+    dd 0x64748B
+    db 3
+    db 7, 1
+    dd 0x64748B
+    db 8, 16
+    dd 0x94A3B8
+    db 24, 1
+    dd 0x64748B
+    db 7
+    db 6, 3
+    dd 0x64748B
+    db 9, 2
+    dd 0x94A3B8
+    db 11, 2
+    dd 0x64748B
+    db 13, 6
+    dd 0x94A3B8
+    db 19, 2
+    dd 0x64748B
+    db 21, 2
+    dd 0x94A3B8
+    db 23, 3
+    dd 0x64748B
+    db 3
+    db 6, 9
+    dd 0x64748B
+    db 15, 2
+    dd 0x94A3B8
+    db 17, 9
+    dd 0x64748B
+    db 5
+    db 7, 2
+    dd 0x64748B
+    db 10, 4
+    dd 0x64748B
+    db 14, 4
+    dd 0x94A3B8
+    db 18, 4
+    dd 0x64748B
+    db 23, 2
+    dd 0x64748B
+    db 1
+    db 13, 6
+    dd 0x64748B
+    db 1
+    db 14, 4
+    dd 0x64748B
+    db 1
+    db 14, 4
+    dd 0x64748B
+    db 0
+    db 0
+    db 0
+dkart_star:
+    db 0
+    db 0
+    db 1
+    db 15, 1
+    dd 0xFCDB43
+    db 1
+    db 15, 1
+    dd 0xFCD941
+    db 1
+    db 14, 3
+    dd 0xFBD73F
+    db 1
+    db 14, 3
+    dd 0xFBD53D
+    db 1
+    db 14, 3
+    dd 0xFBD33B
+    db 1
+    db 13, 5
+    dd 0xFBD139
+    db 1
+    db 13, 5
+    dd 0xFACE37
+    db 1
+    db 13, 5
+    dd 0xFACC35
+    db 1
+    db 12, 7
+    dd 0xFACA33
+    db 1
+    db 2, 27
+    dd 0xFAC831
+    db 1
+    db 3, 25
+    dd 0xF9C62F
+    db 1
+    db 4, 23
+    dd 0xF9C42D
+    db 1
+    db 6, 19
+    dd 0xF9C22B
+    db 1
+    db 7, 17
+    dd 0xF9C029
+    db 1
+    db 8, 15
+    dd 0xF8BD28
+    db 1
+    db 9, 13
+    dd 0xF8BB26
+    db 1
+    db 10, 11
+    dd 0xF8B924
+    db 1
+    db 9, 13
+    dd 0xF8B722
+    db 1
+    db 9, 13
+    dd 0xF7B520
+    db 1
+    db 9, 13
+    dd 0xF7B31E
+    db 2
+    db 8, 7
+    dd 0xF7B11C
+    db 16, 7
+    dd 0xF7B11C
+    db 2
+    db 8, 5
+    dd 0xF7AF1A
+    db 18, 5
+    dd 0xF7AF1A
+    db 2
+    db 8, 4
+    dd 0xF6AC18
+    db 19, 4
+    dd 0xF6AC18
+    db 2
+    db 8, 2
+    dd 0xF6AA16
+    db 21, 2
+    dd 0xF6AA16
+    db 2
+    db 7, 2
+    dd 0xF6A814
+    db 22, 2
+    dd 0xF6A814
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+dkart_music:
+    db 0
+    db 0
+    db 0
+    db 1
+    db 24, 2
+    dd 0xDB2777
+    db 1
+    db 24, 2
+    dd 0xDB2777
+    db 1
+    db 12, 14
+    dd 0xDB2777
+    db 1
+    db 12, 14
+    dd 0xDB2777
+    db 1
+    db 12, 14
+    dd 0xDB2777
+    db 2
+    db 12, 2
+    dd 0xDB2777
+    db 24, 2
+    dd 0xDB2777
+    db 2
+    db 12, 2
+    dd 0xDB2777
+    db 24, 2
+    dd 0xDB2777
+    db 2
+    db 12, 2
+    dd 0xDB2777
+    db 24, 2
+    dd 0xDB2777
+    db 2
+    db 12, 2
+    dd 0xDB2777
+    db 24, 2
+    dd 0xDB2777
+    db 2
+    db 12, 2
+    dd 0xDB2777
+    db 24, 2
+    dd 0xDB2777
+    db 2
+    db 12, 2
+    dd 0xDB2777
+    db 24, 2
+    dd 0xDB2777
+    db 2
+    db 12, 2
+    dd 0xDB2777
+    db 24, 2
+    dd 0xDB2777
+    db 2
+    db 12, 2
+    dd 0xDB2777
+    db 24, 2
+    dd 0xDB2777
+    db 2
+    db 12, 2
+    dd 0xDB2777
+    db 24, 2
+    dd 0xDB2777
+    db 2
+    db 12, 2
+    dd 0xDB2777
+    db 24, 2
+    dd 0xDB2777
+    db 3
+    db 12, 2
+    dd 0xDB2777
+    db 20, 3
+    dd 0xDB2777
+    db 24, 2
+    dd 0xDB2777
+    db 2
+    db 12, 2
+    dd 0xDB2777
+    db 18, 8
+    dd 0xDB2777
+    db 2
+    db 12, 2
+    dd 0xDB2777
+    db 17, 9
+    dd 0xDB2777
+    db 3
+    db 8, 3
+    dd 0xDB2777
+    db 12, 2
+    dd 0xDB2777
+    db 17, 9
+    dd 0xDB2777
+    db 2
+    db 6, 8
+    dd 0xDB2777
+    db 17, 9
+    dd 0xDB2777
+    db 2
+    db 5, 9
+    dd 0xDB2777
+    db 18, 7
+    dd 0xDB2777
+    db 2
+    db 5, 9
+    dd 0xDB2777
+    db 20, 3
+    dd 0xDB2777
+    db 1
+    db 5, 9
+    dd 0xDB2777
+    db 1
+    db 6, 7
+    dd 0xDB2777
+    db 1
+    db 8, 3
+    dd 0xDB2777
+    db 0
+    db 0
+    db 0
     db 0

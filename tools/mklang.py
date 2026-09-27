@@ -348,6 +348,8 @@ TR = {
 'dkt_l_zip': ('Сжать в ZIP', 'Comprimir en ZIP'),
 'dkt_l_unzip': ('Распаковать сюда', 'Extraer aquí'),
 'dkt_l_trash': ('Корзина', 'Papelera'),
+'dkp_l_change': ('Изменить иконку...', 'Cambiar icono...'),
+'dkp_m_choose': ('Выбери иконку (первая - своя):', 'Elige su icono (el primero: el suyo):'),
 'dkt_l_tempty': ('Очистить корзину', 'Vaciar la papelera'),
 'dkt_m_empty': ('Корзина пуста.', 'La papelera está vacía.'),
 'dkt_m_emptied': ('Корзина очищена (удалено: ', 'Papelera vaciada (borrados: '),

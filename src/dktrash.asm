@@ -138,6 +138,14 @@ dkt_ctx_edit_item:
     je .edit
     cmp eax, IC_SCRIPT
     je .edit
+    cmp eax, IC_CSRC
+    je .edit
+    cmp eax, IC_BAS
+    je .edit
+    cmp eax, IC_TRG
+    je .edit
+    cmp eax, IC_CFG
+    je .edit
     cmp eax, IC_FILE
     jne .no_edit
     call dk_ext_dword

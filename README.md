@@ -140,6 +140,10 @@ All taken in QEMU (1024x768) - more in [docs/screenshots](docs/screenshots).
 </tr>
 <tr>
 <td align="center" valign="top"><img src="docs/screenshots/54-desktop-trash.png" alt="The trash on the desktop" width="400"><br><sub>The trash, top left (full here); long names on two lines</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/55-change-icon.png" alt="Change icon" width="400"><br><sub>Properties: Change icon... - any of them, for any file</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/56-custom-icons.png" alt="Icons chosen" width="400"><br><sub>Games with a gamepad, CUBE with Lex - chosen in Properties</sub></td>
 <td></td>
 </tr>
 </table>
@@ -682,9 +686,16 @@ tester@/PROGRAMS$
     icon, or out of Files) is deleted into it; its menu has **Empty the
     trash** (done quietly, for good - not what's read-only).
   - **Pictures for icons** (tools/mkicons.py -> src/dkart.inc,
-    src/dkart.asm): the trash, a globe for the browser, a pad and pencil
-    for Notepad, a zipper for `.ZIP`s. A desktop icon's name that's
-    longer than its cell goes on two lines.
+    src/dkart.asm): folders, files, text, programs (a window), pictures,
+    sounds, scripts (`.HG`), C (`.C .H`), BASIC (`.BAS`), turtle
+    graphics (`.TRG` - a turtle), CHIP-8 games (`.CH8` - a chip), settings
+    (`.CFG`), the trash, a globe for the browser, a pad and pencil for
+    Notepad, a zipper for `.ZIP`s - and a gamepad, a terminal, Lex, a
+    gear, a star and a note to choose from. **Change icon...** in
+    Properties shows them all: any file or shortcut can have any of them
+    (kept in its own slot, so it goes where the file goes; the first one
+    in the list is its own again). A desktop icon's name that's longer
+    than its cell goes on two lines.
   - **The trash remembers** (src/dktrash.asm): whatever's deleted (or
     moved) keeps the folder it came from; in TRASH, **Restore** puts it
     back there - or in the root, if that folder's gone or the name's

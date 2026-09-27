@@ -101,7 +101,7 @@ dki_scan:
     jne .plain
     push edi                              ; its text: the target
     mov ax, bx
-    mov ecx, DKI_PATH - 1
+    mov ecx, DKI_PATH - 2                 ; (its last byte: the icon chosen)
     call fs_load_to
     pop edi
     mov byte [edi + ecx], 0
@@ -118,6 +118,7 @@ dki_scan:
     add esi, dki_new_file
     call dki_copy
 .have:
+    call dka_scan_look                    ; (an icon chosen for it)
     inc ebp
 .next:
     inc ebx
@@ -482,7 +483,7 @@ dki_draw:
     push eax
     push ebx
     push edx
-    movzx ecx, byte [dki_kind + ebx]
+    call dka_icon_look                    ; -> ecx (its own, or chosen)
     add eax, (DKI_W - 32) / 2
     lea ebx, [edx + 3]
     call dk_icon                          ; (src/dkwins.asm, as in Files)
