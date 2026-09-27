@@ -2718,16 +2718,12 @@ dk_launch:
     pushad
     call dkx_recent_add                   ; (src/dkextra.asm: the menu's recent)
     call dkf_rec_add                      ; (Files' Recent: src/dkfview.asm)
-    call dk_open_command                  ; a text file, and Notepad's open:
-    cmp edx, dk_verb_edit                 ; a tab in it (src/appext.asm)
-    jne .not_notepad
-    mov edx, dk_n_notepad
-    call aext_hand_over
-    jnc .done
-.not_notepad:
-    cmp edx, dkt_verb_hex                 ; (the Hex editor's open: in it)
-    jne .new
-    mov edx, dkt_n_hex
+    call dk_open_command                  ; what opens it is open already
+    call dk_win_verb                      ; (a text file, Notepad): it goes
+    jc .new                               ; there (src/appext.asm)
+    mov edx, [ebx + 4]
+    or edx, edx
+    jz .new
     call aext_hand_over
     jnc .done
 .new:
@@ -2784,14 +2780,14 @@ dk_launch:
     call wget_append
     pop esi
     pop eax
-    cmp edx, dk_verb_edit                 ; Notepad, the browser, Paint: the
-    je .whole                             ; whole path
-    cmp edx, dkt_verb_paint
-    je .whole
-    cmp edx, dkt_verb_hex
-    je .whole
-    cmp edx, dk_verb_web
-    jne .named
+    push ebx                              ; Notepad, the browser, Paint...:
+    call dk_win_verb                      ; the whole path
+    jc .part
+    cmp dword [ebx + 8], 0
+.part:
+    pop ebx
+    jc .named
+    je .named
 .whole:
     push esi
     mov esi, eax
@@ -4248,27 +4244,31 @@ dk_open_command:
 ; esi = a file's name: carry=0 if what opens it is a window of its own
 ; (Notepad, the browser) - started like a program, no Terminal
 dk_gui_verb:
-    push eax
+    push ebx
     push edx
     call dk_open_command                  ; -> edx
-    cmp edx, dk_verb_edit
-    je .yes
-    cmp edx, dk_verb_web
-    je .yes
-    cmp edx, dkt_verb_view                ; (a ZIP, looked into: src/dktrash.asm)
-    je .yes
-    cmp edx, dkt_verb_paint               ; (Edit in Paint)
-    je .yes
-    cmp edx, dkt_verb_hex                 ; (Open in the Hex editor)
-    je .yes
+    call dk_win_verb
     pop edx
-    pop eax
-    stc
+    pop ebx
     ret
+
+; edx = a verb -> ebx = its line in dk_win_verbs (the verb, the program's
+; window title to hand a file to or 0, 1 if it wants the whole path),
+; carry=1 if it isn't one that opens a window of its own
+dk_win_verb:
+    mov ebx, dk_win_verbs
+.line:
+    cmp dword [ebx], 0
+    je .no
+    cmp [ebx], edx
+    je .yes
+    add ebx, 12
+    jmp .line
 .yes:
-    pop edx
-    pop eax
     clc
+    ret
+.no:
+    stc
     ret
 
 ; Up to the parent folder
@@ -5734,12 +5734,22 @@ dk_ext_kinds      dd 'APP', IC_APP, 'COM', IC_APP, 'BIN', IC_APP, 'BMP', IC_IMAG
                   dd 'BAS', IC_BAS, 'TXT', IC_TEXT, 'C', IC_CSRC, 'ASM', IC_TEXT
                   dd 'CFG', IC_CFG, 'TRG', IC_TRG, 'CH8', IC_CH8, 'H', IC_CSRC
                   dd 'MD', IC_TEXT, 'HTM', IC_TEXT, 'LNK', IC_TEXT, 'ZIP', IC_ZIP
+                  dd 'CSV', IC_TEXT
                   dd 0, 0
 dk_ext_verbs      dd 'APP', dk_verb_run, 'COM', dk_verb_run, 'BIN', dk_verb_run
                   dd 'WAV', dk_verb_play, 'IMF', dk_verb_play, 'MOD', dk_verb_mod
                   dd 'HG', dk_verb_none, 'BAS', dk_verb_basic, 'TRG', dk_verb_turtle
                   dd 'CH8', dk_verb_chip8, 'HTM', dk_verb_web, 'MD', dk_verb_web
-                  dd 'ZIP', dkt_verb_view, 0, 0
+                  dd 'ZIP', dkt_verb_view, 'CSV', dk_verb_sheet, 0, 0
+; the verbs that open a window of their own (no Terminal): the verb, the
+; program to hand another file to if it's open already, the whole path?
+dk_win_verbs      dd dk_verb_edit, dk_n_notepad, 1
+                  dd dk_verb_web, dk_n_browser, 1
+                  dd dkt_verb_view, 0, 0            ; (a ZIP, looked into)
+                  dd dkt_verb_paint, 0, 1           ; (Edit in Paint)
+                  dd dkt_verb_hex, dkt_n_hex, 1     ; (Open in the Hex editor)
+                  dd dk_verb_sheet, dk_n_sheet, 1
+                  dd 0
 dk_state_names    dd dk_st_free, dk_st_ready, dk_st_waiting, dk_st_paused
 
 dk_verb_run       db "run ", 0
@@ -5751,6 +5761,9 @@ dk_verb_turtle    db "turtle ", 0
 dk_verb_chip8     db "chip8 ", 0
 dk_verb_edit      db "run notepad.app ", 0
 dk_n_notepad      db "notepad.app", 0
+dk_n_browser      db "browser.app", 0
+dk_verb_sheet     db "run sheet.app ", 0
+dk_n_sheet        db "sheet.app", 0
 dk_verb_web       db "run browser.app ", 0
 dk_cmd_cd         db "cd ", 0
 dk_st_free        db "-", 0

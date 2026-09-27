@@ -1,0 +1,10 @@
+Budget,January,February,March,Total
+Rent,500,500,500,=SUM(B2:D2)
+Food,210.5,195,230.25,=SUM(B3:D3)
+Transport,45,60,38,=SUM(B4:D4)
+Fun,80,35,120,=SUM(B5:D5)
+Total,=SUM(B2:B5),=SUM(C2:C5),=SUM(D2:D5),=SUM(E2:E5)
+
+Average a month,=E6/3
+Biggest cost,=MAX(E2:E5)
+Over 2800?,"=IF(E6>2800,""yes"",""no"")"

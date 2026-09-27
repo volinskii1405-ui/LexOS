@@ -1760,6 +1760,10 @@ int main(int argc, char **argv)
     go(argc > 1 ? argv[1] : home, 1);
     for (;;) {
         int k = pollkey(), changed = 0, over;
+        {                                                /* a page opened in Files */
+            char in[URL_MAX];                            /* while we're open: a tab */
+            if (inbox(in, sizeof in) > 0) { if (ntabs < TABS_MAX) tab_new(in); else go(in, 1); changed = 1; }
+        }
         if (k) {
             int ch = k & 0xFF, sc = (k >> 8) & 0xFF;
             if (editing) {

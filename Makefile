@@ -134,7 +134,7 @@ lan2: $(BUILD_DIR)/os-image.bin
 # committed, so plain `make` / `make run` never needs any of this.
 APP_CFLAGS = -m32 -ffreestanding -fno-pic -fno-pie -fno-stack-protector \
 	-fno-asynchronous-unwind-tables -nostdlib -O2 -Wall
-C_APPS = guess wc note fire pong mandel modplay ftest cube maze browser cc notepad zip paint calc snake tetris sweeper 2048 hexedit
+C_APPS = guess wc note fire pong mandel modplay ftest cube maze browser cc notepad zip paint calc snake tetris sweeper 2048 hexedit sheet
 upper = $(shell echo $(1) | tr a-z A-Z)
 apps: disk/APPS/HELLO.APP disk/APPS/CRASH.APP $(foreach a,$(C_APPS),disk/APPS/$(call upper,$(a)).APP)
 
