@@ -317,6 +317,11 @@ dk_wheel_work:
     add [dk_app_wheel + eax*4], ebp
     jmp .done
 .not_app:
+    cmp byte [dkw_kind + esi], K_PICS     ; Pictures: zoomed
+    jne .not_pics
+    call dkv_wheel                        ; (src/dkpics.asm)
+    jmp .done
+.not_pics:
     cmp byte [dkw_kind + esi], K_FILES
     jne .done
     mov eax, [dk_fm_page]                 ; Files: a page per notch
@@ -527,6 +532,11 @@ dk_clock_hand:
 dk_draw_pictures:
     cmp byte [dk_pic_state], 2
     je .image
+    cmp byte [dk_pic_state], 1            ; (the next one coming: this one
+    jne .words                            ;  till then)
+    cmp byte [dkv_have], 0
+    jne .image
+.words:
     mov eax, [dk_cx]
     add eax, 12
     mov ebx, [dk_cy]
@@ -540,12 +550,7 @@ dk_draw_pictures:
     call dk_text
     jmp dk_contents_done
 .image:
-    mov esi, DESK_IMG_PIX
-    mov eax, [dk_pic_w]
-    mov ebx, [dk_pic_h]
-    mov ecx, 1
-    call dk_copy_pixels
-    jmp dk_contents_done
+    jmp dkv_draw                          ; (src/dkpics.asm: the viewer)
 
 ; The pixels at esi (eax x ebx, 32bpp) -> the client area at dk_cx/cy,
 ; each ecx x ecx times (1 or 2), inside the clip
@@ -689,10 +694,13 @@ dk_pictures_next:
     mov ecx, FS_TOTAL_SLOTS
     mov ebx, [dk_pic_slot]
 .slot:
-    inc ebx
+    add ebx, [dk_pic_step]                ; (on, or back: src/dkpics.asm)
     cmp ebx, FS_TOTAL_SLOTS
     jb .check
     xor ebx, ebx
+    cmp dword [dk_pic_step], 0
+    jg .check
+    mov ebx, FS_TOTAL_SLOTS - 1
 .check:
     push ecx
     mov ax, bx
@@ -709,6 +717,7 @@ dk_pictures_next:
     je .found
 .next:
     loop .slot
+    call dkv_none
     mov byte [dk_pic_state], 3            ; none here
     mov eax, K_PICS
     xor ebx, ebx
@@ -762,17 +771,10 @@ dk_pictures_next:
     jc .bad
     mov byte [dk_pic_state], 2
     mov esi, [dk_pic_win]
-    mov eax, [dk_pic_w]
-    cmp eax, 240
-    jae .w_ok
-    mov eax, 240
-.w_ok:
-    mov [dkw_w + esi*4], eax
-    mov eax, [dk_pic_h]
-    mov [dkw_h + esi*4], eax
-    call dk_fit_window
+    call dkv_loaded                       ; (src/dkpics.asm: sized, counted)
     jmp .redraw
 .bad:
+    call dkv_none
     mov byte [dk_pic_state], 3
 .redraw:
     mov byte [dk_redraw_all], 1
@@ -4554,7 +4556,7 @@ dk_win_click:
 .not_term:
     cmp edx, K_PICS
     jne .not_pics
-    mov byte [dk_pic_state], 1            ; the next picture
+    call dkv_click                        ; (src/dkpics.asm)
     jmp .done
 .not_pics:
     cmp edx, K_FILES

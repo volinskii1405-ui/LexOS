@@ -358,6 +358,7 @@ desktop_task:
     call dk_menu_keys_work                ; (src/dkwins.asm: the menu's search)
     call dkc_work                         ; (src/dkclip.asm: copy, paste)
     call dk_fm_keys_work                  ; (src/dkfind.asm: Files' search)
+    call dkv_work                         ; (src/dkpics.asm: Pictures' keys)
     call dkn_work                         ; (src/dkname.asm: the dialog)
     call dk_sub_hover_work                ; (the context menu's pointer)
     call dkx_startup_work                 ; (src/dkextra.asm: STARTUP)
@@ -1326,6 +1327,11 @@ dk_mouse_event:
     call dkc_move
     jmp .done
 .no_select:
+    cmp byte [dkv_drag], 0                ; a zoomed picture being moved
+    je .no_pan                            ; (src/dkpics.asm)
+    call dkv_move
+    jmp .done
+.no_pan:
     call dkm_band_move                    ; a rubber band (src/dkmsel.asm)
     jnc .done
     cmp dword [dki_drag], -1              ; a desktop icon being carried
@@ -1639,6 +1645,8 @@ dk_min_offset:
 dk_can_max:
     cmp byte [dkw_kind + eax], K_FILES
     je .yes
+    cmp byte [dkw_kind + eax], K_PICS
+    je .yes
     cmp byte [dkw_kind + eax], K_TERM
     je .yes
     cmp byte [dkw_kind + eax], K_APP
@@ -1652,6 +1660,8 @@ dk_can_max:
 ; eax = a window -> carry=0 if it can be resized by its corner (Files)
 dk_can_resize:
     cmp byte [dkw_kind + eax], K_FILES
+    je .yes
+    cmp byte [dkw_kind + eax], K_PICS
     je .yes
     stc
     ret

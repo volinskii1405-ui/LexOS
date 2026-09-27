@@ -562,9 +562,13 @@ push_key_to_buffer:
     jne .name
     cmp byte [dk_menu_open], 0
     jne .menu
+    cmp byte [dkv_typing], 0       ; Pictures in front: its (src/dkpics.asm)
+    jne .pics
     cmp byte [dk_fm_typing], 0
     je .console
     jmp dk_fm_key_in
+.pics:
+    jmp dkv_key_in
 .menu:
     jmp dk_menu_key_in
 .lock:

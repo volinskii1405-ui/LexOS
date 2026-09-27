@@ -401,4 +401,5 @@ kext_start:
 %include "src/dksaver.asm"
 %include "src/dkfscheck.asm"
 %include "src/dkpng.asm"
+%include "src/dkpics.asm"
 kext_end:
