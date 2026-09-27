@@ -58,8 +58,8 @@ DK_MENU_ITEM_H    equ 24
 DK_MENU_ITEMS     equ 12
 DK_TRAY_W         equ 188                 ; the taskbar's right end: volume,
                                           ; network, the time
-DK_CAL_W          equ 244                 ; the calendar
-DK_CAL_H          equ 196
+DK_CAL_W          equ 340                 ; the calendar, the notifications
+DK_CAL_H          equ 196 + DNC_H         ; above it (src/dknotify.asm)
 DK_PROG_W         equ 230                 ; the Programs submenu
 DK_PROG_MAX       equ 22
 
@@ -1380,7 +1380,9 @@ dk_click:
 .not_desk_btn:
     cmp byte [dk_cal_open], 0             ; the calendar: any click closes
     je .no_cal                            ; it (the time's own: see the
-    call dk_mark_calendar                 ; tray, it toggles)
+    call dnc_click                        ; tray, it toggles) - but on it,
+    jnc .done                             ; its buttons (src/dknotify.asm)
+    call dk_mark_calendar
     mov byte [dk_cal_open], 0
     cmp ebx, DESK_H - DK_TASKBAR_H
     jb .done
@@ -2327,6 +2329,7 @@ dk_draw_taskbar:
     mov edx, COL_BARTEXT
     call dk_text
     call dk_draw_tray                     ; (src/dkwins.asm)
+    call dnc_draw_dot                     ; (src/dknotify.asm: news)
     call dkx_draw_desk_btn                ; (src/dkextra.asm)
     popad
     ret

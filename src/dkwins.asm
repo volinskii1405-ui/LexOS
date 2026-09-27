@@ -3048,6 +3048,7 @@ dk_tray_click:
     mov [dk_time_click_ms], eax
     mov byte [dk_cal_open], 1
     call dk_mark_calendar
+    call dnc_seen                         ; (src/dknotify.asm)
 .done:
     popad
     ret
@@ -3148,6 +3149,8 @@ dk_cal_today:
 ; ============================================================
 DK_CAL_X equ DESK_W - DK_CAL_W - 4
 DK_CAL_Y equ DESK_H - DK_TASKBAR_H - DK_CAL_H - 4
+DK_CALB_X equ DK_CAL_X + (DK_CAL_W - 244) / 2 ; (the calendar's own part,
+DK_CALB_Y equ DK_CAL_Y + DNC_H                ;  under the notifications)
 
 dk_mark_calendar:
     pushad
@@ -3173,6 +3176,7 @@ dk_draw_calendar:
     sub edx, 2
     mov esi, COL_POPUP
     call dk_fill
+    call dnc_draw                         ; (src/dknotify.asm: on top)
     call dk_cal_today                     ; today, in the user's time zone
     ; "September 2026"
     mov edi, dk_sys_buf
@@ -3184,13 +3188,13 @@ dk_draw_calendar:
     mov eax, [dk_cal_year]
     call wget_append_num
     mov byte [edi], 0
-    mov eax, DK_CAL_X + 12
-    mov ebx, DK_CAL_Y + 8
+    mov eax, DK_CALB_X + 12
+    mov ebx, DK_CALB_Y + 8
     mov esi, dk_sys_buf
     mov edx, COL_TEXT
     call dk_text
-    mov eax, DK_CAL_X + 12
-    mov ebx, DK_CAL_Y + 32
+    mov eax, DK_CALB_X + 12
+    mov ebx, DK_CALB_Y + 32
     mov esi, dk_cal_weekdays
     mov edx, COL_MUTED
     call dk_text
@@ -3234,9 +3238,9 @@ dk_draw_calendar:
     mov esi, 7
     div esi                               ; eax = row, edx = column
     imul ebx, eax, 22
-    add ebx, DK_CAL_Y + 54
+    add ebx, DK_CALB_Y + 54
     imul eax, edx, 32
-    add eax, DK_CAL_X + 10
+    add eax, DK_CALB_X + 10
     mov edx, COL_TEXT
     cmp ecx, [dk_cal_day]
     jne .plain
@@ -4127,6 +4131,9 @@ dk_shot_capture:
 DK_TOAST_W equ 420
 dk_toast:
     pushad
+    call dnc_record                       ; (src/dknotify.asm: kept)
+    cmp byte [dnc_quiet], 0               ; (do not disturb: only kept)
+    jne .quiet
     mov eax, SND_NOTIFY
     call snd_play
     mov eax, [timer_ms]
@@ -4134,6 +4141,7 @@ dk_toast:
     mov [dk_toast_until], eax
     mov byte [dk_toast_on], 1
     call dk_mark_toast
+.quiet:
     popad
     ret
 

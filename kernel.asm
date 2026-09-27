@@ -402,4 +402,5 @@ kext_start:
 %include "src/dkfscheck.asm"
 %include "src/dkpng.asm"
 %include "src/dkpics.asm"
+%include "src/dknotify.asm"
 kext_end:
