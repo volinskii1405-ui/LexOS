@@ -364,6 +364,8 @@ desktop_task:
     call dkx_fc_work                      ; (src/dkextra.asm: Files' clipboard)
     call dkd_work                         ; (src/dkdrop.asm: a drop)
     call dkt_del_work                     ; (src/dktrash.asm: Del)
+    call dkw_work                         ; (src/dkwall.asm: the wallpaper)
+    call dkf_thumb_work                   ; (src/dkfview.asm: thumbnails)
     call dkx_cat_work                     ; (src/dkcat.asm: Lex)
     call dkt_work                         ; (src/dkextra.asm: the tooltip,
     call dkx_win_key                      ;  the Win key)
@@ -1908,6 +1910,8 @@ dk_render:
     jl .cover
     jmp .win                              ; ecx = the first to draw
 .uncovered:
+    call dkw_draw                         ; (a wallpaper: src/dkwall.asm)
+    jnc .bg_done
     ; the background: a vertical gradient, dark blue into teal
     mov ebx, [dk_clip_y0]
 .bg_row:
@@ -3032,9 +3036,9 @@ dk_zcount         dd 0
 
 ; each kind's place and size when it opens, and name
 ;                   term  clock pics  sys   files tasks mixer app
-dk_def_x          dd 30,   800,  240,  560,  60,   250,  420,  200
+dk_def_x          dd 30,   800,  240,  560,  40,   250,  420,  200
 dk_def_y          dd 24,   30,   120,  320,  90,   90,   260,  60
-dk_def_w          dd 640,  200,  320,  420,  560,  520,  400,  320
+dk_def_w          dd 640,  200,  320,  420,  680,  520,  400,  320
 dk_def_h          dd 400,  214,  200,  244,  380,  400,  210,  200
 dk_kind_names     dd dk_title_terminal, dk_title_clock, dk_title_pictures, dk_title_system
                   dd dk_title_files, dk_title_tasks, dk_title_mixer, dk_title_program

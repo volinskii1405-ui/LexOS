@@ -156,7 +156,7 @@ dk_fm_matches:
 
 ; esi, eax = two entries -> carry=1 if esi's comes before eax's:
 ; folders first, then by dk_fm_sort (0 the name, 1 the size - biggest
-; first, 2 the kind), ties by the name
+; first, 2 the kind, 3 when it changed - newest first), ties by the name
 dk_fm_before:
     push ebx
     push ecx
@@ -181,6 +181,14 @@ dk_fm_before:
     jb .no
     jmp .by_name
 .not_size:
+    cmp dword [dk_fm_sort], 3             ; when it changed: newest first
+    jne .not_date
+    mov edx, [esi + 28]
+    cmp edx, [eax + 28]
+    ja .yes
+    jb .no
+    jmp .by_name
+.not_date:
     cmp dword [dk_fm_sort], 2
     jne .by_name
     push esi                              ; the kind: its extension
@@ -314,13 +322,16 @@ dk_fm_draw_tools:
     mov esi, [dk_fm_sort_names + ecx*4]
     mov edx, COL_TEXT
     call dk_text
+    mov eax, ebp                          ; Icons / Details (src/dkfview.asm)
+    call dk_fm_shift
+    call dkf_draw_viewbtn
     popad
     ret
 
 ; eax = a Files window -> edx = how far left its search and order go
 ; (a narrow one - half the screen: the page buttons stay clear)
 dk_fm_shift:
-    mov edx, FM_SORT_X + FM_SORT_W + 68
+    mov edx, FM_SORT_X + FM_SORT_W + 68 + 34     ; (the view button too)
     sub edx, [dkw_w + eax*4]
     jns .some
     xor edx, edx
@@ -451,7 +462,8 @@ dk_fm_khead       db 0
 dk_fm_ktail       db 0
 dk_fm_tmp         times FM_ENTRY db 0
 dk_fm_find_hint   db "Type to find", 0
-dk_fm_sort_names  dd dk_fm_s_name, dk_fm_s_size, dk_fm_s_type
+dk_fm_sort_names  dd dk_fm_s_name, dk_fm_s_size, dk_fm_s_type, dk_fm_s_date
+dk_fm_s_date      db "Sort: Date", 0
 dk_fm_s_name      db "Sort: Name", 0
 dk_fm_s_size      db "Sort: Size", 0
 dk_fm_s_type      db "Sort: Type", 0

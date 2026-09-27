@@ -387,6 +387,62 @@ def linkbadge():
             put(img, x, 19+y, col[ch])
     return img
 
+# --- Paint: a palette with paint on it, a brush across ---------------------
+def palette():
+    img = blank()
+    wood, edge = hexc(0xE9C48A), hexc(0x9A6A3A)
+    for y in range(H):
+        for x in range(W):
+            dx, dy = (x-15.5)/14.5, (y-17)/12.5
+            if dx*dx + dy*dy <= 1:
+                put(img, x, y, edge if dx*dx + dy*dy > 0.82 else wood)
+    for y in range(H):                       # the thumb hole
+        for x in range(W):
+            if (x-21)**2 + (y-23)**2 <= 6: put(img, x, y, None)
+    for (cx, cy, c) in ((8, 14, 0xE53935), (13, 9, 0xFDD835), (20, 9, 0x43A047), (25, 14, 0x1E88E5), (9, 21, 0x8E24AA)):
+        for y in range(cy-2, cy+3):
+            for x in range(cx-2, cx+3):
+                if (x-cx)**2 + (y-cy)**2 <= 5: put(img, x, y, hexc(c))
+    for i in range(12):                      # the brush
+        put(img, 14+i, 27-i, hexc(0x5D4037)); put(img, 15+i, 27-i, hexc(0x8D6E63))
+    rect(img, 11, 27, 14, 30, hexc(0x333333))
+    return img
+
+# --- the Calculator: a body, its display, its keys ------------------------
+def calcicon():
+    img = blank()
+    rect(img, 6, 1, 25, 30, hexc(0x39424F))
+    rect(img, 7, 2, 24, 29, hexc(0x5B6778))
+    rect(img, 9, 4, 22, 10, hexc(0xCFE8C8))
+    rect(img, 16, 6, 21, 8, hexc(0x2E4A2A))
+    for r in range(4):
+        for c in range(3):
+            x, y = 9 + c*5, 13 + r*4
+            col = 0xF59E0B if (c == 2 and r > 0) else 0xE5E7EB
+            rect(img, x, y, x+3, y+2, hexc(col))
+    return img
+
+# --- Files' places: the desktop (a screen), the disk --------------------
+def monitor():
+    img = blank()
+    rect(img, 3, 5, 28, 23, hexc(0x39424F))
+    for y in range(7, 22):                   # the screen: sky into sea
+        t = (y-7)/14
+        rect(img, 5, y, 26, y, mix(hexc(0x2E6FD8), hexc(0x33B3A6), t))
+    rect(img, 8, 10, 10, 12, hexc(0xFFFFFF)); rect(img, 8, 15, 10, 17, hexc(0xFDE68A))
+    rect(img, 13, 24, 18, 26, hexc(0x5B6778))
+    rect(img, 9, 27, 22, 28, hexc(0x39424F))
+    return img
+
+def disk():
+    img = blank()
+    rect(img, 3, 9, 28, 24, hexc(0x39424F))
+    rect(img, 4, 10, 27, 23, hexc(0xB8C2CF))
+    rect(img, 4, 10, 27, 12, hexc(0xD5DCE5))
+    rect(img, 6, 18, 21, 19, hexc(0x8A96A6))
+    rect(img, 23, 17, 25, 20, hexc(0x22C55E))
+    return img
+
 # kind -> (name, picture): the numbers are src/dkwins.asm's IC_*
 KINDS = [
     (0, 'dkart_folder', folder()), (1, 'dkart_up', folder(True)), (2, 'dkart_file', plainfile()),
@@ -399,6 +455,8 @@ KINDS = [
     (19, 'dkart_term', terminal()), (20, 'dkart_cat', cat()), (21, 'dkart_gear', gear()),
     (22, 'dkart_star', star()), (23, 'dkart_music', music()),
     (24, 'dkart_link', linkbadge()),
+    (25, 'dkart_paint', palette()), (26, 'dkart_calc', calcicon()),
+    (27, 'dkart_desk', monitor()), (28, 'dkart_disk', disk()),
 ]
 ICONS = [(n, i) for _, n, i in KINDS]
 

@@ -682,7 +682,9 @@ dk_pictures_next:
     call dk_shell_idle
     jc .done                              ; not now - next frame
     cmp byte [dk_shot_ready], 0           ; (a screenshot's in its buffer,
-    jne .done                             ;  being written)
+    jne .done                             ;  being written - or the wallpaper
+    cmp byte [dkw_busy], 0                ;  being made from its file)
+    jne .done
     mov byte [dk_pic_state], 0
     mov ecx, FS_TOTAL_SLOTS
     mov ebx, [dk_pic_slot]
@@ -1548,6 +1550,10 @@ IC_GEAR   equ 21
 IC_STAR   equ 22
 IC_MUSIC  equ 23
 IC_LINKMARK equ 24                      ; (a shortcut's mark, over its icon)
+IC_PAINT  equ 25
+IC_CALC   equ 26
+IC_DESK   equ 27                        ; (Files' places: the desktop,
+IC_DISK   equ 28                        ;  the disk)
 
 dk_draw_files:
     ; the toolbar: [Up], the path, [<] [>]
@@ -1597,7 +1603,8 @@ dk_draw_files:
     add eax, 30
     mov esi, dk_fm_next
     call dk_text
-    ; the grid
+    ; the places on the left, Details' headings, then the cells
+    call dkf_draw_frame                   ; (src/dkfview.asm)
     xor edi, edi                          ; the cell
 .cell:
     cmp edi, [dk_fm_page_n]
@@ -1607,77 +1614,7 @@ dk_draw_files:
     add eax, edi
     cmp eax, [dk_fm_count]
     jae .status
-    push edi
-    mov esi, eax                          ; the entry
-    shl esi, 5
-    add esi, DESK_FILES
-    push eax
-    mov eax, edi                          ; its cell's corner
-    xor edx, edx
-    mov ecx, [dk_fm_cols]
-    div ecx
-    imul ebx, eax, FM_CELL_H
-    add ebx, FM_TOP
-    add ebx, [dk_cy]
-    imul eax, edx, FM_CELL_W
-    add eax, 4
-    add eax, [dk_cx]
-    pop edx                               ; edx = the entry's index
-    mov [dk_fm_cell_x], eax
-    mov [dk_fm_cell_y], ebx
-    ; the icon, centered
-    add eax, (FM_CELL_W - 32) / 2
-    add ebx, 6
-    call dka_entry_kind                   ; -> ecx (its own, or chosen)
-    mov dword [dk_icon_fill], dk_fill
-    call dk_icon
-    call dka_badge                        ; (a shortcut: its mark)
-    ; the name below it (highlighted if selected)
-    push esi
-    xor ecx, ecx
-.len:
-    cmp byte [esi + ecx], 0
-    je .have_len
-    inc ecx
-    cmp ecx, 11
-    jb .len
-.have_len:
-    mov eax, FM_CELL_W
-    mov ebx, ecx
-    shl ebx, 3
-    sub eax, ebx
-    shr eax, 1
-    add eax, [dk_fm_cell_x]
-    mov ebx, [dk_fm_cell_y]
-    add ebx, 44
-    mov edi, ecx
-    push ebx
-    mov ebx, edx
-    call dk_sel_test
-    pop ebx
-    jc .plain_name
-    push eax
-    push ebx
-    push ecx
-    push edx
-    sub eax, 2
-    shl ecx, 3
-    add ecx, 4
-    mov edx, 16
-    mov esi, COL_TITLE_ON
-    call dk_fill
-    pop edx
-    pop ecx
-    pop ebx
-    pop eax
-    mov edx, COL_WHITE
-    jmp .name
-.plain_name:
-    mov edx, COL_TEXT
-.name:
-    pop esi
-    call dk_text_n
-    pop edi
+    call dkf_draw_cell                    ; eax = the entry, edi = the cell
     inc edi
     jmp .cell
 .status:
@@ -1967,6 +1904,8 @@ dk_files_click:
     mov byte [dk_fm_msg_clear], 1
     call dkt_bar_click                    ; (the trash's buttons)
     jnc .done
+    call dkf_click                        ; (the view button, the places,
+    jnc .done                             ;  Details' headings)
     cmp ebx, FM_TOP - 4
     jae .grid
     cmp ecx, 50                           ; [Up]
@@ -1983,7 +1922,7 @@ dk_files_click:
     cmp ecx, FM_SORT_X + FM_SORT_W
     jae .not_sort_back
     inc dword [dk_fm_sort]
-    cmp dword [dk_fm_sort], 3
+    cmp dword [dk_fm_sort], 4
     jb .sorted
     mov dword [dk_fm_sort], 0
 .sorted:
@@ -2019,25 +1958,11 @@ dk_files_click:
 .done:
     ret
 .grid:
-    sub ebx, FM_TOP
     push eax
-    mov eax, ebx
-    xor edx, edx
-    mov ebx, FM_CELL_H
-    div ebx                               ; eax = the row
-    cmp eax, [dk_fm_rows]
-    jae .miss
-    mov ebx, eax
-    imul ebx, [dk_fm_cols]
-    mov eax, ecx
-    sub eax, 4
-    js .miss
-    xor edx, edx
-    mov ecx, FM_CELL_W
-    div ecx                               ; eax = the column
-    cmp eax, [dk_fm_cols]
-    jae .miss
-    add ebx, eax
+    call dkf_hit                          ; -> edx = the cell (src/dkfview.asm)
+    cmp edx, -1
+    je .miss
+    mov ebx, edx
     mov eax, [dk_fm_page]
     imul eax, [dk_fm_page_n]
     add ebx, eax
@@ -2107,6 +2032,8 @@ dk_files_drag:
     shl eax, 5
     cmp byte [DESK_FILES + eax + 17], IC_UP
     je .done
+    cmp byte [dkf_recent], 0              ; (nor out of Recent)
+    jne .done
     mov byte [dk_fm_state], 3
     jmp .done
 .clicked:
@@ -2191,26 +2118,13 @@ dk_files_entry_at:
     call dk_client_origin                 ; -> eax, ebx
     mov ecx, [dk_mx]
     sub ecx, eax
-    sub ecx, 4
-    js .done
     mov eax, [dk_my]
     sub eax, ebx
-    sub eax, FM_TOP
-    js .done
-    xor edx, edx
-    mov ebx, FM_CELL_H
-    div ebx
-    cmp eax, [dk_fm_rows]
-    jae .none
     mov ebx, eax
-    imul ebx, [dk_fm_cols]
-    mov eax, ecx
-    xor edx, edx
-    mov ecx, FM_CELL_W
-    div ecx
-    cmp eax, [dk_fm_cols]
-    jae .none
-    add ebx, eax
+    call dkf_hit                          ; -> edx (src/dkfview.asm)
+    cmp edx, -1
+    je .done
+    mov ebx, edx
     mov eax, [dk_fm_page]
     imul eax, [dk_fm_page_n]
     add ebx, eax
@@ -2275,6 +2189,8 @@ dk_screen_fill:
 ; Open entry eax (a double click)
 dk_files_open:
     pushad
+    call dkf_open                         ; (in Recent: where it is)
+    jnc .done
     mov esi, eax
     shl esi, 5
     add esi, DESK_FILES
@@ -2318,6 +2234,8 @@ dk_files_open:
     mov byte [dk_fm_find], 0
     jmp .done
 .file:
+    mov edi, dk_fm_path                   ; (Recent: src/dkfview.asm)
+    call dkf_rec_add
     cmp ecx, IC_IMAGE                     ; a picture: into Pictures
     jne .command
     movzx eax, word [esi + 20]
@@ -2797,6 +2715,7 @@ dk_prog_run:
 dk_launch:
     pushad
     call dkx_recent_add                   ; (src/dkextra.asm: the menu's recent)
+    call dkf_rec_add                      ; (Files' Recent: src/dkfview.asm)
     mov ebx, 1                            ; a free console
 .free:
     cmp ebx, CONSOLE_MAX
@@ -2850,8 +2769,10 @@ dk_launch:
     call wget_append
     pop esi
     pop eax
-    cmp edx, dk_verb_edit                 ; Notepad, the browser: the whole
-    je .whole                             ; path
+    cmp edx, dk_verb_edit                 ; Notepad, the browser, Paint: the
+    je .whole                             ; whole path
+    cmp edx, dkt_verb_paint
+    je .whole
     cmp edx, dk_verb_web
     jne .named
 .whole:
@@ -3485,24 +3406,21 @@ dk_band_select:
     add ebx, edi
     cmp ebx, [dk_fm_count]
     jae .done
-    mov eax, edi                          ; its rectangle on the screen
-    xor edx, edx
-    div dword [dk_fm_cols]                ; eax = row, edx = column
-    imul eax, FM_CELL_H
-    add eax, FM_TOP
-    add eax, [dk_fm_by]
-    imul edx, FM_CELL_W
-    add edx, 4
-    add edx, [dk_fm_bx]
-    cmp edx, [dk_fm_br]                   ; left edge right of the band?
+    push ebx                              ; its rectangle on the screen
+    call dkf_cell                         ; -> eax, ebx, ecx, edx
+    mov esi, ebx
+    pop ebx
+    add eax, [dk_fm_bx]
+    add esi, [dk_fm_by]
+    cmp eax, [dk_fm_br]                   ; left edge right of the band?
     jg .next
-    lea esi, [edx + FM_CELL_W]
-    cmp esi, [dk_fm_bl]
+    add ecx, eax
+    cmp ecx, [dk_fm_bl]
     jl .next
-    cmp eax, [dk_fm_bb]
+    cmp esi, [dk_fm_bb]
     jg .next
-    lea esi, [eax + FM_CELL_H]
-    cmp esi, [dk_fm_bt]
+    add edx, esi
+    cmp edx, [dk_fm_bt]
     jl .next
     mov esi, ebx                          ; (not "..")
     shl esi, 5
@@ -3561,6 +3479,9 @@ DKC_TRESTORE equ 39                   ; the trash's (src/dktrash.asm)
 DKC_EDIT     equ 40                   ; Edit in Notepad (src/dktrash.asm)
 DKC_ZIP      equ 41                   ; Compress to ZIP
 DKC_UNZIP    equ 42                   ; Extract here
+DKC_PAINT    equ 44                   ; Edit in Paint (src/dktrash.asm)
+DKC_WALL     equ 45                   ; Set as wallpaper (src/dkwall.asm)
+DKC_LOCATE   equ 46                   ; Recent: Open its folder (src/dkfview.asm)
 DK_CTX_W    equ 160
 DK_CTX_ITEM equ 22
 
@@ -3602,6 +3523,12 @@ dk_right_click:
 .not_trash:
     mov dword [dk_ctx_n], 0
     call dk_files_entry_at                ; -> edx
+    call dkf_ctx_items                    ; (Recent: its own - src/dkfview.asm)
+    jc .not_recent
+    cmp dword [dk_ctx_n], 0
+    je .done
+    jmp .show
+.not_recent:
     cmp edx, -1
     je .empty_space
     mov eax, edx
@@ -4131,6 +4058,8 @@ dk_shot_capture:
     pushad
     cmp byte [dk_shot_req], 0
     je .done
+    cmp byte [dkw_busy], 0                ; (the wallpaper's file is there:
+    jne .done                             ;  src/dkwall.asm - in a moment)
     mov byte [dk_shot_req], 0
     cmp byte [dk_shot_ready], 0           ; (one's still being written)
     jne .done
@@ -4308,6 +4237,8 @@ dk_gui_verb:
     je .yes
     cmp edx, dkt_verb_view                ; (a ZIP, looked into: src/dktrash.asm)
     je .yes
+    cmp edx, dkt_verb_paint               ; (Edit in Paint)
+    je .yes
     pop edx
     pop eax
     stc
@@ -4321,6 +4252,8 @@ dk_gui_verb:
 ; Up to the parent folder
 dk_files_up:
     pushad
+    call dkf_up                           ; (out of Recent)
+    jnc .done
     mov dword [dk_fm_find_len], 0         ; (another folder: no search)
     mov byte [dk_fm_find], 0
     cmp byte [dk_fm_dir], FS_ROOT_BYTE
@@ -4492,6 +4425,8 @@ dk_files_refresh:
     call dk_sel_clear
 .keep_selection:
     mov byte [dk_fm_refresh], 0
+    call dkf_refresh                      ; (Recent: src/dkfview.asm) -> edx
+    jnc .counted
     mov edi, DESK_FILES
     xor edx, edx                          ; entries
     cmp byte [dk_fm_dir], FS_ROOT_BYTE
@@ -4561,6 +4496,7 @@ dk_files_refresh:
     jb .scan_pass
 .listed:
     call dk_fm_arrange                    ; (the search, the order: edx)
+.counted:
     mov [dk_fm_count], edx
     call dkt_note_where                   ; (the trash? its buttons: src/dktrash.asm)
     mov eax, [dk_fm_page]                 ; (a page that's gone: back to one)
@@ -5115,51 +5051,10 @@ dk_clear_prog_title:
     mov byte [dk_redraw_all], 1
     ret
 
-; Files' grid: as many columns and rows as its window has room for
+; Files' grid: as many columns and rows as its window has room for, in
+; the view it's in (src/dkfview.asm)
 dk_fm_layout:
-    pushad
-    mov eax, K_FILES
-    xor ebx, ebx
-    call dk_win_find
-    cmp eax, -1
-    je .done
-    mov ebp, eax
-    mov eax, [dkw_w + ebp*4]
-    sub eax, 8
-    xor edx, edx
-    mov ecx, FM_CELL_W
-    div ecx
-    cmp eax, 1
-    jae .cols
-    mov eax, 1
-.cols:
-    mov ebx, eax
-    mov eax, [dkw_h + ebp*4]
-    sub eax, FM_TOP + 26
-    jns .rows_room
-    xor eax, eax
-.rows_room:
-    xor edx, edx
-    mov ecx, FM_CELL_H
-    div ecx
-    cmp eax, 1
-    jae .rows
-    mov eax, 1
-.rows:
-    cmp ebx, [dk_fm_cols]
-    jne .changed
-    cmp eax, [dk_fm_rows]
-    je .done
-.changed:
-    mov [dk_fm_cols], ebx
-    mov [dk_fm_rows], eax
-    imul eax, ebx
-    mov [dk_fm_page_n], eax
-    mov dword [dk_fm_page], 0             ; (from the first page again)
-    mov byte [dk_redraw_all], 1
-.done:
-    popad
-    ret
+    jmp dkf_layout
 
 ; Each frame: pictures and file lists waiting to be (re)loaded
 dk_windows_work:
@@ -5615,7 +5510,8 @@ dk_ctx_labels     dd dk_ctx_l_open, dk_ctx_l_rename, dk_ctx_l_copy, dk_ctx_l_del
                   dd dkx_l_create, dkx_l_newdir, dkx_l_newtxt, dkx_l_newhg
                   dd dkx_l_newlnk, dkx_l_iopen, dkx_l_irename, dkx_l_idelete
                   dd dkx_l_iprops, dkt_l_restore, dkt_l_edit, dkt_l_zip
-                  dd dkt_l_unzip, dkt_l_tempty
+                  dd dkt_l_unzip, dkt_l_tempty, dkw_l_paint, dkw_l_set
+                  dd dkf_l_locate
 dk_ctx_l_open     db "Open", 0
 dk_ctx_l_rename   db "Rename...", 0
 dk_ctx_l_copy     db "Copy to...", 0

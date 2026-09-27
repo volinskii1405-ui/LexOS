@@ -124,6 +124,18 @@ dkt_ctx_more:
     jne .not_empty
     jmp dkt_empty_req
 .not_empty:
+    cmp eax, DKC_PAINT
+    jne .not_paint
+    jmp dkt_paint
+.not_paint:
+    cmp eax, DKC_WALL
+    jne .not_wall
+    jmp dkw_ctx_set                       ; (src/dkwall.asm)
+.not_wall:
+    cmp eax, DKC_LOCATE
+    jne .not_locate
+    jmp dkf_locate                        ; (src/dkfview.asm)
+.not_locate:
     ret
 
 ; Files' menu, on something: Edit in Notepad - if it's a file - and
@@ -134,7 +146,20 @@ dkt_ctx_edit_item:
     shl esi, 5
     add esi, DESK_FILES
     movzx eax, byte [esi + 17]            ; (text: not folders, programs,
-    cmp eax, IC_TEXT                      ;  pictures, sounds, archives)
+    cmp eax, IC_IMAGE                     ;  pictures, sounds, archives)
+    jne .not_picture
+    push eax                              ; a .BMP: Edit in Paint, Set as
+    call dk_ext_dword                     ; wallpaper
+    cmp eax, 'BMP'
+    pop eax
+    jne .no_edit
+    mov al, DKC_PAINT
+    call dk_ctx_add
+    mov al, DKC_WALL
+    call dk_ctx_add
+    jmp .no_edit
+.not_picture:
+    cmp eax, IC_TEXT
     je .edit
     cmp eax, IC_SCRIPT
     je .edit
@@ -175,6 +200,22 @@ dkt_edit:
     shl esi, 5
     add esi, DESK_FILES
     mov dword [dkt_force_verb], dk_verb_edit
+    mov edi, dk_fm_path
+    call dk_launch
+    mov dword [dkt_force_verb], 0
+.done:
+    popad
+    ret
+
+; The selected picture, into Paint (a program: no Terminal)
+dkt_paint:
+    pushad
+    mov esi, [dk_fm_sel]
+    cmp esi, -1
+    je .done
+    shl esi, 5
+    add esi, DESK_FILES
+    mov dword [dkt_force_verb], dkt_verb_paint
     mov edi, dk_fm_path
     call dk_launch
     mov dword [dkt_force_verb], 0
@@ -240,6 +281,7 @@ dkt_force_verb   dd 0
 dkt_verb_zip     db "run zip.app -q ", 0
 dkt_verb_unzip   db "run zip.app -x -q ", 0
 dkt_verb_view    db "run zip.app -v ", 0
+dkt_verb_paint   db "run paint.app ", 0
 dkt_cmd          times 40 db 0
 dkt_l_zip        db "Compress to ZIP", 0
 dkt_l_unzip      db "Extract here", 0
@@ -647,6 +689,11 @@ dkt_del_key:
     cmp byte [dk_menu_open], 0
     jne .theirs
     pushad
+    cmp byte [dkf_recent], 0              ; (Recent: nothing's deleted from
+    je .not_recent                        ;  there - taken, ignored)
+    cmp byte [dk_fm_typing], 0
+    jne .mine
+.not_recent:
     call dk_top_window                    ; a Terminal, a program in front:
     cmp eax, -1                           ; the key is theirs
     je .pointer
@@ -745,6 +792,8 @@ DKT_BAR_W2     equ 136
 dkt_note_where:
     pushad
     mov byte [dkt_fm_in_trash], 0
+    cmp byte [dkf_recent], 0              ; (Recent: not the trash)
+    jne .done
     call dkt_find                         ; -> al
     jc .done
     cmp al, [dk_fm_dir]

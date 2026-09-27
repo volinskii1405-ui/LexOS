@@ -97,6 +97,7 @@ dk_backdrop_set:
     pushad
     cmp eax, DK_BACKDROPS
     jae .done
+    call dkw_off                          ; (no wallpaper: src/dkwall.asm)
     mov [dk_bg_mode], eax
     call dk_theme_apply
     mov byte [dk_redraw_all], 1
@@ -292,6 +293,7 @@ dk_settings_load:
     mov [dk_bg_mode], eax
 .apply:
     call dkx_recent_load                  ; (src/dkextra.asm)
+    call dkf_cfg_load                     ; (Files' Recent, the wallpaper)
     cmp dword [dk_theme], DK_THEMES
     jb .theme_ok
     mov dword [dk_theme], 0
@@ -385,6 +387,7 @@ dk_settings_work:
     mov ax, 0x0A0D
     stosw
     call dkx_recent_save                  ; (src/dkextra.asm: recent programs)
+    call dkf_cfg_save                     ; (Files' Recent, the wallpaper)
     call dki_save                         ; (src/dkicons.asm: where they are)
     sub edi, dk_cfg_buf
     mov [fs_stream_size], edi
@@ -412,7 +415,7 @@ dk_settings_work:
 ; ============================================================
 ; Data (shared)
 ; ============================================================
-DK_CFG_MAX     equ 1024
+DK_CFG_MAX     equ 4096
 dk_theme       dd 0
 dk_cfg_dirty   db 0
 dk_cfg_name    db "DESKTOP.CFG", 0

@@ -546,4 +546,6 @@ kext_start:
 %include "src/appext.asm"
 %include "src/dkart.asm"
 %include "src/dkshot.asm"
+%include "src/dkfview.asm"
+%include "src/dkwall.asm"
 kext_end:

@@ -30,9 +30,9 @@ DKP_CHG_X      equ DKP_X + DKP_W - DKP_CHG_W - 16
 DKP_CHG_Y      equ DKP_Y + 44
 DKP_GRID_X     equ DKP_X + 24
 DKP_GRID_Y     equ DKP_Y + 116
-DKP_CELL_W     equ 54
+DKP_CELL_W     equ 48
 DKP_CELL_H     equ 44
-DKP_GRID_COLS  equ 8
+DKP_GRID_COLS  equ 9
 
 ; ecx = the slot of what it's about
 dkp_ask:
@@ -827,7 +827,7 @@ dkp_grid_at:
 dkp_picks        db IC_FOLDER, IC_FILE, IC_TEXT, IC_APP, IC_IMAGE, IC_SOUND
                  db IC_SCRIPT, IC_CSRC, IC_BAS, IC_TRG, IC_CH8, IC_CFG, IC_WEB
                  db IC_NOTEPAD, IC_ZIP, IC_GAME, IC_TERM, IC_CAT, IC_GEAR
-                 db IC_STAR, IC_MUSIC, IC_TRASH
+                 db IC_STAR, IC_MUSIC, IC_TRASH, IC_PAINT, IC_CALC
 DKP_PICKS        equ $ - dkp_picks
 dkp_link         times DKI_PATH + 2 db 0
 dkp_l_change     db "Change icon...", 0
