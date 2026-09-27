@@ -1547,6 +1547,7 @@ IC_CAT    equ 20
 IC_GEAR   equ 21
 IC_STAR   equ 22
 IC_MUSIC  equ 23
+IC_LINKMARK equ 24                      ; (a shortcut's mark, over its icon)
 
 dk_draw_files:
     ; the toolbar: [Up], the path, [<] [>]
@@ -1630,6 +1631,7 @@ dk_draw_files:
     call dka_entry_kind                   ; -> ecx (its own, or chosen)
     mov dword [dk_icon_fill], dk_fill
     call dk_icon
+    call dka_badge                        ; (a shortcut: its mark)
     ; the name below it (highlighted if selected)
     push esi
     xor ecx, ecx
@@ -1706,7 +1708,8 @@ dk_draw_files:
     mov esi, dk_sys_buf
     mov edx, COL_MUTED
 .say:
-    call dk_text
+    call dkt_bar_text                     ; (dk_text; in the trash, short of
+    call dkt_bar_draw                     ;  its buttons: Restore all, Empty)                     ; (in the trash: Restore all, Empty)
     jmp dk_contents_done
 
 ; esi = a 0-terminated name -> eax = its extension, uppercase, as a
@@ -1962,6 +1965,8 @@ dk_icon:
 ; Files: the window's own clicks - ecx, ebx = where in its client area
 dk_files_click:
     mov byte [dk_fm_msg_clear], 1
+    call dkt_bar_click                    ; (the trash's buttons)
+    jnc .done
     cmp ebx, FM_TOP - 4
     jae .grid
     cmp ecx, 50                           ; [Up]
@@ -3845,6 +3850,11 @@ dk_ctx_do:
     ret
 .files_item:
     mov dword [dk_fm_msg], 0
+    cmp eax, DKC_FOREVER                  ; Delete forever: quietly too
+    jne .not_forever
+    call dkt_forever_req
+    jmp .done
+.not_forever:
     cmp eax, DKC_EMPTY                    ; Empty trash: quietly, for good
     jne .not_empty                        ; (src/dktrash.asm)
     call dkt_empty_req
@@ -4552,6 +4562,7 @@ dk_files_refresh:
 .listed:
     call dk_fm_arrange                    ; (the search, the order: edx)
     mov [dk_fm_count], edx
+    call dkt_note_where                   ; (the trash? its buttons: src/dktrash.asm)
     mov eax, [dk_fm_page]                 ; (a page that's gone: back to one)
     imul eax, [dk_fm_page_n]
     cmp eax, edx

@@ -354,6 +354,8 @@ TR = {
 'dkt_m_empty': ('Корзина пуста.', 'La papelera está vacía.'),
 'dkt_m_emptied': ('Корзина очищена (удалено: ', 'Papelera vaciada (borrados: '),
 'dkt_m_emptied2': (').', ').'),
+'dkt_l_restore_all': ('Восстановить все', 'Restaurar todo'),
+'dkt_m_gone': ('Удалено навсегда: ', 'Borrado para siempre: '),
 'dkd_m_moved': ('Перемещено: ', 'Movido: '),
 'dkd_m_copied': ('Скопировано: ', 'Copiado: '),
 'dkp_t_title': ('Свойства', 'Propiedades'),

@@ -1,7 +1,7 @@
 ; dkart.inc - made by tools/mkicons.py: the picture icons, 32x32,
 ; each row: how many runs, then (x, length, 0xRRGGBB) for each
 
-DKA_COUNT equ 24
+DKA_COUNT equ 25
 dka_table:
     dd dkart_folder
     dd dkart_up
@@ -27,6 +27,7 @@ dka_table:
     dd dkart_gear
     dd dkart_star
     dd dkart_music
+    dd dkart_link
 
 dkart_folder:
     db 0
@@ -7882,3 +7883,150 @@ dkart_music:
     db 0
     db 0
     db 0
+dkart_link:
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 0
+    db 1
+    db 0, 13
+    dd 0x39424F
+    db 3
+    db 0, 1
+    dd 0x39424F
+    db 1, 11
+    dd 0xFFFFFF
+    db 12, 1
+    dd 0x39424F
+    db 5
+    db 0, 1
+    dd 0x39424F
+    db 1, 6
+    dd 0xFFFFFF
+    db 7, 1
+    dd 0x2563EB
+    db 8, 4
+    dd 0xFFFFFF
+    db 12, 1
+    dd 0x39424F
+    db 5
+    db 0, 1
+    dd 0x39424F
+    db 1, 6
+    dd 0xFFFFFF
+    db 7, 2
+    dd 0x2563EB
+    db 9, 3
+    dd 0xFFFFFF
+    db 12, 1
+    dd 0x39424F
+    db 5
+    db 0, 1
+    dd 0x39424F
+    db 1, 3
+    dd 0xFFFFFF
+    db 4, 6
+    dd 0x2563EB
+    db 10, 2
+    dd 0xFFFFFF
+    db 12, 1
+    dd 0x39424F
+    db 5
+    db 0, 1
+    dd 0x39424F
+    db 1, 2
+    dd 0xFFFFFF
+    db 3, 8
+    dd 0x2563EB
+    db 11, 1
+    dd 0xFFFFFF
+    db 12, 1
+    dd 0x39424F
+    db 7
+    db 0, 1
+    dd 0x39424F
+    db 1, 1
+    dd 0xFFFFFF
+    db 2, 2
+    dd 0x2563EB
+    db 4, 3
+    dd 0xFFFFFF
+    db 7, 2
+    dd 0x2563EB
+    db 9, 3
+    dd 0xFFFFFF
+    db 12, 1
+    dd 0x39424F
+    db 7
+    db 0, 1
+    dd 0x39424F
+    db 1, 1
+    dd 0xFFFFFF
+    db 2, 2
+    dd 0x2563EB
+    db 4, 3
+    dd 0xFFFFFF
+    db 7, 1
+    dd 0x2563EB
+    db 8, 4
+    dd 0xFFFFFF
+    db 12, 1
+    dd 0x39424F
+    db 5
+    db 0, 1
+    dd 0x39424F
+    db 1, 1
+    dd 0xFFFFFF
+    db 2, 2
+    dd 0x2563EB
+    db 4, 8
+    dd 0xFFFFFF
+    db 12, 1
+    dd 0x39424F
+    db 5
+    db 0, 1
+    dd 0x39424F
+    db 1, 1
+    dd 0xFFFFFF
+    db 2, 2
+    dd 0x2563EB
+    db 4, 8
+    dd 0xFFFFFF
+    db 12, 1
+    dd 0x39424F
+    db 5
+    db 0, 1
+    dd 0x39424F
+    db 1, 1
+    dd 0xFFFFFF
+    db 2, 2
+    dd 0x2563EB
+    db 4, 8
+    dd 0xFFFFFF
+    db 12, 1
+    dd 0x39424F
+    db 3
+    db 0, 1
+    dd 0x39424F
+    db 1, 11
+    dd 0xFFFFFF
+    db 12, 1
+    dd 0x39424F
+    db 1
+    db 0, 13
+    dd 0x39424F

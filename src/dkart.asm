@@ -121,6 +121,33 @@ dka_scan_look:
     pop eax
     ret
 
+; esi = a file's name, eax, ebx = its icon's corner: a shortcut (.LNK)
+; gets its mark over the icon's bottom left (dk_icon_fill as set)
+dka_badge:
+    pushad
+    push eax
+    call dk_ext_dword
+    cmp eax, 'LNK'
+    pop eax
+    jne .done
+    mov ecx, IC_LINKMARK
+    call dka_icon
+.done:
+    popad
+    ret
+
+; dki_draw, an icon drawn: ebx = which, eax, edx = its cell
+dka_icon_badge:
+    pushad
+    mov esi, ebx
+    shl esi, 4
+    add esi, dki_file
+    add eax, (DKI_W - 32) / 2
+    lea ebx, [edx + 3]
+    call dka_badge
+    popad
+    ret
+
 ; ebx = a desktop icon -> ecx = the icon to draw
 dka_icon_look:
     push eax

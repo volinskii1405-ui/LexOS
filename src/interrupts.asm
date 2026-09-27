@@ -474,6 +474,11 @@ keyboard_isr:
     mov byte [dkx_win_combo], 0
     jmp .eoi
 .not_win_key:
+    cmp bl, 0x53                   ; Del over a file (Files, the desktop):
+    jne .not_del                   ; it goes into the trash (src/dktrash.asm)
+    call dkt_del_key
+    jnc .eoi
+.not_del:
     xor ax, ax
     mov ah, bl
     call push_key_to_buffer

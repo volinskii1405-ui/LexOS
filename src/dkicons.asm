@@ -490,6 +490,7 @@ dki_draw:
     pop edx
     pop ebx
     pop eax
+    call dka_icon_badge                   ; (a shortcut: its mark)
     call dka_label                        ; its name, on two lines if long
 .next:
     inc ebx

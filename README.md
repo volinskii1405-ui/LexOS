@@ -144,7 +144,7 @@ All taken in QEMU (1024x768) - more in [docs/screenshots](docs/screenshots).
 </tr>
 <tr>
 <td align="center" valign="top"><img src="docs/screenshots/56-custom-icons.png" alt="Icons chosen" width="400"><br><sub>Games with a gamepad, CUBE with Lex - chosen in Properties</sub></td>
-<td></td>
+<td align="center" valign="top"><img src="docs/screenshots/57-trash-buttons.png" alt="The trash's buttons" width="400"><br><sub>In the trash: Restore all, Empty the trash; shortcuts marked with an arrow</sub></td>
 </tr>
 </table>
 
@@ -688,7 +688,17 @@ tester@/PROGRAMS$
     of its own - papers stick out of it when there's something in it. A
     double click opens it in Files; whatever's dropped on it (a desktop
     icon, or out of Files) is deleted into it; its menu has **Empty the
-    trash** (done quietly, for good - not what's read-only).
+    trash** (done quietly, for good - not what's read-only). In Files,
+    the trash's bottom line has **Restore all** and **Empty the trash**
+    buttons; **Delete forever** there is quiet too (no console), and
+    `/TRASH` is made by itself if it's missing, so it always opens (with
+    its "..").
+  - **Del** deletes what's under the pointer - a desktop icon, a file in
+    Files (or, with Files in front, what's selected there) - into the
+    trash; in the trash, for good. With a Terminal or a program in front
+    Del stays theirs.
+  - **Shortcuts are marked**: a `.LNK`'s icon has a small arrow in its
+    corner (on the desktop and in Files).
   - **Pictures for icons** (tools/mkicons.py -> src/dkart.inc,
     src/dkart.asm): folders, files, text, programs (a window), pictures,
     sounds, scripts (`.HG`), C (`.C .H`), BASIC (`.BAS`), turtle
@@ -778,7 +788,8 @@ tester@/PROGRAMS$
     band on empty space or Ctrl+click selects several, and dragging one
     of them moves them all. Right-click: Open, Rename..., Copy to...,
     Delete, Properties - or New folder..., Select all on empty space.
-    Delete moves into /TRASH (Delete forever, Empty trash in there);
+    Delete (or Del over it) moves into /TRASH (Delete forever, Empty
+    trash, Restore all in there);
     Rename, Copy and New folder type the command into a Terminal and
     leave the new name to you.
     While Files is in front, typing searches: only names with the text
@@ -1311,7 +1322,8 @@ src/
   dkprops.asm          the Properties window.
   dktrash.asm          Restore (where things came from), Edit in
                        Notepad, Compress to ZIP / Extract here, the
-                       trash's desktop icon, Empty the trash.
+                       trash's desktop icon, Empty the trash, Delete
+                       forever, Restore all, the Del key.
   dkdrop.asm           dragging files between Files and the desktop.
   appext.asm           system calls: keymode, readdir, mkdir, notify.
                        (These are the kernel's extension - KEXT:

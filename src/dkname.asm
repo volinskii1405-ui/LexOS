@@ -226,6 +226,17 @@ dkn_do:
     call dkt_empty_do
     jmp .out
 .not_empty:
+    cmp eax, DKN_FOREVER
+    jne .not_forever
+    call dkt_forever_do
+    jmp .out
+.not_forever:
+    cmp eax, DKN_MKTRASH
+    jne .not_mktrash
+    call dkn_trash_dir
+    mov byte [dki_rescan], 1
+    jmp .out
+.not_mktrash:
     cmp eax, DKN_TRASH
     je .trash
     cmp dword [dkn_len], 0

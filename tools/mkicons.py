@@ -365,6 +365,28 @@ def music():
                 if ((x-cx)/4.3)**2 + ((y-cy)/3.2)**2 <= 1: put(img, x, y, c)
     return img
 
+def linkbadge():
+    """a shortcut's mark, drawn over its icon: bottom left, an arrow"""
+    img = blank()
+    art = ["kkkkkkkkkkkkk",
+           "kwwwwwwwwwwwk",
+           "kwwwwwwbwwwwk",
+           "kwwwwwwbbwwwk",
+           "kwwwbbbbbbwwk",
+           "kwwbbbbbbbbwk",
+           "kwbbwwwbbwwwk",
+           "kwbbwwwbwwwwk",
+           "kwbbwwwwwwwwk",
+           "kwbbwwwwwwwwk",
+           "kwbbwwwwwwwwk",
+           "kwwwwwwwwwwwk",
+           "kkkkkkkkkkkkk"]
+    col = {'k': hexc(0x39424F), 'w': (255, 255, 255), 'b': hexc(0x2563EB)}
+    for y, row in enumerate(art):
+        for x, ch in enumerate(row):
+            put(img, x, 19+y, col[ch])
+    return img
+
 # kind -> (name, picture): the numbers are src/dkwins.asm's IC_*
 KINDS = [
     (0, 'dkart_folder', folder()), (1, 'dkart_up', folder(True)), (2, 'dkart_file', plainfile()),
@@ -376,6 +398,7 @@ KINDS = [
     (16, 'dkart_ch8', chip()), (17, 'dkart_cfg', cfgfile()), (18, 'dkart_game', gamepad()),
     (19, 'dkart_term', terminal()), (20, 'dkart_cat', cat()), (21, 'dkart_gear', gear()),
     (22, 'dkart_star', star()), (23, 'dkart_music', music()),
+    (24, 'dkart_link', linkbadge()),
 ]
 ICONS = [(n, i) for _, n, i in KINDS]
 
