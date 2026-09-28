@@ -2925,6 +2925,32 @@ dk_draw_tray:
     pushad
     mov ebp, [dk_h] ; (the icons' top)
     add ebp, 0 - DK_TASKBAR_H + 7
+    cmp byte [aext_music], 0              ; a player playing: a note
+    je .no_music                          ; (src/appext.asm's music_state)
+    movzx ebx, byte [aext_music_con]
+    call dk_app_window_of
+    cmp eax, -1
+    jne .music_on
+    mov byte [aext_music], 0              ; (its window's gone: so is it)
+    jmp .no_music
+.music_on:
+    mov eax, [dk_w]
+    add eax, ( 0 - 212 )
+    lea ebx, [ebp - 2]
+    mov ecx, 24
+    mov edx, 18
+    mov esi, COL_TITLE_ON
+    cmp byte [aext_music], 1
+    je .music_box
+    mov esi, COL_TASKBTN                  ; (paused)
+.music_box:
+    call dk_fill
+    add eax, 8
+    inc ebx
+    mov esi, dk_msg_note
+    mov edx, COL_WHITE
+    call dk_text
+.no_music:
     cmp byte [kbd_caps_on], 0             ; Caps Lock on: an "A" lit
     je .no_caps
     mov eax, [dk_w]
@@ -3038,6 +3064,18 @@ dk_draw_tray:
     popad
     ret
 
+; The tray's note: to be drawn again
+dk_mark_tray_music:
+    pushad
+    mov eax, [dk_w]
+    add eax, ( 0 - 212 )
+    mov ebx, [dk_task_y]
+    mov ecx, 24
+    mov edx, DK_TASKBAR_H
+    call dk_mark
+    popad
+    ret
+
 ; dk_line with ebx..edx as dk_line wants it, esi the color (a helper)
 dk_line_c:
     call dk_line
@@ -3046,6 +3084,17 @@ dk_line_c:
 ; eax = x of a click on the tray
 dk_tray_click:
     pushad
+    mov edx, [dk_w]                       ; the note: the player paused /
+    add edx, 0 - 188                      ; on again
+    cmp eax, edx
+    jae .not_music
+    cmp byte [aext_music], 0
+    je .done
+    mov esi, aext_cmd_pause
+    call aext_music_send
+    call snd_click
+    jmp .done
+.not_music:
     push edx
     mov edx, [dk_w]
     add edx, ( 0 - 152 ) - 4
@@ -3106,6 +3155,20 @@ dk_tray_wheel:
     jb .done
     mov eax, [dk_mx]
     sub eax, [dk_w]
+    cmp eax, -212 - 4                     ; the note's: the next / the one
+    jl .done                              ; before
+    cmp eax, -188
+    jge .not_music
+    cmp byte [aext_music], 0
+    je .done
+    mov esi, aext_cmd_next
+    or ebp, ebp
+    jns .music_cmd
+    mov esi, aext_cmd_prev
+.music_cmd:
+    call aext_music_send
+    jmp .done
+.not_music:
     cmp eax, -118 - 4                     ; (the volume's, from the right)
     jl .done
     cmp eax, -92 - 4
@@ -4203,6 +4266,8 @@ dk_shot_capture:
 DK_TOAST_W equ 420
 dk_toast:
     pushad
+    mov byte [dk_toast_act], 0            ; (a click on it: nothing - unless
+                                          ;  its caller says, after this)
     call dnc_record                       ; (src/dknotify.asm: kept)
     cmp byte [dnc_quiet], 0               ; (do not disturb: only kept)
     jne .quiet
@@ -4261,8 +4326,75 @@ dk_draw_toast:
     mov edi, (DK_TOAST_W - 24) / 8
     call dk_text_n
     pop edi
+    movzx ecx, byte [dk_toast_act]        ; something a click does: said
+    jecxz .done                           ; at its right end
+    mov esi, [dk_toast_act_l + ecx*4 - 4]
+    call tr_lookup
+    call dki_strlen
+    shl ecx, 3
+    mov eax, [dk_w2]
+    add eax, DK_TOAST_W / 2 - 12
+    sub eax, ecx
+    sub eax, 6
+    push ecx
+    add ecx, 12
+    mov edx, 20
+    sub ebx, 2
+    push esi
+    mov esi, COL_TITLE_ON
+    call dk_fill
+    pop esi
+    pop ecx
+    add eax, 6
+    add ebx, 2
+    mov edx, COL_WHITE
+    call dk_text
 .done:
     popad
+    ret
+
+; A left click at eax, ebx: on a toast that does something (a
+; screenshot: opened in Pictures; the Clock ringing: stopped)? -> carry=0
+dk_toast_click:
+    cmp byte [dk_toast_on], 0
+    je .no
+    cmp byte [dk_toast_act], 0
+    je .no
+    cmp ebx, 8
+    jb .no
+    cmp ebx, 8 + 30
+    jae .no
+    push eax
+    sub eax, [dk_w2]
+    add eax, DK_TOAST_W / 2
+    cmp eax, DK_TOAST_W
+    pop eax
+    jae .no
+    pushad
+    cmp byte [dk_toast_act], 1
+    jne .not_pic
+    mov eax, [dk_toast_slot]              ; a picture: Pictures, on it
+    dec eax
+    mov [dk_pic_slot], eax
+    mov al, [dk_toast_dir]
+    mov [dk_pic_dir], al
+    mov byte [dk_pic_state], 1
+    mov eax, K_PICS
+    call dk_win_single
+    jmp .gone
+.not_pic:
+    mov byte [dkclk_ringing], 0           ; the Clock: quiet (src/dkclock.asm)
+    call dkclk_mark
+.gone:
+    call snd_click
+    mov byte [dk_toast_on], 0
+    mov byte [dk_toast_act], 0
+    call dk_mark_toast
+    popad
+    clc
+    ret
+.no:
+    stc
     ret
 
 ; -> bl = the console to type a command into: the one on screen, if
@@ -5740,6 +5872,13 @@ dk_fm_cols        dd 6                    ; Files: the grid the window has
 dk_fm_rows        dd 4                    ; room for (dk_fm_layout)
 dk_fm_page_n      dd 24
 dk_pic_state      db 0                    ; 0 -, 1 to load, 2 shown, 3 none
+dk_msg_note       db 0x0E, 0            ; (the tray's note: the font's own)
+dk_toast_act      db 0                  ; a click on the toast: 1 open a
+dk_toast_dir      db 0                  ; picture (its slot, its folder),
+dk_toast_slot     dd 0                  ; 2 stop the Clock's ringing
+dk_toast_act_l    dd dk_l_toast_open, dk_l_toast_stop
+dk_l_toast_open   db "Open", 0
+dk_l_toast_stop   db "Stop", 0
 dk_pic_slot       dd -1
 dk_pic_dir        db FS_ROOT_BYTE
 dk_pic_win        dd 0

@@ -666,18 +666,6 @@ dki_press:
     mov [dki_start_y], eax
     jmp .done
 .nothing:
-    mov edx, [timer_ms]                   ; the background clicked twice:
-    sub edx, [dki_bg_click_ms]            ; a Terminal (as the start menu's)
-    cmp edx, [dk_dbl_ms]                  ; (the Control panel's Mouse)
-    ja .first_bg
-    mov dword [dki_bg_click_ms], 0
-    mov eax, 1
-    call dk_menu_choose
-    jmp .unpick
-.first_bg:
-    mov edx, [timer_ms]
-    mov [dki_bg_click_ms], edx
-.unpick:
     call dkm_band_press                   ; the background: none picked - a
 .done:                                    ; rubber band from here
     popad
@@ -1000,13 +988,12 @@ dki_moved        db 0
 dki_rescan       db 1
 dki_scanned      dd 0
 dki_click_ms     dd 0
-dki_bg_click_ms  dd 0
 dki_dir          db 0
-dki_file         times DKI_MAX * FS_NAME_LEN db 0
+dki_file         times (DKI_MAX + 1) * FS_NAME_LEN db 0   ; (+1: `open`'s, src/shellx.asm)
 DKI_LABEL        equ 32                     ; (a long name's start)
-dki_label        times DKI_MAX * DKI_LABEL db 0
-dki_target       times DKI_MAX * DKI_PATH db 0
-dki_kind         times DKI_MAX db 0
+dki_label        times (DKI_MAX + 1) * DKI_LABEL db 0
+dki_target       times (DKI_MAX + 1) * DKI_PATH db 0
+dki_kind         times DKI_MAX + 1 db 0
 dki_x            times DKI_MAX dd 0
 dki_y            times DKI_MAX dd 0
 dki_new_n        dd 0

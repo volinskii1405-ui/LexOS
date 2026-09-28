@@ -353,10 +353,34 @@ keyboard_isr:
 
     cmp byte [dk_active], 0        ; the desktop's own keys
     je .not_desk_keys              ; (src/dkextra.asm)
-    cmp bh, 0
-    jne .not_desk_keys
     cmp byte [dkl_grab], 0         ; (locked, the saver out: theirs)
     jne .not_desk_keys
+    cmp bh, 0
+    je .desk_plain
+    cmp byte [dkx_win_held], 0     ; Win+arrows: the window in front to
+    je .not_desk_keys              ; the left / right half, the whole
+    cmp al, 0x4B                   ; screen, back or down to the taskbar
+    je .warrow_left
+    cmp al, 0x4D
+    je .warrow_right
+    cmp al, 0x48
+    je .warrow_up
+    cmp al, 0x50
+    jne .not_desk_keys
+    mov byte [dkx_snap_req], 4
+    jmp .win_arrow
+.warrow_left:
+    mov byte [dkx_snap_req], 1
+    jmp .win_arrow
+.warrow_right:
+    mov byte [dkx_snap_req], 2
+    jmp .win_arrow
+.warrow_up:
+    mov byte [dkx_snap_req], 3
+.win_arrow:
+    mov byte [dkx_win_combo], 1
+    jmp .eoi
+.desk_plain:
     cmp al, 0x2C                   ; Ctrl+Z: the last thing done to files,
     jne .not_undo                  ; undone (src/dkundo.asm)
     cmp byte [lang_ctrl_held], 0

@@ -566,6 +566,10 @@ cmd_uptime       db "uptime", 0
 cmd_neofetch     db "neofetch", 0
 cmd_lex          db "lex", 0
 cmd_lex_prefix   db "lex ", 0
+cmd_open         db "open", 0
+cmd_open_prefix  db "open ", 0
+cmd_clip         db "clip", 0
+cmd_clip_prefix  db "clip ", 0
 cmd_ls_l         db "ls -l", 0
 cmd_attrib       db "attrib", 0
 cmd_attrib_prefix db "attrib ", 0

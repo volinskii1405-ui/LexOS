@@ -63,8 +63,8 @@ DK_TITLE_LEN      equ 32
 DK_MENU_W         equ 170
 DK_MENU_ITEM_H    equ 24
 DK_MENU_ITEMS     equ 12
-DK_TRAY_W         equ 188                 ; the taskbar's right end: volume,
-                                          ; network, the time
+DK_TRAY_W         equ 216                 ; the taskbar's right end: music,
+                                          ; volume, network, the time
 DK_CAL_W          equ 340                 ; the calendar, the notifications
 DK_CAL_H          equ 196 + DNC_H         ; above it (src/dknotify.asm)
 DK_PROG_W         equ 230                 ; the Programs submenu
@@ -399,6 +399,7 @@ desktop_task:
     call dkx_win_key                      ;  the Win key)
     call dk_alt_tab_work
     call drs_work                         ; (src/dkregion.asm: Shift+PrtSc)
+    call shx_work                         ; (src/shellx.asm: `open`)
     call dkclk_work                       ; (src/dkclock.asm: alarm, timer)
     call dk_shot_capture                  ; (src/dkwins.asm)
     call dk_toast_work
@@ -1238,6 +1239,13 @@ dk_mouse_event:
     mov [dk_my], ebx
     mov ch, [dk_last_buttons]
     mov [dk_last_buttons], cl
+    cmp cl, 1                             ; pressed on a toast that does
+    jne .no_toast                         ; something (src/dkwins.asm)
+    or ch, ch
+    jnz .no_toast
+    call dk_toast_click
+    jnc .done
+.no_toast:
 
     cmp byte [dk_resizing], 0
     je .not_resizing

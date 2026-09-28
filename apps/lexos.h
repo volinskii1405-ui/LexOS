@@ -168,6 +168,11 @@ static inline int audio_queued(int flush)                 { return lx_syscall(42
 static inline int clip_pic_get(char *buf, int n)          { return lx_syscall3(43, (int)buf, n, 0); }
 static inline int clip_pic_set(const char *path)          { return lx_syscall3(43, (int)path, 0, 1); }
 
+/* music_state(n): what a player's doing - 0 nothing, 1 playing, 2
+ * paused. While it's 1 or 2 the tray shows a note; a click on it puts
+ * "|PAUSE" in the player's inbox(), the wheel "|NEXT" / "|PREV". */
+static inline void music_state(int s)                     { lx_syscall(44, s, 0); }
+
 /* keydown(scancode): 1 while that key is held - for games. */
 static inline int keydown(int scancode)                   { return lx_syscall(20, scancode, 0); }
 #define KEY_ESC   0x01

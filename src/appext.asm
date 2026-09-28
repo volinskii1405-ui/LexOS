@@ -20,6 +20,10 @@
 ;                             (Files opened another text file and Notepad
 ;                             is already there: a tab in it, not a second
 ;                             Notepad) -> its path's length, 0 if none
+;   44 music_state(n)         a player says what it's doing (0 nothing, 1
+;                             playing, 2 paused): a note in the tray, its
+;                             click "|PAUSE" in the player's inbox, the
+;                             wheel "|NEXT" / "|PREV"
 ;   43 clip_pic(buf, n, set)  the clipboard's picture - a path: set 1, that
 ;                             file's it now (Paint's Ctrl+C) -> 0; set 0,
 ;                             its path into buf -> its length, 0 if none.
@@ -28,6 +32,7 @@
 ; Arguments as every call's: ebx [ebp+16], ecx [ebp+24], edx [ebp+20].
 ; Exports: sys_keymode, sys_readdir, sys_mkdir, sys_notify, sys_inbox,
 ;          sys_opl, sys_audio_queued, sys_clip_pic, aext_clip_pic,
+;          sys_music_state, aext_music, aext_music_send,
 ;          aext_hand_over
 
 AEXT_PATH_MAX  equ 120
@@ -563,7 +568,38 @@ sys_clip_pic:
 .done:
     ret
 
+; SYS 44: ebx = what the calling program plays: 0 nothing, 1 playing,
+; 2 paused (the tray's note)
+sys_music_state:
+    mov eax, [ebp + 16]
+    mov [aext_music], al
+    mov eax, [sched_current]
+    mov al, [task_console + eax]
+    mov [aext_music_con], al
+    cmp byte [dk_active], 0
+    je .done
+    call dk_mark_tray_music
+.done:
+    xor eax, eax
+    ret
+
+; esi = a command ("|PAUSE"): into the player's inbox
+aext_music_send:
+    pushad
+    mov edi, aext_inbox
+    call wget_append
+    mov byte [edi], 0
+    mov al, [aext_music_con]
+    mov [aext_inbox_con], al
+    popad
+    ret
+
 aext_opl_task    dd -1
+aext_music       db 0
+aext_music_con   db 0xFF
+aext_cmd_pause   db "|PAUSE", 0
+aext_cmd_next    db "|NEXT", 0
+aext_cmd_prev    db "|PREV", 0
 aext_clip_pic    times AEXT_PATH_MAX + 8 db 0
 aext_inbox       times AEXT_PATH_MAX + 20 db 0
 aext_inbox_con   db 0xFF

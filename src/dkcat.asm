@@ -3,8 +3,9 @@
 ; He walks along its top, turns round at the ends, sits down now and
 ; then, or curls up and sleeps (Zzz). A click on him: a meow (a sound
 ; and "Meow!" above him) and he sits and looks at you. The desktop's
-; right-click menu hides him, or brings him back (kept in DESKTOP.CFG:
-; "cat=0").
+; right-click menu hides him - he jumps, and falls away below the screen
+; - or brings him back: up he flies from below, and lands (kept in
+; DESKTOP.CFG: "cat=0"). The Clock's alarm makes him jump and meow.
 ;
 ; And he has to be looked after (a tamagotchi): food, joy and energy,
 ; 0..100 each. Food and joy run down as time goes by, energy while he's
@@ -29,6 +30,8 @@ CAT_SAD_JOY    equ 25
 CAT_TIRED      equ 25                     ; below this: sleeps more
 CAT_PANEL_W    equ 150
 CAT_PANEL_H    equ 70
+CAT_FLY_STEP   equ 20                     ; ms a step of a flight
+CAT_FLY_BELOW  equ DK_TASKBAR_H + CAT_H * CAT_SCALE + 2   ; (off the screen)
 
 ; A random number -> eax (0..ecx-1)
 cat_random:
@@ -50,6 +53,8 @@ dkx_cat_work:
     pushad
     cmp byte [cat_on], 0
     je .done
+    cmp byte [cat_fly], 0                 ; flying off, or in
+    jne .flying
     call cat_tick
     mov eax, [timer_ms]
     cmp eax, [cat_play_until]
@@ -197,6 +202,85 @@ dkx_cat_work:
 .done:
     popad
     ret
+.flying:
+    call cat_fly_step
+    jmp .done
+
+; A step of a flight (gravity: 1 pixel a step, each step): away - down
+; past the screen's edge, then he's off; in - up from below, then down
+; onto the taskbar, and a meow
+cat_fly_step:
+    mov eax, [timer_ms]
+    sub eax, [cat_fly_ms]
+    cmp eax, CAT_FLY_STEP
+    jb .done
+    add dword [cat_fly_ms], CAT_FLY_STEP
+    cmp eax, CAT_FLY_STEP * 5             ; (a long gap: not all at once)
+    jb .step
+    mov eax, [timer_ms]
+    mov [cat_fly_ms], eax
+.step:
+    call cat_mark
+    mov eax, [cat_vy]
+    add [cat_dy], eax
+    inc dword [cat_vy]
+    cmp byte [cat_fly], 1
+    jne .coming
+    cmp dword [cat_dy], CAT_FLY_BELOW     ; gone
+    jl .moved
+    mov byte [cat_fly], 0
+    mov byte [cat_on], 0
+    mov dword [cat_dy], 0
+    mov byte [dk_cfg_dirty], 1
+    ret
+.coming:
+    cmp dword [cat_vy], 0                 ; (still on the way up)
+    jle .moved
+    cmp dword [cat_dy], 0
+    jl .moved
+    mov dword [cat_dy], 0                 ; landed
+    mov al, [cat_fly]
+    mov byte [cat_fly], 0
+    mov ecx, [timer_ms]
+    mov [cat_step_ms], ecx
+    add ecx, 2500
+    mov [cat_until], ecx
+    cmp al, 3                             ; (the alarm's jump: then he says)
+    je .woke
+    cmp al, 2                             ; (back: a meow)
+    jne .moved
+    mov eax, SND_MEOW
+    call snd_play
+    jmp .moved
+.woke:
+    mov esi, cat_msg_alarm
+    mov ecx, 2500
+    call cat_say
+.moved:
+    call cat_mark
+.done:
+    ret
+
+; The Clock's alarm (src/dkclock.asm): he jumps, and meows
+dkx_cat_alarm:
+    cmp byte [cat_on], 0
+    je .done
+    cmp byte [cat_fly], 0
+    jne .done
+    pushad
+    call cat_mark
+    mov byte [cat_fly], 3                 ; (a jump: up and back down)
+    mov dword [cat_dy], 0
+    mov dword [cat_vy], -9
+    mov eax, [timer_ms]
+    mov [cat_fly_ms], eax
+    mov byte [cat_state], CAT_SIT
+    mov dword [cat_play_until], 0
+    mov eax, SND_MEOW
+    call snd_play
+    popad
+.done:
+    ret
 
 ; carry=1 at night (from 22:00 to 6:00, the user's time)
 cat_is_night:
@@ -280,6 +364,16 @@ cat_mark:
     mov ecx, CAT_W * CAT_SCALE + 120
     mov edx, CAT_H * CAT_SCALE + CAT_PANEL_H + 18
     call dk_mark
+    cmp dword [cat_dy], 0                 ; flying: where he is too
+    je .done
+    mov eax, [cat_x]
+    mov ebx, [dk_h]
+    add ebx, ( 0 - DK_TASKBAR_H - CAT_H * CAT_SCALE ) - 2
+    add ebx, [cat_dy]
+    mov ecx, CAT_W * CAT_SCALE
+    mov edx, CAT_H * CAT_SCALE + 4
+    call dk_mark
+.done:
     popad
     ret
 
@@ -431,6 +525,8 @@ dkx_cat_draw:
     cmp byte [dkx_power_what], 0          ; (not over the goodbye)
     jne .done
     mov esi, cat_sit
+    cmp byte [cat_fly], 0                 ; (flying: sitting up)
+    jne .have
     cmp byte [cat_state], CAT_SIT
     jne .not_sit
     call cat_is_sad                       ; (sad: eyes shut, head down)
@@ -484,6 +580,7 @@ dkx_cat_draw:
     imul ebx, CAT_SCALE
     add ebx, [dk_h]
     add ebx, ( 0 - DK_TASKBAR_H - CAT_H * CAT_SCALE )
+    add ebx, [cat_dy]
     mov ecx, CAT_SCALE
     mov edx, CAT_SCALE
     call dk_fill
@@ -498,6 +595,8 @@ dkx_cat_draw:
     inc ebx
     cmp ebx, CAT_H
     jb .row
+    cmp byte [cat_fly], 0
+    jne .done
     cmp byte [cat_state], CAT_SLEEP       ; asleep: z, then Z
     jne .extras
     mov eax, [cat_x]
@@ -688,6 +787,8 @@ cat_draw_panel:
 dkx_cat_hit:
     cmp byte [cat_on], 0
     je .no
+    cmp byte [cat_fly], 0                 ; (flying: not to be caught)
+    jne .no
     push edx
     mov edx, [dk_h]
     add edx, ( 0 - DK_TASKBAR_H - CAT_H * CAT_SCALE )
@@ -977,16 +1078,48 @@ cat_put_dec:
 
 ; The desktop's menu: hidden <-> shown
 dkx_cat_toggle:
+    pushad
     call cat_mark
-    xor byte [cat_on], 1
+    cmp byte [cat_fly], 0                 ; mid-flight: turned round
+    je .still
+    cmp byte [cat_fly], 1
+    jne .coming_back
+    mov byte [cat_fly], 2                 ; (going: back he comes)
+    jmp .done
+.coming_back:
+    mov byte [cat_fly], 1                 ; (coming or jumping: off he goes)
+    jmp .done
+.still:
+    mov eax, [timer_ms]
+    mov [cat_fly_ms], eax
+    mov byte [cat_state], CAT_SIT
+    mov dword [cat_play_until], 0
+    mov dword [cat_panel_until], 0
+    cmp byte [cat_on], 0
+    je .in
+    mov byte [cat_fly], 1                 ; away: a jump, then down he falls
+    mov dword [cat_dy], 0
+    mov dword [cat_vy], -8
+    jmp .done
+.in:
+    mov byte [cat_on], 1                  ; back: up from below the screen
+    mov byte [cat_fly], 2
+    mov dword [cat_dy], CAT_FLY_BELOW
+    mov dword [cat_vy], -16
     mov byte [dk_cfg_dirty], 1
+.done:
     call cat_mark
+    popad
     ret
 
 ; ============================================================
 ; Data (shared)
 ; ============================================================
 cat_on           db 1
+cat_fly          db 0                     ; 1 going, 2 coming, 3 a jump
+cat_dy           dd 0                     ; (up: less than 0)
+cat_vy           dd 0
+cat_fly_ms       dd 0
 cat_state        db CAT_WALK
 cat_frame        db 0
 cat_x            dd 300
@@ -997,6 +1130,7 @@ cat_seed         dd 0x1E5
 cat_msg_z        db "z", 0
 cat_msg_zz       db "Z", 0
 cat_msg_meow     db "Meow!", 0
+cat_msg_alarm    db "Meow! Wake up!", 0
 cat_msg_tidy     db "Purr... nice and tidy!", 0
 cat_msg_gone     db "Eek! Gone for good?!", 0
 cat_msg_back     db "Welcome back!", 0

@@ -277,9 +277,41 @@ dkx_win_key:
     call dk_win_x                         ; (as its [x])
 .no_close:
     cmp byte [dkx_logout_req], 0          ; Win+L
-    je .done
+    je .no_logout
     mov byte [dkx_logout_req], 0
     call dkx_logout
+.no_logout:
+    movzx edx, byte [dkx_snap_req]        ; Win+arrows
+    or edx, edx
+    jz .done
+    mov byte [dkx_snap_req], 0
+    call dk_top_window
+    cmp eax, -1
+    je .done
+    cmp edx, 4
+    je .down
+    cmp edx, 3
+    jne .side
+    call dk_can_max                       ; up: the whole screen (if it can -
+    jc .done                              ;  from a half too)
+    cmp byte [dkw_max + eax], 0
+    je .side
+    call dk_win_maximize                  ; (as it was, first)
+.side:
+    mov [dk_drag_win], eax                ; (dk_snap_rect's: this one)
+    call dk_win_snap
+    jmp .done
+.down:
+    cmp byte [dkw_max + eax], 0           ; down: back to its own size, or
+    je .minimize                          ; down to the taskbar
+    call snd_click
+    call dk_win_maximize
+    jmp .done
+.minimize:
+    call snd_click
+    mov byte [dkw_hidden + eax], 1
+    mov byte [dk_redraw_all], 1
+    call dka_minimize
 .done:
     popad
     ret
@@ -427,6 +459,15 @@ dk_snap_zone:
 dk_snap_halves:
     cmp byte [dkw_kind + eax], K_TERM     ; (its 80 columns wouldn't fit)
     je .no
+    cmp byte [dkw_kind + eax], K_APP      ; a program's picture wider than
+    jne dk_can_max                        ; half the screen: at that side,
+    push eax                              ; its own size
+    mov eax, [dkw_param + eax*4]
+    mov eax, [dk_app_w + eax*4]
+    add eax, DK_BORDER * 2
+    cmp eax, [dk_w2]
+    pop eax
+    ja .no
     jmp dk_can_max
 .no:
     stc
@@ -568,6 +609,11 @@ dk_win_snap:
     call dk_win_maximize
     jmp .done
 .fixed:
+    cmp byte [dkw_max + ebp], 0           ; (maximized: as it was, first)
+    je .own_size
+    mov eax, ebp
+    call dk_win_maximize
+.own_size:
     call dk_snap_rect                     ; (dk_drag_win: this one)
     push eax
     mov eax, ebp
@@ -1989,6 +2035,7 @@ dkx_files_req    db 0
 dkx_tasks_req    db 0
 dkx_close_req    db 0
 dkx_logout_req   db 0
+dkx_snap_req     db 0                     ; Win+arrows: 1 left 2 right 3 up 4 down
 dkx_desk_hid     times DK_MAX_WIN db 0
 dk_snap_now      dd 0
 DKX_FC_MAX       equ 16

@@ -621,7 +621,9 @@ tester@/DESKTOP$ run snake.app
   waiting, or none of it any more; `clip_pic_get(buf, n)` /
   `clip_pic_set(path)` - the clipboard's picture, a path to a .BMP or
   .PNG (the last screenshot, a picture copied in Files, what Paint
-  copied). A file dragged onto a program's window comes to its inbox
+  copied); `music_state(n)` - a player saying it plays (1) or is paused
+  (2): the tray's note, whose click and wheel come to its inbox as
+  `|PAUSE`, `|NEXT`, `|PREV`. A file dragged onto a program's window comes to its inbox
   too.
 - **Paint** (`apps/paint.c`, `/APPS/PAINT.APP`; Files' **Edit in Paint**
   on a `.BMP`): pencil, brush, eraser, line, rectangle, filled box,
@@ -726,17 +728,23 @@ tester@/DESKTOP$ run snake.app
   Keys: **Alt+F4** closes the window in front, **Win+D** (or the thin
   strip at the taskbar's right end) shows the desktop and brings the
   windows back, **Win+E** opens Files, **Win+L** locks the screen,
-  **Ctrl+Shift+Esc** opens Tasks. Right-click a taskbar button:
+  **Ctrl+Shift+Esc** opens Tasks, **Win+←/→** puts the window in front
+  into the left / right half (a program's picture wider than that: at
+  that side, its own size), **Win+↑** maximizes it, **Win+↓** gives it
+  its own size back, or down to the taskbar. Right-click a taskbar button:
   Minimize / Restore, Maximize, Close; right-click the desktop: New
   Terminal, Files, Tasks, System, Arrange icons, Next backdrop.
   **Caps Lock** works (with its light), an "A" in the tray while it's
   on.
-  A taskbar with a button per window and a tray - volume (click: the
-  Mixer, wheel: the master volume), network (green once it's set up),
+  A taskbar with a button per window and a tray - a note while Music
+  plays (click: pause / on again, wheel: the next / the one before),
+  volume (click: the Mixer, wheel: the master volume), network (green once it's set up),
   the time (click: the **notification center** - every line that came
   up at the top of the screen, the last six with their times, Clear and
   Do not disturb (they're kept, not shown or sounded), a red dot by the
-  time when there are new ones - over this month's calendar;
+  time when there are new ones - over this month's calendar; a line
+  that does something has a button at its end - a screenshot's
+  **Open** shows it in Pictures, the Clock's **Stop** quiets it;
   double-click: the Clock;
   the pointer resting on it: today's date) - and a start menu (the
   Win key opens it too): Programs (every .APP/.COM/.BIN on the disk),
@@ -752,8 +760,9 @@ tester@/DESKTOP$ run snake.app
   `DESKTOP.CFG`).
   - **Lex**, the cat LexOS is named after (src/dkcat.asm), lives on the
     taskbar: he walks along it, sits, curls up and sleeps (Zzz); click
-    him and he meows. The desktop's right-click menu hides him or calls
-    him back. He's a tamagotchi, too: food, joy and energy run down as
+    him and he meows. The desktop's right-click menu hides him - he
+    jumps, and falls away below the screen - or calls him back: up he
+    flies from below, and lands. The Clock's alarm makes him jump. He's a tamagotchi, too: food, joy and energy run down as
     time goes by (energy while he's awake - sleep brings it back). Right-
     click him: **Feed** (a bowl), **Pet** (a heart and a purr), **Play**
     (for a while he chases the pointer), **How is Lex?** (three bars
@@ -865,8 +874,8 @@ tester@/DESKTOP$ run snake.app
     icon onto Files goes into the folder shown there (or the one under
     the pointer), onto another icon that's a folder, into it. **Ctrl**
     held when it's let go of: a copy instead - in Files too.
-  - A double click on the empty desktop opens a Terminal; Esc closes a
-    Clock, System, Tasks, Mixer or Pictures window in front.
+  - Esc closes a Clock, System, Tasks, Mixer or Pictures window in
+    front.
   - **Icons on the desktop**: whatever's in `/DESKTOP` (src/dkicons.asm).
     A `.LNK` file there is a shortcut - its text is the path it opens
     (`/APPS/FIRE.APP`, a folder like `/DEMOS`). Double-click opens,
@@ -1266,7 +1275,7 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `httpd [port]` | serve this disk on the web (`make run`: http://localhost:8080/) |
 | `ntp [server]` | set the clock from a time server (default `pool.ntp.org`) |
 | `dhcp` | get an address from the DHCP server again |
-| `run <n>.app [args]` | run a protected (ring 3) program - see `apps/` |
+| `run <n>.app [args]` | run a protected (ring 3) program - see `apps/` (a name: here, then `/APPS`; or a path, `run /apps/snake.app`) |
 | `run browser.app [url]` | LexOS Web, the browser (or the WEB icon) |
 | `run cc.app <f.c> [-o <n>.app]` | compile C into a program, inside LexOS |
 | Alt+T / Alt+1..9 / `exit` | open a new console / switch to console N / close this one |
@@ -1277,7 +1286,9 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `neofetch` | the system at a glance, next to Lex the cat (ASCII, in color) |
 | `lex [text]` | Lex the cat says something in a speech bubble (or your text) |
 | `play <n.imf \| n.wav>` | play AdLib music or a WAV (an AC'97 or a Sound Blaster 16, or the PC speaker) |
-| `play <n> &` | play it in the background |
+| `play <n> &` | play it in the background (a name or a path) |
+| `open <n>` | open it as a double click on the desktop would - a picture in Pictures, a text in Notepad, a program, a folder in Files |
+| `clip <n>`, `<command> \| clip` | a file's text - or a command's output - onto the clipboard (Ctrl+V pastes) |
 | `basic [n]` | Tiny BASIC; with a name, load and run that program first |
 | `reboot` / `shutdown` | restart / power off |
 | `history` | list previously run commands, numbered oldest first |
@@ -1576,6 +1587,7 @@ src/
   script.asm           *.hg scripts: variables, expressions, if/while/
                        for/goto, set/vars/input/sleep, AUTOEXEC.HG.
   pipe.asm             pipes and redirection: a | b, a > f, a >> f.
+  shellx.asm           paths for `run` and `play`; `open`, `clip`.
 ```
 
 ## Known limitations

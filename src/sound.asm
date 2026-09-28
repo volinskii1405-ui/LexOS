@@ -99,10 +99,19 @@ play_file:
     jmp .end
 
 .have_name:
+    movzx esi, word [esp + 2]             ; a path ("/DEMOS/TUNE.IMF"): that
+    call shx_has_slash                    ; (src/shellx.asm)
+    jnc .by_name
+    call shx_find                         ; -> eax, fs_tmp_name
+    cmp ax, -1
+    jne .found
+    jmp .missing
+.by_name:
     mov si, fs_tmp_name
     call fs_find_by_name
     cmp ax, -1
     jne .found
+.missing:
     mov si, msg_fs_notfound
     call print_string
     jmp .end
@@ -1012,6 +1021,14 @@ play_spawn:
     loop .copy
     mov byte [edi], 0
 .copied:
+    mov esi, play_bg_arg                  ; (there at all? else said now,
+    call shx_find                         ;  not from the task, later)
+    cmp eax, -1
+    jne .there
+    mov si, msg_fs_notfound
+    call print_string
+    jmp .done
+.there:
     ; the task's name: "play NAME"
     mov esi, play_bg_task_name_prefix
     mov edi, play_bg_task_name

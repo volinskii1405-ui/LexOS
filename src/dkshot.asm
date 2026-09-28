@@ -44,6 +44,11 @@ dks_work:
     call dki_copy
     mov byte [dk_fm_refresh], 1           ; (Files shows it)
     call dk_toast
+    mov byte [dk_toast_act], 1            ; (a click on it: it, in Pictures)
+    mov eax, [dks_slot]
+    mov [dk_toast_slot], eax
+    mov al, [dks_dir]
+    mov [dk_toast_dir], al
     jmp .let_go
 .failed:
     mov byte [dks_state], 0
@@ -124,6 +129,12 @@ dks_start:
     mov esi, fs_tmp_name
     call wget_append
     mov byte [edi], 0
+    mov al, [fs_current_dir]              ; (its folder, for the toast's click)
+    cmp word [fs_current_dir], FS_ROOT
+    jne .dir_byte
+    mov al, FS_ROOT_BYTE
+.dir_byte:
+    mov [dks_dir], al
     push edi                              ; its path, for the clipboard
     mov edi, dks_path
     mov byte [edi], '/'
@@ -256,3 +267,4 @@ dks_pos          dd 0
 dks_last         dd -1
 dks_said         times 64 db 0
 dks_path         times 24 db 0
+dks_dir          db 0

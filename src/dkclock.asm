@@ -516,10 +516,12 @@ dkclk_ring:
     mov eax, [timer_ms]
     mov [dkclk_ring_at], eax
     mov byte [dkss_poke], 1               ; (the screen saver away)
+    call dkx_cat_alarm                    ; (Lex jumps: src/dkcat.asm)
     call tr_lookup
     mov edi, dk_toast_buf
     call dki_copy
     call dk_toast
+    mov byte [dk_toast_act], 2            ; (a click on it: quiet)
     mov eax, K_CLOCK
     call dk_win_single                    ; (src/desktop.asm)
     call dkclk_mark
@@ -707,8 +709,8 @@ dkclk_l_on       db "Alarm on", 0
 dkclk_l_off      db "Alarm off", 0
 dkclk_l_al_off   db "It won't ring.", 0
 dkclk_l_al_rings db "It rings every day at this time.", 0
-dkclk_l_alarm_toast db "Alarm! (a click in the Clock stops it)", 0
-dkclk_l_timer_toast db "Time's up! (a click in the Clock stops it)", 0
+dkclk_l_alarm_toast db "Alarm!", 0
+dkclk_l_timer_toast db "Time's up!", 0
 dkclk_cfg_alarm  db "alarm=", 0
 dkclk_cfg_on     db "alarmon=", 0
 dkclk_pg         db 0                     ; 0 the face, 1 alarm, 2 timer, 3 stopwatch
