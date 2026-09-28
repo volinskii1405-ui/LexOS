@@ -92,13 +92,19 @@ endif
 #   make run AUDIOTIMER=20000              QEMU's audio timer period (us;
 #                                          its default is 10000)
 #   make run ACCEL=kvm                     (whpx on Windows, hvf on macOS)
+#   make run SOUNDCARDS=                   no Sound Blaster, no AdLib at all
+#                                          (only the PC speaker): is it
+#                                          QEMU's emulation of the cards?
+#   make run QEMUFLAGS="-display sdl"      anything else for QEMU
 AUDIOBUF ?=
 AUDIOTIMER ?=
 ACCEL ?=
 comma := ,
 AUDIO_OPTS = $(if $(AUDIOBUF),$(comma)out.buffer-length=$(AUDIOBUF))$(if $(AUDIOTIMER),$(comma)timer-period=$(AUDIOTIMER))
 AUDIO = -audiodev $(AUDIODEV),id=snd0$(AUDIO_OPTS)
-QEMU_ACCEL = $(if $(ACCEL),-accel $(ACCEL))
+QEMU_ACCEL = $(if $(ACCEL),-accel $(ACCEL)) $(QEMUFLAGS)
+SOUNDCARDS ?= -device adlib,audiodev=snd0,iobase=0x220 -device sb16,audiodev=snd0
+QEMUFLAGS ?=
 
 # The host folder LexOS's `hostls`/`hostget` see (src/hostfs.asm): QEMU
 # presents it to the guest as a whole FAT16 disk - the primary IDE
@@ -118,7 +124,7 @@ run: $(BUILD_DIR)/os-image.bin
 	qemu-system-i386 $(QEMU_ACCEL) -m 256 -drive format=raw,file=$(BUILD_DIR)/os-image.bin,if=ide,index=0 \
 		$(SHARED_DRIVE) $(NIC) \
 		$(AUDIO) -machine pcspk-audiodev=snd0 \
-		-device adlib,audiodev=snd0,iobase=0x220 -device sb16,audiodev=snd0
+		$(SOUNDCARDS)
 
 # Same as `run`, but also exposes COM1 as a TCP socket on localhost, so
 # `recv <name> <hex size>` (see README) has something to actually receive
@@ -130,7 +136,7 @@ run-serial: $(BUILD_DIR)/os-image.bin
 	qemu-system-i386 $(QEMU_ACCEL) -m 256 -drive format=raw,file=$(BUILD_DIR)/os-image.bin,if=ide,index=0 \
 		$(SHARED_DRIVE) $(NIC) \
 		$(AUDIO) -machine pcspk-audiodev=snd0 \
-		-device adlib,audiodev=snd0,iobase=0x220 -device sb16,audiodev=snd0 \
+		$(SOUNDCARDS) \
 		-serial tcp::$(SERIALPORT),server,nowait
 
 # Two LexOS machines on one network, for `chat` (src/chat.asm): run

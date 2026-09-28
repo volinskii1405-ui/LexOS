@@ -1196,7 +1196,9 @@ run`, or the same options on the command line):
 | `AUDIODEV=sdl` (or `pipewire`, `alsa`) | `-audiodev sdl,id=snd0` | another backend - SDL plays from a thread of its own |
 | `AUDIOBUF=100000` | `-audiodev pa,id=snd0,out.buffer-length=100000` | a longer backend buffer (microseconds) |
 | `AUDIOTIMER=20000` | `...,timer-period=20000` | QEMU's audio timer less often (default 10000us) |
-| `ACCEL=kvm` (`whpx` on Windows, `hvf` on macOS) | `-accel kvm` | the CPU not emulated: much less for the main loop to do | On a PipeWire system (Fedora, recent Ubuntu) use
+| `ACCEL=kvm` (`whpx` on Windows, `hvf` on macOS) | `-accel kvm` | the CPU not emulated: much less for the main loop to do |
+| `SOUNDCARDS=` | (no `-device adlib`, `-device sb16`) | no sound cards at all: is it QEMU's emulation of them? |
+| `QEMUFLAGS="-display sdl"` | `-display sdl` (or `gtk`, `cocoa`) | another window for QEMU; any other flags go here too | On a PipeWire system (Fedora, recent Ubuntu) use
 `pipewire` - through PipeWire's PulseAudio stand-in QEMU stalls the
 whole machine while a sound plays. `make run` picks `pipewire` by itself
 when QEMU has it (QEMU 8.1+; on Fedora the `qemu-audio-pipewire`

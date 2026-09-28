@@ -1033,10 +1033,12 @@ play_spawn:
     mov eax, play_bg_task
     mov esi, play_bg_task_name
     mov bl, SCHED_PRIO_HIGH
-    call task_create
-    cmp eax, -1
-    je .full
+    inc dword [sched_lock]                ; (its pid kept before it can run:
+    call task_create                      ;  a file not found ends it at
+    cmp eax, -1                           ;  once, and it clears the pid)
+    je .full_unlock
     mov [play_bg_pid], eax
+    dec dword [sched_lock]
     mov si, msg_play_bg_started
     call print_string
     call basic_print_num
@@ -1047,7 +1049,8 @@ play_spawn:
     mov si, msg_play_bg_busy
     call print_string
     jmp .done
-.full:
+.full_unlock:
+    dec dword [sched_lock]
     mov si, msg_task_table_full
     call print_string
 .done:
