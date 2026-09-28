@@ -130,6 +130,7 @@ align 4096, db 0
 shared_sound_start:
 %include "src/sound.asm"
 %include "src/mixer.asm"
+%include "src/ac97.asm"
 shared_sound_end:
 align 4096, db 0
 %include "src/chip8.asm"

@@ -494,12 +494,12 @@ tester@/DESKTOP$ run snake.app
   `/DEMOS/CATCH.BAS` (catch falling stars with A/D or the arrows).
 - **Sound.** `play <n.imf>` plays AdLib music (OPL2, Type-0 IMF at
   560Hz); `play <n.wav>` plays uncompressed PCM - 8- or 16-bit, mono or
-  stereo, any rate - through a **Sound Blaster 16**: the DSP is found
-  and reset at 0x220, and the samples go to it by ISA DMA (channel 1
-  for 8-bit, 5 for 16-bit) straight from memory, so it's real digital
-  sound and costs the CPU nothing while it plays. Without an SB16, 8-bit
+  stereo, any rate - through an **AC'97** (PCI bus-master DMA) or a
+  **Sound Blaster 16** (the DSP found and reset at 0x220, the samples
+  going to it by ISA DMA on channel 5), straight from memory, so it's
+  real digital sound. Without either, 8-bit
   mono WAVs still play, 1-bit, on the PC speaker. `make run` gives QEMU
-  both an AdLib and an SB16. ESC stops playback; `&` puts it in the
+  an AdLib and an AC'97 (`CARD=sb16`: the SB16). ESC stops playback; `&` puts it in the
   background (below).
 - **Virtual consoles.** Alt+T opens another console with a shell of
   its own, Alt+1..Alt+9 switch between them, `exit` closes the one
@@ -564,7 +564,10 @@ tester@/DESKTOP$ run snake.app
   at its own rate (converted on the fly to 22050Hz stereo) with its own
   volume, mixed by the IRQ handler - so a game's sound plays over
   `play music.wav &`, and `.WAV` files (now up to 8MB) play through it
-  too. It's kept light for QEMU, whose Sound Blaster pushes every byte
+  too. The stream goes to an AC'97 if there is one (src/ac97.asm: a
+  PCI bus master reading a ring of 32 buffer descriptors - the same two
+  halves - its interrupt refilling one), else to the Sound Blaster.
+  It's kept light for QEMU, whose Sound Blaster pushes every byte
   through an emulated ISA DMA in the same loop that draws its window:
   each half is ~93ms; while every voice is mono at 11025Hz or less (the
   desktop's own sounds are) the stream is 11025Hz mono - a quarter of
@@ -1170,16 +1173,22 @@ qemu-system-i386 -m 256 -drive format=raw,file=os-image.bin
 
 That's enough for the setup, the desktop, the shell and the programs.
 For everything else, give QEMU the devices `make run` gives it (see the
-`Makefile`): the RTL8139 network card, an AdLib and a Sound Blaster 16,
-and a real audio backend (QEMU's default is `none`, so nothing would be
-heard, `beep` included):
+`Makefile`): the RTL8139 network card, an AC'97 sound card and an
+AdLib, and a real audio backend (QEMU's default is `none`, so nothing
+would be heard, `beep` included):
 
 ```sh
 qemu-system-i386 -m 256 -drive format=raw,file=os-image.bin \
     -nic user,model=rtl8139 \
     -audiodev pa,id=snd0 -machine pcspk-audiodev=snd0 \
-    -device adlib,audiodev=snd0,iobase=0x220 -device sb16,audiodev=snd0
+    -device AC97,audiodev=snd0 -device adlib,audiodev=snd0,iobase=0x220
 ```
+
+LexOS takes a Sound Blaster 16 too (`-device sb16,audiodev=snd0`, or
+`make run CARD=sb16`) - but QEMU's Sound Blaster copies every byte
+through an emulated ISA DMA controller, and on QEMU 10 (Fedora) that
+froze QEMU's whole window while a sound played; the AC'97 reads its
+samples itself (a PCI bus master), and doesn't.
 
 (swap `pa` for `pipewire`/`alsa`/`sdl`/`coreaudio`/`dsound` depending
 on your host; run `qemu-system-i386 -audiodev help` to see which
@@ -1197,7 +1206,9 @@ run`, or the same options on the command line):
 | `AUDIOBUF=100000` | `-audiodev pa,id=snd0,out.buffer-length=100000` | a longer backend buffer (microseconds) |
 | `AUDIOTIMER=20000` | `...,timer-period=20000` | QEMU's audio timer less often (default 10000us) |
 | `ACCEL=kvm` (`whpx` on Windows, `hvf` on macOS) | `-accel kvm` | the CPU not emulated: much less for the main loop to do |
-| `SOUNDCARDS=` | (no `-device adlib`, `-device sb16`) | no sound cards at all: is it QEMU's emulation of them? |
+| `SOUNDCARDS=` | (no `-device AC97`, `-device adlib`) | no sound cards at all: is it QEMU's emulation of them? |
+| `SOUNDCARDS="-device AC97,audiodev=snd0"` | (no `-device adlib`) | no AdLib (.IMF music silent): is it the AdLib's? |
+| `CARD=sb16` | `-device sb16,audiodev=snd0` (instead of the AC'97) | the Sound Blaster 16 |
 | `QEMUFLAGS="-display sdl"` | `-display sdl` (or `gtk`, `cocoa`) | another window for QEMU; any other flags go here too | On a PipeWire system (Fedora, recent Ubuntu) use
 `pipewire` - through PipeWire's PulseAudio stand-in QEMU stalls the
 whole machine while a sound plays. `make run` picks `pipewire` by itself
@@ -1265,7 +1276,7 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `uptime` | how long since boot, the consoles and tasks |
 | `neofetch` | the system at a glance, next to Lex the cat (ASCII, in color) |
 | `lex [text]` | Lex the cat says something in a speech bubble (or your text) |
-| `play <n.imf \| n.wav>` | play AdLib music or a WAV (Sound Blaster 16, or PC speaker) |
+| `play <n.imf \| n.wav>` | play AdLib music or a WAV (an AC'97 or a Sound Blaster 16, or the PC speaker) |
 | `play <n> &` | play it in the background |
 | `basic [n]` | Tiny BASIC; with a name, load and run that program first |
 | `reboot` / `shutdown` | restart / power off |
@@ -1460,6 +1471,7 @@ src/
                        script interpreter - vga.asm's mode switch too.
   mouse.asm            the PS/2 mouse (IRQ12), with the wheel.
   sound.asm            `play`: AdLib (.IMF), the Sound Blaster 16 (.WAV).
+  ac97.asm             the AC'97 (QEMU's -device AC97): the mixer's stream.
   mixer.asm            the SB16's mixer: 4 voices, each with its own rate
                        and volume; `mixer`.
   hostfs.asm           the host's shared folder (FAT16): hostls/hostget/

@@ -644,7 +644,7 @@ play_wav_file:
     cmp dword [wav_data_size], 0
     je .end
 
-    call sb_detect
+    call sb_stream_init                   ; (an AC'97 or a Sound Blaster)
     jc .speaker
     call mixer_play_wav
     jmp .end
@@ -1168,6 +1168,8 @@ sb_stream_init:
     cmp byte [sb_stream_ready], 0
     jne .ok
     pushad
+    call ac97_init                        ; an AC'97 first (src/ac97.asm)
+    jnc .ready
     call sb_detect
     jc .fail
     call sb_reset
@@ -1180,6 +1182,7 @@ sb_stream_init:
     in al, PIC1_DATA
     and al, ~0x20
     out PIC1_DATA, al
+.ready:
     mov byte [sb_stream_ready], 1
     popad
 .ok:
@@ -1195,6 +1198,8 @@ sb_stream_init:
 ; mixed first - so what was just queued is heard at once. Interrupts
 ; off (the mixer's mix_kick)
 sb_stream_start:
+    cmp byte [ac97_present], 0            ; (the AC'97's own)
+    jne ac97_start
     pushad
     cmp byte [sb_streaming], 0            ; playing: paused first
     je .stopped
@@ -1252,6 +1257,18 @@ sb_stream_start:
     call sb_write
     mov byte [sb_streaming], 1
     popad
+    ret
+
+; eax = a rate, ecx = channels -> what the card plays instead (the
+; AC'97: always stereo; 48000Hz if it has no variable rate)
+sb_stream_fit:
+    cmp byte [ac97_present], 0
+    je .done
+    mov ecx, 2
+    cmp byte [ac97_rate_fixed], 0
+    je .done
+    mov eax, 48000
+.done:
     ret
 
 ; IRQ5: a half has been played - refill it; two silent ones in a row:
