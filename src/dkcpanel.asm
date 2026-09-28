@@ -774,6 +774,7 @@ dkc_cfg_save:
     stosb
     mov ax, 0x0A0D
     stosw
+    call dkclk_cfg_save                   ; (the alarm: src/dkclock.asm)
     mov esi, dkc_cfg_res
     call wget_append
     mov al, [dk_res_want]
@@ -809,6 +810,7 @@ dkc_cfg_load:
     jae .no_dbl
     call dkc_set_dbl
 .no_dbl:
+    call dkclk_cfg_load                   ; (the alarm: src/dkclock.asm)
     mov esi, dkc_cfg_res
     call dk_cfg_value
     jc .no_res

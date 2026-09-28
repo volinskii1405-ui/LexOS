@@ -382,6 +382,9 @@ dk_term_cursor:
 CLOCK_R equ 80
 
 dk_draw_clock:
+    call dkclk_tabs                       ; (its pages: src/dkclock.asm)
+    cmp byte [dkclk_pg], 0
+    jne dkclk_page
     call rtc_read_time                    ; bh:bl:cl = h:m:s (UTC)
     movzx eax, bh
     call dk_local_hour
@@ -390,7 +393,7 @@ dk_draw_clock:
     mov [dk_s_now], cl
 
     mov eax, [dk_cx]
-    add eax, 100
+    add eax, CLK_W / 2
     mov [dk_ccx], eax
     mov eax, [dk_cy]
     add eax, 96
@@ -958,7 +961,15 @@ dk_draw_system:
     mov esi, dk_sys_buf
     mov edx, COL_TEXT
     call dk_sys_line
-    mov esi, dk_sys_memory
+    mov edi, dk_sys_buf                   ; the memory (the CMOS says:
+    mov esi, dk_sys_memory                ;  src/dkres.asm)
+    call wget_append
+    call dkr_mem_mb
+    call wget_append_num
+    mov esi, dk_sys_mb
+    call wget_append
+    mov byte [edi], 0
+    mov esi, dk_sys_buf
     call dk_sys_line
     mov edi, dk_sys_buf                   ; consoles
     mov esi, dk_sys_consoles
@@ -1563,6 +1574,7 @@ IC_PAINT  equ 25
 IC_CALC   equ 26
 IC_DESK   equ 27                        ; (Files' places: the desktop,
 IC_DISK   equ 28                        ;  the disk)
+IC_CLOCK  equ 29
 
 dk_draw_files:
     ; the toolbar: [Up], the path, [<] [>]
@@ -4180,6 +4192,8 @@ dk_shot_capture:
     loop .px
     dec edx
     jns .row
+    mov eax, [dk_shot_size]               ; (all of it: src/dkregion.asm's
+    mov [dks_len], eax                    ;  is a part)
     mov byte [dk_shot_ready], 1
 .done:
     popad
@@ -4622,6 +4636,11 @@ dk_win_click:
     call dkc_press
     jmp .done
 .not_term:
+    cmp edx, K_CLOCK                      ; the Clock: its tabs, its pages
+    jne .not_clock                        ; (src/dkclock.asm)
+    call dkclk_click
+    jmp .done
+.not_clock:
     cmp edx, K_PICS
     jne .not_pics
     call dkv_click                        ; (src/dkpics.asm)
@@ -5850,7 +5869,8 @@ dk_msg_loading      db "Looking for .BMP files...", 0
 dk_msg_no_pictures  db "No .BMP files in this folder.", 0
 dk_sys_title        db "LexOS - a hobby OS in NASM", 0
 dk_sys_uptime       db "Up for ", 0
-dk_sys_memory       db "Memory: 128 MB", 0
+dk_sys_memory       db "Memory: ", 0
+dk_sys_mb           db " MB", 0
 dk_sys_consoles     db "Consoles: ", 0
 dk_sys_ip           db "Address: ", 0
 dk_sys_no_ip        db "(no network yet)", 0

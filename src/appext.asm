@@ -20,10 +20,15 @@
 ;                             (Files opened another text file and Notepad
 ;                             is already there: a tab in it, not a second
 ;                             Notepad) -> its path's length, 0 if none
+;   43 clip_pic(buf, n, set)  the clipboard's picture - a path: set 1, that
+;                             file's it now (Paint's Ctrl+C) -> 0; set 0,
+;                             its path into buf -> its length, 0 if none.
+;                             A screenshot, a picture copied in Files: it.
 ;
 ; Arguments as every call's: ebx [ebp+16], ecx [ebp+24], edx [ebp+20].
 ; Exports: sys_keymode, sys_readdir, sys_mkdir, sys_notify, sys_inbox,
-;          sys_opl, sys_audio_queued, aext_hand_over
+;          sys_opl, sys_audio_queued, sys_clip_pic, aext_clip_pic,
+;          aext_hand_over
 
 AEXT_PATH_MAX  equ 120
 
@@ -514,7 +519,52 @@ sys_audio_queued:
     mov eax, -1
     ret
 
+; SYS 43: ebx = a buffer, ecx = its size, edx = 1: the path in it is
+; the clipboard's picture now -> 0 (-1: not a path); edx = 0: the
+; clipboard picture's path into it -> its length (0: none, or no room)
+sys_clip_pic:
+    cmp dword [ebp + 20], 0
+    je .get
+    mov eax, [ebp + 16]
+    call aext_take_path
+    jc .bad
+    mov esi, aext_path
+    mov edi, aext_clip_pic
+    mov ecx, AEXT_PATH_MAX
+    cld
+    rep movsb
+    xor eax, eax
+    ret
+.bad:
+    mov eax, -1
+    ret
+.get:
+    xor eax, eax
+    cmp byte [aext_clip_pic], 0
+    je .done
+    mov esi, aext_clip_pic                ; its length (with the 0)
+    xor ecx, ecx
+.len:
+    cmp byte [esi + ecx], 0
+    je .counted
+    inc ecx
+    jmp .len
+.counted:
+    inc ecx
+    cmp ecx, [ebp + 24]
+    ja .done
+    mov [ebp + 24], ecx
+    call app_check_range
+    mov edi, [ebp + 16]
+    cld
+    rep movsb
+    mov eax, [ebp + 24]
+    dec eax
+.done:
+    ret
+
 aext_opl_task    dd -1
+aext_clip_pic    times AEXT_PATH_MAX + 8 db 0
 aext_inbox       times AEXT_PATH_MAX + 20 db 0
 aext_inbox_con   db 0xFF
 aext_dir         db 0

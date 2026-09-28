@@ -223,9 +223,25 @@ keyboard_isr:
     jne .not_prtsc
     cmp byte [dk_active], 0
     je .not_prtsc
+    cmp byte [kbd_shift_held], 0   ; (Shift+PrintScreen: a part of the
+    jne .prtsc_part                ;  screen, chosen - src/dkregion.asm)
     mov byte [dk_shot_req], 1
     jmp .eoi
+.prtsc_part:
+    mov byte [drs_req], 1
+    jmp .eoi
 .not_prtsc:
+    cmp bh, 0                    ; E0 2A / E0 AA / E0 36 / E0 B6: the
+    je .not_fake_shift           ; "fake" Shifts that come with PrintScreen
+    cmp al, 0x2A                 ; and the grey keys - not the Shift key
+    je .eoi
+    cmp al, 0xAA
+    je .eoi
+    cmp al, 0x36
+    je .eoi
+    cmp al, 0xB6
+    je .eoi
+.not_fake_shift:
     cmp bh, 0                    ; the Win keys let go (E0 DB / E0 DC):
     je .not_win_up               ; alone, the start menu; with a key
     cmp al, 0xDB                 ; (Win+D...), that's done already
@@ -243,6 +259,23 @@ keyboard_isr:
     mov byte [dkx_win_req], 1
     jmp .eoi
 .not_win_up:
+    mov cl, al                   ; Shift, Alt, Ctrl held: in key_held too
+    and cl, 0x7F                 ; (a program's keydown() - Paint's Shift)
+    cmp cl, 0x2A
+    je .mod_held
+    cmp cl, 0x36
+    je .mod_held
+    cmp cl, 0x38
+    je .mod_held
+    cmp cl, 0x1D
+    jne .mods_done
+.mod_held:
+    movzx ecx, cl
+    mov byte [key_held + ecx], 1
+    test al, 0x80
+    jz .mods_done
+    mov byte [key_held + ecx], 0
+.mods_done:
 
     cmp al, 0x2A                 ; Left Shift (press)
     je .shift_down
@@ -272,6 +305,9 @@ keyboard_isr:
 .alt_up:
     mov byte [kbd_alt_held], 0
     mov byte [lang_alt_held], 0
+    cmp byte [dk_active], 0        ; (Alt+Tab's panel: that one - src/dkswitch.asm)
+    je .eoi
+    mov byte [dsw_alt_up], 1
     jmp .eoi
 .ctrl_down:
     mov byte [kbd_ctrl_held], 1
@@ -380,7 +416,12 @@ keyboard_isr:
     je .desk_esc
     mov byte [dkx_tasks_req], 1
     jmp .eoi
-.desk_esc:                         ; Esc, a Clock / System / Tasks / Mixer /
+.desk_esc:
+    cmp byte [drs_active], 0       ; (choosing a part of the screen: no more)
+    je .desk_esc_win
+    mov byte [drs_cancel], 1
+    jmp .eoi
+.desk_esc_win:                     ; Esc, a Clock / System / Tasks / Mixer /
     call dkx_esc_closes            ; Pictures in front: it closes (the rest -
     jc .not_desk_keys              ; Terminals, programs, Files - keep it)
     mov byte [dkx_close_req], 1
@@ -395,7 +436,12 @@ keyboard_isr:
     jne .not_alt_tab               ; (src/desktop.asm)
     cmp byte [dk_active], 0
     je .not_alt_tab
+    cmp byte [kbd_shift_held], 0   ; (Shift+Tab: back)
+    jne .alt_tab_back
     inc byte [dk_alt_tab]
+    jmp .eoi
+.alt_tab_back:
+    inc byte [dsw_back]
     jmp .eoi
 .not_alt_tab:
     cmp al, 0x14                   ; T

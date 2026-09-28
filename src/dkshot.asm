@@ -35,6 +35,10 @@ dks_work:
     jz .failed                            ; (ZF: the disk's full)
     mov byte [dks_state], 0
     mov byte [dk_shot_ready], 0
+    mov esi, dks_path                     ; the clipboard's picture now
+    mov edi, aext_clip_pic                ; (Ctrl+V in Paint)
+    call wget_append
+    mov byte [edi], 0
     mov esi, dks_said
     mov edi, dk_toast_buf
     call dki_copy
@@ -120,6 +124,20 @@ dks_start:
     mov esi, fs_tmp_name
     call wget_append
     mov byte [edi], 0
+    push edi                              ; its path, for the clipboard
+    mov edi, dks_path
+    mov byte [edi], '/'
+    inc edi
+    cmp word [fs_current_dir], FS_ROOT
+    je .path_name
+    mov dword [edi], 'PICS'
+    mov byte [edi + 4], '/'
+    add edi, 5
+.path_name:
+    mov esi, fs_tmp_name
+    call wget_append
+    mov byte [edi], 0
+    pop edi
     call fs_stream_prepare
     jc .failed
     movzx eax, word [fs_tmp_slot]
@@ -174,7 +192,7 @@ dks_piece:
 .linked:
     mov ebp, DKS_BATCH
 .sector:
-    mov ecx, [dk_shot_size] ; this one's bytes
+    mov ecx, [dks_len]                    ; this one's bytes
     sub ecx, [dks_pos]
     cmp ecx, FS_EXTRA_CONTENT_LEN
     jbe .count
@@ -192,7 +210,7 @@ dks_piece:
     jz .last                              ; (this piece's last)
     push eax
     mov eax, [dks_pos]
-    cmp eax, [dk_shot_size]
+    cmp eax, [dks_len]
     pop eax
     jae .last
     call fs_extra_alloc                   ; the next, first - so this one
@@ -215,7 +233,7 @@ dks_piece:
     call fs_write_slot
     push eax
     mov eax, [dks_pos]
-    cmp eax, [dk_shot_size]
+    cmp eax, [dks_len]
     pop eax
     jae .all
     popad
@@ -237,3 +255,4 @@ dks_slot         dd 0
 dks_pos          dd 0
 dks_last         dd -1
 dks_said         times 64 db 0
+dks_path         times 24 db 0

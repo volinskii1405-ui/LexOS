@@ -161,6 +161,13 @@ static inline void opl(int reg, int value)                { lx_syscall(41, reg, 
  * small for a quick pause); audio_queued(1) drops them at once. */
 static inline int audio_queued(int flush)                 { return lx_syscall(42, flush, 0); }
 
+/* The clipboard's picture: a path to a .BMP or .PNG - the last
+ * screenshot, a picture copied (Ctrl+C) in Files, or what a program set.
+ * clip_pic_get(buf, n) -> the path's length, 0 if there's none;
+ * clip_pic_set("/SYSTEM/CLIP.BMP") - that file's it now. */
+static inline int clip_pic_get(char *buf, int n)          { return lx_syscall3(43, (int)buf, n, 0); }
+static inline int clip_pic_set(const char *path)          { return lx_syscall3(43, (int)path, 0, 1); }
+
 /* keydown(scancode): 1 while that key is held - for games. */
 static inline int keydown(int scancode)                   { return lx_syscall(20, scancode, 0); }
 #define KEY_ESC   0x01

@@ -11,6 +11,11 @@
 ; It's done the way Files' Paste is (src/dkextra.asm: dkx_fc_paste) -
 ; by the desktop's task, holding the kernel lock - through the same
 ; functions, with the drop's list lent to it for the time being.
+;
+; A file (not a folder) let go of on a program's window goes to that
+; program (its inbox: Paint opens a picture, Notepad a text, Music plays
+; the music...); on the Terminal in front, its shell waiting, its path
+; is typed there.
 ; Exports: dkd_files_drop, dkd_icon_drop, dkd_work, dkd_place
 
 DKD_COPY       equ 1
@@ -26,7 +31,36 @@ dkd_files_drop:
     cmp esi, -1
     je .desktop
     cmp byte [dkw_kind + esi], K_FILES
-    jne .theirs
+    je .in_files
+    mov edx, [dk_fm_press]                ; onto a program: the file to it
+    call dkd_entry_folder
+    jnc .theirs
+    push esi
+    mov esi, edx
+    shl esi, 5
+    add esi, DESK_FILES
+    cmp byte [esi + 17], IC_UP
+    pop esi
+    je .theirs
+    call dk_shell_idle                    ; (the disk: to read)
+    jc .theirs
+    mov al, [dk_fm_dir]                   ; its path: the folder's, its name
+    mov edi, dkd_path
+    call dk_dir_path
+    call dkd_path_end
+    push esi
+    mov esi, edx
+    shl esi, 5
+    add esi, DESK_FILES
+    mov ecx, FS_NAME_LEN - 1
+    cld
+    rep movsb
+    mov byte [edi], 0
+    pop esi
+    call dkd_to_window
+    jnc .mine
+    jmp .theirs
+.in_files:
     cmp byte [lang_ctrl_held], 0          ; in Files: a copy with Ctrl, onto
     je .theirs                            ; a folder in it (else Files' own)
     call dk_files_entry_at                ; -> edx
@@ -246,7 +280,29 @@ dkd_icon_drop:
     cmp esi, -1
     je .on_desktop
     cmp byte [dkw_kind + esi], K_FILES
-    jne .theirs
+    je .into_files
+    mov ecx, ebx                          ; onto a program: the file to it
+    call dkd_icon_folder
+    jnc .theirs
+    push esi
+    mov esi, ebx
+    shl esi, 6
+    add esi, dki_target
+    mov edi, dkd_path
+    call dki_copy
+    pop esi
+    call dkd_to_window
+    jc .theirs
+    call dki_mark                         ; (the icon: back where it was)
+    mov eax, [dki_start_x]
+    mov [dki_x + ebx*4], eax
+    mov eax, [dki_start_y]
+    mov [dki_y + ebx*4], eax
+    call dki_mark
+    popad
+    clc
+    ret
+.into_files:
     mov dl, [dk_fm_dir]                   ; Files: its folder, or one in it
     call dk_files_entry_at                ; -> edx (its own register)
     cmp edx, -1
@@ -358,6 +414,80 @@ dkd_icon_drop:
     clc
     ret
 .theirs:
+    popad
+    stc
+    ret
+
+; edi = a path ("/" or "/A/B") -> edi at its end, a "/" after it
+dkd_path_end:
+    push eax
+    push ecx
+    xor al, al
+    mov ecx, 64
+    cld
+    repne scasb
+    dec edi
+    cmp byte [edi - 1], '/'
+    je .slash
+    mov byte [edi], '/'
+    inc edi
+.slash:
+    pop ecx
+    pop eax
+    ret
+
+; esi = a window, dkd_path = a file's path, dropped on it: a program
+; gets it in its inbox (src/appext.asm), a Terminal has it typed;
+; carry=1 if it's neither
+dkd_to_window:
+    pushad
+    cmp byte [dkw_kind + esi], K_APP
+    je .app
+    cmp byte [dkw_kind + esi], K_TERM
+    jne .no
+    mov al, [dkw_param + esi*4]           ; (only the one in front, its shell
+    cmp al, [console_fg]                  ;  waiting - not a program in it)
+    jne .no
+    cmp byte [shell_at_prompt], 0
+    je .no
+    cmp byte [app_active], 0
+    jne .no
+    push esi                              ; a Terminal: the path, a space
+    mov esi, dkd_path
+    mov edi, dk_inject_buf
+.typed:
+    lodsb
+    or al, al
+    jz .typed_all
+    stosb
+    jmp .typed
+.typed_all:
+    mov al, ' '
+    stosb
+    pop esi
+    mov bl, [dkw_param + esi*4]
+    call dk_inject_go
+    jmp .done
+.app:
+    push esi
+    mov esi, dkd_path
+    mov edi, aext_inbox
+    call dki_copy
+    pop esi
+    mov eax, esi
+    call dk_win_console
+    mov [aext_inbox_con], al
+    mov ebx, esi
+    mov byte [dkw_hidden + ebx], 0        ; (it, in front)
+    mov eax, ebx
+    call dk_mark_window
+    call dk_raise
+    call dk_focus_console
+.done:
+    popad
+    clc
+    ret
+.no:
     popad
     stc
     ret
@@ -535,6 +665,7 @@ dkd_place:
 ; Data (shared)
 ; ============================================================
 dkd_req          db 0
+dkd_path         times 96 db 0
 dkd_mode         db 0
 dkd_dest         db 0
 dkd_n            dd 0

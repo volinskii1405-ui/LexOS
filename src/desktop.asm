@@ -398,6 +398,8 @@ desktop_task:
     call dkt_work                         ; (src/dkextra.asm: the tooltip,
     call dkx_win_key                      ;  the Win key)
     call dk_alt_tab_work
+    call drs_work                         ; (src/dkregion.asm: Shift+PrtSc)
+    call dkclk_work                       ; (src/dkclock.asm: alarm, timer)
     call dk_shot_capture                  ; (src/dkwins.asm)
     call dk_toast_work
     call dk_wheel_work                    ; (src/dkwins.asm)
@@ -1216,6 +1218,8 @@ dk_mouse_event:
     mov ebx, [dk_ev_y]
     call dkl_mouse                        ; (locked: src/dklock.asm)
     jnc .done
+    call drs_mouse                        ; (choosing a part of the screen:
+    jnc .done                             ;  src/dkregion.asm)
     mov cl, [dk_btn_now]
     shr cl, 1                             ; the right button pressed: a
     mov ch, [dk_last_right]               ; context menu
@@ -1827,35 +1831,10 @@ dk_win_maximize:
     popad
     ret
 
-; Alt+Tab (keyboard_isr counts them): the window at the back comes to
-; the front - round they go
+; Alt+Tab (keyboard_isr counts them): the panel of windows
+; (src/dkswitch.asm)
 dk_alt_tab_work:
-    pushad
-.more:
-    cmp byte [dk_alt_tab], 0
-    je .done
-    dec byte [dk_alt_tab]
-    xor ecx, ecx
-.bottom:
-    cmp ecx, [dk_zcount]
-    jae .done
-    movzx eax, byte [dk_zorder + ecx]
-    push ecx
-    mov ecx, eax
-    call dk_on_taskbar
-    pop ecx
-    jnc .found
-    inc ecx
-    jmp .bottom
-.found:
-    mov byte [dkw_hidden + eax], 0
-    call dk_raise
-    call dk_focus_console
-    mov byte [dk_redraw_all], 1
-    jmp .more
-.done:
-    popad
-    ret
+    jmp dsw_work
 
 ; ecx = a window -> esi = its title: a Terminal running a text program
 ; that named itself (prog_title: uranium) shows that name instead
@@ -2073,6 +2052,8 @@ dk_render:
 .no_ctx:
     call dk_snap_draw                     ; (src/dkextra.asm: an edge's outline)
     call dka_draw                         ; (src/dkanim.asm: a window growing)
+    call dsw_draw                         ; (src/dkswitch.asm: Alt+Tab's panel)
+    call drs_draw                         ; (src/dkregion.asm: a part chosen)
     call dk_draw_toast
     call dkt_draw                         ; (src/dkextra.asm: the tooltip)
     call dkn_draw                         ; (src/dkname.asm: a name dialog)
@@ -3177,10 +3158,10 @@ dk_zcount         dd 0
 
 ; each kind's place and size when it opens, and name
 ;                   term  clock pics  sys   files tasks mixer app
-dk_def_x          dd 30,   800,  240,  170,  40,   250,  420,  200
+dk_def_x          dd 30,   684,  240,  170,  40,   250,  420,  200
 dk_def_y          dd 24,   30,   120,  90,   90,   90,   260,  60
-dk_def_w          dd 640,  200,  320,  660,  680,  520,  400,  320
-dk_def_h          dd 400,  214,  200,  420,  380,  400,  210,  200
+dk_def_w          dd 640,  CLK_W, 320, 660,  680,  520,  400,  320
+dk_def_h          dd 400,  252,  200,  420,  380,  400,  210,  200
 dk_kind_names     dd dk_title_terminal, dk_title_clock, dk_title_pictures, dk_title_system
                   dd dk_title_files, dk_title_tasks, dk_title_mixer, dk_title_program
 dk_menu_labels    dd dk_menu_programs

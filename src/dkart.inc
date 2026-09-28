@@ -1,7 +1,7 @@
 ; dkart.inc - made by tools/mkicons.py: the picture icons, 32x32,
 ; each row: how many runs, then (x, length, 0xRRGGBB) for each
 
-DKA_COUNT equ 29
+DKA_COUNT equ 30
 dka_table:
     dd dkart_folder
     dd dkart_up
@@ -32,6 +32,7 @@ dka_table:
     dd dkart_calc
     dd dkart_desk
     dd dkart_disk
+    dd dkart_clock
 
 dkart_folder:
     db 0
@@ -9080,5 +9081,320 @@ dkart_disk:
     db 0
     db 0
     db 0
+    db 0
+    db 0
+dkart_clock:
+    db 0
+    db 0
+    db 1
+    db 11, 10
+    dd 0x39424F
+    db 1
+    db 9, 14
+    dd 0x39424F
+    db 3
+    db 7, 4
+    dd 0x39424F
+    db 11, 10
+    dd 0xFFFFFF
+    db 21, 4
+    dd 0x39424F
+    db 5
+    db 6, 3
+    dd 0x39424F
+    db 9, 7
+    dd 0xFDFDFE
+    db 16, 1
+    dd 0x5B6778
+    db 17, 6
+    dd 0xFDFDFE
+    db 23, 3
+    dd 0x39424F
+    db 8
+    db 5, 3
+    dd 0x39424F
+    db 8, 2
+    dd 0xFCFCFD
+    db 10, 1
+    dd 0x5B6778
+    db 11, 10
+    dd 0xFCFCFD
+    db 21, 1
+    dd 0x5B6778
+    db 22, 1
+    dd 0x1F2937
+    db 23, 1
+    dd 0xFCFCFD
+    db 24, 3
+    dd 0x39424F
+    db 5
+    db 4, 3
+    dd 0x39424F
+    db 7, 14
+    dd 0xFAFBFC
+    db 21, 1
+    dd 0x1F2937
+    db 22, 3
+    dd 0xFAFBFC
+    db 25, 3
+    dd 0x39424F
+    db 5
+    db 4, 2
+    dd 0x39424F
+    db 6, 14
+    dd 0xF9FAFC
+    db 20, 1
+    dd 0x1F2937
+    db 21, 5
+    dd 0xF9FAFC
+    db 26, 2
+    dd 0x39424F
+    db 5
+    db 3, 2
+    dd 0x39424F
+    db 5, 15
+    dd 0xF8F9FB
+    db 20, 1
+    dd 0x1F2937
+    db 21, 6
+    dd 0xF8F9FB
+    db 27, 2
+    dd 0x39424F
+    db 9
+    db 3, 2
+    dd 0x39424F
+    db 5, 1
+    dd 0xF6F8FA
+    db 6, 1
+    dd 0x5B6778
+    db 7, 12
+    dd 0xF6F8FA
+    db 19, 1
+    dd 0x1F2937
+    db 20, 5
+    dd 0xF6F8FA
+    db 25, 1
+    dd 0x5B6778
+    db 26, 1
+    dd 0xF6F8FA
+    db 27, 2
+    dd 0x39424F
+    db 5
+    db 2, 2
+    dd 0x39424F
+    db 4, 14
+    dd 0xF5F7F9
+    db 18, 1
+    dd 0x1F2937
+    db 19, 9
+    dd 0xF5F7F9
+    db 28, 2
+    dd 0x39424F
+    db 7
+    db 2, 2
+    dd 0x39424F
+    db 4, 6
+    dd 0xF4F6F9
+    db 10, 3
+    dd 0x1F2937
+    db 13, 5
+    dd 0xF4F6F9
+    db 18, 1
+    dd 0x1F2937
+    db 19, 9
+    dd 0xF4F6F9
+    db 28, 2
+    dd 0x39424F
+    db 7
+    db 2, 2
+    dd 0x39424F
+    db 4, 8
+    dd 0xF2F5F8
+    db 12, 2
+    dd 0x1F2937
+    db 14, 3
+    dd 0xF2F5F8
+    db 17, 1
+    dd 0x1F2937
+    db 18, 10
+    dd 0xF2F5F8
+    db 28, 2
+    dd 0x39424F
+    db 5
+    db 2, 2
+    dd 0x39424F
+    db 4, 9
+    dd 0xF1F4F7
+    db 13, 4
+    dd 0x1F2937
+    db 17, 11
+    dd 0xF1F4F7
+    db 28, 2
+    dd 0x39424F
+    db 5
+    db 2, 2
+    dd 0x39424F
+    db 4, 11
+    dd 0xF0F3F6
+    db 15, 2
+    dd 0xDC2626
+    db 17, 11
+    dd 0xF0F3F6
+    db 28, 2
+    dd 0x39424F
+    db 9
+    db 2, 2
+    dd 0x39424F
+    db 4, 1
+    dd 0xEEF2F6
+    db 5, 1
+    dd 0x5B6778
+    db 6, 9
+    dd 0xEEF2F6
+    db 15, 2
+    dd 0xDC2626
+    db 17, 9
+    dd 0xEEF2F6
+    db 26, 1
+    dd 0x5B6778
+    db 27, 1
+    dd 0xEEF2F6
+    db 28, 2
+    dd 0x39424F
+    db 5
+    db 2, 2
+    dd 0x39424F
+    db 4, 12
+    dd 0xEDF1F5
+    db 16, 1
+    dd 0xDC2626
+    db 17, 11
+    dd 0xEDF1F5
+    db 28, 2
+    dd 0x39424F
+    db 5
+    db 2, 2
+    dd 0x39424F
+    db 4, 12
+    dd 0xECEFF4
+    db 16, 1
+    dd 0xDC2626
+    db 17, 11
+    dd 0xECEFF4
+    db 28, 2
+    dd 0x39424F
+    db 5
+    db 2, 2
+    dd 0x39424F
+    db 4, 12
+    dd 0xEAEEF4
+    db 16, 1
+    dd 0xDC2626
+    db 17, 11
+    dd 0xEAEEF4
+    db 28, 2
+    dd 0x39424F
+    db 5
+    db 2, 2
+    dd 0x39424F
+    db 4, 12
+    dd 0xE9EDF3
+    db 16, 1
+    dd 0xDC2626
+    db 17, 11
+    dd 0xE9EDF3
+    db 28, 2
+    dd 0x39424F
+    db 9
+    db 3, 2
+    dd 0x39424F
+    db 5, 1
+    dd 0xE8ECF2
+    db 6, 1
+    dd 0x5B6778
+    db 7, 9
+    dd 0xE8ECF2
+    db 16, 1
+    dd 0xDC2626
+    db 17, 8
+    dd 0xE8ECF2
+    db 25, 1
+    dd 0x5B6778
+    db 26, 1
+    dd 0xE8ECF2
+    db 27, 2
+    dd 0x39424F
+    db 5
+    db 3, 2
+    dd 0x39424F
+    db 5, 11
+    dd 0xE6EBF1
+    db 16, 1
+    dd 0xDC2626
+    db 17, 10
+    dd 0xE6EBF1
+    db 27, 2
+    dd 0x39424F
+    db 5
+    db 4, 2
+    dd 0x39424F
+    db 6, 10
+    dd 0xE5EAF1
+    db 16, 1
+    dd 0xDC2626
+    db 17, 9
+    dd 0xE5EAF1
+    db 26, 2
+    dd 0x39424F
+    db 5
+    db 4, 3
+    dd 0x39424F
+    db 7, 9
+    dd 0xE4E9F0
+    db 16, 1
+    dd 0xDC2626
+    db 17, 8
+    dd 0xE4E9F0
+    db 25, 3
+    dd 0x39424F
+    db 7
+    db 5, 3
+    dd 0x39424F
+    db 8, 2
+    dd 0xE2E8EF
+    db 10, 1
+    dd 0x5B6778
+    db 11, 10
+    dd 0xE2E8EF
+    db 21, 1
+    dd 0x5B6778
+    db 22, 2
+    dd 0xE2E8EF
+    db 24, 3
+    dd 0x39424F
+    db 5
+    db 6, 3
+    dd 0x39424F
+    db 9, 7
+    dd 0xE1E7EE
+    db 16, 1
+    dd 0x5B6778
+    db 17, 6
+    dd 0xE1E7EE
+    db 23, 3
+    dd 0x39424F
+    db 3
+    db 7, 4
+    dd 0x39424F
+    db 11, 10
+    dd 0xE0E6EE
+    db 21, 4
+    dd 0x39424F
+    db 1
+    db 9, 14
+    dd 0x39424F
+    db 1
+    db 11, 10
+    dd 0x39424F
     db 0
     db 0

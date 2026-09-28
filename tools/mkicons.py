@@ -443,6 +443,26 @@ def disk():
     rect(img, 23, 17, 25, 20, hexc(0x22C55E))
     return img
 
+# --- the Clock: a face, its hands ---------------------------------------
+def clockicon():
+    img = blank()
+    for y in range(H):
+        for x in range(W):
+            d = math.hypot(x - 15.5, y - 15.5)
+            if d <= 14.5: put(img, x, y, hexc(0x39424F))
+            if d <= 12.5: put(img, x, y, mix(hexc(0xFFFFFF), hexc(0xDCE3EC), max(0, (y - 4) / 26)))
+    for k in range(12):                      # the hours' marks
+        a = k * math.pi / 6
+        put(img, int(round(15.5 + 10.5 * math.sin(a))), int(round(15.5 - 10.5 * math.cos(a))), hexc(0x5B6778))
+    for i in range(8):                       # the hands: ten past ten
+        put(img, 15 - i * 3 // 4, 15 - i * 2 // 4, hexc(0x1F2937)); put(img, 16 - i * 3 // 4, 15 - i * 2 // 4, hexc(0x1F2937))
+    for i in range(10):
+        put(img, 16 + i * 2 // 3, 15 - i, hexc(0x1F2937))
+    for i in range(9):                       # the seconds, red
+        put(img, 16, 16 + i, hexc(0xDC2626))
+    rect(img, 15, 15, 16, 16, hexc(0xDC2626))
+    return img
+
 # kind -> (name, picture): the numbers are src/dkwins.asm's IC_*
 KINDS = [
     (0, 'dkart_folder', folder()), (1, 'dkart_up', folder(True)), (2, 'dkart_file', plainfile()),
@@ -457,6 +477,7 @@ KINDS = [
     (24, 'dkart_link', linkbadge()),
     (25, 'dkart_paint', palette()), (26, 'dkart_calc', calcicon()),
     (27, 'dkart_desk', monitor()), (28, 'dkart_disk', disk()),
+    (29, 'dkart_clock', clockicon()),
 ]
 ICONS = [(n, i) for _, n, i in KINDS]
 
