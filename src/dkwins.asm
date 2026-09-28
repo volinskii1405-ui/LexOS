@@ -382,6 +382,9 @@ dk_term_cursor:
 CLOCK_R equ 80
 
 dk_draw_clock:
+    call dkclk_tabs                       ; (its pages: src/dkclock.asm)
+    cmp byte [dkclk_pg], 0
+    jne dkclk_page
     call rtc_read_time                    ; bh:bl:cl = h:m:s (UTC)
     movzx eax, bh
     call dk_local_hour
@@ -390,7 +393,7 @@ dk_draw_clock:
     mov [dk_s_now], cl
 
     mov eax, [dk_cx]
-    add eax, 100
+    add eax, CLK_W / 2
     mov [dk_ccx], eax
     mov eax, [dk_cy]
     add eax, 96
@@ -4188,6 +4191,8 @@ dk_shot_capture:
     loop .px
     dec edx
     jns .row
+    mov eax, [dk_shot_size]               ; (all of it: src/dkregion.asm's
+    mov [dks_len], eax                    ;  is a part)
     mov byte [dk_shot_ready], 1
 .done:
     popad
@@ -4630,6 +4635,11 @@ dk_win_click:
     call dkc_press
     jmp .done
 .not_term:
+    cmp edx, K_CLOCK                      ; the Clock: its tabs, its pages
+    jne .not_clock                        ; (src/dkclock.asm)
+    call dkclk_click
+    jmp .done
+.not_clock:
     cmp edx, K_PICS
     jne .not_pics
     call dkv_click                        ; (src/dkpics.asm)

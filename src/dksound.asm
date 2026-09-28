@@ -23,7 +23,8 @@ SND_NOM        equ 6
 SND_TRASH      equ 7                      ; (files into the trash)
 SND_EMPTY      equ 8                      ; (the trash emptied, gone for good)
 SND_RESTORE    equ 9                      ; (back from the trash, undone)
-SND_COUNT      equ 10                     ; (up to TR_BASE: 14 at most)
+SND_ALARM      equ 10                     ; (the Clock's alarm, a timer's end)
+SND_COUNT      equ 11                     ; (up to TR_BASE: 14 at most)
 SND_BASE       equ 0x3F10000              ; 32KB each (past HTTPD_REQ)
 SND_SLOT       equ 0x8000
 
@@ -244,3 +245,5 @@ snd_notes:
     dw 160, 30, 12000, 1, 15, 0, 120, 30, 12000, 1, 15, 0, 190, 30, 12000, 1, 15, 0
     dw 100, 80, 10000, 0                                          ; crunch
     dw 440, 40, 6000, 587, 40, 6500, 784, 70, 7000, 0             ; back again
+    dw 1568, 90, 11000, 1, 50, 0, 1568, 90, 11000, 1, 50, 0       ; the alarm: beep
+    dw 1568, 90, 11000, 1, 50, 0, 2093, 200, 12000, 0             ; beep beep BEEP
