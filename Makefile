@@ -83,6 +83,23 @@ else
 	AUDIODEV ?= $(shell qemu-system-i386 -audiodev help 2>/dev/null | grep -qx pipewire && echo pipewire || echo pa)
 endif
 
+# If the picture stutters or stops while a sound plays, it's QEMU's audio
+# on the host (the emulated Sound Blaster and the backend share QEMU's
+# main loop with the window). Things to try, one at a time:
+#   make run AUDIODEV=none                 no sound: does the picture flow?
+#   make run AUDIODEV=sdl                  SDL's own audio thread
+#   make run AUDIOBUF=100000               a longer backend buffer (us)
+#   make run AUDIOTIMER=20000              QEMU's audio timer period (us;
+#                                          its default is 10000)
+#   make run ACCEL=kvm                     (whpx on Windows, hvf on macOS)
+AUDIOBUF ?=
+AUDIOTIMER ?=
+ACCEL ?=
+comma := ,
+AUDIO_OPTS = $(if $(AUDIOBUF),$(comma)out.buffer-length=$(AUDIOBUF))$(if $(AUDIOTIMER),$(comma)timer-period=$(AUDIOTIMER))
+AUDIO = -audiodev $(AUDIODEV),id=snd0$(AUDIO_OPTS)
+QEMU_ACCEL = $(if $(ACCEL),-accel $(ACCEL))
+
 # The host folder LexOS's `hostls`/`hostget` see (src/hostfs.asm): QEMU
 # presents it to the guest as a whole FAT16 disk - the primary IDE
 # channel's slave drive - built from whatever's in it at startup. Files
@@ -98,9 +115,9 @@ NIC = -nic user,model=rtl8139,hostfwd=tcp::8080-:80
 
 run: $(BUILD_DIR)/os-image.bin
 	mkdir -p $(SHARED)
-	qemu-system-i386 -m 256 -drive format=raw,file=$(BUILD_DIR)/os-image.bin,if=ide,index=0 \
+	qemu-system-i386 $(QEMU_ACCEL) -m 256 -drive format=raw,file=$(BUILD_DIR)/os-image.bin,if=ide,index=0 \
 		$(SHARED_DRIVE) $(NIC) \
-		-audiodev $(AUDIODEV),id=snd0 -machine pcspk-audiodev=snd0 \
+		$(AUDIO) -machine pcspk-audiodev=snd0 \
 		-device adlib,audiodev=snd0,iobase=0x220 -device sb16,audiodev=snd0
 
 # Same as `run`, but also exposes COM1 as a TCP socket on localhost, so
@@ -110,9 +127,9 @@ run: $(BUILD_DIR)/os-image.bin
 SERIALPORT ?= 4444
 run-serial: $(BUILD_DIR)/os-image.bin
 	mkdir -p $(SHARED)
-	qemu-system-i386 -m 256 -drive format=raw,file=$(BUILD_DIR)/os-image.bin,if=ide,index=0 \
+	qemu-system-i386 $(QEMU_ACCEL) -m 256 -drive format=raw,file=$(BUILD_DIR)/os-image.bin,if=ide,index=0 \
 		$(SHARED_DRIVE) $(NIC) \
-		-audiodev $(AUDIODEV),id=snd0 -machine pcspk-audiodev=snd0 \
+		$(AUDIO) -machine pcspk-audiodev=snd0 \
 		-device adlib,audiodev=snd0,iobase=0x220 -device sb16,audiodev=snd0 \
 		-serial tcp::$(SERIALPORT),server,nowait
 
@@ -123,8 +140,8 @@ run-serial: $(BUILD_DIR)/os-image.bin
 # on it, so each takes an address from its own MAC. lan2 boots its own
 # copy of the disk (made on first use), and neither mounts shared/.
 LAN_PORT ?= 5560
-LAN_QEMU = qemu-system-i386 -m 256 \
-	-audiodev $(AUDIODEV),id=snd0 -machine pcspk-audiodev=snd0 \
+LAN_QEMU = qemu-system-i386 $(QEMU_ACCEL) -m 256 \
+	$(AUDIO) -machine pcspk-audiodev=snd0 \
 	-device sb16,audiodev=snd0
 lan1: $(BUILD_DIR)/os-image.bin
 	$(LAN_QEMU) -drive format=raw,file=$(BUILD_DIR)/os-image.bin,if=ide,index=0 \

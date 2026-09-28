@@ -1,9 +1,13 @@
 ; mixer.asm — several sounds at once through the one Sound Blaster:
 ; up to MIX_VOICES "voices", each a queue of 16-bit samples at its own
 ; rate (mono or stereo) with its own volume, mixed together into the
-; card's stream (src/sound.asm's sb_stream_*: 22050Hz stereo, auto-init
-; DMA) by its IRQ5 handler, half a buffer at a time. A voice's rate is
-; converted on the fly (a 16.16 step per output frame).
+; card's stream (src/sound.asm's sb_stream_*: auto-init DMA) by its IRQ5
+; handler, half a buffer at a time. A voice's rate is converted on the
+; fly (a 16.16 step per output frame). The stream is 22050Hz stereo -
+; or, while every voice is mono at 11025Hz or less (the desktop's
+; sounds), 11025Hz mono: a quarter of the bytes through QEMU's emulated
+; DMA. It starts when something's queued (mix_kick) and the card pauses
+; itself when nothing is.
 ;
 ; Who uses it: ring-3 programs (audio_open/audio_write - src/appsys.asm),
 ; `play <n>.wav` (src/sound.asm, in the foreground or as a background
@@ -19,7 +23,10 @@ MIX_VOICES        equ 4
 MIX_FIFO_BASE     equ 0x5600000
 MIX_FIFO_SIZE     equ 0x10000            ; per voice, a power of 2
 MIX_TMP_BASE      equ MIX_FIFO_BASE + MIX_VOICES * MIX_FIFO_SIZE  ; 8KB each
-MIX_FRAMES        equ SB_STREAM_HALF / 4 ; output frames per half buffer
+MIX_LIGHT_RATE    equ 11025              ; (mono this fast or slower: the
+                                         ;  light stream is enough)
+MIX_FRAMES_FULL   equ 2048               ; a half: ~93ms either way
+MIX_FRAMES_LIGHT  equ 1024
 
 ; eax = rate, ecx = channels (1/2) -> eax = a voice (0-3), carry=1 if
 ; there's no free one or no card. The owner is the current task.
@@ -40,11 +47,8 @@ mixer_open:
     mov [mix_channels + ebx*4], ecx
     shl ecx, 1
     mov [mix_frame + ebx*4], ecx          ; bytes per frame
-    shl eax, 16                           ; the step: rate / MIX_RATE, 16.16
-    xor edx, edx
-    mov ecx, MIX_RATE
-    div ecx
-    mov [mix_step + ebx*4], eax
+    call mix_set_step
+    mov eax, [mix_rate + ebx*4]
     xor eax, eax
     mov [mix_frac + ebx*4], eax
     mov [mix_head + ebx*4], eax
@@ -53,14 +57,8 @@ mixer_open:
     mov dword [mix_volume + ebx*4], 100
     mov eax, [sched_current]
     mov [mix_owner + ebx*4], eax
-    cmp byte [mix_running], 0
-    jne .running
-    mov eax, MIX_RATE
-    mov ecx, 2
-    call sb_stream_open
+    call sb_stream_init                   ; (the card set up, the first time)
     jc .fail
-    mov byte [mix_running], 1
-.running:
     mov byte [mix_used + ebx], 1          ; (last: the ISR may look now)
     mov eax, ebx
     pop edx
@@ -114,6 +112,10 @@ mixer_write:
 .done:
     pop eax
     mov [mix_head + ebx*4], edx
+    or eax, eax                           ; something new: the stream on
+    jz .kicked
+    call mix_queued_kick
+.kicked:
     pop edi
     pop esi
     pop edx
@@ -131,24 +133,13 @@ mixer_queued:
     pop ebx
     ret
 
-; eax = voice: silenced and freed at once (the card stops with the last)
+; eax = voice: silenced and freed at once
 mixer_close:
     pushad
     cmp eax, MIX_VOICES
     jae .done
-    mov byte [mix_used + eax], 0
-    xor ecx, ecx
-.any:
-    cmp byte [mix_used + ecx], 0
-    jne .done
-    inc ecx
-    cmp ecx, MIX_VOICES
-    jb .any
-    cmp byte [mix_running], 0
-    je .done
-    mov byte [mix_running], 0
-    call sb_stream_close
-.done:
+    mov byte [mix_used + eax], 0          ; (the card pauses by itself
+.done:                                    ;  once it's all silence)
     popad
     ret
 
@@ -194,13 +185,130 @@ mixer_find_owner:
     clc
     ret
 
+; ebx = a voice: its step, rate / the stream's rate (16.16)
+mix_set_step:
+    push eax
+    push edx
+    mov eax, [mix_rate + ebx*4]
+    shl eax, 16
+    xor edx, edx
+    div dword [mix_out_rate]
+    mov [mix_step + ebx*4], eax
+    pop edx
+    pop eax
+    ret
+
+; ebx = a voice something was just queued on: the stream on - at once
+; if it's playing (or 200ms of it are there: both halves filled with it),
+; else in a moment (the timer's mix_pending_check: a writer queuing a
+; little at a time gets the chance to queue more first - no gap at the
+; start)
+mix_queued_kick:
+    cmp byte [sb_streaming], 0
+    jne mix_kick
+    push eax
+    push edx
+    mov eax, [mix_head + ebx*4]           ; queued * 5 >= a second's bytes?
+    sub eax, [mix_tail + ebx*4]
+    and eax, MIX_FIFO_SIZE - 1
+    imul eax, eax, 5
+    mov edx, [mix_rate + ebx*4]
+    imul edx, [mix_frame + ebx*4]
+    cmp eax, edx
+    jae .now
+    pushfd
+    cli
+    cmp byte [mix_pending], 0
+    jne .waiting
+    mov eax, [timer_ms]
+    mov [mix_pending_since], eax
+    mov byte [mix_pending], 1
+.waiting:
+    popfd
+    pop edx
+    pop eax
+    ret
+.now:
+    pop edx
+    pop eax
+    jmp mix_kick
+
+; From the timer's interrupt, while mix_pending: 40ms on, started anyway
+mix_pending_check:
+    push eax
+    mov eax, [timer_ms]
+    sub eax, [mix_pending_since]
+    cmp eax, 40
+    pop eax
+    jb .not_yet
+    call mix_kick
+.not_yet:
+    ret
+
+; Something was queued: the stream playing, in a format every voice
+; fits in - started (or, the light one playing and a voice needing
+; more, started again as the full one)
+mix_kick:
+    pushfd
+    cli
+    pushad
+    mov byte [mix_pending], 0
+    mov eax, MIX_LIGHT_RATE               ; what the voices need
+    mov ecx, 1
+    xor ebx, ebx
+.need:
+    cmp byte [mix_used + ebx], 0
+    je .next_need
+    cmp dword [mix_channels + ebx*4], 1
+    jne .full
+    cmp dword [mix_rate + ebx*4], MIX_LIGHT_RATE
+    ja .full
+.next_need:
+    inc ebx
+    cmp ebx, MIX_VOICES
+    jb .need
+    jmp .needed
+.full:
+    mov eax, MIX_RATE
+    mov ecx, 2
+.needed:
+    cmp byte [sb_streaming], 0
+    je .start
+    cmp eax, [mix_out_rate]               ; playing, and good enough
+    jbe .done
+.start:
+    mov [mix_out_rate], eax
+    mov [mix_out_ch], ecx
+    mov edx, MIX_FRAMES_FULL
+    cmp ecx, 2
+    je .frames
+    mov edx, MIX_FRAMES_LIGHT
+.frames:
+    mov [mix_half_frames], edx
+    imul edx, ecx                         ; a half's bytes
+    shl edx, 1
+    xor ebx, ebx                          ; each voice's step, for it
+.steps:
+    call mix_set_step
+    inc ebx
+    cmp ebx, MIX_VOICES
+    jb .steps
+    call sb_stream_start
+.done:
+    popad
+    popfd
+    ret
+
 ; ============================================================
-; From sb_stream_isr: edi = a half buffer to fill, MIX_FRAMES stereo
-; frames, with every voice's next samples mixed.
+; From sb_stream_isr (and sb_stream_start): edi = a half buffer to
+; fill, mix_half_frames frames (stereo or mono - mix_out_ch), with
+; every voice's next samples mixed -> mix_heard: 1 if any had some
 ; ============================================================
 mixer_fill:
     pushad
-    mov dword [mix_left_frames], MIX_FRAMES
+    mov byte [mix_heard], 0
+    mov eax, [mix_half_frames]
+    mov [mix_left_frames], eax
 .frame:
     xor eax, eax
     mov [mix_sum_l], eax
@@ -214,6 +322,7 @@ mixer_fill:
     and ecx, MIX_FIFO_SIZE - 1
     cmp ecx, [mix_frame + ebx*4]
     jb .next_voice
+    mov byte [mix_heard], 1
     mov esi, ebx
     shl esi, 16
     add esi, MIX_FIFO_BASE
@@ -260,6 +369,8 @@ mixer_fill:
     cmp ebx, MIX_VOICES
     jb .voice
     ; the master volume, then clip to 16 bits
+    cmp dword [mix_out_ch], 2
+    jne .out_mono
     mov eax, [mix_sum_l]
     call .master
     mov [edi], ax
@@ -267,6 +378,15 @@ mixer_fill:
     call .master
     mov [edi + 2], ax
     add edi, 4
+    jmp .frame_done
+.out_mono:
+    mov eax, [mix_sum_l]                  ; (left and right, halved)
+    add eax, [mix_sum_r]
+    sar eax, 1
+    call .master
+    mov [edi], ax
+    add edi, 2
+.frame_done:
     dec dword [mix_left_frames]
     jnz .frame
     popad
@@ -394,7 +514,12 @@ mixer_command:
 ; ============================================================
 ; Data (shared: the card is one for everyone)
 ; ============================================================
-mix_running       db 0
+mix_heard         db 0
+mix_pending       db 0                   ; queued, the stream not on yet
+mix_pending_since dd 0
+mix_out_rate      dd MIX_RATE
+mix_out_ch        dd 2
+mix_half_frames   dd MIX_FRAMES_FULL
 mix_used          times MIX_VOICES db 0
 mix_owner         times MIX_VOICES dd 0   ; task id
 mix_rate          times MIX_VOICES dd 0

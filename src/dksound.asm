@@ -9,8 +9,9 @@
 ; System's Sounds: Off (kept in DESKTOP.CFG, src/dkstyle.asm).
 ;
 ; The sounds are made the first time one's needed: triangle waves with
-; a quick fade in and a slow fade out, 16-bit mono at MIX_RATE, all in
-; integers (the FPU belongs to the programs - src/usermode.asm).
+; a quick fade in and a slow fade out, 16-bit mono at SND_RATE, all in
+; integers (the FPU belongs to the programs - src/usermode.asm). 11025Hz
+; mono: alone, they need only the mixer's light stream (src/mixer.asm).
 ; Exports: snd_play, snd_click, snd_work, snd_stop
 
 SND_CLICK      equ 0
@@ -25,6 +26,7 @@ SND_EMPTY      equ 8                      ; (the trash emptied, gone for good)
 SND_RESTORE    equ 9                      ; (back from the trash, undone)
 SND_ALARM      equ 10                     ; (the Clock's alarm, a timer's end)
 SND_COUNT      equ 11                     ; (up to TR_BASE: 14 at most)
+SND_RATE       equ 11025
 SND_BASE       equ 0x3F10000              ; 32KB each (past HTTPD_REQ)
 SND_SLOT       equ 0x8000
 
@@ -69,7 +71,7 @@ snd_work:
 .made:
     cmp dword [snd_voice], -1
     jne .have_voice
-    mov eax, MIX_RATE
+    mov eax, SND_RATE
     mov ecx, 1
     call mixer_open
     jc .playing                           ; (no card, or no voice free)
@@ -167,7 +169,7 @@ snd_note:
     push esi
     push ebp
     mov [snd_amp], edx
-    imul ecx, MIX_RATE                    ; the samples
+    imul ecx, SND_RATE                    ; the samples
     push eax
     mov eax, ecx
     xor edx, edx
@@ -175,7 +177,7 @@ snd_note:
     div ecx
     mov [snd_n], eax
     pop eax
-    mov ecx, 194783                       ; the phase step: Hz * 2^32 / rate
+    mov ecx, 389566                       ; the phase step: Hz * 2^32 / rate
     mul ecx
     mov [snd_step], eax
     xor esi, esi                          ; the phase
