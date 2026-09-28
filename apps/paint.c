@@ -4,7 +4,16 @@
  *   run paint.app [picture.bmp|.png]      (Files: Edit in Paint)
  *
  * Tools (a key each): Pencil P, Brush B, Eraser E, Line L, Rectangle R,
- * Box (filled) X, Oval O, Disc (filled) D, Fill F, Pick a color K.
+ * Box (filled) X, Oval O, Disc (filled) D, Fill F, Pick a color K,
+ * Text T, Select S.
+ * Text: a click where it starts, then type (Enter a new line); the size
+ * buttons make it bigger. A click elsewhere, Esc or another tool puts it
+ * into the picture.
+ * Select: drag a frame; dragged from inside, the part moves (Ctrl held:
+ * a copy of it). Ctrl+C / Ctrl+X copy / cut it (nothing chosen: the whole
+ * picture), Delete clears it, Ctrl+A chooses it all. Ctrl+V pastes the
+ * clipboard's picture - what Paint copied, a screenshot (Shift+PrintScreen
+ * too), a picture copied in Files - to be dragged where it goes.
  * The left button draws in the first color, the right in the second;
  * a palette color, clicked: left - the first, right - the second.
  * Shift makes a line straight (45 degrees) and a rectangle or oval a
@@ -52,11 +61,12 @@
 #define C_ACCENT  RGB(40, 90, 200)
 #define C_SEL     RGB(184, 212, 250)
 
-enum { T_PENCIL, T_BRUSH, T_ERASER, T_LINE, T_RECT, T_BOX, T_OVAL, T_DISC, T_FILL, T_PICK, NTOOLS };
+enum { T_PENCIL, T_BRUSH, T_ERASER, T_LINE, T_RECT, T_BOX, T_OVAL, T_DISC, T_FILL, T_PICK, T_TEXT, T_SELECT, NTOOLS };
 static const char *tool_name[NTOOLS] = {
-    "Pencil", "Brush", "Eraser", "Line", "Rectangle", "Box", "Oval", "Disc", "Fill", "Pick a color"
+    "Pencil", "Brush", "Eraser", "Line", "Rectangle", "Box", "Oval", "Disc", "Fill", "Pick a color", "Text", "Select"
 };
-static const char tool_key[NTOOLS] = { 'P', 'B', 'E', 'L', 'R', 'X', 'O', 'D', 'F', 'K' };
+static const char tool_key[NTOOLS] = { 'P', 'B', 'E', 'L', 'R', 'X', 'O', 'D', 'F', 'K', 'T', 'S' };
+#define CLIP_FILE "/SYSTEM/CLIP.BMP"
 static const int sizes[4] = { 1, 3, 6, 11 };
 
 static const unsigned palette[28] = {
@@ -78,6 +88,12 @@ static unsigned fg = RGB(0, 0, 0), bg = RGB(255, 255, 255);
 static char path[PATH_MAX], name[20] = "UNTITLED.BMP";
 static char status[120];
 static int dirty, quitting, hover = -1;
+
+/* the selection (see its part below) */
+static int sel_on, sel_x, sel_y, sel_w, sel_h;
+static unsigned short *flt;                     /* floating: w x h of them */
+static int sel_drag, sel_ax, sel_ay;            /* a frame being drawn */
+static int sel_move, grab_x, grab_y;            /* ...or it being moved */
 
 /* undo / redo: the picture before each change, packed */
 struct snap { unsigned short *runs; int n, w, h; };
@@ -460,31 +476,37 @@ static int load_bmp(const char *p)
     say(w > CMAX_W || h > CMAX_H ? "Opened - cut to 800x600, Paint's most." : "Opened.");
     return 1;
 }
-static int save_bmp(const char *p)
+/* w x h pixels of src (a row: sw of them) as a 24-bit .BMP -> 1 */
+static int write_bmp(const char *p, const unsigned short *src, int sw, int w, int h)
 {
     static unsigned char hdr[54], rowbuf[CMAX_W * 3 + 4];
-    int fd, y, x, stride = (cw * 3 + 3) & ~3;
+    int fd, y, x, stride = (w * 3 + 3) & ~3;
     memset(hdr, 0, sizeof hdr);
     hdr[0] = 'B'; hdr[1] = 'M';
-    wr32(hdr + 2, 54 + stride * ch);
+    wr32(hdr + 2, 54 + stride * h);
     wr32(hdr + 10, 54);
     wr32(hdr + 14, 40);
-    wr32(hdr + 18, cw); wr32(hdr + 22, ch);
+    wr32(hdr + 18, w); wr32(hdr + 22, h);
     hdr[26] = 1; hdr[28] = 24;
-    wr32(hdr + 34, stride * ch);
+    wr32(hdr + 34, stride * h);
     wr32(hdr + 38, 2835); wr32(hdr + 42, 2835);
     fd = open(p, O_WRITE);
     if (fd < 0) { say("Can't save there (read-only, or no room?)."); return 0; }
     fwrite(fd, hdr, 54);
     memset(rowbuf, 0, sizeof rowbuf);
-    for (y = ch - 1; y >= 0; y--) {
-        for (x = 0; x < cw; x++) {
-            unsigned c = from565(canvas[y * cw + x]);
+    for (y = h - 1; y >= 0; y--) {
+        for (x = 0; x < w; x++) {
+            unsigned c = from565(src[y * sw + x]);
             rowbuf[x * 3] = c; rowbuf[x * 3 + 1] = c >> 8; rowbuf[x * 3 + 2] = c >> 16;
         }
         if (fwrite(fd, rowbuf, stride) != stride) { close(fd); say("The disk is full - not saved."); return 0; }
     }
     close(fd);
+    return 1;
+}
+static int save_bmp(const char *p)
+{
+    if (!write_bmp(p, canvas, cw, cw, ch)) return 0;
     set_path(p);
     dirty = 0;
     {
@@ -629,18 +651,19 @@ static int save_picture(const char *p)
 /* ============================================================
  * the layout
  * ============================================================ */
-#define TB_X 8                                   /* the tools, 34 apart */
-#define TB_Y 6
-#define TB_S 32
-#define SZ_X (TB_X + NTOOLS * 34 + 12)           /* the sizes */
-#define CMD_X (SZ_X + 4 * 28 + 14)               /* New, Open, Save, Undo, Redo */
-#define CMD_W 58
+#define TB_X 8                                   /* the tools, 32 apart */
+#define TB_Y 7
+#define TB_S 30
+#define TB_STEP 32
+#define SZ_X (TB_X + NTOOLS * TB_STEP + 10)      /* the sizes, 26 apart */
+#define CMD_X (SZ_X + 4 * 26 + 10)               /* New, Open, Save, Undo, Redo */
+#define CMD_W 50
 static const char *cmd_label[5] = { "New", "Open", "Save", "Undo", "Redo" };
 #define SW_X 8                                   /* the two colors */
 #define PC_X 64                                  /* the palette: 14 x 2 */
 #define PC_S 20
 
-/* the buttons: 0-9 tools, 10-13 sizes, 20-24 commands, 30-32 a
+/* the buttons: 0-11 tools, 14-17 sizes, 20-24 commands, 30-32 a
  * dialog's, 40+ the palette; -1 none */
 static int button_at(int x, int y)
 {
@@ -661,8 +684,8 @@ static int button_at(int x, int y)
         return -1;
     }
     if (y >= TB_Y && y < TB_Y + TB_S) {
-        if (x >= TB_X && x < TB_X + NTOOLS * 34 && (x - TB_X) % 34 < TB_S) return (x - TB_X) / 34;
-        if (x >= SZ_X && x < SZ_X + 4 * 28 && (x - SZ_X) % 28 < 26) return 10 + (x - SZ_X) / 28;
+        if (x >= TB_X && x < TB_X + NTOOLS * TB_STEP && (x - TB_X) % TB_STEP < TB_S) return (x - TB_X) / TB_STEP;
+        if (x >= SZ_X && x < SZ_X + 4 * 26 && (x - SZ_X) % 26 < 24) return 14 + (x - SZ_X) / 26;
         if (x >= CMD_X && x < CMD_X + 5 * (CMD_W + 4) && (x - CMD_X) % (CMD_W + 4) < CMD_W) return 20 + (x - CMD_X) / (CMD_W + 4);
     }
     if (y >= PAL_Y + 3 && y < PAL_Y + 3 + 2 * PC_S && x >= PC_X && x < PC_X + 14 * PC_S)
@@ -714,6 +737,19 @@ static void draw_icon(int t, int x, int y)
         line(iplot, 4, 19, 13, 10, 2, RGB(150, 156, 168), 0);
         stamp(iplot, 16, 7, 7, k, 0);
         break;
+    case T_TEXT:                                  /* an A */
+        line(iplot, 4, 20, 11, 3, 2, k, 0);
+        line(iplot, 12, 3, 19, 20, 2, k, 0);
+        line(iplot, 8, 14, 16, 14, 2, k, 0);
+        break;
+    case T_SELECT: {                              /* a dashed frame */
+        int i;
+        for (i = 3; i <= 20; i += 4) {
+            line(iplot, i, 4, i + 1, 4, 1, k, 0); line(iplot, i, 19, i + 1, 19, 1, k, 0);
+            line(iplot, 3, i, 3, i + 1, 1, k, 0); line(iplot, 20, i, 20, i + 1, 1, k, 0);
+        }
+        break;
+    }
     }
 }
 
@@ -723,17 +759,20 @@ static void draw_toolbar(void)
     fill(0, 0, W, TOOL_H, C_BAR);
     fill(0, TOOL_H - 1, W, 1, C_BAR_LO);
     for (i = 0; i < NTOOLS; i++) {
-        int x = TB_X + i * 34;
+        int x = TB_X + i * TB_STEP;
         fill(x, TB_Y, TB_S, TB_S, C_BAR_LO);
         fill(x + 1, TB_Y + 1, TB_S - 2, TB_S - 2, i == tool ? C_ON : hover == i ? C_HOVER : C_BTN);
-        draw_icon(i, x + 4, TB_Y + 4);
+        draw_icon(i, x + 3, TB_Y + 3);
     }
     for (i = 0; i < 4; i++) {
-        int x = SZ_X + i * 28, s = sizes[i] > 9 ? 9 : sizes[i];
-        fill(x, TB_Y, 26, TB_S, C_BAR_LO);
-        fill(x + 1, TB_Y + 1, 24, TB_S - 2, i == size_i ? C_ON : hover == 10 + i ? C_HOVER : C_BTN);
-        ico_x = x + 13; ico_y = TB_Y + 16;
-        stamp(iplot, 0, 0, s + 1, C_TEXT, 0);
+        int x = SZ_X + i * 26, s = sizes[i] > 9 ? 9 : sizes[i];
+        fill(x, TB_Y, 24, TB_S, C_BAR_LO);
+        fill(x + 1, TB_Y + 1, 22, TB_S - 2, i == size_i ? C_ON : hover == 14 + i ? C_HOVER : C_BTN);
+        ico_x = x + 12; ico_y = TB_Y + 15;
+        if (tool == T_TEXT) {                    /* the text's size: x1..x4 */
+            char d[3] = { 'x', (char)('1' + i), 0 };
+            text(x + 4, TB_Y + 7, d, C_TEXT, 16);
+        } else stamp(iplot, 0, 0, s + 1, C_TEXT, 0);
     }
     for (i = 0; i < 5; i++)
         button(CMD_X + i * (CMD_W + 4), TB_Y, CMD_W, TB_S, cmd_label[i], hover == 20 + i);
@@ -799,6 +838,10 @@ static void draw_status(void)
     }
     append(s, "   ", sizeof s);
     append(s, tool_name[tool], sizeof s);
+    if (sel_on && !sel_drag) {
+        append(s, " ", sizeof s);
+        append_num(s, sel_w, sizeof s); append(s, "x", sizeof s); append_num(s, sel_h, sizeof s);
+    }
     text(8, H - STATUS_H + 3, s, C_TEXT, 440);
     text(W - 8 - 8 * (int)strlen(status), H - STATUS_H + 3, status, C_ACCENT, W - 460);
 }
@@ -909,11 +952,282 @@ static void draw_shape(plot_fn plot)
     }
 }
 
+/* ============================================================
+ * the selection: a frame on the picture (sel_*); lifted, its pixels
+ * float over it (flt) until they're put down
+ * ============================================================ */
+
+/* malloc, the undo steps given up for room if need be */
+static void *room(int n)
+{
+    void *b = malloc(n);
+    while (!b && (nundo || nredo)) {
+        if (nredo) drop_oldest(redo, &nredo); else drop_oldest(undo, &nundo);
+        b = malloc(n);
+    }
+    return b;
+}
+static void sel_drop(void)                      /* no selection (what floats: gone) */
+{
+    if (flt) { free(flt); flt = 0; }
+    sel_on = sel_drag = sel_move = 0;
+}
+static void sel_put(void)                       /* what floats: into the picture */
+{
+    int x, y;
+    if (flt) {
+        for (y = 0; y < sel_h; y++) {
+            int cy = sel_y + y;
+            if (cy < 0 || cy >= ch) continue;
+            for (x = 0; x < sel_w; x++) {
+                int cx = sel_x + x;
+                if (cx >= 0 && cx < cw) canvas[cy * cw + cx] = flt[y * sel_w + x];
+            }
+        }
+        dirty = 1;
+    }
+    sel_drop();
+}
+/* the part chosen, cut to the picture -> 0 if nothing's left of it */
+static int sel_clip(void)
+{
+    if (sel_x < 0) { sel_w += sel_x; sel_x = 0; }
+    if (sel_y < 0) { sel_h += sel_y; sel_y = 0; }
+    if (sel_x + sel_w > cw) sel_w = cw - sel_x;
+    if (sel_y + sel_h > ch) sel_h = ch - sel_y;
+    return sel_w > 0 && sel_h > 0;
+}
+/* lifted off the picture: it floats (keep: the picture keeps it too) */
+static int sel_lift(int keep)
+{
+    int x, y;
+    unsigned short b = to565(bg);
+    if (flt) return 1;
+    flt = room(sel_w * sel_h * 2);
+    if (!flt) { say("Not enough memory for that."); return 0; }
+    before_change();
+    for (y = 0; y < sel_h; y++)
+        for (x = 0; x < sel_w; x++) {
+            unsigned short *q = &canvas[(sel_y + y) * cw + sel_x + x];
+            flt[y * sel_w + x] = *q;
+            if (!keep) *q = b;
+        }
+    return 1;
+}
+static int in_sel(int px, int py)
+{
+    return sel_on && px >= sel_x && px < sel_x + sel_w && py >= sel_y && py < sel_y + sel_h;
+}
+static void sel_all(void)
+{
+    sel_put();
+    sel_on = 1; sel_x = sel_y = 0; sel_w = cw; sel_h = ch;
+    tool = T_SELECT;
+    say("All of it chosen.");
+}
+/* Ctrl+C / Ctrl+X: the selection (or all of it) -> CLIP_FILE, the
+ * clipboard's picture */
+static void sel_copy(int cut)
+{
+    unsigned short *src = canvas;
+    int sw = cw, w = cw, h = ch;
+    if (sel_on) {
+        if (flt) { src = flt; sw = w = sel_w; h = sel_h; }
+        else { src = canvas + sel_y * cw + sel_x; w = sel_w; h = sel_h; }
+    }
+    if (!write_bmp(CLIP_FILE, src, sw, w, h)) return;
+    clip_pic_set(CLIP_FILE);
+    if (!cut) { say(sel_on ? "Copied - Ctrl+V pastes it." : "The whole picture copied."); return; }
+    if (!sel_on) { sel_on = 1; sel_x = sel_y = 0; sel_w = cw; sel_h = ch; }
+    if (flt) { free(flt); flt = 0; dirty = 1; }
+    else {
+        int x, y;
+        unsigned short b = to565(bg);
+        before_change();
+        for (y = 0; y < sel_h; y++) for (x = 0; x < sel_w; x++) canvas[(sel_y + y) * cw + sel_x + x] = b;
+    }
+    sel_drop();
+    say("Cut - Ctrl+V pastes it.");
+}
+static void sel_clear(void)                     /* Delete, with a selection */
+{
+    int x, y;
+    unsigned short b = to565(bg);
+    if (flt) { free(flt); flt = 0; dirty = 1; sel_drop(); return; }
+    before_change();
+    for (y = 0; y < sel_h; y++) for (x = 0; x < sel_w; x++) canvas[(sel_y + y) * cw + sel_x + x] = b;
+    sel_drop();
+    say("Cleared (Ctrl+Z brings it back).");
+}
+
+/* the clipboard's picture, read into a new floating selection */
+static int paste_w;
+static void png_to_flt(int x, int y, int r, int g, int b) { flt[y * paste_w + x] = to565(RGB(r, g, b)); }
+static int paste_bmp(const char *p)
+{
+    static unsigned char hdr[54 + 1024], rowbuf[CMAX_W * 4 + 8];
+    int fd = open(p, O_READ), w, h, bpp, top = 0, stride, y, x, n, off, colors, sw, sh;
+    unsigned pal[256];
+    if (fd < 0) return 0;
+    n = read(fd, hdr, sizeof hdr);
+    if (n < 54 || hdr[0] != 'B' || hdr[1] != 'M' || rd32(hdr + 30) != 0) { close(fd); return 0; }
+    off = rd32(hdr + 10); w = rd32(hdr + 18); h = rd32(hdr + 22); bpp = hdr[28] | hdr[29] << 8;
+    if (h < 0) { h = -h; top = 1; }
+    if (w <= 0 || h <= 0 || (bpp != 8 && bpp != 24 && bpp != 32)) { close(fd); return 0; }
+    if (bpp == 8) {
+        int po = 14 + rd32(hdr + 14), i;
+        colors = rd32(hdr + 46);
+        if (!colors || colors > 256) colors = 256;
+        for (i = 0; i < 256; i++) pal[i] = 0;
+        for (i = 0; i < colors && po + i * 4 + 3 < n; i++)
+            pal[i] = RGB(hdr[po + i * 4 + 2], hdr[po + i * 4 + 1], hdr[po + i * 4]);
+    }
+    stride = (w * (bpp / 8) + 3) & ~3;
+    sw = w > CMAX_W ? CMAX_W : w; sh = h > CMAX_H ? CMAX_H : h;
+    flt = room(sw * sh * 2);
+    if (!flt) { close(fd); return -1; }
+    for (y = 0; y < h; y++) {
+        int row = top ? y : h - 1 - y;
+        seek(fd, off + y * stride);
+        if (read(fd, rowbuf, stride > (int)sizeof rowbuf ? (int)sizeof rowbuf : stride) <= 0) break;
+        if (row >= sh) continue;
+        for (x = 0; x < sw; x++) {
+            unsigned c;
+            if (bpp == 8) c = pal[rowbuf[x]];
+            else { const unsigned char *q = rowbuf + x * (bpp / 8); c = RGB(q[2], q[1], q[0]); }
+            flt[row * sw + x] = to565(c);
+        }
+    }
+    close(fd);
+    sel_w = sw; sel_h = sh;
+    return 1;
+}
+static int paste_png(const char *p)
+{
+    int fd = open(p, O_READ), n, w, h;
+    unsigned char *buf;
+    if (fd < 0) return 0;
+    n = fsize(fd);
+    buf = room(n + 4);
+    if (!buf) { close(fd); return -1; }
+    n = read(fd, buf, n);
+    close(fd);
+    if (!png_size(buf, n, CMAX_W, CMAX_H, &w, &h)) { free(buf); return 0; }
+    flt = room(w * h * 2);
+    if (!flt) { free(buf); return -1; }
+    memset(flt, 0xFF, w * h * 2);
+    paste_w = w;
+    png_sink = png_to_flt;
+    n = png_to_bmp(buf, n, 0, 0, CMAX_W, CMAX_H);
+    png_sink = 0;
+    free(buf);
+    if (n < 0) { free(flt); flt = 0; return 0; }
+    sel_w = w; sel_h = h;
+    return 1;
+}
+static void paste(void)
+{
+    char p[PATH_MAX];
+    unsigned char sig[8];
+    int fd, n = 0, ok;
+    sel_put();
+    if (clip_pic_get(p, sizeof p) <= 0) { say("No picture on the clipboard."); return; }
+    fd = open(p, O_READ);
+    if (fd >= 0) { n = read(fd, sig, 8); close(fd); }
+    if (n <= 0) { say("The clipboard's picture is gone."); return; }
+    ok = n == 8 && sig[0] == 137 && sig[1] == 'P' ? paste_png(p) : paste_bmp(p);
+    if (ok < 0) { say("Not enough memory to paste that."); return; }
+    if (!ok) { say("Can't read the clipboard's picture."); return; }
+    if (sel_w > cw || sel_h > ch) {             /* bigger: the picture grows */
+        unsigned short *keep = flt;
+        flt = 0;
+        resize(sel_w > cw ? sel_w : cw, sel_h > ch ? sel_h : ch);
+        flt = keep;
+    }
+    before_change();                            /* (Ctrl+Z: as it was) */
+    sel_on = 1;
+    sel_x = vx > MARGIN ? vx - MARGIN : 0;      /* where it's seen */
+    sel_y = vy > MARGIN ? vy - MARGIN : 0;
+    if (sel_x + sel_w > cw) sel_x = cw - sel_w;
+    if (sel_y + sel_h > ch) sel_y = ch - sel_h;
+    tool = T_SELECT;
+    say("Pasted - drag it where it goes.");
+}
+
+/* the frame: dashes, black and white */
+static void sel_frame(void)
+{
+    int x0 = cx0() + sel_x - 1, y0 = cy0() + sel_y - 1, x1 = x0 + sel_w + 1, y1 = y0 + sel_h + 1, i;
+    for (i = x0; i <= x1; i++) {
+        unsigned c = ((i - x0) >> 2) & 1 ? RGB(255, 255, 255) : RGB(0, 0, 0);
+        if (y0 >= AREA_Y && y0 < AREA_Y + AREA_H) fpix(i, y0, c);
+        if (y1 >= AREA_Y && y1 < AREA_Y + AREA_H) fpix(i, y1, c);
+    }
+    for (i = y0; i <= y1; i++) {
+        unsigned c = ((i - y0) >> 2) & 1 ? RGB(255, 255, 255) : RGB(0, 0, 0);
+        if (i < AREA_Y || i >= AREA_Y + AREA_H) continue;
+        fpix(x0, i, c);
+        fpix(x1, i, c);
+    }
+}
+static void draw_sel(void)
+{
+    int x, y;
+    if (flt)
+        for (y = 0; y < sel_h; y++)
+            for (x = 0; x < sel_w; x++) pplot(sel_x + x, sel_y + y, from565(flt[y * sel_w + x]));
+    if (sel_on || sel_drag) sel_frame();
+}
+
+/* ============================================================
+ * the text being typed: over the picture until it's put down
+ * ============================================================ */
+#define TXT_MAX 400
+static char txt[TXT_MAX];
+static int txt_on, txt_n, txt_x, txt_y;
+static void text_draw(plot_fn plot, int caret)
+{
+    int k = size_i + 1, x = txt_x, y = txt_y, i, r, b, a, d;
+    for (i = 0; i <= txt_n; i++) {
+        if (i == txt_n) {
+            if (caret) for (r = 0; r < 16 * k; r++) plot(x, y + r, RGB(0, 0, 0));
+            break;
+        }
+        if (txt[i] == '\n') { x = txt_x; y += 16 * k; continue; }
+        {
+            const unsigned char *g = glyphs + (unsigned char)txt[i] * 16;
+            for (r = 0; r < 16; r++)
+                for (b = 0; b < 8; b++)
+                    if (g[r] & (0x80 >> b))
+                        for (a = 0; a < k; a++) for (d = 0; d < k; d++) plot(x + b * k + d, y + r * k + a, fg);
+        }
+        x += 8 * k;
+    }
+}
+static void text_put(void)                      /* into the picture */
+{
+    if (!txt_on) return;
+    txt_on = 0;
+    if (!txt_n) return;
+    before_change();
+    text_draw(cplot, 0);
+}
+static void text_key(int c)
+{
+    if (c == 8) { if (txt_n) txt_n--; }
+    else if (c == 13) { if (txt_n < TXT_MAX - 1) txt[txt_n++] = '\n'; }
+    else if (c >= 32 && c != 127 && txt_n < TXT_MAX - 1) txt[txt_n++] = c;
+}
+/* whatever's half done (a text, what floats) put down */
+static void settle(void) { text_put(); sel_put(); }
+
 static void redraw(void)
 {
     draw_toolbar();
     draw_area();
     if (shaping) draw_shape(pplot);
+    draw_sel();
+    if (txt_on) text_draw(pplot, 1);
     if (sizing) {                                /* the new size's outline */
         int x0 = cx0(), y0 = cy0(), i;
         for (i = 0; i < size_w; i += 2) { fpix(x0 + i, y0 + size_h, C_TEXT); fpix(x0 + i, y0 - 1, C_TEXT); }
@@ -1049,8 +1363,9 @@ static void dialog_cancel(void) { dlg = 0; ask_then = 0; }
 
 static void press(int b, int right)
 {
-    if (b >= 0 && b < NTOOLS) { tool = b; say(tool_name[b]); }
-    else if (b >= 10 && b < 14) size_i = b - 10;
+    if (b >= 20 && b < 30) settle();                 /* (a command: what's half done, down) */
+    if (b >= 0 && b < NTOOLS) { if (b != tool) settle(); tool = b; say(tool == T_TEXT ? "Click where it starts, then type." : tool == T_SELECT ? "Drag a frame; then Ctrl+C, X, V." : tool_name[b]); }
+    else if (b >= 14 && b < 18) size_i = b - 14;
     else if (b == 20) ask_first(1);
     else if (b == 21) ask_first(2);
     else if (b == 22) save(0);
@@ -1083,6 +1398,28 @@ static void key(int c, int sc)
         }
         return;
     }
+    if (txt_on) {                                                /* typing */
+        if (c == 27) { text_put(); return; }
+        if (c == 26) { txt_on = 0; say("The text: away."); return; }
+        if (c == 8 || c == 13 || c >= 32) { text_key(c); return; }
+        if (c) text_put();                                       /* (Ctrl+...: done with it) */
+        else return;
+    }
+    if (c == 3) { sel_copy(0); return; }                         /* Ctrl+C */
+    if (c == 24) { sel_copy(1); return; }                        /* Ctrl+X */
+    if (c == 22) { paste(); return; }                            /* Ctrl+V */
+    if (c == 1) { sel_all(); return; }                           /* Ctrl+A */
+    if (sel_on && (c == 27 || c == 13)) { sel_put(); return; }   /* Esc, Enter: put down */
+    if (sel_on && (sc == 0x48 || sc == 0x50 || sc == 0x4B || sc == 0x4D) && !ctrl) {
+        if (!flt && !sel_lift(0)) return;                        /* the arrows: a pixel */
+        if (sc == 0x48) sel_y--;
+        else if (sc == 0x50) sel_y++;
+        else if (sc == 0x4B) sel_x--;
+        else sel_x++;
+        return;
+    }
+    if (sel_on && sc == 0x53) { sel_clear(); return; }           /* Delete: it */
+    if (c == 14 || c == 15 || c == 19 || c == 26 || c == 25 || c == 17) settle();
     if (c == 14) { ask_first(1); return; }                       /* Ctrl+N */
     if (c == 15) { ask_first(2); return; }                       /* Ctrl+O */
     if (c == 19) { save(shift()); return; }                      /* Ctrl+S */
@@ -1102,7 +1439,7 @@ static void key(int c, int sc)
     {
         int i;
         for (i = 0; i < NTOOLS; i++)
-            if (upper(c) == tool_key[i]) { tool = i; say(tool_name[i]); }
+            if (upper(c) == tool_key[i]) press(i, 0);
     }
 }
 
@@ -1149,7 +1486,7 @@ int main(int argc, char **argv)
         if (over) {
             int btn = m[2] & 3, mx = m[0], my = m[1];
             int px = mx - cx0(), py = my - cy0();
-            int hb = drawing || shaping || sizing ? -1 : button_at(mx, my);
+            int hb = drawing || shaping || sizing || sel_drag || sel_move ? -1 : button_at(mx, my);
             int in_area = my >= AREA_Y && my < AREA_Y + AREA_H;
             if (hb != hover) { hover = hb; changed = 1; }
             if (!dlg && in_area && px >= 0 && px < cw && py >= 0 && py < ch) {
@@ -1175,9 +1512,23 @@ int main(int argc, char **argv)
                         }
                     }
                 } else if (!dlg && in_area) {
-                    if (px >= cw && px < cw + 6 && py >= ch && py < ch + 6) {
+                    if (tool == T_SELECT && btn == 1 && in_sel(px, py)) {
+                        if (flt || sel_lift(keydown(KEY_CTRL))) {  /* moved (Ctrl: a copy) */
+                            sel_move = 1; grab_x = px - sel_x; grab_y = py - sel_y;
+                        }
+                    } else if (px >= cw && px < cw + 6 && py >= ch && py < ch + 6) {
+                        settle();
                         sizing = 1; size_w = cw; size_h = ch;
-                    } else if (tool == T_FILL) {
+                    } else if (tool == T_SELECT) {
+                        sel_put();
+                        if (btn == 1) { sel_drag = 1; sel_ax = sel_x = px; sel_ay = sel_y = py; sel_w = sel_h = 1; }
+                    } else if (tool == T_TEXT) {
+                        text_put();
+                        if (px >= 0 && px < cw && py >= 0 && py < ch) {
+                            txt_on = 1; txt_n = 0; txt_x = px; txt_y = py;
+                            say("Type; Esc or a click puts it down.");
+                        }
+                    } else if (settle(), tool == T_FILL) {
                         if (px >= 0 && px < cw && py >= 0 && py < ch) {
                             before_change();
                             flood(px, py, btn == 2 ? bg : fg);
@@ -1209,6 +1560,13 @@ draw_now:
                 int x = px, y = py;
                 constrain(&x, &y);
                 if (x != sx_b || y != sy_b) { sx_b = x; sy_b = y; changed = 1; }
+            } else if (btn && sel_drag) {
+                int x = px < 0 ? 0 : px >= cw ? cw - 1 : px, y = py < 0 ? 0 : py >= ch ? ch - 1 : py;
+                int nx = x < sel_ax ? x : sel_ax, ny = y < sel_ay ? y : sel_ay;
+                int nw = iabs(x - sel_ax) + 1, nh = iabs(y - sel_ay) + 1;
+                if (nx != sel_x || ny != sel_y || nw != sel_w || nh != sel_h) { sel_x = nx; sel_y = ny; sel_w = nw; sel_h = nh; changed = 1; }
+            } else if (btn && sel_move) {
+                if (px - grab_x != sel_x || py - grab_y != sel_y) { sel_x = px - grab_x; sel_y = py - grab_y; changed = 1; }
             } else if (btn && sizing) {
                 if (px != size_w || py != size_h) { size_w = px < 1 ? 1 : px > CMAX_W ? CMAX_W : px; size_h = py < 1 ? 1 : py > CMAX_H ? CMAX_H : py; changed = 1; }
             }
@@ -1220,6 +1578,8 @@ draw_now:
                     changed = 1;
                 }
                 if (sizing) { sizing = 0; resize(size_w, size_h); changed = 1; }
+                if (sel_drag) { sel_drag = 0; sel_on = sel_w > 1 && sel_h > 1 && sel_clip(); changed = 1; }
+                sel_move = 0;
                 drawing = 0;
             }
             was = btn;
@@ -1228,6 +1588,8 @@ draw_now:
             was = 0;
             if (shaping) { before_change(); draw_shape(cplot); shaping = 0; changed = 1; }
             if (sizing) { sizing = 0; resize(size_w, size_h); changed = 1; }
+            if (sel_drag) { sel_drag = 0; sel_on = sel_w > 1 && sel_h > 1 && sel_clip(); changed = 1; }
+            sel_move = 0;
             drawing = 0;
         }
         if (changed) redraw();

@@ -1665,6 +1665,10 @@ dkx_fc_take:
 .say:
     mov ecx, [dkx_fc_n]
     jecxz .done
+    cmp ecx, 1                            ; one picture: Paint's Ctrl+V too
+    jne .not_pic
+    call dkx_fc_pic
+.not_pic:
     mov edi, dk_toast_buf                 ; "Copied: 3 - Ctrl+V pastes"
     mov esi, dkx_msg_fc_copied
     cmp byte [dkx_fc_mode], 1
@@ -1680,6 +1684,50 @@ dkx_fc_take:
     call wget_append
     mov byte [edi], 0
     call dk_toast
+.done:
+    popad
+    ret
+
+; The clipboard's one file a .BMP or .PNG? -> its path, the clipboard's
+; picture (src/appext.asm's clip_pic: Paint pastes it)
+dkx_fc_pic:
+    pushad
+    mov esi, dkx_fc_name
+    xor ecx, ecx
+.len:
+    cmp byte [esi + ecx], 0
+    je .counted
+    inc ecx
+    jmp .len
+.counted:
+    cmp ecx, 5
+    jb .done
+    mov eax, [esi + ecx - 4]
+    and eax, 0xDFDFDFFF                   ; (".bmp" too)
+    cmp eax, '.BMP'
+    je .pic
+    cmp eax, '.PNG'
+    jne .done
+.pic:
+    mov al, [dk_fm_dir]
+    mov edi, aext_clip_pic
+    call dk_dir_path
+    xor al, al
+    mov ecx, 64
+    cld
+    repne scasb
+    dec edi
+    cmp byte [edi - 1], '/'
+    je .name
+    mov byte [edi], '/'
+    inc edi
+.name:
+    mov esi, dkx_fc_name
+.copy:
+    lodsb
+    stosb
+    or al, al
+    jnz .copy
 .done:
     popad
     ret
