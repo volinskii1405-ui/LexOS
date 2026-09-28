@@ -174,7 +174,7 @@ dks_piece:
 .linked:
     mov ebp, DKS_BATCH
 .sector:
-    mov ecx, [dk_shot_size] ; this one's bytes
+    mov ecx, [dks_len]                    ; this one's bytes
     sub ecx, [dks_pos]
     cmp ecx, FS_EXTRA_CONTENT_LEN
     jbe .count
@@ -192,7 +192,7 @@ dks_piece:
     jz .last                              ; (this piece's last)
     push eax
     mov eax, [dks_pos]
-    cmp eax, [dk_shot_size]
+    cmp eax, [dks_len]
     pop eax
     jae .last
     call fs_extra_alloc                   ; the next, first - so this one
@@ -215,7 +215,7 @@ dks_piece:
     call fs_write_slot
     push eax
     mov eax, [dks_pos]
-    cmp eax, [dk_shot_size]
+    cmp eax, [dks_len]
     pop eax
     jae .all
     popad

@@ -223,9 +223,25 @@ keyboard_isr:
     jne .not_prtsc
     cmp byte [dk_active], 0
     je .not_prtsc
+    cmp byte [kbd_shift_held], 0   ; (Shift+PrintScreen: a part of the
+    jne .prtsc_part                ;  screen, chosen - src/dkregion.asm)
     mov byte [dk_shot_req], 1
     jmp .eoi
+.prtsc_part:
+    mov byte [drs_req], 1
+    jmp .eoi
 .not_prtsc:
+    cmp bh, 0                    ; E0 2A / E0 AA / E0 36 / E0 B6: the
+    je .not_fake_shift           ; "fake" Shifts that come with PrintScreen
+    cmp al, 0x2A                 ; and the grey keys - not the Shift key
+    je .eoi
+    cmp al, 0xAA
+    je .eoi
+    cmp al, 0x36
+    je .eoi
+    cmp al, 0xB6
+    je .eoi
+.not_fake_shift:
     cmp bh, 0                    ; the Win keys let go (E0 DB / E0 DC):
     je .not_win_up               ; alone, the start menu; with a key
     cmp al, 0xDB                 ; (Win+D...), that's done already
@@ -383,7 +399,12 @@ keyboard_isr:
     je .desk_esc
     mov byte [dkx_tasks_req], 1
     jmp .eoi
-.desk_esc:                         ; Esc, a Clock / System / Tasks / Mixer /
+.desk_esc:
+    cmp byte [drs_active], 0       ; (choosing a part of the screen: no more)
+    je .desk_esc_win
+    mov byte [drs_cancel], 1
+    jmp .eoi
+.desk_esc_win:                     ; Esc, a Clock / System / Tasks / Mixer /
     call dkx_esc_closes            ; Pictures in front: it closes (the rest -
     jc .not_desk_keys              ; Terminals, programs, Files - keep it)
     mov byte [dkx_close_req], 1
