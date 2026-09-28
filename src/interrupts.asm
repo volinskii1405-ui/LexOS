@@ -665,6 +665,11 @@ timer_isr:
     mov al, 0x20
     out PIC1_CMD, al
 
+    cmp byte [mix_pending], 0             ; sound queued, the card not on
+    je .no_mix                            ; yet (src/mixer.asm)
+    call mix_pending_check
+.no_mix:
+
     ; Ctrl+C for a program running in ring 3 (src/usermode.asm)
     cmp byte [app_abort_request], 0
     je .no_abort

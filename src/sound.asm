@@ -964,7 +964,7 @@ sb_set_rate:
     push eax
     mov al, 0x41
     call sb_write
-    mov eax, [wav_sample_rate]
+    mov eax, [sb_stream_rate]
     xchg al, ah
     call sb_write                         ; high byte
     xchg al, ah
@@ -1141,44 +1141,75 @@ sb_dma_count     dd 0
 sb_deadline      dd 0
 
 ; ============================================================
-; A stream for ring-3 programs (src/appsys.asm's SYS_AUDIO_*): 16-bit
-; signed PCM, mono or stereo, at any rate the card takes. The card
-; plays SB_STREAM_DMA over and over (auto-init DMA on channel 5), two
-; halves of SB_STREAM_HALF bytes; at the end of each half it raises
-; IRQ5, and sb_stream_isr refills the half just played from the FIFO
-; the program writes into (or with silence, if the program fell
-; behind). One program at a time; `play` stops it.
+; The mixer's stream (src/mixer.asm): 16-bit signed PCM, mono or
+; stereo. The card plays SB_STREAM_DMA over and over (auto-init DMA on
+; channel 5), two halves; at the end of each half it raises IRQ5, and
+; sb_stream_isr refills the half just played with every voice mixed.
+;
+; Kept light for QEMU, whose Sound Blaster copies every byte through
+; its emulated ISA DMA in its main loop (the one that also draws the
+; window): the halves are ~93ms (fewer interrupts than before), the
+; mixer asks for mono 11025Hz when that's all its voices need (the
+; desktop's sounds - a quarter of the bytes), and the card is set up
+; once and only paused (DSP 0xD5) when two halves in a row come out
+; silent - no DMA at all while nothing plays, and no DSP reset for
+; every click. What's queued next starts it again at once
+; (sb_stream_start fills both halves first).
 ; ============================================================
 SB_STREAM_DMA    equ 0x330000             ; 2 halves - word aligned, inside
-SB_STREAM_HALF   equ 4096                 ; one 128KB DMA page
+SB_STREAM_HALF   equ 8192                 ; one 128KB DMA page (the most)
 
-; eax = the rate, ecx = channels (1/2) -> carry=1 if there's no SB16
-sb_stream_open:
+; The card, once: IRQ5 -> sb_stream_isr, the speaker on. carry=1 if
+; there's no SB16
+sb_stream_init:
+    cmp byte [sb_stream_ready], 0
+    jne .ok
     pushad
-    mov [sb_stream_rate], eax
-    mov [sb_stream_channels], ecx
     call sb_detect
     jc .fail
     call sb_reset
     jc .fail
     mov al, 0xD1                          ; speaker on
     call sb_write
-    xor eax, eax
-    mov [sb_stream_half_next], eax
-    mov edi, SB_STREAM_DMA                ; both halves: silence to start
-    mov ecx, SB_STREAM_HALF * 2 / 4
-    cld
-    rep stosd
-
-    ; IRQ5 -> sb_stream_isr
     mov edi, idt_table + (IRQ_BASE + 5) * 8
     mov eax, sb_stream_isr
     call set_idt_entry_at_edi
     in al, PIC1_DATA
     and al, ~0x20
     out PIC1_DATA, al
+    mov byte [sb_stream_ready], 1
+    popad
+.ok:
+    clc
+    ret
+.fail:
+    popad
+    stc
+    ret
 
-    ; DMA channel 5: auto-init, memory -> card, the whole buffer
+; eax = the rate, ecx = channels (1/2), edx = a half's bytes (to
+; SB_STREAM_HALF): (re)started from the buffer's start, both halves
+; mixed first - so what was just queued is heard at once. Interrupts
+; off (the mixer's mix_kick)
+sb_stream_start:
+    pushad
+    cmp byte [sb_streaming], 0            ; playing: paused first
+    je .stopped
+    mov al, 0xD5
+    call sb_write
+    mov byte [sb_streaming], 0
+.stopped:
+    mov [sb_stream_rate], eax
+    mov [sb_stream_channels], ecx
+    mov [sb_stream_half], edx
+    mov edi, SB_STREAM_DMA                ; both halves: mixed now
+    call mixer_fill
+    add edi, edx
+    call mixer_fill
+    mov dword [sb_stream_half_next], 0
+    mov byte [sb_silent], 0
+
+    ; DMA channel 5: auto-init, memory -> card, both halves
     mov al, 0x05                          ; mask
     out 0xD4, al
     xor al, al
@@ -1193,15 +1224,14 @@ sb_stream_open:
     mov eax, SB_STREAM_DMA
     shr eax, 16
     out 0x8B, al                          ; page
-    mov eax, SB_STREAM_HALF * 2 / 2 - 1   ; words - 1
+    mov eax, [sb_stream_half]             ; words - 1 (two halves)
+    dec eax
     out 0xC6, al
     mov al, ah
     out 0xC6, al
     mov al, 0x01                          ; unmask
     out 0xD4, al
 
-    mov eax, [sb_stream_rate]
-    mov [wav_sample_rate], eax
     call sb_set_rate
     mov al, 0xB6                          ; 16-bit output, auto-init, FIFO
     call sb_write
@@ -1211,39 +1241,18 @@ sb_stream_open:
     mov al, 0x30                          ; signed stereo
 .mode:
     call sb_write
-    mov eax, SB_STREAM_HALF / 2 - 1       ; a half's samples (in auto-init
-                                          ; mode QEMU counts samples, not
-                                          ; stereo frames - unlike sb_play_wav)
+    mov eax, [sb_stream_half]             ; a half's samples - 1 (in
+    shr eax, 1                            ; auto-init mode QEMU counts
+    dec eax                               ; samples, not stereo frames)
     call sb_write
     mov al, ah
     call sb_write
     mov byte [sb_streaming], 1
     popad
-    clc
-    ret
-.fail:
-    popad
-    stc
     ret
 
-sb_stream_close:
-    cmp byte [sb_streaming], 0
-    je .done
-    pushad
-    mov byte [sb_streaming], 0
-    in al, PIC1_DATA
-    or al, 0x20                           ; IRQ5 off again
-    out PIC1_DATA, al
-    mov al, 0xD9                          ; leave 16-bit auto-init
-    call sb_write
-    call sb_reset
-    mov al, 0x05
-    out 0xD4, al
-    popad
-.done:
-    ret
-
-; IRQ5: a half has been played - refill it
+; IRQ5: a half has been played - refill it; two silent ones in a row:
+; the card paused
 sb_stream_isr:
     pushad
     cld
@@ -1252,17 +1261,31 @@ sb_stream_isr:
     cmp byte [sb_streaming], 0
     je .eoi
     mov edi, [sb_stream_half_next]
-    imul edi, SB_STREAM_HALF
+    imul edi, [sb_stream_half]
     add edi, SB_STREAM_DMA
     xor byte [sb_stream_half_next], 1
     call mixer_fill                       ; every voice, mixed (src/mixer.asm)
+    cmp byte [mix_heard], 0
+    je .silent
+    mov byte [sb_silent], 0
+    jmp .eoi
+.silent:
+    inc byte [sb_silent]                  ; (the one playing is silence
+    cmp byte [sb_silent], 2               ;  too: nothing's lost)
+    jb .eoi
+    mov al, 0xD5                          ; pause 16-bit DMA
+    call sb_write
+    mov byte [sb_streaming], 0
 .eoi:
     mov al, 0x20
     out PIC1_CMD, al
     popad
     iret
 
+sb_stream_ready      db 0
 sb_streaming         db 0
+sb_silent            db 0
 sb_stream_rate       dd 0
 sb_stream_channels   dd 0
+sb_stream_half       dd SB_STREAM_HALF
 sb_stream_half_next  dd 0

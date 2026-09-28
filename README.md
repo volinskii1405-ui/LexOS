@@ -564,7 +564,15 @@ tester@/DESKTOP$ run snake.app
   at its own rate (converted on the fly to 22050Hz stereo) with its own
   volume, mixed by the IRQ handler - so a game's sound plays over
   `play music.wav &`, and `.WAV` files (now up to 8MB) play through it
-  too. `mixer` lists what's playing; `mixer master 60`, `mixer 2 30`
+  too. It's kept light for QEMU, whose Sound Blaster pushes every byte
+  through an emulated ISA DMA in the same loop that draws its window:
+  each half is ~93ms; while every voice is mono at 11025Hz or less (the
+  desktop's own sounds are) the stream is 11025Hz mono - a quarter of
+  the bytes; the card is set up once, pauses itself (DSP `D5`) after two
+  silent halves - no DMA at all while nothing plays - and starts again,
+  both halves filled at once, when something's queued (at once with
+  200ms of it, else 40ms later, so a writer queuing a bit at a time
+  gets no gap). `mixer` lists what's playing; `mixer master 60`, `mixer 2 30`
   set volumes; programs have `audio_volume()`. Time: the system timer
   interrupts ~1000 times a second -
   `millis()` counts milliseconds since boot, `sleep_ms` is exact to the
@@ -1173,9 +1181,22 @@ qemu-system-i386 -m 256 -drive format=raw,file=os-image.bin \
     -device adlib,audiodev=snd0,iobase=0x220 -device sb16,audiodev=snd0
 ```
 
-(swap `pa` for `pipewire`/`alsa`/`coreaudio`/`dsound` depending on your
-host; run `qemu-system-i386 -audiodev help` to see which backends your
-build supports.) On a PipeWire system (Fedora, recent Ubuntu) use
+(swap `pa` for `pipewire`/`alsa`/`sdl`/`coreaudio`/`dsound` depending
+on your host; run `qemu-system-i386 -audiodev help` to see which
+backends your build supports.)
+
+**If the picture freezes or stutters while a sound plays**, it's QEMU's
+audio on the host - the emulated Sound Blaster and the audio backend
+share QEMU's main loop with the window. Try, one at a time (with `make
+run`, or the same options on the command line):
+
+| `make run ...` | QEMU option | what it tries |
+|---|---|---|
+| `AUDIODEV=none` | `-audiodev none,id=snd0` | no sound: if the picture flows now, it's the audio path |
+| `AUDIODEV=sdl` (or `pipewire`, `alsa`) | `-audiodev sdl,id=snd0` | another backend - SDL plays from a thread of its own |
+| `AUDIOBUF=100000` | `-audiodev pa,id=snd0,out.buffer-length=100000` | a longer backend buffer (microseconds) |
+| `AUDIOTIMER=20000` | `...,timer-period=20000` | QEMU's audio timer less often (default 10000us) |
+| `ACCEL=kvm` (`whpx` on Windows, `hvf` on macOS) | `-accel kvm` | the CPU not emulated: much less for the main loop to do | On a PipeWire system (Fedora, recent Ubuntu) use
 `pipewire` - through PipeWire's PulseAudio stand-in QEMU stalls the
 whole machine while a sound plays. `make run` picks `pipewire` by itself
 when QEMU has it (QEMU 8.1+; on Fedora the `qemu-audio-pipewire`
