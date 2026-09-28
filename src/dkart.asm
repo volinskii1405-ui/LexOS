@@ -95,7 +95,7 @@ dka_name_look:
 .game:
     call dkx_str_eq
     je .yes
-    add edi, 12
+    add edi, 16
     cmp byte [edi], 0
     jne .game
     pop edi
@@ -345,12 +345,18 @@ dka_n_notepad    db "NOTEPAD.APP", 0
 dka_n_paint      db "PAINT.APP", 0
 dka_n_calc       db "CALC.APP", 0
 dka_n_music      db "MUSIC.APP", 0
-dka_n_games      db "SNAKE.APP", 0, 0, 0     ; (12 bytes each)
-                 db "TETRIS.APP", 0, 0
-                 db "SWEEPER.APP", 0
-                 db "2048.APP", 0, 0, 0, 0
-                 db "PONG.APP", 0, 0, 0, 0
-                 db "MAZE.APP", 0, 0, 0, 0
+%macro dka_game 1                        ; (16 bytes each)
+                 db %1
+                 times 16 - %strlen(%1) db 0
+%endmacro
+dka_n_games:
+                 dka_game "SNAKE.APP"
+                 dka_game "TETRIS.APP"
+                 dka_game "SWEEPER.APP"
+                 dka_game "2048.APP"
+                 dka_game "PONG.APP"
+                 dka_game "MAZE.APP"
+                 dka_game "SOLITAIRE.APP"
                  db 0
 
 %include "src/dkart.inc"
