@@ -305,6 +305,109 @@ dkf_columns:
     pop eax
     ret
 
+; esi = an entry -> esi = the name to show: its long one, if it has
+; one (src/fslong.asm - from the slots' cache: nothing else touched)
+dkf_disp:
+    cmp byte [esi + 17], IC_UP
+    je .as_is
+    push eax
+    push esi
+    movzx eax, word [esi + 20]
+    call fsl_peek                         ; -> esi
+    jc .none
+    add esp, 4
+    pop eax
+    ret
+.none:
+    pop esi
+    pop eax
+.as_is:
+    ret
+
+; esi = a name longer than a cell's line: two lines under the icon
+; (dk_fm_cell_x/_y), broken at a space if there's one near, ".." at the
+; end if it's longer still; dkf_selected: lit
+dkf_two_lines:
+    pushad
+    mov ebx, 11                           ; the first line: to the last
+.space:                                   ; space in 6..11 (dropped)...
+    cmp byte [esi + ebx], ' '
+    je .at_space
+    dec ebx
+    cmp ebx, 6
+    jae .space
+    mov ebx, 11                           ; ...or 11 of it
+    mov edx, ebx
+    jmp .split
+.at_space:
+    lea edx, [ebx + 1]
+.split:
+    mov edi, dkf_lines                    ; line 1
+    mov ecx, ebx
+    push esi
+    rep movsb
+    mov byte [edi], 0
+    pop esi
+    add esi, edx                          ; line 2: 11 at most, ".." if
+    mov edi, dkf_lines + 12               ; there's more
+    mov ecx, 11
+.second:
+    lodsb
+    stosb
+    or al, al
+    jz .second_done
+    loop .second
+    mov byte [edi], 0
+    cmp byte [esi], 0
+    je .second_done
+    mov word [edi - 2], '..'
+.second_done:
+    mov esi, dkf_lines
+    mov ebx, [dk_fm_cell_y]
+    add ebx, 42
+    call dkf_label_line
+    mov esi, dkf_lines + 12
+    add ebx, 15
+    call dkf_label_line
+    popad
+    ret
+
+; esi = a line, ebx = its y: centered under the cell's icon
+dkf_label_line:
+    pushad
+    call dki_strlen
+    mov eax, FM_CELL_W
+    mov edi, ecx
+    shl edi, 3
+    sub eax, edi
+    shr eax, 1
+    add eax, [dk_fm_cell_x]
+    mov edi, ecx
+    mov edx, COL_TEXT
+    cmp byte [dkf_selected], 0
+    je .ink
+    push eax
+    push ebx
+    push ecx
+    push esi
+    sub eax, 2
+    shl ecx, 3
+    add ecx, 4
+    mov edx, 15
+    mov esi, COL_TITLE_ON
+    call dk_fill
+    pop esi
+    pop ecx
+    pop ebx
+    pop eax
+    mov edx, COL_WHITE
+.ink:
+    call dk_text_raw
+    popad
+    ret
+
+dkf_lines        times 2 * 11 + 4 db 0
+
 ; eax = an entry, edi = its cell on the page: drawn
 dkf_draw_cell:
     pushad
@@ -336,10 +439,12 @@ dkf_draw_cell:
     call dk_icon
     call dka_badge                        ; (a shortcut: its mark)
 .named:
+    call dkf_disp                         ; (its long name: src/fslong.asm)
     call dki_strlen                       ; the name: 11 at most
     cmp ecx, 11
     jbe .len
-    mov ecx, 11
+    call dkf_two_lines                    ; (longer: two lines)
+    jmp .done
 .len:
     mov eax, FM_CELL_W
     mov edi, ecx
@@ -409,7 +514,10 @@ dkf_draw_cell:
     sub edi, 30
     shr edi, 3
     mov edx, [dkf_row_col]
+    push esi
+    call dkf_disp
     call dk_text_raw
+    pop esi
     ; the size (not a folder's)
     mov ecx, [dkf_c_x + 4]
     cmp ecx, -1

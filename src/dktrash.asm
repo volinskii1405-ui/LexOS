@@ -441,7 +441,7 @@ dkt_icon_kinds:
 .kind:
     mov [dki_kind + ebx], al
     mov edi, ebx
-    shl edi, 4
+    shl edi, 5
     add edi, dki_label
     mov esi, dkt_l_trash
     call dki_copy

@@ -303,9 +303,12 @@ dki_set_kind:
     mov al, IC_FOLDER
 .kind:
     mov [dki_kind + ebx], al
+    call dki_long_label                   ; (a long name: that, src/fslong.asm)
+    jnc .done
     mov esi, ebx                          ; the name shown
     shl esi, 4
-    mov edi, esi
+    mov edi, ebx
+    shl edi, 5
     add esi, dki_file
     add edi, dki_label
     mov ecx, FS_NAME_LEN
@@ -324,6 +327,48 @@ dki_set_kind:
     mov byte [edi], 0
 .done:
     popad
+    ret
+
+; ebx = an icon: carry=0 if its file (in /DESKTOP) has a long name -
+; then that's its label (".LNK" off a shortcut's)
+dki_long_label:
+    pushad
+    mov esi, dki_folder_path              ; "/DESKTOP/" + the name
+    mov edi, dki_tmp_path
+    call dki_copy
+    mov byte [edi - 1], '/'
+    mov esi, ebx
+    shl esi, 4
+    add esi, dki_file
+    call dki_copy
+    mov esi, dki_tmp_path
+    call dki_resolve                      ; -> eax (the slot in scratch)
+    cmp eax, -1
+    je .none
+    call fsl_get                          ; -> esi
+    jc .none
+    mov edi, ebx
+    shl edi, 5
+    add edi, dki_label
+    mov ecx, DKI_LABEL - 1
+.copy:
+    lodsb
+    stosb
+    or al, al
+    jz .copied
+    loop .copy
+    mov byte [edi], 0
+.copied:
+    cmp dword [edi - 5], '.LNK'           ; (a shortcut's: off)
+    jne .kept
+    mov byte [edi - 5], 0
+.kept:
+    popad
+    clc
+    ret
+.none:
+    popad
+    stc
     ret
 
 ; esi = a file name -> eax, edx = where it is shown now; carry=1 if it isn't
@@ -958,7 +1003,8 @@ dki_click_ms     dd 0
 dki_bg_click_ms  dd 0
 dki_dir          db 0
 dki_file         times DKI_MAX * FS_NAME_LEN db 0
-dki_label        times DKI_MAX * FS_NAME_LEN db 0
+DKI_LABEL        equ 32                     ; (a long name's start)
+dki_label        times DKI_MAX * DKI_LABEL db 0
 dki_target       times DKI_MAX * DKI_PATH db 0
 dki_kind         times DKI_MAX db 0
 dki_x            times DKI_MAX dd 0

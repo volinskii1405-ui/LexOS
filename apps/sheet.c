@@ -86,11 +86,11 @@ static char *dupstr(const char *s)
 static int is_digit(int c) { return c >= '0' && c <= '9'; }
 static int is_alpha(int c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); }
 
-/* a number, in as few characters as fit: 12, 3.25, 1.5e+12 */
-static void fmt_num(double v, char *out)
+/* a number, to sig figures, in as few characters as fit: 12, 3.25, 1.5e+12 */
+static void fmt_sig(double v, char *out, int sig)
 {
     char dig[20];
-    int e = 0, i, n = 0, neg = v < 0, sig = 10;
+    int e = 0, i, n = 0, neg = v < 0;
     double m;
     if (v != v || v - v != 0) { strcpy(out, "#NUM!"); return; }
     if (neg) v = -v;
@@ -120,6 +120,7 @@ static void fmt_num(double v, char *out)
     }
     out[n] = 0;
 }
+static void fmt_num(double v, char *out) { fmt_sig(v, out, 10); }
 /* text -> a number, all of it (carry nothing after) -> 1 if it was one */
 static int parse_num(const char *s, double *out)
 {
@@ -724,6 +725,10 @@ static void draw(void)
                 int k = c + 1;
                 while (k < left + nv && !cells[r][k].kind && (int)strlen(t) > maxc + over / 8) over += colw[k++];
                 maxc += over / 8;
+            }
+            if (cl->kind == 1) {                       /* a number: fewer figures, as fit */
+                int sig = 9;
+                while ((int)strlen(t) > maxc && sig > 0) fmt_sig(cl->num, t, sig--);
             }
             if ((int)strlen(t) > maxc && cl->kind == 1) { t[0] = 0; for (tw = 0; tw < maxc && tw < 20; tw++) t[tw] = '#'; t[tw] = 0; }
             tw = gui_text_w(t, 1);

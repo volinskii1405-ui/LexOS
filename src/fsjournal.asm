@@ -596,6 +596,7 @@ fs_list_long:
     cmp ecx, FS_NAME_LEN
     jb .name_char
 .named:
+    call fsl_print_long                   ; (src/fslong.asm)
     mov al, [jnl_color]
     mov [current_color], al
     mov al, 13

@@ -162,6 +162,7 @@ shared_system_start:
 %include "src/neofetch.asm"
 %include "src/langui.asm"
 %include "src/fsjournal.asm"
+%include "src/fslong.asm"
 shared_system_end:
 align 4096, db 0
 %include "src/grep.asm"
