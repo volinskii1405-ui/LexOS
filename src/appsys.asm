@@ -1122,6 +1122,12 @@ sys_mouse:
     mov al, [console_self]
     cmp al, [console_fg]                  ; (and it has the keyboard)
     jne .over
+    cmp byte [dk_fm_state], 2             ; (a file, an icon carried over it,
+    jae .over                             ;  a part of the screen chosen:
+    cmp dword [dki_drag], -1              ;  not its button)
+    jne .over
+    cmp byte [drs_active], 0
+    jne .over
     movzx eax, byte [mouse_buttons]
     and eax, 7
     mov [edi + 8], eax

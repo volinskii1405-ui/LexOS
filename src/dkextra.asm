@@ -1692,6 +1692,8 @@ dkx_fc_take:
 ; picture (src/appext.asm's clip_pic: Paint pastes it)
 dkx_fc_pic:
     pushad
+    call dk_shell_idle                    ; (its folder's path: from the disk)
+    jc .done
     mov esi, dkx_fc_name
     xor ecx, ecx
 .len:

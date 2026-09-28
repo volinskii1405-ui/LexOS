@@ -3,6 +3,8 @@
  *
  *   run paint.app [picture.bmp|.png]      (Files: Edit in Paint)
  *
+ * A picture dragged from Files or the desktop onto the window opens.
+ *
  * Tools (a key each): Pencil P, Brush B, Eraser E, Line L, Rectangle R,
  * Box (filled) X, Oval O, Disc (filled) D, Fill F, Pick a color K,
  * Text T, Select S.
@@ -105,7 +107,8 @@ static int nundo, nredo;
 #define DLG_OPEN 1
 #define DLG_SAVE 2
 #define DLG_ASK  3                        /* save changes? */
-static int dlg, ask_then;                 /* after DLG_ASK: 1 new, 2 open, 3 quit */
+static int dlg, ask_then;                 /* after DLG_ASK: 1 new, 2 open, 3 quit, 4 open handed */
+static char handed[PATH_MAX];             /* a picture dropped on the window (inbox) */
 static char dlg_dir[PATH_MAX], dlg_name[FIELD_MAX];
 static char last_dir[PATH_MAX] = "/DESKTOP";
 static struct lx_dirent dents[200];
@@ -1324,6 +1327,7 @@ static void then_do(int what)                  /* after the changes are dealt wi
     if (what == 1) new_picture();
     else if (what == 2) open_dialog(DLG_OPEN);
     else if (what == 3) quitting = 1;
+    else if (what == 4 && load_picture(handed)) clamp_view();
 }
 static void ask_first(int what)
 {
@@ -1472,6 +1476,13 @@ int main(int argc, char **argv)
             k = pollkey();
         }
         if (quitting) break;
+        if (!dlg && inbox(handed, sizeof handed) > 0) {          /* dropped on it: opened */
+            int i;
+            for (i = 0; handed[i]; i++) handed[i] = upper(handed[i]);
+            settle();
+            ask_first(4);
+            changed = 1;
+        }
         over = mouse(m);
         if (m[3]) {
             if (dlg == DLG_OPEN || dlg == DLG_SAVE) {
