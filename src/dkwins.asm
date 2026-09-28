@@ -1574,6 +1574,7 @@ IC_PAINT  equ 25
 IC_CALC   equ 26
 IC_DESK   equ 27                        ; (Files' places: the desktop,
 IC_DISK   equ 28                        ;  the disk)
+IC_CLOCK  equ 29
 
 dk_draw_files:
     ; the toolbar: [Up], the path, [<] [>]

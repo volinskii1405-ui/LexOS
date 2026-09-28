@@ -188,7 +188,15 @@ All taken in QEMU (1024x768) - more in [docs/screenshots](docs/screenshots).
 </tr>
 <tr>
 <td align="center" valign="top"><img src="docs/screenshots/78-tetris.png" alt="Tetris" width="400"><br><sub>The games are programs in windows now: TETRIS.APP</sub></td>
-<td></td>
+<td align="center" valign="top"><img src="docs/screenshots/82-solitaire.png" alt="Solitaire" width="400"><br><sub>SOLITAIRE.APP - Klondike with the mouse</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/79-alt-tab.png" alt="Alt+Tab" width="400"><br><sub>Alt+Tab: the windows' panel while Alt is held</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/80-screenshot-part.png" alt="Shift+PrintScreen" width="400"><br><sub>Shift+PrintScreen: a part of the screen, dragged over</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/81-clock-stopwatch.png" alt="The Clock's stopwatch" width="400"><br><sub>The Clock's alarm, timer and stopwatch (in Russian here)</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/83-paint-text-select.png" alt="Paint: text, selection" width="400"><br><sub>Paint: text, a selection copied with Ctrl, the clipboard</sub></td>
 </tr>
 </table>
 
@@ -214,7 +222,7 @@ d- 28.09.2026 09:06   <DIR>  STARTUP
 -- 28.09.2026 09:06      16  CALC.LNK
 ...
 -- 28.09.2026 09:08       0  TRIPTO~1.TXT  (Trip to the mountains.txt)
-tester@/DESKTOP$ run /apps/snake.app
+tester@/DESKTOP$ run snake.app
 ```
 
 ## Features
@@ -451,7 +459,10 @@ tester@/DESKTOP$ run /apps/snake.app
   `SNAKE.APP` (it waits for the first arrow), `TETRIS.APP` (the 7 pieces,
   a ghost, a next-piece box, faster every 10 lines), `SWEEPER.APP`
   (Minesweeper: three levels - the window resizes to each - a flag on
-  the right button, a timer, the best times kept), `2048.APP`, plus
+  the right button, a timer, the best times kept), `2048.APP`,
+  `SOLITAIRE.APP` (Klondike with the mouse: cards dragged from pile to
+  pile, a double click sends one home, the right button all it can;
+  undo - U or Ctrl+Z - draw 1 or 3 - D - a timer, the best time), plus
   `PONG.APP` and `MAZE.APP` (a raycaster). The best scores are kept in
   `/SYSTEM/APPS.CFG`.
 - **SHEET.APP** - a spreadsheet: cells A1..Z99, numbers, text and
@@ -596,7 +607,11 @@ tester@/DESKTOP$ run /apps/snake.app
   Notepad that's already running: a new tab there, not a second
   window); `opl(reg, val)` writes the AdLib chip (silenced when the
   program ends); `audio_queued(flush)` - how much sound is still
-  waiting, or none of it any more.
+  waiting, or none of it any more; `clip_pic_get(buf, n)` /
+  `clip_pic_set(path)` - the clipboard's picture, a path to a .BMP or
+  .PNG (the last screenshot, a picture copied in Files, what Paint
+  copied). A file dragged onto a program's window comes to its inbox
+  too.
 - **Paint** (`apps/paint.c`, `/APPS/PAINT.APP`; Files' **Edit in Paint**
   on a `.BMP`): pencil, brush, eraser, line, rectangle, filled box,
   oval, disc, fill and color picker (P B E L R X O D F K); the left
@@ -604,7 +619,16 @@ tester@/DESKTOP$ run /apps/snake.app
   ([ ]), Shift keeps lines straight and shapes square; undo / redo
   (Ctrl+Z / Ctrl+Y, each step packed as runs), the canvas resized by
   its corner (up to 800x600), New / Open / Save (24-bit `.BMP`, or a
-  `.PNG`; opens 8-, 24- and 32-bit BMPs and PNGs).
+  `.PNG`; opens 8-, 24- and 32-bit BMPs and PNGs). **Text** (T): a click
+  where it starts, then type - Enter for a new line, the size buttons
+  x1..x4, Esc or a click elsewhere puts it down. **Select** (S): drag a
+  frame, drag from inside it to move that part (Ctrl: a copy), the
+  arrows nudge it, Delete clears it, Ctrl+A takes everything; **Ctrl+C
+  / Ctrl+X** copy / cut it to the clipboard (`/SYSTEM/CLIP.BMP`),
+  **Ctrl+V** pastes the clipboard's picture - Paint's own, a screenshot
+  (Shift+PrintScreen's part of the screen too) or a picture copied in
+  Files - as a selection to drag where it goes. A picture dragged onto
+  Paint's window opens.
 - **Calculator** (`apps/calc.c`, `/APPS/CALC.APP`): Standard and
   Scientific (Tab switches): what's pressed or typed builds an
   expression - `12+3×(4−1)` - worked out with precedence as it's typed
@@ -678,8 +702,13 @@ tester@/DESKTOP$ run /apps/snake.app
   with [_] (to the taskbar) and - Files, programs and Terminals -
   maximize with the box or a double click on the title (a Terminal
   then shows the lines that scrolled off above its 25); Files resizes
-  by its bottom-right corner; Alt+Tab brings the window at the back
-  forward. Dragged to the screen's left or right edge a window takes
+  by its bottom-right corner; **Alt+Tab** shows a panel of the windows
+  (their icons and names, the last used first): Tab again (Shift+Tab
+  back) while Alt is held, and the chosen one comes forward when Alt is
+  let go (a minimized one restored). A file dragged from Files or the
+  desktop onto a program's window goes to that program - a picture into
+  Paint, a text into Notepad, music into Music - and onto the Terminal
+  in front its path is typed. Dragged to the screen's left or right edge a window takes
   that half (Files, programs - the others just go to that side), to
   its top the whole screen; an outline shows where while it's held
   there, and pulling a maximized one away gives it its own size back.
@@ -844,7 +873,10 @@ tester@/DESKTOP$ run /apps/snake.app
     tune when the desktop starts, a click for the menu and buttons, a
     low tone for an error, a high one for news (a screenshot saved).
   PrintScreen saves the desktop as PICS/SHOTnn.BMP (written some sectors
-  a frame, src/dkshot.asm - the desktop doesn't stop meanwhile). The mouse wheel
+  a frame, src/dkshot.asm - the desktop doesn't stop meanwhile);
+  **Shift+PrintScreen** saves a part of it - drag a frame over it (its
+  size shown), Esc or the right button to cancel. The screenshot is the
+  clipboard's picture then: Ctrl+V in Paint pastes it. The mouse wheel
   works too (the IntelliMouse protocol).
   - **Terminals.** Every console has its own **Terminal** window -
     while the desktop is on, each console's text goes to a buffer in
@@ -912,7 +944,12 @@ tester@/DESKTOP$ run /apps/snake.app
     consoles or the desktop).
   - **Mixer** lists what's playing (see the mixer below), with a
     volume slider and a level meter each, and the master volume.
-  - **Clock** is an analog clock in your time zone, **Pictures** shows
+  - **Clock** is an analog clock in your time zone, with tabs: an
+    **alarm** (every day at that time - kept in the settings), a
+    **timer** (to 99:59) and a **stopwatch** (tenths, the last three
+    laps). The alarm and the timer ring with the window closed too - a
+    beep a second, a line at the top, the Clock opening on its page, the
+    screen saver gone; a click in the Clock stops it. **Pictures** shows
     the pictures in the current folder (.BMP 8-, 24- and 32-bit, and
     .PNG) - a viewer (src/dkpics.asm): fitted to the window or 10%..800%
     (the wheel zooms round the pointer, a zoomed picture is dragged
@@ -1346,7 +1383,7 @@ apps/                  example ring-3 programs (`make apps`): lexos.inc for
                        cc.c (the C compiler), notepad.c (Notepad),
                        zip.c (ZIP archives), paint.c (Paint), calc.c
                        (the Calculator), snake.c / tetris.c /
-                       sweeper.c / 2048.c (the games), sheet.c (the
+                       sweeper.c / 2048.c / solitaire.c (the games), sheet.c (the
                        spreadsheet), music.c (the player), hexedit.c;
                        gui.h (buttons, text boxes, the file dialog,
                        APPS.CFG), deflate.h, png.h, mod.h (the MOD
@@ -1437,8 +1474,10 @@ src/
                        Notepad, Compress to ZIP / Extract here, the
                        trash's desktop icon, Empty the trash, Delete
                        forever, Restore all, the Del key.
-  dkdrop.asm           dragging files between Files and the desktop.
-  appext.asm           system calls: keymode, readdir, mkdir, notify.
+  dkdrop.asm           dragging files between Files and the desktop,
+                       and onto programs' windows.
+  appext.asm           system calls: keymode, readdir, mkdir, notify,
+                       inbox, clip_pic.
   dkfview.asm          Files: the places, Details, thumbnails, Recent.
   dkwall.asm           the wallpaper, and reading .BMPs for it and
                        the thumbnails.
@@ -1454,6 +1493,9 @@ src/
   dknotify.asm         the notification center.
   dkanim.asm           windows' animations.
   dkres.asm            the screen's size (the Control panel's Screen).
+  dkswitch.asm         Alt+Tab's panel of the windows.
+  dkregion.asm         Shift+PrintScreen: a part of the screen.
+  dkclock.asm          the Clock's alarm, timer and stopwatch.
                        (These are the kernel's extension - KEXT:
                        assembled with the kernel, cut off by the
                        Makefile into /SYSTEM/KEXT.BIN, loaded at boot

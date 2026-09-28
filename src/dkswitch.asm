@@ -297,7 +297,7 @@ dsw_icon:
 ; Data
 ; ============================================================
 ;                   term     clock   pics      system   files      tasks   mixer
-dsw_kind_icons   db IC_TERM, IC_CFG, IC_IMAGE, IC_GEAR, IC_FOLDER, IC_APP, IC_MUSIC
+dsw_kind_icons   db IC_TERM, IC_CLOCK, IC_IMAGE, IC_GEAR, IC_FOLDER, IC_APP, IC_MUSIC
 dsw_open         db 0
 dsw_back         db 0                     ; Shift+Tabs (the keyboard's)
 dsw_alt_up       db 0                     ; Alt let go (the keyboard's)

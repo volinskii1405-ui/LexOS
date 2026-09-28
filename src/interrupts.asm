@@ -259,6 +259,23 @@ keyboard_isr:
     mov byte [dkx_win_req], 1
     jmp .eoi
 .not_win_up:
+    mov cl, al                   ; Shift, Alt, Ctrl held: in key_held too
+    and cl, 0x7F                 ; (a program's keydown() - Paint's Shift)
+    cmp cl, 0x2A
+    je .mod_held
+    cmp cl, 0x36
+    je .mod_held
+    cmp cl, 0x38
+    je .mod_held
+    cmp cl, 0x1D
+    jne .mods_done
+.mod_held:
+    movzx ecx, cl
+    mov byte [key_held + ecx], 1
+    test al, 0x80
+    jz .mods_done
+    mov byte [key_held + ecx], 0
+.mods_done:
 
     cmp al, 0x2A                 ; Left Shift (press)
     je .shift_down
