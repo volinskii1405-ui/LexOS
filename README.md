@@ -174,13 +174,29 @@ All taken in QEMU (1024x768) - more in [docs/screenshots](docs/screenshots).
 <td align="center" valign="top"><img src="docs/screenshots/70-lex-tidy.png" alt="Lex" width="400"><br><sub>Lex is pleased when the trash is emptied</sub></td>
 <td align="center" valign="top"><img src="docs/screenshots/71-control-panel-ru.png" alt="In Russian" width="400"><br><sub>The language switched on the spot (Keyboard)</sub></td>
 </tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/72-pictures-viewer.png" alt="Pictures" width="400"><br><sub>Pictures: a PNG at 200%, the wheel zooms round the pointer; a slideshow</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/73-notifications.png" alt="Notifications" width="400"><br><sub>The notification center over the calendar (a click on the time)</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/74-long-names.png" alt="Long names" width="400"><br><sub>Long file names: "Trip to the mountains.txt" (TRIPTO~1.TXT to the Terminal)</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/75-screen-1280.png" alt="1280x720" width="400"><br><sub>The screen at 1280x720, a wallpaper - chosen in the Control panel</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/76-sheet.png" alt="Sheet" width="400"><br><sub>SHEET.APP: formulas, BUDGET.CSV</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/77-music.png" alt="Music" width="400"><br><sub>MUSIC.APP playing a .MOD</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/78-tetris.png" alt="Tetris" width="400"><br><sub>The games are programs in windows now: TETRIS.APP</sub></td>
+<td></td>
+</tr>
 </table>
 
 Every screenshot, described in Russian: [docs/screenshots/README.md](docs/screenshots/README.md).
 
 **In a Terminal** (the taskbar's Terminal 1, or the whole screen without
-the desktop) — `ls`, `cd`, and `run`-ning a program from the `PROGRAMS`
-folder, on a fresh disk:
+the desktop) — `ls`, `cd`, and a long name next to its short one, on a
+fresh disk:
 
 ```
 tester@/$ ls
@@ -188,23 +204,17 @@ APPS  <DIR>
 DEMOS  <DIR>
 DESKTOP  <DIR>
 SYSTEM  <DIR>
-PROGRAMS  <DIR>
 TMP  <DIR>
 README
 LICENSE
 USER.CFG
-tester@/$ cd programs
-tester@/PROGRAMS$ ls
-TEST.BIN
-CALC.BIN
-SNAKE.BIN
-SWEEPER.BIN
-TETRIS.BIN
-2048.BIN
-CONVERT.BIN
-tester@/PROGRAMS$ run test.bin
-Hello from executable file!
-tester@/PROGRAMS$
+tester@/$ cd desktop
+tester@/DESKTOP$ ls -l
+d- 28.09.2026 09:06   <DIR>  STARTUP
+-- 28.09.2026 09:06      16  CALC.LNK
+...
+-- 28.09.2026 09:08       0  TRIPTO~1.TXT  (Trip to the mountains.txt)
+tester@/DESKTOP$ run /apps/snake.app
 ```
 
 ## Features
@@ -304,10 +314,11 @@ tester@/PROGRAMS$
   given count).
 - On first boot the root folder is seeded with `README`, a `LICENSE` file
   holding the project's own license text (long enough to spill from the
-  inline area into chained extra sectors), a `PROGRAMS` folder holding
-  `TEST.BIN`, `CALC.BIN`, `CONVERT.BIN`, `SNAKE.BIN`, `SWEEPER.BIN`,
-  `TETRIS.BIN` and `2048.BIN` (see **Programs** below), and a `TMP`
-  folder for scratch files (see below). The build puts the rest on the
+  inline area into chained extra sectors), and a `TMP` folder for
+  scratch files (see below). (Older disks had a `PROGRAMS` folder of
+  `.BIN` demos; the games are programs in `APPS` now, and at boot the
+  old folder's `.BIN` files are removed - and the folder, once it's
+  empty.) The build puts the rest on the
   disk beforehand (`tools/mkdisk.py`, from the repo's `disk/`): `APPS`
   (the ring-3 programs), `DEMOS` (scripts, music, BASIC, a CHIP-8 ROM),
   `DESKTOP` (the desktop's icons) and `SYSTEM` (the translations).
@@ -428,47 +439,30 @@ tester@/PROGRAMS$
   wrapping around to the start of the file if needed; pressing Enter on an
   empty prompt repeats the last search, and a footer flash reads
   `Not found.` when nothing matches.
-- `hex` is an interactive hex editor (arrow keys, nibble-at-a-time input)
-  for writing small machine-code programs byte by byte, plus a one-line
-  mini-assembler (press `S` inside the editor) so you don't have to
-  hand-encode opcodes.
-- Both editors frame their header and footer in a solid green bar (white
+- The editor frames its header and footer in a solid green bar (white
   text on green), the same treatment as the first-boot setup window.
-- The mini-assembler now handles `mov`/`add`/`sub`/`cmp`/`and`/`or`/`xor`
-  between any two registers of the same width (`xor ax,ax`, `mov bl,dl`,
-  `cmp ax,bx`, ...), plus `add`/`sub`/`cmp`/`and`/`or`/`xor` with an
-  immediate on any of the 8 8-bit registers, not just `al`.
+- (The Terminal's old `hex` editor and `paint` are gone: `HEXEDIT.APP`
+  and `PAINT.APP` are windows on the desktop - see **Programs**.)
 
 ### Programs
-- `run` loads a small file from disk and executes it as raw machine code.
-- `PROGRAMS/TEST.BIN` is a demo program: prints a short greeting.
-- `PROGRAMS/CALC.BIN` is a simple integer calculator: prompts for two
-  signed numbers and an operator (`+ - * / ^`), then prints the result -
-  division by zero, an unrecognized operator, and a result too big for
-  16 bits (e.g. `20000 + 20000`) all print an error instead.
-  Both programs are tiny stubs that call into a normal kernel function -
-  the same way any program can call `print_char` by absolute address -
-  rather than squeezing the whole feature into a single file's 127-byte
-  limit.
-- `PROGRAMS/SNAKE.BIN` is a graphical snake game: switches to VGA mode
-  13h (320x200, 256 colors) for the actual game, arrows or WASD to
-  move, ESC to quit early. The shell's own text console is completely
-  untouched by this - `src/vga.asm` saves every VGA register and a
-  raw copy of the text framebuffer before switching modes, and restores
-  them exactly afterward (whether the snake dies or the game is quit),
-  so it's back to normal immediately after.
-- `PROGRAMS/TETRIS.BIN` and `PROGRAMS/2048.BIN` are two more VGA mode
-  13h games, on the same save-and-restore footing as SNAKE.BIN. Tetris
-  is the classic 7-piece falling-block game (arrows to move, up to
-  rotate, space to hard drop, gravity speeds up every 10 lines); 2048
-  is the sliding-tile puzzle (arrows or WASD to slide a whole row/
-  column at once, merging equal tiles). Both save a high score file
-  next to themselves, the same way SNAKE.BIN does.
-- `PROGRAMS/CONVERT.BIN` is a base converter: prompts for one number -
-  plain decimal, `0x`-prefixed hex, or `0b`-prefixed binary - and
-  prints it back out as decimal, hex, octal, and binary, all on one
-  screen. One-shot like CALC.BIN, not a loop: run it again to convert
-  another value.
+- `run` starts a program: an `.APP` (a ring-3 C program - see below) or
+  a raw machine-code `.BIN`.
+- **Games** (`APPS`, a window each on the desktop, the game icon):
+  `SNAKE.APP` (it waits for the first arrow), `TETRIS.APP` (the 7 pieces,
+  a ghost, a next-piece box, faster every 10 lines), `SWEEPER.APP`
+  (Minesweeper: three levels - the window resizes to each - a flag on
+  the right button, a timer, the best times kept), `2048.APP`, plus
+  `PONG.APP` and `MAZE.APP` (a raycaster). The best scores are kept in
+  `/SYSTEM/APPS.CFG`.
+- **SHEET.APP** - a spreadsheet: cells A1..Z99, numbers, text and
+  formulas (`=A1+B2*2`, `SUM(A1:A9)`, `AVG`, `MIN`, `MAX`), copy and
+  paste with the references moved along, saved as `.CSV` (a `.CSV` in
+  Files opens in it; `DEMOS/BUDGET.CSV` is one).
+- **MUSIC.APP** - a player for `.WAV`, `.MOD` (the four-channel tracker
+  songs) and `.IMF` (AdLib): a playlist, pause, a position bar, the
+  time. Files opens those in it.
+- **HEXEDIT.APP** - a hex editor: the bytes and their characters,
+  typing either, Ctrl+S saves (Files: right click - Hex editor).
 - **Tiny BASIC.** `basic` drops into a BASIC prompt the way 80s home
   computers booted into one: type numbered lines to build a program,
   `RUN`, `LIST`, `NEW`, `SAVE name` / `LOAD name` (plain text files, so
@@ -597,15 +591,20 @@ tester@/PROGRAMS$
   of its own (the browser's TLS runs on that); `readdir`/`mkdir` walk
   and make folders; `keymode(1)` makes Ctrl+letters the program's own
   (coded 1-26 - on the desktop Ctrl+C would end it); `notify(text)` puts
-  a line at the top of the desktop (src/appext.asm).
+  a line at the top of the desktop (src/appext.asm); `inbox(buf, n)`
+  takes a file the desktop hands over (Files opening a text in the
+  Notepad that's already running: a new tab there, not a second
+  window); `opl(reg, val)` writes the AdLib chip (silenced when the
+  program ends); `audio_queued(flush)` - how much sound is still
+  waiting, or none of it any more.
 - **Paint** (`apps/paint.c`, `/APPS/PAINT.APP`; Files' **Edit in Paint**
   on a `.BMP`): pencil, brush, eraser, line, rectangle, filled box,
   oval, disc, fill and color picker (P B E L R X O D F K); the left
   button draws in the first color, the right in the second; four sizes
   ([ ]), Shift keeps lines straight and shapes square; undo / redo
   (Ctrl+Z / Ctrl+Y, each step packed as runs), the canvas resized by
-  its corner (up to 800x600), New / Open / Save (24-bit `.BMP`; opens
-  8-, 24- and 32-bit ones).
+  its corner (up to 800x600), New / Open / Save (24-bit `.BMP`, or a
+  `.PNG`; opens 8-, 24- and 32-bit BMPs and PNGs).
 - **Calculator** (`apps/calc.c`, `/APPS/CALC.APP`): Standard and
   Scientific (Tab switches): what's pressed or typed builds an
   expression - `12+3×(4−1)` - worked out with precedence as it's typed
@@ -642,10 +641,16 @@ tester@/PROGRAMS$
   bold/italic/underlined and colored text, links (relative ones too),
   lists (nested, bullets and numbers), `<pre>`, `<hr>`, `<blockquote>`,
   `<center>`, tables as rows of cells, `<body bgcolor>` and pictures -
-  `<img>` of `.BMP` files (8, 24 or 32 bits); text in UTF-8, entities;
+  `<img>` of `.BMP` (8, 24 or 32 bits) and `.PNG` files; text in UTF-8, entities;
   scripts and styles are skipped. Back / forward / reload / home, an
   address bar (Tab, or click it), a scrollbar, the wheel, links lighting
   up under the pointer with their address in the status line.
+  **Downloads**: a link to something that isn't a page (a `.ZIP`, a
+  picture, a program...) is saved straight to `/DOWNLOADS` - streamed
+  to the disk as it comes, over `http` or `https`, chunked or not, a
+  name of its own if that one's taken - with its progress in the
+  Downloads panel (the button by the address bar), and Ctrl+S saves the
+  page being shown.
   **Markdown** (a `.MD` page, from the disk or the web - Files opens
   them in it; `/DEMOS/README.MD` is one) is turned into a page first:
   `#` and underlined headings, **bold**, *italic*, `code`, fenced and
@@ -688,7 +693,11 @@ tester@/PROGRAMS$
   on.
   A taskbar with a button per window and a tray - volume (click: the
   Mixer, wheel: the master volume), network (green once it's set up),
-  the time (click: this month's calendar, double-click: the Clock;
+  the time (click: the **notification center** - every line that came
+  up at the top of the screen, the last six with their times, Clear and
+  Do not disturb (they're kept, not shown or sounded), a red dot by the
+  time when there are new ones - over this month's calendar;
+  double-click: the Clock;
   the pointer resting on it: today's date) - and a start menu (the
   Win key opens it too): Programs (every .APP/.COM/.BIN on the disk),
   Terminal, Files, Clock, Pictures, Tasks, Mixer, System, Log out (the
@@ -724,8 +733,10 @@ tester@/PROGRAMS$
     desktop's task does the work itself, with the kernel lock, through
     the journal.
   - **Properties** (src/dkprops.asm): Files' Properties, or an icon's -
-    a window with the name and icon, the folder it's in, its kind, size
-    (a folder: how many things are in it), when it last changed, and a
+    a window with the name (a long one, and its short one under it) and
+    icon, the folder it's in, its kind, size (a folder: all that's in
+    it however deep, and how many files and folders), when it last
+    changed, and a
     **Read-only** box to tick (as `attrib +r`).
   - **The trash on the desktop** (src/dktrash.asm), top left: an icon
     of its own - papers stick out of it when there's something in it. A
@@ -771,7 +782,12 @@ tester@/PROGRAMS$
     Users - Add...) starts with a few shortcuts and no password.
   - **The Control panel** (src/dkcpanel.asm, the start menu's Control
     panel): System (how it's running), Appearance (theme, backdrop,
-    wallpaper, Lex, the screen saver), Sound (on/off, the Mixer),
+    wallpaper, Lex, the screen saver, window **animations** - a window
+    grows out of its middle as it opens, shrinks into its taskbar button
+    minimized and grows back out of it - and the **screen size**:
+    800x600, 1024x768, 1280x720 or 1280x1024, changed at once, the
+    windows and icons kept on it; the two 1280-wide ones need 256MB -
+    `make run` gives QEMU that), Sound (on/off, the Mixer),
     Keyboard (the system's language - at once - and the layouts), Date &
     time (the time zone), Mouse (pointer speed, double-click speed),
     Users (Add..., Password..., Switch user).
@@ -846,12 +862,10 @@ tester@/PROGRAMS$
     modes are shown doubled - titled with its name, up to 3 at once;
     its [x] stops it, maximizing blows its picture up as far as it
     fits. Start one in each Terminal to have several running side by
-    side. The built-in 320x200 graphics programs - Snake,
-    Tetris, Sweeper, 2048 (PROGRAMS/*.BIN), paint, chip8, turtle - get
-    a window too: their 0xA0000 is remapped by paging to that
-    console's own 64KB of RAM (src/vga.asm), which the desktop shows,
-    so they draw exactly as on the real screen; paint and Sweeper get
-    the mouse inside their window (gfx_mouse_*, src/mouse.asm). A
+    side. The built-in 320x200 graphics programs - chip8, turtle,
+    `view` - get a window too: their 0xA0000 is remapped by paging to
+    that console's own 64KB of RAM (src/vga.asm), which the desktop
+    shows, so they draw exactly as on the real screen. A
     window's [x] stops its program (Ctrl+C in ring 3, Esc for the
     others); leave the desktop while one runs and it moves onto the
     whole screen, picture and colors kept.
@@ -899,9 +913,27 @@ tester@/PROGRAMS$
   - **Mixer** lists what's playing (see the mixer below), with a
     volume slider and a level meter each, and the master volume.
   - **Clock** is an analog clock in your time zone, **Pictures** shows
-    the .BMP files in the current folder (8-, 24- and 32-bit; click
-    for the next one), **System** has uptime, memory, tasks and the
-    network address.
+    the pictures in the current folder (.BMP 8-, 24- and 32-bit, and
+    .PNG) - a viewer (src/dkpics.asm): fitted to the window or 10%..800%
+    (the wheel zooms round the pointer, a zoomed picture is dragged
+    about), the previous / next one (the arrows, PgUp/PgDn, Home/End, a
+    click on its left third / the rest), a 3-second slideshow (Space),
+    and a bar with the buttons and "3 / 12  45%"; the window resizes
+    and maximizes. **System** has uptime, memory, tasks and the network
+    address.
+  - **PNG pictures** (apps/png.h, a streaming inflate and the five row
+    filters, all bit depths and color types, interlaced ones too): the
+    desktop's own are turned into a BMP by `/SYSTEM/PNG.BIN` - that C
+    code built for a kernel address (apps/pngmod.c, src/dkpng.asm) - so
+    Files' thumbnails, Pictures and the wallpaper take them; Paint opens
+    and saves them, and the browser shows them.
+  - **Long file names** (src/fslong.asm): up to 63 characters, spaces
+    and case as typed, the way VFAT does it - every file keeps its short
+    name (15 at most, what the Terminal uses: `TRIPTO~1.TXT`), and the
+    long one is kept beside it in the slot's spare bytes. The name
+    dialog makes one when a name isn't a short one as it is; Files (on
+    two lines under an icon), the desktop, Properties and `ls` show it,
+    and a copy keeps it. An old disk simply has none.
 
   It's a task of its own (src/desktop.asm, the windows' contents in
   src/dkwins.asm), at high priority so the pointer never waits for a
@@ -993,7 +1025,7 @@ tester@/PROGRAMS$
   VM: the 35-opcode interpreted machine mid-70s COSMAC VIP calculators
   ran, the target of most public-domain "here's a tiny Pong/Tetris/
   Space Invaders clone" ROMs floating around online). Same VGA mode
-  13h save-and-restore footing as SNAKE.BIN, scaled 5x (64x32 -> 320x160,
+  13h save-and-restore footing as `view`, scaled 5x (64x32 -> 320x160,
   leaving a strip for the ESC hint). The 16-key hex keypad maps to
   `1234`/`qwer`/`asdf`/`zxcv`. `EX9E`/`EXA1` ("skip if this key is/
   isn't held") need to know whether a key is down *right now*, not
@@ -1014,7 +1046,7 @@ tester@/PROGRAMS$
   `LEFT 90` / `BACKWARD 30` / `RIGHT 20`, plus `PENUP`/`PENDOWN`,
   `HOME`, `CLEARSCREEN`, `COLOR <0-15>`, and a nestable
   `REPEAT n [ ... ]`. Same VGA mode 13h save-and-restore footing as
-  SNAKE.BIN, shown until any key is pressed once the script finishes
+  `view`, shown until any key is pressed once the script finishes
   (like `view <name>` for a saved picture). The kernel itself never
   uses the FPU (it's the ring-3 programs'), so an arbitrary-angle
   FORWARD/BACKWARD leans on
@@ -1088,7 +1120,7 @@ toolchain, nothing to compile.
 **QEMU** (quickest way to try it):
 
 ```sh
-qemu-system-i386 -m 128 -drive format=raw,file=os-image.bin
+qemu-system-i386 -m 256 -drive format=raw,file=os-image.bin
 ```
 
 That's enough for the setup, the desktop, the shell and the programs.
@@ -1098,7 +1130,7 @@ and a real audio backend (QEMU's default is `none`, so nothing would be
 heard, `beep` included):
 
 ```sh
-qemu-system-i386 -m 128 -drive format=raw,file=os-image.bin \
+qemu-system-i386 -m 256 -drive format=raw,file=os-image.bin \
     -nic user,model=rtl8139 \
     -audiodev pa,id=snd0 -machine pcspk-audiodev=snd0 \
     -device adlib,audiodev=snd0,iobase=0x220 -device sb16,audiodev=snd0
@@ -1209,7 +1241,6 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `fsck [fix]` | check the filesystem (and put right what's wrong) |
 | **Editors** | |
 | `uranium <n>` | full-screen text editor (creates the file if it doesn't exist) |
-| `hex <n>` | hex/assembly editor (auto-adds `.BIN` if the name has no dot) |
 | **Programs** | |
 | `run <n>` | execute a program file, or a `.com` MS-DOS program (see below) |
 
@@ -1222,14 +1253,6 @@ the cursor is (`Ln 3, Col 12`).
 saves without exiting and without asking (flashes `Saved.` in the status
 line), and `Esc` exits - asking only if there are changes not saved yet:
 `Y` exit without them, `S` save them and exit, `N` back to editing.
-
-Inside the hex editor: arrow keys move the cursor, hex digits edit the
-byte under it a nibble at a time, `S` opens the one-line mini-assembler
-(`mov`/`add`/`sub`/`cmp`/`and`/`or`/`xor` between two registers of the
-same width, or with an immediate on an 8-bit register; `push`/`pop`,
-`inc`/`dec`; `int`; `jmp`/`je`/`jne`/`jz`/`jnz`/`loop` to an
-already-defined label; `ret`, `nop`, `hlt`, `cli`, `sti`), `Ctrl+B` saves
-and exits, `Esc` cancels.
 
 ## How it works
 
@@ -1268,7 +1291,7 @@ outside the kernel image need a full 32-bit linear address:
 | Video memory (VGA text mode) | `0xB8000` |
 | ATA scratch buffer (one sector) | `0x91000` |
 | BASIC program, arrays, strings (`basic`) | `0x200000` – `0x26FFFF` |
-| Big-file buffer (hostput, program files) | `0x6400000` – `0x6FFFFFF` |
+| Big-file buffer (hostput, program files: 9MB) / a PNG made a BMP | `0x6400000` – `0x6CFFFFF` / `0x6D00000` |
 | Wallpaper (1024x768x4) / Files' thumbnails | `0x7000000` / `0x7300000` |
 | Filesystem slot + bitmap cache | `0x3E00000` |
 | IMF song buffer (`play`) | `0x310000` |
@@ -1283,7 +1306,8 @@ outside the kernel image need a full 32-bit linear address:
 | Consoles' mode 13h in a window (9 x 64KB) | `0x5680000` – `0x570FFFF` |
 | Those windows as last shown (3 x 64KB) | `0x5710000` – `0x573FFFF` |
 | WAV file being played (`play`, 8MB) | `0x5800000` – `0x5FFFFFF` |
-| Desktop back buffer (1024x768x4) | `0x6000000` – `0x62FFFFF` |
+| Desktop back buffer (up to 1024x768x4) | `0x6000000` – `0x62FFFFF` |
+| A bigger screen's (1280 wide): back buffer, pages' copies, wallpaper, screenshot (5MB each, 4MB) | `0x8000000` / `0x8500000` / `0x8A00000` / `0x8F00000` / `0x9400000` |
 | FPU save areas / consoles' desktop text | `0x6300000` / `0x6310000` |
 | Desktop: shown text / Files list | `0x6320000` / `0x6330000` |
 | Terminals' scrollback (200 lines per console) | `0x6340000` – `0x6387FFF` |
@@ -1321,7 +1345,12 @@ apps/                  example ring-3 programs (`make apps`): lexos.inc for
                        browser.c (LexOS Web) and tls.h (its TLS 1.3),
                        cc.c (the C compiler), notepad.c (Notepad),
                        zip.c (ZIP archives), paint.c (Paint), calc.c
-                       (the Calculator).
+                       (the Calculator), snake.c / tetris.c /
+                       sweeper.c / 2048.c (the games), sheet.c (the
+                       spreadsheet), music.c (the player), hexedit.c;
+                       gui.h (buttons, text boxes, the file dialog,
+                       APPS.CFG), deflate.h, png.h, mod.h (the MOD
+                       engine), pngmod.c (/SYSTEM/PNG.BIN).
 disk/                  what LexOS's disk starts with: APPS/ (the built
                        programs), DEMOS/ (scripts, music, a CHIP-8 ROM,
                        SITE/ - the browser's demo site, C/ - C examples),
@@ -1357,28 +1386,18 @@ src/
   fs_extra.asm         chained extra sectors for files > 127 bytes, and
                        fs_load_content - the shared file-content reader
                        used by grep/head/tail/uranium.
-  programs.asm         `run`/`hex` commands, the TEST.BIN/CALC.BIN demo
-                       programs, and the PROGRAMS/TMP folders they live in.
+  programs.asm         `run`, the TMP folder, and an old disk's PROGRAMS
+                       folder retired at boot.
+  parse.asm            numbers typed at the prompt (decimal, 0x hex).
   vga.asm              switches the VGA hardware to/from mode 13h (320x200,
                        256 colors) by programming its registers directly -
-                       no BIOS int 10h in protected mode. Used by SNAKE.BIN.
-  snake.asm            PROGRAMS/SNAKE.BIN, a graphical snake game built on
-                       vga.asm's mode switch.
-  tetris.asm           PROGRAMS/TETRIS.BIN, the falling-block game, same
-                       vga.asm mode switch as snake.asm.
-  game2048.asm         PROGRAMS/2048.BIN, the sliding-tile puzzle, same
-                       vga.asm mode switch as snake.asm.
-  convert.asm          PROGRAMS/CONVERT.BIN, a decimal/hex/octal/binary
-                       base converter - a text-mode program like calc_run
-                       (programs.asm), not a vga.asm one.
-  chip8.asm            `chip8 <name>`, a CHIP-8/SUPER-CHIP interpreter - same
-                       vga.asm mode switch as snake.asm, reuses
+                       no BIOS int 10h in protected mode.
+  view.asm             `view <name>`: a .BMP in mode 13h.
+  chip8.asm            `chip8 <name>`, a CHIP-8/SUPER-CHIP interpreter -
+                       vga.asm's mode switch, reuses
                        sound.asm's audio_timer_start for its 60Hz timer.
   turtle.asm           `turtle <name>`, a LOGO-style turtle graphics
-                       script interpreter - same vga.asm mode switch
-                       as snake.asm.
-  sweeper.asm          PROGRAMS/SWEEPER.BIN, Minesweeper (the mouse too).
-  paint.asm            `paint` (mouse drawing, saved as .BMP) and `view`.
+                       script interpreter - vga.asm's mode switch too.
   mouse.asm            the PS/2 mouse (IRQ12), with the wheel.
   sound.asm            `play`: AdLib (.IMF), the Sound Blaster 16 (.WAV).
   mixer.asm            the SB16's mixer: 4 voices, each with its own rate
@@ -1430,6 +1449,11 @@ src/
   dkcpanel.asm         the Control panel.
   dksaver.asm          the screen saver.
   dkfscheck.asm        the disk checked at boot after a crash.
+  dkpng.asm            /SYSTEM/PNG.BIN loaded, a PNG made a BMP.
+  dkpics.asm           Pictures: the viewer (zoom, slideshow, its bar).
+  dknotify.asm         the notification center.
+  dkanim.asm           windows' animations.
+  dkres.asm            the screen's size (the Control panel's Screen).
                        (These are the kernel's extension - KEXT:
                        assembled with the kernel, cut off by the
                        Makefile into /SYSTEM/KEXT.BIN, loaded at boot
@@ -1437,6 +1461,7 @@ src/
                        loads are full.)
   fsjournal.asm        the filesystem's journal, file times and
                        attributes, `ls -l`, `attrib`, `fsck`.
+  fslong.asm           long file names beside the short ones.
   langui.asm           the system's language: /SYSTEM/LANG.DAT, tr_lookup.
   lang.asm             the Russian and Spanish letters and layouts.
   font866.inc          the Cyrillic glyphs (from CyrKoi-VGA16).
@@ -1458,9 +1483,6 @@ src/
                        small int 20h/21h emulation layer. %included at
                        the very end of kernel.asm, same reasoning as
                        atadma.asm above.
-  assembler.asm        one-line mini-assembler used by the hex editor; its
-                       mnemonic table lives at the tail of kernel.asm
-                       instead of here (see the note above mnem_ret there).
   rtc.asm              CMOS RTC driver (`date`, `time`).
   speaker.asm          PC speaker driver (`beep`).
   grep.asm             text search within a file (`grep`), with on-screen
@@ -1505,13 +1527,13 @@ src/
   support - no header parsing, no segment relocation.
 - One file's inline metadata + content lives in a single 512-byte sector;
   content past that grows through a chain of extra sectors, but the pool
-  is fixed at 30000 sectors (~15MB), and file/folder names are at most 15
-  characters, the extension included (`hostput` wants a DOS 8.3 name for
-  the host's side). Longer names would mean a new on-disk format - the
-  16-byte name sits at the start of every slot, and every command, the
-  desktop's Files, the tools and `mkdisk.py` compare names that way, many
-  of them through 16-bit pointers into low memory - so they were left out
-  when the journal, times and attributes came in.
+  is fixed at 30000 sectors (~15MB). A name the shell and the commands
+  take is at most 15 characters, the extension included (`hostput`
+  wants a DOS 8.3 name for the host's side); a long name (up to 63) is
+  the desktop's - Files, the icons, Properties, `ls` show it, but in the
+  Terminal a file is reached by its short one (`cat TRIPTO~1.TXT`), a
+  `mv`/`ren` there drops it, and programs' file dialogs show short
+  names.
 - The journal covers the filesystem's own records; a file's data goes
   straight to its sectors (before the records that point to it). One
   command that changes more than 120 different record sectors at once
@@ -1521,7 +1543,7 @@ src/
   first (up to 20KB per console), then handed on - and a command that
   waits for keys (`uranium`, a game) can't be piped.
 - LexOS Web knows no CSS, JavaScript, forms or frames; tables are rows
-  of cells, pictures are `.BMP` only, a page up to 256KB. Its https
+  of cells, pictures are `.BMP` and `.PNG`, a page up to 256KB. Its https
   offers only TLS 1.3 with X25519 (servers asking for another key
   exchange are refused) and doesn't check certificates (see above).
 - `cc.app` has no structs, unions, floats, multi-dimensional arrays or
@@ -1541,16 +1563,15 @@ src/
 - Script variables are 64 at most, their values up to 63 characters,
   numbers 32-bit integers; a script line handed to the shell is cut at
   63 characters (the shell's own line length).
-- The mini-assembler resolves labels in one pass, so jumps can only target
-  a label that already appears earlier in the same program. It also has
-  no memory operands (no `[bx]`, no `[label]`) and no 16-bit-register
-  immediates (`add cx,5` doesn't work - only 8-bit registers take an
-  immediate; `add cx,dx` works fine, since that's register-to-register).
+- The screen's size is one of four (800x600, 1024x768, 1280x720,
+  1280x1024 - QEMU's standard VGA); the sign-in screen is always
+  1024x768, and the two 1280-wide sizes need 256MB of memory (with less
+  they stay 1024x768 and say why).
 - Only `.APP` programs run in ring 3, each isolated by paging (its own
   4MB, nothing else). The kernel, the shell and everything built in run
-  in ring 0 - and so do the PROGRAM-type files `run` starts (TEST.BIN,
-  SNAKE.BIN and the others: raw machine code, up to 127 bytes, called
-  like a kernel function in the kernel's own address space) and MS-DOS
+  in ring 0 - and so do the PROGRAM-type files `run` starts (raw machine
+  code, up to 127 bytes, called like a kernel function in the kernel's
+  own address space) and MS-DOS
   `.com` programs (a 16-bit code segment, but still ring 0).
 - The kernel isn't reentrant: a console's task holds the one kernel lock
   while it's inside the kernel, so the multitasking is between consoles,
