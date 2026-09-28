@@ -43,6 +43,15 @@ dkn_ask:
     mov dword [dkn_err], 0
     mov byte [dkn_khead], 0
     mov byte [dkn_ktail], 0
+    cmp al, DKN_RENAME                    ; (renaming: its long name, if
+    jne .as_given                         ;  it has one - src/fslong.asm)
+    push esi
+    mov eax, ecx
+    call fsl_peek                         ; -> esi
+    pop eax
+    jnc .as_given
+    mov esi, eax
+.as_given:
     xor ecx, ecx
     or esi, esi
     jz .typed
@@ -125,14 +134,8 @@ dkn_work:
     jb .key
     cmp al, 127
     jae .key
-    cmp byte [dkn_op], DKN_ADDUSER        ; (a user's name, a password: as
-    jae .char                             ;  typed)
-    cmp al, 'a'                           ; (names are capitals)
-    jb .char
-    cmp al, 'z'
-    ja .char
-    sub al, 32
-.char:
+.char:                                   ; (as typed: a short name's made
+                                          ;  capitals by dkn_name)
     cmp byte [dkn_fresh], 0               ; (the text it started with: gone)
     je .not_fresh
     mov byte [dkn_fresh], 0
@@ -308,6 +311,8 @@ dkn_do:
 .content:
     call dkn_write_file
     jc .full
+    movzx eax, word [fs_tmp_slot]         ; (its long name, if it has one)
+    call dkn_long_done
     jmp .made
 
 .rename:
@@ -330,6 +335,7 @@ dkn_do:
     call dki_copy
     mov eax, [dkn_slot]
     call fs_write_slot
+    call dkn_long_done
     jmp .made
 
 .newdir:
@@ -351,6 +357,7 @@ dkn_do:
     mov word [SCRATCH_ADDR + FS_CHAIN_OFFSET], FS_NO_CHAIN
     pop eax
     call fs_write_slot
+    call dkn_long_done
     jmp .made
 
 .link:
@@ -458,6 +465,9 @@ dkn_do:
     mov ecx, [dkn_size]
     call dkn_write_file
     jc .full
+    mov eax, [dkn_slot]                   ; (its long name: src/fslong.asm)
+    movzx edx, word [fs_tmp_slot]
+    call fsl_copy
     jmp .made
 
 .trash:
@@ -538,49 +548,127 @@ dkn_do:
     popad
     ret
 
-; dkn_text -> fs_tmp_name, if it's a name that can be (15 characters,
-; none of / \ | < > * ? " : or a space); carry=1 (dkn_err) if not
+; dkn_text -> fs_tmp_name, if it's a name that can be: a short one as
+; it is (dkn_long 0), or a long one (63 at most, spaces and all - none
+; of / \ | < > * ? " : ;) kept in dkn_lname, its short name made up
+; (src/fslong.asm); carry=1 (dkn_err) if not
 dkn_name:
-    push eax
-    push ecx
-    push esi
+    pushad
+    mov byte [dkn_long], 0
+    mov esi, dkn_text
+    call fsl_is_short
+    jc .long_name
+    mov edi, fs_tmp_name                  ; (in capitals, as they've always
+.upper:                                   ;  been)
+    lodsb
+    call to_upper_al
+    stosb
+    or al, al
+    jnz .upper
+    popad
+    clc
+    ret
+.long_name:
     mov ecx, [dkn_len]
-    cmp ecx, FS_NAME_LEN - 1
+    cmp ecx, FS_LNAME_MAX - 1
     ja .long
     xor ecx, ecx
+    xor edx, edx                          ; (anything but spaces?)
 .char:
     mov al, [dkn_text + ecx]
     or al, al
-    jz .good
-    mov esi, dkn_bad_chars
-.bad:
-    cmp byte [esi], 0
-    je .ok_char
-    cmp al, [esi]
-    je .invalid
-    inc esi
-    jmp .bad
-.ok_char:
-    mov [fs_tmp_name + ecx], al
+    jz .checked
+    call fsl_bad_char
+    jnc .invalid
+    cmp al, ' '
+    je .space
+    inc edx
+.space:
+    mov [dkn_lname + ecx], al
     inc ecx
     jmp .char
-.good:
-    mov byte [fs_tmp_name + ecx], 0
-    pop esi
-    pop ecx
-    pop eax
+.checked:
+    mov byte [dkn_lname + ecx], 0
+    or edx, edx
+    jz .invalid
+    cmp byte [dkn_op], DKN_NEWTXT         ; a new text or script: its
+    mov esi, dkn_ext_txt                  ; extension, if it has none
+    je .ext
+    cmp byte [dkn_op], DKN_NEWHG
+    mov esi, dkn_ext_hg
+    jne .ext_done
+.ext:
+    mov edi, dkn_lname
+.find_dot:
+    cmp byte [edi], '.'
+    je .ext_done
+    cmp byte [edi], 0
+    je .add_ext
+    inc edi
+    jmp .find_dot
+.add_ext:
+    lea eax, [edi + 5]
+    cmp eax, dkn_lname + FS_LNAME_MAX
+    ja .ext_done
+    push edi
+    call dki_copy
+    pop edi
+.lower:                                   ; (".txt": a long name's as typed)
+    inc edi
+    cmp byte [edi], 0
+    je .ext_done
+    or byte [edi], 0x20
+    jmp .lower
+.ext_done:
+    mov esi, dkn_lname                    ; that long name here already?
+    call fsl_find_long                    ; -> eax
+    jc .fresh
+    cmp byte [dkn_op], DKN_RENAME         ; (itself, renamed: its short
+    jne .taken                            ;  name stays)
+    cmp eax, [dkn_slot]
+    jne .taken
+    call fs_read_slot
+    mov esi, SCRATCH_ADDR
+    mov edi, fs_tmp_name
+    mov ecx, FS_NAME_LEN
+    cld
+    rep movsb
+    mov byte [fs_tmp_name + FS_NAME_LEN], 0
+    jmp .made_up
+.fresh:
+    call fsl_short                        ; -> fs_tmp_name
+    jc .taken
+.made_up:
+    mov byte [dkn_long], 1
+    popad
     clc
     ret
 .long:
     mov dword [dkn_err], dkn_m_long
     jmp .fail
+.taken:
+    mov dword [dkn_err], dkn_m_taken
+    jmp .fail
 .invalid:
     mov dword [dkn_err], dkn_m_invalid
 .fail:
-    pop esi
-    pop ecx
-    pop eax
+    popad
     stc
+    ret
+
+; eax = the slot just made or renamed: its long name (dkn_lname), or
+; none any more (a short name typed)
+dkn_long_done:
+    pushad
+    call fs_read_slot
+    xor esi, esi
+    cmp byte [dkn_long], 0
+    je .put
+    mov esi, dkn_lname
+.put:
+    call fsl_put
+    call fs_write_slot
+    popad
     ret
 
 ; fs_tmp_name without a "." gets esi (".TXT"), if it fits
@@ -1083,6 +1171,8 @@ dk_sub_y         dd 0
 dkn_empty        db 0
 dkn_ext_txt      db ".TXT", 0
 dkn_ext_hg       db ".HG", 0
+dkn_long         db 0                     ; the name typed: a long one
+dkn_lname        times FS_LNAME_MAX + 8 db 0
 dkn_bad_chars    db "/\|<>*?", 34, ": ", 0
 dkn_hg_template  db "@echo off", 13, 10
                  db "# a LexOS script: help lists the commands, README says more", 13, 10
@@ -1105,7 +1195,7 @@ dkn_t_newtxt     db "New text file", 0
 dkn_t_newhg      db "New script", 0
 dkn_t_newlnk     db "New shortcut", 0
 dkn_t_copyto     db "Copy to", 0
-dkn_p_name       db "Name (up to 15 characters):", 0
+dkn_p_name       db "Name (up to 63 characters):", 0
 dkn_p_target     db "What it opens (a path, like /APPS/FIRE.APP):", 0
 dkn_p_folder     db "The folder to copy it into (like /DEMOS, or /):", 0
 dkn_l_ok         db "OK", 0
@@ -1129,5 +1219,5 @@ dkn_m_nothing    db "There's nothing at that path.", 0
 dkn_m_not_folder db "That isn't a folder.", 0
 dkn_m_files_only db "Only files can be copied.", 0
 dkn_m_busy       db "A screenshot is being saved - in a moment.", 0
-dkn_m_long       db "At most 15 characters.", 0
-dkn_m_invalid    db "Not in a name: / \ | < > * ? : or a space.", 0
+dkn_m_long       db "At most 63 characters.", 0
+dkn_m_invalid    db "Not in a name: / \ | < > * ? : ;", 0

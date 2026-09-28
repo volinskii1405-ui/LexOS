@@ -1794,6 +1794,9 @@ dkx_fc_copy_one:
     mov dword [fh_src_ptr], DESK_IMG_FILE
     mov dword [fs_stream_source], fh_stream_byte
     call fs_stream_write
+    movzx eax, word [dkx_fc_slot + ebx*2] ; (its long name: src/fslong.asm)
+    movzx edx, word [fs_tmp_slot]
+    call fsl_copy
     popad
     clc
     ret

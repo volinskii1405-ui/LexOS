@@ -220,7 +220,7 @@ dka_label:
     mov [dka_x], eax
     mov [dka_y], edx
     mov esi, ebx
-    shl esi, 4
+    shl esi, 5
     add esi, dki_label
     call tr_lookup                        ; (the trash's: in the language)
     mov edi, dka_text
@@ -240,6 +240,21 @@ dka_label:
     call dka_line
     jmp .done
 .two:
+    cmp ecx, 2 * DKA_LINE                 ; (longer than two lines - a long
+    jbe .two_fit                          ;  name: after a space, if one's
+    mov ebx, DKA_LINE                     ;  near the end of the first)
+.long_space:
+    cmp byte [dka_text + ebx], ' '
+    je .long_at
+    dec ebx
+    cmp ebx, 4
+    jae .long_space
+    mov ebx, DKA_LINE
+    jmp .hard
+.long_at:
+    inc ebx
+    jmp .hard
+.two_fit:
     mov ebx, DKA_LINE                     ; where to break: the last good
     lea edx, [ebx + 1]                    ; place that leaves the rest a line
 .find:
@@ -278,11 +293,12 @@ dka_label:
     pop ebx
     mov al, [dka_keep]
     mov [dka_text + ebx], al
-    lea esi, [dka_text + ebx]             ; the second: the rest (as fits)
-    call dki_strlen
+    lea esi, [dka_text + ebx]             ; the second: the rest (as fits,
+    call dki_strlen                       ;  ".." if there's more)
     cmp ecx, DKA_LINE
     jbe .rest
     mov ecx, DKA_LINE
+    mov word [esi + DKA_LINE - 2], '..'
 .rest:
     mov edx, [dka_y]
     add edx, 55

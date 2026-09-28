@@ -934,6 +934,7 @@ fs_list:
     jmp .print_name
 .name_end:
     pop bx
+    call fsl_print_long           ; (and its long name: src/fslong.asm)
 
     push si
     cmp byte [fs_list_type], FS_TYPE_DIR

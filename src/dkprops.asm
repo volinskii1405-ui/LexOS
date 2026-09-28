@@ -171,6 +171,22 @@ dkp_load:
     cld
     rep movsb
     mov byte [dkp_name + FS_NAME_LEN], 0
+    mov byte [dkp_long], 0                ; its long name (src/fslong.asm):
+    call fsl_get                          ; shown as far as it fits, the
+    jc .short                             ; short one under it
+    mov edi, dkp_long
+    mov ecx, DKP_LONG_MAX
+.long:
+    lodsb
+    stosb
+    or al, al
+    jz .short
+    loop .long
+    mov byte [edi], 0
+    cmp byte [esi], 0
+    je .short
+    mov word [edi - 2], '..'
+.short:
     mov al, [SCRATCH_ADDR + FS_TYPE_OFFSET]
     mov [dkp_type], al
     mov al, [SCRATCH_ADDR + FS_PARENT_OFFSET]
@@ -536,6 +552,15 @@ dkp_draw:
     add eax, ( 0 - DKP_W / 2 ) + 66
     mov ebx, DKP_Y + 48
     mov edx, COL_TEXT
+    cmp byte [dkp_long], 0
+    je .one_name
+    mov esi, dkp_long                     ; a long name, and its short one
+    sub ebx, 8
+    call dk_text_raw_all
+    add ebx, 17
+    mov esi, dkp_name
+    mov edx, COL_MUTED
+.one_name:
     call dk_text_raw_all
     mov eax, [dk_w2] ; a line under
     add eax, ( 0 - DKP_W / 2 ) + 16
@@ -1001,6 +1026,8 @@ dkp_icon         dd 0
 dkp_kind         dd 0
 dkp_up           times 8 dd 0
 dkp_name         times FS_NAME_LEN + 1 db 0
+DKP_LONG_MAX     equ (DKP_W - 66 - 16) / 8
+dkp_long         times DKP_LONG_MAX + 2 db 0
 dkp_where        times 128 db 0
 dkp_size_text    times 64 db 0
 dkp_inside_text  times 64 db 0
