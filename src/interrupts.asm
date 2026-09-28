@@ -272,6 +272,9 @@ keyboard_isr:
 .alt_up:
     mov byte [kbd_alt_held], 0
     mov byte [lang_alt_held], 0
+    cmp byte [dk_active], 0        ; (Alt+Tab's panel: that one - src/dkswitch.asm)
+    je .eoi
+    mov byte [dsw_alt_up], 1
     jmp .eoi
 .ctrl_down:
     mov byte [kbd_ctrl_held], 1
@@ -395,7 +398,12 @@ keyboard_isr:
     jne .not_alt_tab               ; (src/desktop.asm)
     cmp byte [dk_active], 0
     je .not_alt_tab
+    cmp byte [kbd_shift_held], 0   ; (Shift+Tab: back)
+    jne .alt_tab_back
     inc byte [dk_alt_tab]
+    jmp .eoi
+.alt_tab_back:
+    inc byte [dsw_back]
     jmp .eoi
 .not_alt_tab:
     cmp al, 0x14                   ; T

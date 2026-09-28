@@ -958,7 +958,15 @@ dk_draw_system:
     mov esi, dk_sys_buf
     mov edx, COL_TEXT
     call dk_sys_line
-    mov esi, dk_sys_memory
+    mov edi, dk_sys_buf                   ; the memory (the CMOS says:
+    mov esi, dk_sys_memory                ;  src/dkres.asm)
+    call wget_append
+    call dkr_mem_mb
+    call wget_append_num
+    mov esi, dk_sys_mb
+    call wget_append
+    mov byte [edi], 0
+    mov esi, dk_sys_buf
     call dk_sys_line
     mov edi, dk_sys_buf                   ; consoles
     mov esi, dk_sys_consoles
@@ -5850,7 +5858,8 @@ dk_msg_loading      db "Looking for .BMP files...", 0
 dk_msg_no_pictures  db "No .BMP files in this folder.", 0
 dk_sys_title        db "LexOS - a hobby OS in NASM", 0
 dk_sys_uptime       db "Up for ", 0
-dk_sys_memory       db "Memory: 128 MB", 0
+dk_sys_memory       db "Memory: ", 0
+dk_sys_mb           db " MB", 0
 dk_sys_consoles     db "Consoles: ", 0
 dk_sys_ip           db "Address: ", 0
 dk_sys_no_ip        db "(no network yet)", 0

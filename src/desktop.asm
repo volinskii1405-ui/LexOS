@@ -1827,35 +1827,10 @@ dk_win_maximize:
     popad
     ret
 
-; Alt+Tab (keyboard_isr counts them): the window at the back comes to
-; the front - round they go
+; Alt+Tab (keyboard_isr counts them): the panel of windows
+; (src/dkswitch.asm)
 dk_alt_tab_work:
-    pushad
-.more:
-    cmp byte [dk_alt_tab], 0
-    je .done
-    dec byte [dk_alt_tab]
-    xor ecx, ecx
-.bottom:
-    cmp ecx, [dk_zcount]
-    jae .done
-    movzx eax, byte [dk_zorder + ecx]
-    push ecx
-    mov ecx, eax
-    call dk_on_taskbar
-    pop ecx
-    jnc .found
-    inc ecx
-    jmp .bottom
-.found:
-    mov byte [dkw_hidden + eax], 0
-    call dk_raise
-    call dk_focus_console
-    mov byte [dk_redraw_all], 1
-    jmp .more
-.done:
-    popad
-    ret
+    jmp dsw_work
 
 ; ecx = a window -> esi = its title: a Terminal running a text program
 ; that named itself (prog_title: uranium) shows that name instead
@@ -2073,6 +2048,7 @@ dk_render:
 .no_ctx:
     call dk_snap_draw                     ; (src/dkextra.asm: an edge's outline)
     call dka_draw                         ; (src/dkanim.asm: a window growing)
+    call dsw_draw                         ; (src/dkswitch.asm: Alt+Tab's panel)
     call dk_draw_toast
     call dkt_draw                         ; (src/dkextra.asm: the tooltip)
     call dkn_draw                         ; (src/dkname.asm: a name dialog)
