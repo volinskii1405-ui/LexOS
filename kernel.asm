@@ -413,4 +413,5 @@ kext_start:
 %include "src/dkregion.asm"
 %include "src/dkclock.asm"
 %include "src/dknight.asm"
+%include "src/dkchist.asm"
 kext_end:

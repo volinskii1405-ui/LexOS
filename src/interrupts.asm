@@ -355,6 +355,24 @@ keyboard_isr:
     je .not_desk_keys              ; (src/dkextra.asm)
     cmp byte [dkl_grab], 0         ; (locked, the saver out: theirs)
     jne .not_desk_keys
+    cmp byte [dch_open], 0         ; Win+V's panel out: Up, Down, Enter,
+    je .no_dch                     ; Esc are its (src/dkchist.asm)
+    mov cl, 1
+    cmp al, 0x48
+    je .dch_key
+    mov cl, 2
+    cmp al, 0x50
+    je .dch_key
+    mov cl, 3
+    cmp al, 0x1C
+    je .dch_key
+    mov cl, 4
+    cmp al, 0x01
+    jne .no_dch
+.dch_key:
+    mov [dch_key], cl
+    jmp .eoi
+.no_dch:
     cmp bh, 0
     je .desk_plain
     cmp byte [dkx_win_held], 0     ; Win+arrows: the window in front to
@@ -420,6 +438,11 @@ keyboard_isr:
     mov byte [dkx_files_req], 1
     jmp .eoi
 .not_win_e:
+    cmp al, 0x2F                   ; V: the clipboard's history
+    jne .not_win_v                 ; (src/dkchist.asm)
+    mov byte [dch_req], 1
+    jmp .eoi
+.not_win_v:
     cmp al, 0x0D                   ; + (= or the keypad's): the magnifier,
     je .win_plus                   ; x2, then x4; - back down, Esc away
     cmp al, 0x4E                   ; (src/dkmag.asm)

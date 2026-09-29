@@ -859,6 +859,8 @@ dkc_cfg_load:
 .term:
     call dnl_set_term
     call dkclk_cfg_load                   ; (the alarm: src/dkclock.asm)
+    call dch_forget                       ; (a new user: not the last one's
+                                          ;  clipboard history, dkchist.asm)
     mov esi, dkc_cfg_res
     call dk_cfg_value
     jc .no_res

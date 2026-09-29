@@ -404,6 +404,7 @@ desktop_task:
     call shx_work                         ; (src/shellx.asm: `open`)
     call dkclk_work                       ; (src/dkclock.asm: alarm, timer)
     call dnl_work                         ; (src/dknight.asm: the night light)
+    call dch_work                         ; (src/dkchist.asm: Win+V)
     call dk_shot_capture                  ; (src/dkwins.asm)
     call dk_toast_work
     call dk_wheel_work                    ; (src/dkwins.asm)
@@ -1422,6 +1423,8 @@ dk_click:
     pushad
     call dkn_click                        ; the name dialog's (src/dkname.asm)
     jnc .done
+    call dch_click                        ; Win+V's panel (src/dkchist.asm)
+    jnc .done
     cmp byte [dk_ctx_open], 0             ; a context menu: an item, or
     je .no_ctx                            ; away it goes
     call dk_ctx_click                     ; (src/dkwins.asm)
@@ -2064,6 +2067,7 @@ dk_render:
     call dk_snap_draw                     ; (src/dkextra.asm: an edge's outline)
     call dka_draw                         ; (src/dkanim.asm: a window growing)
     call dsw_draw                         ; (src/dkswitch.asm: Alt+Tab's panel)
+    call dch_draw                         ; (src/dkchist.asm: Win+V's)
     call drs_draw                         ; (src/dkregion.asm: a part chosen)
     call dk_draw_toast
     call dkt_draw                         ; (src/dkextra.asm: the tooltip)
