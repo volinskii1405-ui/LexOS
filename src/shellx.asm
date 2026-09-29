@@ -162,6 +162,24 @@ shx_work:
     jc .done
     mov byte [shx_open_req], 0
     pushad
+    mov esi, dki_file + DKI_MAX * FS_NAME_LEN
+    call dk_ext_dword                     ; a shortcut: what it points to
+    cmp eax, 'LNK'                        ; (its text), as the desktop's
+    jne .open
+    mov esi, dki_target + DKI_MAX * DKI_PATH
+    call dki_resolve                      ; -> eax = its slot
+    cmp eax, -1
+    je .open
+    mov edi, dki_target + DKI_MAX * DKI_PATH
+    push edi
+    mov ecx, DKI_PATH - 2
+    call fs_load_to                       ; -> ecx
+    pop edi
+    mov byte [edi + ecx], 0
+    call dki_clean_path
+    mov ebx, DKI_MAX
+    call dki_set_kind
+.open:
     mov ebx, DKI_MAX
     call dki_open
     popad

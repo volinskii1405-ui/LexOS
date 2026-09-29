@@ -1497,6 +1497,11 @@ dk_click:
     xor edx, edx
     mov ecx, DK_MENU_ITEM_H
     div ecx
+    cmp eax, [dk_prog_vn]                 ; (past the programs: "Files",
+    jb .run_prog                          ;  then the files found)
+    je .done
+    dec eax
+.run_prog:
     call dk_prog_run                      ; (src/dkwins.asm)
     jmp .done
 .no_sub:

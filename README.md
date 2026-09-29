@@ -728,7 +728,8 @@ tester@/DESKTOP$ run snake.app
   Keys: **Alt+F4** closes the window in front, **Win+D** (or the thin
   strip at the taskbar's right end) shows the desktop and brings the
   windows back, **Win+E** opens Files, **Win+L** locks the screen,
-  **Ctrl+Shift+Esc** opens Tasks, **Win+←/→** puts the window in front
+  **Ctrl+Shift+Esc** opens Tasks, **Win+V** the clipboard's history,
+  **Win+Plus** the magnifier, **Win+←/→** puts the window in front
   into the left / right half (a program's picture wider than that: at
   that side, its own size), **Win+↑** maximizes it, **Win+↓** gives it
   its own size back, or down to the taskbar. Right-click a taskbar button:
@@ -769,7 +770,24 @@ tester@/DESKTOP$ run snake.app
     over him). Hungry or lonely, he's sad - he stops walking and sits with
     his eyes shut and a tear, and says so now and then; tired, he sleeps
     more. It's kept in `DESKTOP.CFG` with the time, and the time the
-    machine was off counts too.
+    machine was off counts too. At the login he greets you by the time
+    of day ("Good evening, tester!"); the pointer held over the taskbar
+    for 3 seconds, he starts hunting it; and while music plays (Music,
+    `play`, any sound) he puts headphones on and nods along, a note
+    over his head.
+  - **Win+V: the clipboard's history** (src/dkchist.asm): the last 8
+    texts (a Terminal's selection, `clip`) and pictures (a screenshot,
+    Paint's Ctrl+C, a picture copied in Files) in a panel over the
+    taskbar, the newest first; a click - or Up / Down, Enter - makes one
+    the clipboard again: a text is typed where Ctrl+V would type it, a
+    picture waits for Paint's Ctrl+V. Clear forgets them, Esc closes.
+  - **The magnifier** (src/dkmag.asm): **Win+Plus** shows a lens round
+    the pointer at x2, again x4; **Win+Minus** back down, **Win+Esc**
+    away. It's drawn onto the screen like the pointer, over everything.
+  - **Files in the start menu's search** (src/dkmfind.asm): under the
+    programs, "Files" - any file on the disk with the typed text in its
+    name (long or short), with its folder; Enter or a click opens it as
+    a double click would (a shortcut opens what it points to).
   - **Files without a Terminal** (src/dkname.asm): a right click on the
     desktop or on Files' empty space has **Create >** - its submenu
     opens under the pointer: Create a folder, Create a TXT, Create a HG
@@ -836,7 +854,10 @@ tester@/DESKTOP$ run snake.app
     minimized and grows back out of it - and the **screen size**:
     800x600, 1024x768, 1280x720 or 1280x1024, changed at once, the
     windows and icons kept on it; the two 1280-wide ones need 256MB -
-    `make run` gives QEMU that), Sound (on/off, the Mixer),
+    `make run` gives QEMU that), the **night light** (Off, On, or
+    Evening - 19:00 to 7:00 - a warmer screen, less blue: src/dknight.asm)
+    and the **Terminal's colors** (Classic, Green, Amber, or Light - dark
+    text on paper), Sound (on/off, the Mixer),
     Keyboard (the system's language - at once - and the layouts), Date &
     time (the time zone), Mouse (pointer speed, double-click speed),
     Users (Add..., Password..., Switch user).
@@ -1542,6 +1563,9 @@ src/
   dkswitch.asm         Alt+Tab's panel of the windows.
   dkregion.asm         Shift+PrintScreen: a part of the screen.
   dkclock.asm          the Clock's alarm, timer and stopwatch.
+  dknight.asm          the night light; the Terminal's color schemes.
+  dkchist.asm          Win+V: the clipboard's history.
+  dkmfind.asm          the start menu's search: files too.
                        (These are the kernel's extension - KEXT:
                        assembled with the kernel, cut off by the
                        Makefile into /SYSTEM/KEXT.BIN, loaded at boot
@@ -1588,6 +1612,7 @@ src/
                        for/goto, set/vars/input/sleep, AUTOEXEC.HG.
   pipe.asm             pipes and redirection: a | b, a > f, a >> f.
   shellx.asm           paths for `run` and `play`; `open`, `clip`.
+  dkmag.asm            the magnifier (Win+Plus).
 ```
 
 ## Known limitations

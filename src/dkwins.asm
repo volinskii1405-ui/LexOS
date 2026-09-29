@@ -2405,13 +2405,21 @@ dk_prog_filter:
 .filtered:
     mov [dk_prog_vn], edx
     call dkx_recent_order                 ; (src/dkextra.asm: recent ones first)
+    call dmf_filter                       ; (files too: src/dkmfind.asm)
     mov dword [dk_prog_sel], -1
     cmp byte [dk_search], 0
     je .rows
-    or edx, edx
+    mov eax, edx
+    add eax, [dmf_n]
     jz .rows
     mov dword [dk_prog_sel], 0
 .rows:
+    mov eax, [dmf_n]                      ; ("Files" and them: rows too)
+    or eax, eax
+    jz .no_files
+    inc eax
+.no_files:
+    add edx, eax
     or edx, edx
     jnz .shown
     inc edx                               ; ("nothing" takes a row)
@@ -2495,8 +2503,9 @@ dk_menu_keys_work:
     call dk_prog_filter
     jmp .key
 .special:
-    cmp dword [dk_prog_vn], 0
-    je .key
+    mov edx, [dk_prog_vn]                 ; (the programs, then the files)
+    add edx, [dmf_n]
+    jz .key
     mov ecx, [dk_prog_sel]
     cmp ah, 0x48                          ; Up
     jne .down
@@ -2512,11 +2521,14 @@ dk_menu_keys_work:
     mov byte [dk_prog_open], 1
     call dk_prog_scan
     mov ecx, -1
+    mov edx, [dk_prog_vn]
+    add edx, [dmf_n]
+    jz .key
 .have_list:
     inc ecx
-    cmp ecx, [dk_prog_vn]
+    cmp ecx, edx
     jb .picked
-    mov ecx, [dk_prog_vn]
+    mov ecx, edx
     dec ecx
 .picked:
     mov [dk_prog_sel], ecx
@@ -2654,8 +2666,11 @@ dk_draw_programs:
     mov ecx, DK_PROG_W
     mov esi, COL_SUBMENU
     call dk_fill
+    call dmf_draw                         ; (the files found: src/dkmfind.asm)
     cmp dword [dk_prog_vn], 0
     jne .items
+    cmp dword [dmf_n], 0
+    jne .done
     add eax, 14
     add ebx, 4
     mov esi, dk_prog_none
@@ -2712,7 +2727,7 @@ dk_draw_programs:
 dk_prog_run:
     pushad
     cmp eax, [dk_prog_vn]
-    jae .done
+    jae .file
     mov eax, [dk_prog_view + eax*4]
     mov esi, eax
     shl esi, 4
@@ -2721,6 +2736,10 @@ dk_prog_run:
     shl edi, 5
     add edi, dk_prog_paths
     call dk_launch
+    jmp .done
+.file:
+    sub eax, [dk_prog_vn]                 ; a file found (src/dkmfind.asm)
+    call dmf_open
 .done:
     popad
     ret

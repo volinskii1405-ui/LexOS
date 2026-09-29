@@ -580,6 +580,26 @@ TR = {
 'lex_s7': ('Гонялся за курсором мыши. Удрал.', 'Perseguí el puntero del ratón. Se escapó.'),
 'lex_s8': ('Девять консолей, девять жизней.', 'Nueve consolas, nueve vidas.'),
 'lex_s9': ('Мяу-мяу! (Это значит: классная ОС.)', '¡Miau miau! (Significa: qué buen SO.)'),
+# ---- Lex's greeting; night light, Terminal colors; Win+V; the menu's files ----
+'cat_msg_morning': ('Доброе утро, ', 'Buenos días, '),
+'cat_msg_afternoon': ('Добрый день, ', 'Buenas tardes, '),
+'cat_msg_evening': ('Добрый вечер, ', 'Buenas tardes, '),
+'cat_msg_night': ('Доброй ночи, ', 'Buenas noches, '),
+'dkc_l_night': ('Ночной свет', 'Luz nocturna'),
+'dkc_l_evening': ('Вечером', 'De noche'),
+'dkc_l_termcol': ('Цвета терминала', 'Colores terminal'),
+'dkc_l_classic': ('Обычные', 'Clásicos'),
+'dkc_l_green': ('Зелёные', 'Verdes'),
+'dkc_l_amber': ('Янтарь', 'Ámbar'),
+'dkc_l_light': ('Светлые', 'Claros'),
+'dch_l_title': ('История буфера обмена', 'Historial del portapapeles'),
+'dch_l_clear': ('Очистить', 'Borrar'),
+'dch_l_keys': ('Вверх / Вниз, Enter: вставить   Esc: закрыть', 'Arriba / Abajo, Enter: pegar   Esc: cerrar'),
+'dch_l_none': ('Пока ничего не скопировано.', 'Aún no se ha copiado nada.'),
+'dch_m_chars': (' символов', ' caracteres'),
+'dch_m_picture': ('Картинка: ', 'Imagen: '),
+'dch_m_pic_on': ('Картинка в буфере - Ctrl+V в Paint', 'Imagen en el portapapeles - Ctrl+V en Paint'),
+'dmf_l_files': ('Файлы', 'Archivos'),
 }
 
 def english():
