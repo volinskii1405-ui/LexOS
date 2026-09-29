@@ -6,6 +6,10 @@
 ; right-click menu hides him - he jumps, and falls away below the screen
 ; - or brings him back: up he flies from below, and lands (kept in
 ; DESKTOP.CFG: "cat=0"). The Clock's alarm makes him jump and meow.
+; Music playing (Music, `play ... &`, a program's sound): he sits with
+; his headphones on, nodding to it, a note over him now and then. The
+; pointer kept on the taskbar a while: he goes after it. When the
+; desktop starts he says hello - as the time of day has it.
 ;
 ; And he has to be looked after (a tamagotchi): food, joy and energy,
 ; 0..100 each. Food and joy run down as time goes by, energy while he's
@@ -56,6 +60,20 @@ dkx_cat_work:
     cmp byte [cat_fly], 0                 ; flying off, or in
     jne .flying
     call cat_tick
+    call cat_greet_work
+    call cat_music_now                    ; music: headphones on
+    jnc .no_music
+    call cat_listen
+    jmp .done
+.no_music:
+    cmp byte [cat_listening], 0           ; (it's over: off they come)
+    je .not_listening
+    mov byte [cat_listening], 0
+    mov eax, [timer_ms]
+    mov [cat_until], eax
+    call cat_mark
+.not_listening:
+    call cat_hunt_check                   ; (the pointer kept on the taskbar)
     mov eax, [timer_ms]
     cmp eax, [cat_play_until]
     js .play
@@ -278,6 +296,151 @@ dkx_cat_alarm:
     mov dword [cat_play_until], 0
     mov eax, SND_MEOW
     call snd_play
+    popad
+.done:
+    ret
+
+; carry=1 if music's playing: Music (its music_state), `play ... &`,
+; or a program's voice with sound queued (not the desktop's own)
+cat_music_now:
+    cmp byte [aext_music], 1
+    je .yes
+    cmp dword [play_bg_pid], 0
+    jne .yes
+    push eax
+    push ebx
+    xor ebx, ebx
+.voice:
+    cmp byte [mix_used + ebx], 0
+    je .next
+    cmp ebx, [snd_voice]
+    je .next
+    mov eax, [mix_head + ebx*4]
+    cmp eax, [mix_tail + ebx*4]
+    je .next
+    pop ebx
+    pop eax
+.yes:
+    stc
+    ret
+.next:
+    inc ebx
+    cmp ebx, MIX_VOICES
+    jb .voice
+    pop ebx
+    pop eax
+    clc
+    ret
+
+; Listening: sitting, nodding every 350ms, a note over him now and then
+cat_listen:
+    cmp byte [cat_listening], 0
+    jne .on
+    mov byte [cat_listening], 1           ; (headphones on)
+    mov byte [cat_state], CAT_SIT
+    mov dword [cat_play_until], 0
+    mov eax, [timer_ms]
+    mov [cat_step_ms], eax
+    call cat_mark
+.on:
+    mov eax, [timer_ms]
+    sub eax, [cat_step_ms]
+    cmp eax, 350
+    jb .done
+    add dword [cat_step_ms], 350
+    cmp eax, 1000                         ; (a long gap: from now)
+    jb .beat
+    mov eax, [timer_ms]
+    mov [cat_step_ms], eax
+.beat:
+    xor byte [cat_frame], 1
+    inc byte [cat_beats]
+    call cat_mark
+.done:
+    ret
+
+; The pointer on the taskbar, still there after 3s: he chases it
+; (awake and not too tired)
+cat_hunt_check:
+    mov eax, [dk_my]
+    cmp eax, [dk_task_y]
+    jb .away
+    cmp dword [cat_hover_since], 0
+    jne .there
+    mov eax, [timer_ms]
+    or eax, 1
+    mov [cat_hover_since], eax
+    ret
+.there:
+    mov eax, [timer_ms]
+    sub eax, [cat_hover_since]
+    cmp eax, 3000                         ; (signed: after a hunt it's ahead)
+    jl .done
+    mov eax, [timer_ms]                   ; (again after this one, if it stays)
+    add eax, 6000
+    mov [cat_hover_since], eax
+    cmp byte [cat_energy], 15
+    jb .done
+    cmp eax, [cat_play_until]             ; (playing already)
+    js .done
+    mov [cat_play_until], eax
+    mov byte [cat_state], CAT_WALK
+    call cat_mark
+    ret
+.away:
+    mov dword [cat_hover_since], 0
+.done:
+    ret
+
+; The desktop starting: in a moment, a hello (desktop_task)
+dkx_cat_greet:
+    mov eax, [timer_ms]
+    add eax, 1800
+    or eax, 1
+    mov [cat_greet_at], eax
+    ret
+
+cat_greet_work:
+    cmp dword [cat_greet_at], 0
+    je .done
+    mov eax, [timer_ms]
+    sub eax, [cat_greet_at]
+    js .done
+    mov dword [cat_greet_at], 0
+    pushad
+    call rtc_read_time                    ; the user's hour
+    movzx eax, bh
+    call dk_local_hour
+    mov esi, cat_msg_night
+    cmp al, 5
+    jb .said
+    mov esi, cat_msg_morning
+    cmp al, 12
+    jb .said
+    mov esi, cat_msg_afternoon
+    cmp al, 17
+    jb .said
+    mov esi, cat_msg_evening
+    cmp al, 22
+    jb .said
+    mov esi, cat_msg_night
+.said:
+    call tr_lookup                        ; "Good morning, " + the name + "!"
+    mov edi, cat_greet_buf
+    call dki_copy
+    dec edi
+    mov esi, user_nickname
+    call dki_copy
+    dec edi
+    mov word [edi], '!'
+    mov esi, cat_greet_buf
+    mov ecx, 4000
+    call cat_say
+    mov byte [cat_state], CAT_SIT
+    mov eax, [timer_ms]
+    add eax, 4000
+    mov [cat_until], eax
+    call cat_mark
     popad
 .done:
     ret
@@ -527,6 +690,14 @@ dkx_cat_draw:
     mov esi, cat_sit
     cmp byte [cat_fly], 0                 ; (flying: sitting up)
     jne .have
+    cmp byte [cat_listening], 0           ; (music: headphones, nodding)
+    je .not_listening
+    mov esi, cat_listen_a
+    cmp byte [cat_frame], 0
+    je .have
+    mov esi, cat_listen_b
+    jmp .have
+.not_listening:
     cmp byte [cat_state], CAT_SIT
     jne .not_sit
     call cat_is_sad                       ; (sad: eyes shut, head down)
@@ -565,6 +736,12 @@ dkx_cat_draw:
     mov esi, 0x60A8FF                     ; b (a tear)
     cmp al, 'b'
     je .color
+    mov esi, 0x4A5263                     ; h (the headphones' band)
+    cmp al, 'h'
+    je .color
+    mov esi, 0xE04848                     ; r (their cups)
+    cmp al, 'r'
+    je .color
     mov esi, 0xF08090                     ; p
 .color:
     push ebx
@@ -597,6 +774,28 @@ dkx_cat_draw:
     jb .row
     cmp byte [cat_fly], 0
     jne .done
+    cmp byte [cat_listening], 0           ; listening: a note, now and then
+    je .no_note
+    test byte [cat_beats], 4
+    jz .done
+    mov eax, [cat_x]
+    add eax, CAT_W * CAT_SCALE - 2
+    cmp dword [cat_dir], 0
+    jg .note_side
+    mov eax, [cat_x]
+    sub eax, 8
+.note_side:
+    mov ebx, [dk_h]
+    add ebx, ( 0 - DK_TASKBAR_H - CAT_H * CAT_SCALE ) - 16
+    test byte [cat_beats], 2
+    jz .note_at
+    sub ebx, 5
+.note_at:
+    mov esi, dk_msg_note
+    mov edx, 0xFFD54F
+    call dk_text
+    jmp .done
+.no_note:
     cmp byte [cat_state], CAT_SLEEP       ; asleep: z, then Z
     jne .extras
     mov eax, [cat_x]
@@ -1117,6 +1316,15 @@ dkx_cat_toggle:
 ; ============================================================
 cat_on           db 1
 cat_fly          db 0                     ; 1 going, 2 coming, 3 a jump
+cat_listening    db 0                     ; (music: headphones on)
+cat_beats        db 0
+cat_hover_since  dd 0                     ; (the pointer on the taskbar since)
+cat_greet_at     dd 0
+cat_greet_buf    times 64 db 0
+cat_msg_morning  db "Good morning, ", 0
+cat_msg_afternoon db "Good afternoon, ", 0
+cat_msg_evening  db "Good evening, ", 0
+cat_msg_night    db "Good night, ", 0
 cat_dy           dd 0                     ; (up: less than 0)
 cat_vy           dd 0
 cat_fly_ms       dd 0
@@ -1210,6 +1418,30 @@ cat_sit          db "................"
                  db "........kwgwgwk."
                  db "........kwwpwwk."
                  db ".k.......kwwwk.."
+                 db "kwk.....kwwswwk."
+                 db ".kwk...kwwwwwwk."
+                 db "..kwkkkwwswwwwk."
+                 db "...kkwwwwwwwwk.."
+                 db ".....kkkkkkkk..."
+cat_listen_a     db ".........hhhhh.."          ; (headphones, head up)
+                 db "........hk...kh."
+                 db "........kwk.kwk."
+                 db ".......rkwwwwwkr"
+                 db ".......rkwkwkwkr"
+                 db "........kwwpwwk."
+                 db ".k.......kwwwk.."
+                 db "kwk.....kwwswwk."
+                 db ".kwk...kwwwwwwk."
+                 db "..kwkkkwwswwwwk."
+                 db "...kkwwwwwwwwk.."
+                 db ".....kkkkkkkk..."
+cat_listen_b     db "................"          ; (...and down)
+                 db ".........hhhhh.."
+                 db "........hk...kh."
+                 db "........kwk.kwk."
+                 db ".......rkwwwwwkr"
+                 db ".......rkwkwkwkr"
+                 db ".k......kwwpwwk."
                  db "kwk.....kwwswwk."
                  db ".kwk...kwwwwwwk."
                  db "..kwkkkwwswwwwk."

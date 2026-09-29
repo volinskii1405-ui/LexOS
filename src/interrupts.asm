@@ -420,6 +420,29 @@ keyboard_isr:
     mov byte [dkx_files_req], 1
     jmp .eoi
 .not_win_e:
+    cmp al, 0x0D                   ; + (= or the keypad's): the magnifier,
+    je .win_plus                   ; x2, then x4; - back down, Esc away
+    cmp al, 0x4E                   ; (src/dkmag.asm)
+    je .win_plus
+    cmp al, 0x0C
+    je .win_minus
+    cmp al, 0x4A
+    je .win_minus
+    cmp al, 0x01
+    jne .not_win_mag
+    mov byte [dmag_zoom], 0
+    jmp .eoi
+.win_plus:
+    cmp byte [dmag_zoom], 4
+    jae .eoi
+    add byte [dmag_zoom], 2
+    jmp .eoi
+.win_minus:
+    cmp byte [dmag_zoom], 0
+    je .eoi
+    sub byte [dmag_zoom], 2
+    jmp .eoi
+.not_win_mag:
     cmp al, 0x26                   ; L: locked (src/dklock.asm)
     jne .eoi
     mov byte [dkl_req], 1

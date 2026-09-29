@@ -274,6 +274,7 @@ dk_video_mode:
     mov dword [dk_prev_n], 0
     mov byte [dk_pg_ptr_on], 0
     mov byte [dk_pg_ptr_on + 1], 0
+    mov word [dmag_pg_on], 0              ; (src/dkmag.asm)
     call dk_front_forget
     popad
     ret
@@ -364,6 +365,7 @@ desktop_resume_hook:
 desktop_task:
     mov eax, SND_START                    ; (src/dksound.asm: a tune)
     call snd_play
+    call dkx_cat_greet                    ; (Lex says hello: src/dkcat.asm)
     mov eax, [timer_ms]
     mov [dk_next_frame], eax
 .frame:
@@ -401,6 +403,7 @@ desktop_task:
     call drs_work                         ; (src/dkregion.asm: Shift+PrtSc)
     call shx_work                         ; (src/shellx.asm: `open`)
     call dkclk_work                       ; (src/dkclock.asm: alarm, timer)
+    call dnl_work                         ; (src/dknight.asm: the night light)
     call dk_shot_capture                  ; (src/dkwins.asm)
     call dk_toast_work
     call dk_wheel_work                    ; (src/dkwins.asm)
@@ -2790,6 +2793,9 @@ dk_blit:
     cmp eax, [edi]
     je .scan
     mov [edi], eax
+    cmp byte [dk_night_on], 0             ; the night light: warmer
+    jne .warm
+.put:
     mov [edi + ebp], eax
     add esi, 4
     add edi, 4
@@ -2805,6 +2811,12 @@ dk_blit:
 .done:
     popad
     ret
+.warm:                                    ; (0xRRGGBB: less green, less blue)
+    movzx ebx, ah
+    mov ah, [dk_night_g + ebx]
+    movzx ebx, al
+    mov al, [dk_night_b + ebx]
+    jmp .put
 
 ; The frame onto the screen. There are two pages of video memory: one
 ; shown, and one drawn into while it isn't, then shown in one step (the
@@ -2827,6 +2839,10 @@ dk_present:
     cmp byte [dk_fm_state], 3             ; (a dragged icon follows too)
     je .go
     cmp byte [dk_ptr_ghost], 0            ; (just dropped: the icon goes)
+    jne .go
+    cmp byte [dmag_zoom], 0               ; (the magnifier: every frame)
+    jne .go
+    cmp word [dmag_pg_on], 0
     jne .go
     jmp .done
 .go:
@@ -2852,6 +2868,19 @@ dk_present:
     mov ecx, 1
     call .rects
 .no_old:
+    cmp byte [dmag_pg_on + ebp], 0        ; the magnifier as drawn here
+    je .no_lens
+    mov esi, ebp
+    shl esi, 4
+    add esi, dmag_pg
+    mov ecx, 1
+    call .rects
+    mov byte [dmag_pg_on + ebp], 0
+.no_lens:
+    cmp byte [dmag_zoom], 0               ; and where it is now (src/dkmag.asm)
+    je .lens_done
+    call dmag_draw
+.lens_done:
     call dk_draw_pointer
     call dk_ptr_rect
     mov esi, ebp
@@ -3055,6 +3084,19 @@ dk_quit           db 0
 dk_suspended      db 0
 dk_in_transition  db 0
 dk_redraw_all     db 0
+dk_night_on       db 0                         ; (src/dknight.asm)
+dk_night_g:
+%assign i 0
+%rep 256
+                  db (i * 215) / 255
+%assign i i + 1
+%endrep
+dk_night_b:
+%assign i 0
+%rep 256
+                  db (i * 165) / 255
+%assign i i + 1
+%endrep
 DK_DIRTY_MAX      equ 8
 dk_nrects         dd 0
 dk_rects          times DK_DIRTY_MAX * 4 dd 0  ; x0, y0, x1, y1 each
@@ -3169,7 +3211,7 @@ dk_zcount         dd 0
 dk_def_x          dd 30,   684,  240,  170,  40,   250,  420,  200
 dk_def_y          dd 24,   30,   120,  90,   90,   90,   260,  60
 dk_def_w          dd 640,  CLK_W, 320, 660,  680,  520,  400,  320
-dk_def_h          dd 400,  252,  200,  420,  380,  400,  210,  200
+dk_def_h          dd 400,  252,  200,  480,  380,  400,  210,  200
 dk_kind_names     dd dk_title_terminal, dk_title_clock, dk_title_pictures, dk_title_system
                   dd dk_title_files, dk_title_tasks, dk_title_mixer, dk_title_program
 dk_menu_labels    dd dk_menu_programs

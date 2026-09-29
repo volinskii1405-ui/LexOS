@@ -101,10 +101,10 @@ dk_draw_terminal:
     push edi
     mov esi, eax
     and eax, 0x0F
-    mov edx, [dk_ega + eax*4]             ; foreground
-    shr esi, 4
+    mov edx, [dk_term_pal + eax*4]        ; foreground (the scheme's:
+    shr esi, 4                            ;  src/dknight.asm)
     and esi, 0x07
-    mov esi, [dk_ega + esi*4]             ; background
+    mov esi, [dk_term_pal + esi*4]        ; background
     cmp byte [dk_term_sel], 0             ; (selected: the colors swapped)
     je .colors
     xchg edx, esi
@@ -131,7 +131,7 @@ dk_draw_terminal:
     mov ecx, [dkw_w + ebp*4]
     sub ecx, SCREEN_COLS * 8
     mov edx, [dkw_h + ebp*4]
-    xor esi, esi
+    mov esi, [dk_term_pal]                ; (the scheme's black)
     call dk_fill
     mov eax, [dk_term_xrows]
     add eax, SCREEN_ROWS
@@ -178,7 +178,7 @@ dk_draw_terminal:
     add ebx, 13
     mov ecx, 8
     mov edx, 2
-    mov esi, 0xC0C0C0
+    mov esi, [dk_term_pal + 7*4]          ; (the scheme's text color)
     call dk_fill
     jmp dk_contents_done
 
@@ -5955,6 +5955,9 @@ dk_app_pal        times DK_APPS * 256 dd 0
 dk_cube_levels    db 0, 51, 102, 153, 204, 255
 ; the 16 text colors, as 0xRRGGBB
 dk_ega            dd 0x000000, 0x0000AA, 0x00AA00, 0x00AAAA, 0xAA0000, 0xAA00AA, 0xAA5500, 0xAAAAAA
+                  dd 0x555555, 0x5555FF, 0x55FF55, 0x55FFFF, 0xFF5555, 0xFF55FF, 0xFFFF55, 0xFFFFFF
+; the Terminal's 16: the Control panel's scheme (src/dknight.asm)
+dk_term_pal       dd 0x000000, 0x0000AA, 0x00AA00, 0x00AAAA, 0xAA0000, 0xAA00AA, 0xAA5500, 0xAAAAAA
                   dd 0x555555, 0x5555FF, 0x55FF55, 0x55FFFF, 0xFF5555, 0xFF55FF, 0xFFFF55, 0xFFFFFF
 ; sin(i * 6 degrees) * 1000, i = 0..59
 dk_sin60 dw 0, 105, 208, 309, 407, 500, 588, 669, 743, 809, 866, 914, 951, 978, 995, 1000, 995, 978, 951, 914, 866, 809, 743, 669, 588, 500, 407, 309, 208, 105

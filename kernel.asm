@@ -175,6 +175,7 @@ align 4096, db 0
 %include "src/script.asm"
 %include "src/pipe.asm"
 %include "src/shellx.asm"
+%include "src/dkmag.asm"
 
 ; src/atadma.asm (Bus Master IDE / ATA DMA) is included here, at the very
 ; end, rather than next to src/ata.asm above: none of its own code needs
@@ -411,4 +412,5 @@ kext_start:
 %include "src/dkswitch.asm"
 %include "src/dkregion.asm"
 %include "src/dkclock.asm"
+%include "src/dknight.asm"
 kext_end:

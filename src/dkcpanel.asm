@@ -391,6 +391,22 @@ dkc_set_anim:
     mov byte [dk_cfg_dirty], 1
     ret
 
+dkc_get_night:                            ; 0 Off, 1 On, 2 Evening
+    movzx eax, byte [dnl_night_mode]      ; (src/dknight.asm)
+    ret
+dkc_set_night:
+    call dnl_set_night
+    mov byte [dk_cfg_dirty], 1
+    ret
+
+dkc_get_termcol:                          ; Classic, Green, Amber, Light
+    movzx eax, byte [dnl_term_scheme]
+    ret
+dkc_set_termcol:
+    call dnl_set_term
+    mov byte [dk_cfg_dirty], 1
+    ret
+
 dkc_get_screen:                           ; (src/dkres.asm)
     mov eax, [dk_res]
     ret
@@ -774,6 +790,20 @@ dkc_cfg_save:
     stosb
     mov ax, 0x0A0D
     stosw
+    mov esi, dkc_cfg_night
+    call wget_append
+    mov al, [dnl_night_mode]
+    add al, '0'
+    stosb
+    mov ax, 0x0A0D
+    stosw
+    mov esi, dkc_cfg_termcol
+    call wget_append
+    mov al, [dnl_term_scheme]
+    add al, '0'
+    stosb
+    mov ax, 0x0A0D
+    stosw
     call dkclk_cfg_save                   ; (the alarm: src/dkclock.asm)
     mov esi, dkc_cfg_res
     call wget_append
@@ -810,6 +840,24 @@ dkc_cfg_load:
     jae .no_dbl
     call dkc_set_dbl
 .no_dbl:
+    mov esi, dkc_cfg_night                ; (none: off, Classic)
+    call dk_cfg_value
+    jc .no_night
+    cmp eax, 3
+    jb .night
+.no_night:
+    xor eax, eax
+.night:
+    call dnl_set_night
+    mov esi, dkc_cfg_termcol
+    call dk_cfg_value
+    jc .no_term
+    cmp eax, DNL_SCHEMES
+    jb .term
+.no_term:
+    xor eax, eax
+.term:
+    call dnl_set_term
     call dkclk_cfg_load                   ; (the alarm: src/dkclock.asm)
     mov esi, dkc_cfg_res
     call dk_cfg_value
@@ -861,6 +909,8 @@ dkc_rows_look  dd dk_msg_theme, dkc_o_theme, DK_THEMES, 66, dkc_get_theme, dkc_s
                dd dkc_l_saver, dkc_o_saver, 4, 72, dkc_get_saver, dkc_set_saver
                dd dkc_l_anim, dkc_o_onoff, 2, 72, dkc_get_anim, dkc_set_anim
                dd dkc_l_screen, dkc_o_screen, 4, 84, dkc_get_screen, dkc_set_screen
+               dd dkc_l_night, dkc_o_night, 3, 72, dkc_get_night, dkc_set_night
+               dd dkc_l_termcol, dkc_o_termcol, 4, 72, dkc_get_termcol, dkc_set_termcol
                dd 0
 dkc_rows_sound dd dk_msg_sounds, dkc_o_onoff, 2, 72, dkc_get_sounds, dkc_set_sounds
                dd dkc_l_volume, dkc_o_mixer, 1, 120, dkc_get_none, dkc_set_mixer
@@ -881,6 +931,8 @@ dkc_o_wall     dd dkc_l_none, dkc_l_sunset, dkc_l_aurora
 dkc_o_onoff    dd dk_msg_on, dk_msg_off
 dkc_o_screen   dd dkc_l_800, dkc_l_1024, dkc_l_1280w, dkc_l_1280
 dkc_o_saver    dd dkc_l_off, dkc_l_1min, dkc_l_3min, dkc_l_10min
+dkc_o_night    dd dkc_l_off, dk_msg_on, dkc_l_evening
+dkc_o_termcol  dd dkc_l_classic, dkc_l_green, dkc_l_amber, dkc_l_light
 dkc_o_mixer    dd dkc_l_mixer
 dkc_o_lang     dd dkc_n_en, lang_n_ru, lang_n_es
 dkc_o_tz       dd dkc_l_minus, dkc_l_plus
@@ -899,6 +951,13 @@ dkc_l_lex      db "Lex the cat", 0
 dkc_l_saver    db "Screen saver", 0
 dkc_l_anim     db "Animations", 0
 dkc_l_screen   db "Screen", 0
+dkc_l_night    db "Night light", 0
+dkc_l_evening  db "Evening", 0
+dkc_l_termcol  db "Terminal colors", 0
+dkc_l_classic  db "Classic", 0
+dkc_l_green    db "Green", 0
+dkc_l_amber    db "Amber", 0
+dkc_l_light    db "Light", 0
 dkc_l_800      db "800x600", 0
 dkc_l_1024     db "1024x768", 0
 dkc_l_1280w    db "1280x720", 0
@@ -943,3 +1002,5 @@ dkc_cfg_dbl    db "dbl=", 0
 dkc_cfg_saver  db "saver=", 0
 dkc_cfg_anim   db "anim=", 0
 dkc_cfg_res    db "res=", 0
+dkc_cfg_night  db "night=", 0
+dkc_cfg_termcol db "termcol=", 0
