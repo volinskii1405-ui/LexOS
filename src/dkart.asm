@@ -192,9 +192,11 @@ dka_icon_badge:
     mov esi, ebx
     shl esi, 4
     add esi, dki_file
-    add eax, (DKI_W - 32) / 2
+    add eax, [dki_icon_dx]
     lea ebx, [edx + 3]
+    call dki_size_on
     call dka_badge
+    call dki_size_off
     popad
     ret
 
@@ -214,7 +216,6 @@ dka_icon_look:
 ; ebx = a desktop icon at eax, edx: its name under it, centered, with a
 ; shadow - on two lines if it's longer than the cell (broken before a
 ; ".", after a "_" or "-", or where it has to be)
-DKA_LINE         equ DKI_W / 8            ; (10 characters)
 dka_label:
     pushad
     mov [dka_x], eax
@@ -233,41 +234,41 @@ dka_label:
     mov byte [edi], 0
     mov esi, dka_text
     call dki_strlen                       ; -> ecx
-    cmp ecx, DKA_LINE
+    cmp ecx, [dka_chars]
     ja .two
     mov edx, [dka_y]                      ; one line
-    add edx, 39
+    add edx, [dki_line1]
     call dka_line
     jmp .done
 .two:
-    cmp ecx, 2 * DKA_LINE                 ; (longer than two lines - a long
+    cmp ecx, [dka_chars2]                 ; (longer than two lines - a long
     jbe .two_fit                          ;  name: after a space, if one's
-    mov ebx, DKA_LINE                     ;  near the end of the first)
+    mov ebx, [dka_chars]                     ;  near the end of the first)
 .long_space:
     cmp byte [dka_text + ebx], ' '
     je .long_at
     dec ebx
     cmp ebx, 4
     jae .long_space
-    mov ebx, DKA_LINE
+    mov ebx, [dka_chars]
     jmp .hard
 .long_at:
     inc ebx
     jmp .hard
 .two_fit:
-    mov ebx, DKA_LINE                     ; where to break: the last good
+    mov ebx, [dka_chars]                     ; where to break: the last good
     lea edx, [ebx + 1]                    ; place that leaves the rest a line
 .find:
     dec edx
     jz .hard
     mov eax, ecx
     sub eax, edx
-    cmp eax, DKA_LINE
+    cmp eax, [dka_chars]
     ja .hard
     mov al, [dka_text + edx]
     cmp al, '.'
     je .before
-    cmp edx, DKA_LINE                     ; (after it: the first line's full)
+    cmp edx, [dka_chars]                     ; (after it: the first line's full)
     jae .find
     cmp al, '_'
     je .after
@@ -288,20 +289,20 @@ dka_label:
     mov esi, dka_text
     call dki_strlen
     mov edx, [dka_y]
-    add edx, 39
+    add edx, [dki_line1]
     call dka_line
     pop ebx
     mov al, [dka_keep]
     mov [dka_text + ebx], al
     lea esi, [dka_text + ebx]             ; the second: the rest (as fits,
     call dki_strlen                       ;  ".." if there's more)
-    cmp ecx, DKA_LINE
+    cmp ecx, [dka_chars]
     jbe .rest
-    mov ecx, DKA_LINE
-    mov word [esi + DKA_LINE - 2], '..'
+    mov ecx, [dka_chars]
+    mov word [esi + ecx - 2], '..'
 .rest:
     mov edx, [dka_y]
-    add edx, 55
+    add edx, [dki_line2]
     call dka_line
 .done:
     popad
@@ -314,7 +315,7 @@ dka_line:
     mov edi, ecx
     shl ecx, 2
     mov eax, [dka_x]
-    add eax, DKI_W / 2
+    add eax, [dki_w_half]
     sub eax, ecx
     mov ebx, edx
     push eax

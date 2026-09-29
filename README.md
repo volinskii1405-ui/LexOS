@@ -774,7 +774,25 @@ tester@/DESKTOP$ run snake.app
     of day ("Good evening, tester!"); the pointer held over the taskbar
     for 3 seconds, he starts hunting it; and while music plays (Music,
     `play`, any sound) he puts headphones on and nods along, a note
-    over his head.
+    over his head. Now and then he **hops up onto the window in front**
+    and walks - or naps - along its top; move it, close it or bring
+    another forward and down he jumps. **Throw the ball** (his menu): it
+    bounces along the taskbar, he runs after it and brings it back
+    ("Again! Again!"). **The seasons**: a Santa's hat in December (to 7
+    January), a pumpkin by the taskbar from 24 October, a party hat on
+    his birthday - the day he came to live with you, kept in
+    `DESKTOP.CFG` - and New Year's, Halloween's and his birthday's
+    greetings. **`lex diary`**: what he did today - fed, petted, played
+    with, the ball thrown and brought back, the meows, how long he slept,
+    how he is now - and a line on how the day was.
+  - **Lex's night**, the other screen saver (Control panel - Appearance -
+    Saver picture: Stars or Lex, src/dksaver.asm): stars fall out of the
+    dark, Lex - big - runs along the ground under the lowest one and
+    jumps for it; a sparkle and a count for each caught.
+  - **Icon size** (Control panel - Appearance - Icons: Small 16x16,
+    Normal 32x32, Big 64x64): the desktop's icons, their grid and their
+    names follow (src/dkicons.asm); changing it puts them in order again
+    (the trash keeps its corner).
   - **Win+V: the clipboard's history** (src/dkchist.asm): the last 8
     texts (a Terminal's selection, `clip`) and pictures (a screenshot,
     Paint's Ctrl+C, a picture copied in Files) in a panel over the
@@ -849,7 +867,8 @@ tester@/DESKTOP$ run snake.app
     Users - Add...) starts with a few shortcuts and no password.
   - **The Control panel** (src/dkcpanel.asm, the start menu's Control
     panel): System (how it's running), Appearance (theme, backdrop,
-    wallpaper, Lex, the screen saver, window **animations** - a window
+    wallpaper, the icons' size, Lex, the screen saver and its picture
+    (stars or Lex's night), window **animations** - a window
     grows out of its middle as it opens, shrinks into its taskbar button
     minimized and grows back out of it - and the **screen size**:
     800x600, 1024x768, 1280x720 or 1280x1024, changed at once, the
@@ -1306,6 +1325,7 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `uptime` | how long since boot, the consoles and tasks |
 | `neofetch` | the system at a glance, next to Lex the cat (ASCII, in color) |
 | `lex [text]` | Lex the cat says something in a speech bubble (or your text) |
+| `lex diary` | Lex's day: fed, petted, played with, the ball, the meows, sleep, how he is |
 | `play <n.imf \| n.wav>` | play AdLib music or a WAV (an AC'97 or a Sound Blaster 16, or the PC speaker) |
 | `play <n> &` | play it in the background (a name or a path) |
 | `open <n>` | open it as a double click on the desktop would - a picture in Pictures, a text in Notepad, a program, a folder in Files |
@@ -1529,7 +1549,8 @@ src/
                        the taskbar's and desktop's menus, recent
                        programs, Caps Lock, /DESKTOP/STARTUP.
   neofetch.asm         `neofetch` (with Lex the cat), `uptime`, `lex`.
-  dkcat.asm            Lex on the taskbar, and his food, joy, energy.
+  dkcat.asm            Lex on the taskbar, and his food, joy, energy;
+                       up on windows, the ball, the seasons, his diary.
   dkname.asm           Create > and the name dialog: files made, renamed,
                        copied, deleted with the mouse.
   dkgrid.asm           the desktop icons' invisible grid.
@@ -1553,7 +1574,7 @@ src/
   dklock.asm           Win+L: the lock screen.
   dkusers.asm          users, each with their own desktop.
   dkcpanel.asm         the Control panel.
-  dksaver.asm          the screen saver.
+  dksaver.asm          the screen savers: stars, and Lex's night.
   dkfscheck.asm        the disk checked at boot after a crash.
   dkpng.asm            /SYSTEM/PNG.BIN loaded, a PNG made a BMP.
   dkpics.asm           Pictures: the viewer (zoom, slideshow, its bar).

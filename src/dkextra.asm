@@ -709,6 +709,8 @@ dkx_ctx_items:
     call dk_ctx_add
     mov al, DKC_CATPLAY
     call dk_ctx_add
+    mov al, DKC_CATBALL
+    call dk_ctx_add
     mov al, DKC_CATHOW
     call dk_ctx_add
     mov al, DKC_CATHIDE
@@ -915,20 +917,36 @@ dkx_ctx_create:
 dkx_arrange_icons:
     pushad
     xor ecx, ecx
+    xor edi, edi                          ; (its place in the columns)
 .each:
     cmp ecx, [dki_n]
     jae .done
-    mov eax, ecx
+    mov eax, ecx                          ; (the trash stays in its corner)
+    shl eax, 4
+    cmp byte [dki_file + eax], '*'
+    je .next
+    mov eax, [dk_h]                       ; (as many rows as fit under it)
+    sub eax, DK_TASKBAR_H
+    sub eax, [dki_top]
     xor edx, edx
-    mov ebx, DKI_ROWS
+    div dword [dki_ch]
+    mov ebx, eax
+    or ebx, ebx
+    jnz .rows
+    inc ebx
+.rows:
+    mov eax, edi
+    xor edx, edx
     div ebx
-    imul eax, -(DKI_W + 10)               ; its column
+    imul eax, [dki_cw_neg]               ; its column
     add eax, [dk_w]
-    add eax, 0 - DKI_W - 10
-    imul edx, DKI_H + 8
-    add edx, DKI_TOP
+    sub eax, [dki_cw]
+    imul edx, [dki_ch]
+    add edx, [dki_top]
     mov [dki_x + ecx*4], eax
     mov [dki_y + ecx*4], edx
+    inc edi
+.next:
     inc ecx
     jmp .each
 .done:

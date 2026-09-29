@@ -16,11 +16,133 @@
 ;          dki_forget
 
 DKI_MAX        equ 32
-DKI_W          equ 80                     ; an icon's cell
-DKI_H          equ 72
-DKI_TOP        equ 290                    ; the default places: columns from
-DKI_ROWS       equ 5                      ; the right, under the clock
 DKI_PATH       equ 64
+
+; ============================================================
+; The icons' size (the Control panel's Appearance): small (16x16 in a
+; 64 wide cell), normal (32x32, 80), big (64x64 - the 32 ones twice
+; over - 112). The cells, the grid, the names' lines follow.
+; ============================================================
+
+; al = 0 small, 1 normal, 2 big -> dki_w and the rest
+dki_set_size:
+    pushad
+    movzx eax, al
+    cmp eax, 3
+    jb .ok
+    mov eax, 1
+.ok:
+    mov [dki_size], al
+    imul esi, eax, 12
+    add esi, dki_sizes                    ; (w, h, the picture's side)
+    mov eax, [esi]
+    mov [dki_w], eax
+    mov ebx, eax
+    shr ebx, 1
+    mov [dki_w_half], ebx
+    lea ebx, [eax + 10]
+    mov [dki_cw], ebx
+    neg ebx
+    mov [dki_cw_neg], ebx
+    shr eax, 3                            ; (a name's line: this many)
+    mov [dka_chars], eax
+    add eax, eax
+    mov [dka_chars2], eax
+    mov eax, [esi + 4]
+    mov [dki_h], eax
+    add eax, 8
+    mov [dki_ch], eax
+    mov eax, [esi + 8]
+    mov ecx, [dki_w]
+    sub ecx, eax
+    shr ecx, 1
+    mov [dki_icon_dx], ecx
+    add eax, 7
+    mov [dki_line1], eax
+    add eax, 16
+    mov [dki_line2], eax
+    call dkg_resize                       ; (src/dkgrid.asm: the grid)
+    popad
+    ret
+
+; The Control panel's: another size - the icons put in order again
+dki_resize:
+    call dki_set_size
+    call dkx_arrange_icons
+    ret
+
+; dk_icon (32x32) drawn in the icons' size from here: small - half
+; (dka_icon_small's way), big - each pixel twice over (dki_fill2)
+dki_size_on:
+    cmp byte [dki_size], 0
+    jne .big
+    mov byte [dka_half], 1
+    ret
+.big:
+    cmp byte [dki_size], 2
+    jne .done
+    push eax
+    mov eax, [dk_icon_fill]
+    mov [dki_fill_was], eax
+    mov dword [dk_icon_fill], dki_fill2
+    pop eax
+.done:
+    ret
+
+dki_size_off:
+    cmp byte [dki_size], 0
+    jne .big
+    mov byte [dka_half], 0
+    ret
+.big:
+    cmp byte [dki_size], 2
+    jne .done
+    push eax
+    mov eax, [dki_fill_was]
+    mov [dk_icon_fill], eax
+    pop eax
+.done:
+    ret
+
+; dk_fill's twin for a big icon: eax, ebx, ecx, edx - from the picture's
+; corner (dka_x, dka_y) - twice as far, twice as big
+dki_fill2:
+    push eax
+    push ebx
+    push ecx
+    push edx
+    sub eax, [dka_x]
+    add eax, eax
+    add eax, [dka_x]
+    sub ebx, [dka_y]
+    add ebx, ebx
+    add ebx, [dka_y]
+    add ecx, ecx
+    add edx, edx
+    call [dki_fill_was]
+    pop edx
+    pop ecx
+    pop ebx
+    pop eax
+    ret
+
+dki_size         db 1
+dki_sizes        dd 64, 52, 16            ; small (the next row: +60 - 290
+                 dd 80, 72, 32            ;  under the clock, as 4 rows
+                 dd 112, 112, 64          ;  of them, 3 normal, 2 big)
+dki_w            dd 80                    ; (normal's, until the settings)
+dki_h            dd 72
+dki_w_half       dd 40
+dki_cw           dd 90
+dki_cw_neg       dd -90
+dki_ch           dd 80
+dki_top          dd 290                   ; the first row under the clock
+dki_icon_dx      dd 24
+dki_line1        dd 39                    ; (a name's lines: this far down)
+dki_line2        dd 55
+dka_chars        dd 10                    ; (a name's line: characters)
+dka_chars2       dd 20
+dki_fill_was     dd dk_fill
 
 ; The desktop's start: none yet, read them at the first chance
 dki_forget:
@@ -442,14 +564,15 @@ dki_saved_place:
     xchg eax, edx
     push edx
     mov edx, [dk_w]
-    add edx, 0 - DKI_W
+    sub edx, [dki_w]
     mov [dk_ctmp], edx
     pop edx
     cmp eax, [dk_ctmp]
     ja .none
     push eax
     mov eax, [dk_h]
-    add eax, 0 - DK_TASKBAR_H - DKI_H
+    sub eax, DK_TASKBAR_H
+    sub eax, [dki_h]
     mov [dk_ctmp], eax
     pop eax
     cmp edx, [dk_ctmp]
@@ -511,12 +634,14 @@ dki_draw:
     jae .done
     mov eax, [dki_x + ebx*4]              ; in the clip at all?
     mov edx, [dki_y + ebx*4]
-    lea ecx, [eax + DKI_W]
+    mov ecx, eax
+    add ecx, [dki_w]
     cmp ecx, [dk_clip_x0]
     jle .next
     cmp eax, [dk_clip_x1]
     jge .next
-    lea ecx, [edx + DKI_H]
+    mov ecx, edx
+    add ecx, [dki_h]
     cmp ecx, [dk_clip_y0]
     jle .next
     cmp edx, [dk_clip_y1]
@@ -527,8 +652,8 @@ dki_draw:
     push eax
     push edx
     mov ebx, edx
-    mov ecx, DKI_W
-    mov edx, DKI_H
+    mov ecx, [dki_w]
+    mov edx, [dki_h]
     mov esi, COL_TITLE_ON
     call dk_fill
     pop edx
@@ -539,9 +664,11 @@ dki_draw:
     push ebx
     push edx
     call dka_icon_look                    ; -> ecx (its own, or chosen)
-    add eax, (DKI_W - 32) / 2
+    add eax, [dki_icon_dx]
     lea ebx, [edx + 3]
+    call dki_size_on                      ; (small, normal or big)
     call dk_icon                          ; (src/dkwins.asm, as in Files)
+    call dki_size_off
     pop edx
     pop ebx
     pop eax
@@ -571,8 +698,8 @@ dki_mark:
     mov eax, [dki_x + ebx*4]
     mov edx, [dki_y + ebx*4]
     mov ebx, edx
-    mov ecx, DKI_W
-    mov edx, DKI_H
+    mov ecx, [dki_w]
+    mov edx, [dki_h]
     call dk_mark
     popad
     ret
@@ -593,13 +720,13 @@ dki_at:
     mov edx, [dki_x + ecx*4]
     cmp eax, edx
     jl .find
-    add edx, DKI_W
+    add edx, [dki_w]
     cmp eax, edx
     jge .find
     mov edx, [dki_y + ecx*4]
     cmp ebx, edx
     jl .find
-    add edx, DKI_H
+    add edx, [dki_h]
     cmp ebx, edx
     jge .find
     pop edx
@@ -618,13 +745,13 @@ dki_press:
     mov edx, [dki_x + ecx*4]
     cmp eax, edx
     jl .find
-    add edx, DKI_W
+    add edx, [dki_w]
     cmp eax, edx
     jge .find
     mov edx, [dki_y + ecx*4]
     cmp ebx, edx
     jl .find
-    add edx, DKI_H
+    add edx, [dki_h]
     cmp ebx, edx
     jge .find
     ; ecx: this one
@@ -699,13 +826,13 @@ dki_drag_move:
 .x0:
     push edx
     mov edx, [dk_w]
-    add edx, 0 - DKI_W
+    sub edx, [dki_w]
     mov [dk_ctmp], edx
     pop edx
     cmp eax, [dk_ctmp]
     jle .x1
     mov eax, [dk_w]
-    add eax, 0 - DKI_W
+    sub eax, [dki_w]
 .x1:
     cmp edx, 0
     jge .y0
@@ -713,13 +840,15 @@ dki_drag_move:
 .y0:
     push eax
     mov eax, [dk_h]
-    add eax, 0 - DK_TASKBAR_H - DKI_H
+    sub eax, DK_TASKBAR_H
+    sub eax, [dki_h]
     mov [dk_ctmp], eax
     pop eax
     cmp edx, [dk_ctmp]
     jle .y1
     mov edx, [dk_h]
-    add edx, 0 - DK_TASKBAR_H - DKI_H
+    sub edx, DK_TASKBAR_H
+    sub edx, [dki_h]
 .y1:
     cmp eax, [dki_x + ebx*4]
     jne .moved

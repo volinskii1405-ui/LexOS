@@ -3220,7 +3220,7 @@ dk_zcount         dd 0
 dk_def_x          dd 30,   684,  240,  170,  40,   250,  420,  200
 dk_def_y          dd 24,   30,   120,  90,   90,   90,   260,  60
 dk_def_w          dd 640,  CLK_W, 320, 660,  680,  520,  400,  320
-dk_def_h          dd 400,  252,  200,  480,  380,  400,  210,  200
+dk_def_h          dd 400,  252,  200,  520,  380,  400,  210,  200
 dk_kind_names     dd dk_title_terminal, dk_title_clock, dk_title_pictures, dk_title_system
                   dd dk_title_files, dk_title_tasks, dk_title_mixer, dk_title_program
 dk_menu_labels    dd dk_menu_programs

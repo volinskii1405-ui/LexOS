@@ -178,13 +178,13 @@ dkm_follow:
 .x0:
     push edx
     mov edx, [dk_w]
-    add edx, 0 - DKI_W
+    sub edx, [dki_w]
     mov [dk_ctmp], edx
     pop edx
     cmp eax, [dk_ctmp]
     jle .x1
     mov eax, [dk_w]
-    add eax, 0 - DKI_W
+    sub eax, [dki_w]
 .x1:
     mov [dki_x + ebx*4], eax
     mov eax, [dki_y + ebx*4]
@@ -195,13 +195,15 @@ dkm_follow:
 .y0:
     push edx
     mov edx, [dk_h]
-    add edx, 0 - DK_TASKBAR_H - DKI_H
+    sub edx, DK_TASKBAR_H
+    sub edx, [dki_h]
     mov [dk_ctmp], edx
     pop edx
     cmp eax, [dk_ctmp]
     jle .y1
     mov eax, [dk_h]
-    add eax, 0 - DK_TASKBAR_H - DKI_H
+    sub eax, DK_TASKBAR_H
+    sub eax, [dki_h]
 .y1:
     mov [dki_y + ebx*4], eax
     call dki_mark
@@ -421,13 +423,13 @@ dkm_band_move:
     mov eax, [dki_x + ebx*4]
     cmp eax, [dkm_r]
     jge .next
-    add eax, DKI_W
+    add eax, [dki_w]
     cmp eax, [dkm_l]
     jle .next
     mov eax, [dki_y + ebx*4]
     cmp eax, [dkm_b]
     jge .next
-    add eax, DKI_H
+    add eax, [dki_h]
     cmp eax, [dkm_t]
     jle .next
     call dkt_is_icon                      ; (not the trash)

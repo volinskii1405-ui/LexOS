@@ -117,7 +117,7 @@ dkd_files_drop:
     rep movsb
     mov byte [dkd_place_name + FS_NAME_LEN - 1], 0
     mov eax, [dk_mx]
-    sub eax, DKI_W / 2
+    sub eax, [dki_w_half]
     mov [dkd_place_x], eax
     mov eax, [dk_my]
     sub eax, 24
@@ -325,11 +325,11 @@ dkd_icon_drop:
     je .other
     mov eax, [dk_mx]
     sub eax, [dki_x + ecx*4]
-    cmp eax, DKI_W
+    cmp eax, [dki_w]
     jae .other
     mov eax, [dk_my]
     sub eax, [dki_y + ecx*4]
-    cmp eax, DKI_H
+    cmp eax, [dki_h]
     jae .other
     call dkd_is_trash                     ; onto the trash: its Delete
     jnc .to_trash
@@ -615,7 +615,8 @@ dkd_place:
     call dkg_cell_xy
     push eax
     mov eax, [dk_h]
-    add eax, 0 - DK_TASKBAR_H - DKI_H
+    sub eax, DK_TASKBAR_H
+    sub eax, [dki_h]
     mov [dk_ctmp], eax
     pop eax
     cmp edx, [dk_ctmp]

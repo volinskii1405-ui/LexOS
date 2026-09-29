@@ -299,6 +299,7 @@ dk_settings_load:
     jae .apply
     mov [dk_bg_mode], eax
 .apply:
+    call cat_born_load                    ; (Lex: his birthday, his diary)
     call dkx_recent_load                  ; (src/dkextra.asm)
     call dkf_cfg_load                     ; (Files' Recent, the wallpaper)
     cmp dword [dk_theme], DK_THEMES

@@ -3643,6 +3643,7 @@ DKC_PAINT    equ 44                   ; Edit in Paint (src/dktrash.asm)
 DKC_WALL     equ 45                   ; Set as wallpaper (src/dkwall.asm)
 DKC_LOCATE   equ 46                   ; Recent: Open its folder (src/dkfview.asm)
 DKC_HEX      equ 47                   ; Open in the Hex editor (src/dktrash.asm)
+DKC_CATBALL  equ 48                   ; Lex: throw the ball (src/dkcat.asm)
 DK_CTX_W    equ 160
 DK_CTX_ITEM equ 22
 
@@ -3925,6 +3926,12 @@ dk_text_raw_all:
 ; eax = a context menu item (DKC_*): done
 dk_ctx_do:
     pushad
+    cmp eax, DKC_CATBALL                  ; Lex: the ball (src/dkcat.asm)
+    jne .not_ball
+    call dkx_cat_act
+    popad
+    ret
+.not_ball:
     cmp eax, DKC_TRESTORE                 ; (src/dktrash.asm: Restore,
     jb .not_more                          ;  Edit, ...)
     mov dword [dk_fm_msg], 0
@@ -5823,7 +5830,7 @@ dk_ctx_labels     dd dk_ctx_l_open, dk_ctx_l_rename, dk_ctx_l_copy, dk_ctx_l_del
                   dd dkx_l_newlnk, dkx_l_iopen, dkx_l_irename, dkx_l_idelete
                   dd dkx_l_iprops, dkt_l_restore, dkt_l_edit, dkt_l_zip
                   dd dkt_l_unzip, dkt_l_tempty, dkw_l_paint, dkw_l_set
-                  dd dkf_l_locate, dkt_l_hex
+                  dd dkf_l_locate, dkt_l_hex, dkx_l_catball
 dk_ctx_l_open     db "Open", 0
 dk_ctx_l_rename   db "Rename...", 0
 dk_ctx_l_copy     db "Copy to...", 0
