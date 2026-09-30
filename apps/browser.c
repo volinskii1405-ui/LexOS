@@ -3,14 +3,26 @@
  *   run browser.app [address]
  *
  * Opens pages from LexOS's own disk (/DEMOS/SITE/INDEX.HTM - the start
- * page) or from the web over plain http:// (fetch(): src/appsys.asm,
- * the same code as `wget`). It knows the HTML a simple page needs:
- * headings, paragraphs, line breaks, bold/italic/underlined text, links,
- * lists (bullets and numbers), <pre>, <hr>, <blockquote>, <center>,
+ * page) or from the web over plain http:// (its own HTTP/1.1 on the
+ * kernel's TCP: tcp_open() and the rest). It knows the HTML a simple
+ * page needs: headings, paragraphs, line breaks, bold/italic/underlined
+ * text, links, lists (bullets and numbers), <pre>, <hr>, <blockquote>, <center>,
  * tables as rows of cells, <font color>, <body bgcolor>, and pictures -
- * <img> of .BMP (8, 24 or 32 bits) and .PNG files (png.h). Text in
- * UTF-8 is shown in LexOS's font (Russian and Spanish letters too);
- * scripts and styles are skipped.
+ * <img> of .BMP (8, 24 or 32 bits), .PNG (png.h), .JPG (jpeg.h) and
+ * .GIF (gif.h), up to 16 a page. Text is shown in LexOS's font (Russian
+ * and Spanish letters too, the rest as near as it can be).
+ *
+ * So that no page comes out as gibberish: gzip'd or deflated pages are
+ * unpacked (inflate.h); the charset is the server's, the <meta>'s, a
+ * BOM's, or guessed from the bytes (UTF-8, windows-1251, KOI8-R, CP866,
+ * ISO-8859-5, windows-1252). A page is stripped as it comes (scripts,
+ * SVG, comments, most attributes left out), so a big one still fits.
+ * A little CSS (css.h): what's hidden stays hidden; bold, italic,
+ * colors, centering, the background. JSON and text are shown as text,
+ * a picture as a picture, the rest is offered as a download.
+ *
+ * Reader mode (Aa, F9): the article alone. Ctrl+I: about this page.
+ * Ctrl+U: its source, in a new tab.
  *
  * https:// works too: apps/tls.h does TLS 1.3 (X25519, AES-GCM or
  * ChaCha20-Poly1305) over the kernel's TCP - encrypted, though the
@@ -36,6 +48,10 @@
 #include "lexos.h"
 #include "tls.h"                         /* https:// - TLS 1.3 of its own */
 #include "png.h"                         /* <img> of .PNG */
+#include "jpeg.h"                        /* ... .JPG */
+#include "gif.h"                         /* ... .GIF */
+#include "inflate.h"                     /* pages sent gzip'd */
+#include "css.h"                         /* the little CSS it knows */
 
 #define W 800
 #define H 600
@@ -47,15 +63,16 @@
 #define VIEW_H (H - VIEW_Y - STATUS)
 #define SBW 14                            /* the scrollbar */
 #define MARGIN 18
-#define RIGHT (W - SBW - MARGIN)
+#define RIGHT right_x                     /* the text's right edge (the reader: narrower) */
+static int left_x = MARGIN, right_x = W - SBW - MARGIN;
 
 #define SRC_MAX (256 * 1024)
-#define ITEMS_MAX 9000
+#define ITEMS_MAX 4500                    /* (words run together: a line's worth each) */
 #define POOL_MAX (160 * 1024)
 #define LINKS_MAX 600
 #define LPOOL_MAX (40 * 1024)
 #define URL_MAX 240
-#define HIST_MAX 32
+#define HIST_MAX 24
 
 /* colors */
 #define C_PAGE   RGB(255, 255, 255)
@@ -100,6 +117,7 @@ static int nlpool;
 static unsigned page_bg;
 static int doc_h, scroll;
 static char title[80];
+static int view_source, reader;                          /* (the page's source; the reader) */
 
 /* --- where we are --- */
 static char url[URL_MAX], edit_url[URL_MAX];
@@ -117,7 +135,9 @@ struct tab {
     int nhist, hpos, scroll;
     char title[40];
     char *src;                            /* the page, kept (0: read again) */
-    int srclen;
+    int srclen, kind, cs, vs;
+    void *css;                            /* (its rules: css_save) */
+    char base[URL_MAX];
 };
 static struct tab tabs[TABS_MAX];
 static int ntabs = 1, cur_tab, hover_tab = -1, hover_close = -1;
@@ -242,6 +262,56 @@ static int to_font(unsigned u, char *out)
         out[0] = u == 0xE7 ? (char)0xB7 : u == 0xC7 ? (char)0xB8 : latin[u - 0xC0];
         return 1;
     }
+    if (u >= 0x100 && u <= 0x17F) {                     /* Latin Extended-A: the letter */
+        static const char ext[] = "AaAaAaCcCcCcCcDdDdEeEeEeEeEeGgGgGgGgHhHhIiIiIiIiIiJjJjKkkLlLlLlLlLlNnNnNnnNnOoOoOoOoRrRrRrSsSsSsSsTtTtTtUuUuUuUuUuUuWwYyYZzZzZzs";
+        out[0] = u == 0x152 ? 'O' : u == 0x153 ? 'o' : ext[u - 0x100];
+        if (u == 0x152 || u == 0x153) { out[1] = u == 0x152 ? 'E' : 'e'; return 2; }
+        return 1;
+    }
+    /* nothing to see: joiners, marks of direction, soft hyphens, the
+     * byte order mark, emoji's variation selectors and skin tones */
+    if ((u >= 0x200B && u <= 0x200F) || (u >= 0x2060 && u <= 0x2064) || u == 0xFEFF || u == 0xAD ||
+        (u >= 0xFE00 && u <= 0xFE0F) || (u >= 0x1F3FB && u <= 0x1F3FF) || u == 0x34F) return 0;
+    if ((u >= 0x2000 && u <= 0x200A) || u == 0x202F || u == 0x205F || u == 0x3000 || u == 0x2028 || u == 0x2029) { out[0] = ' '; return 1; }
+    {                                                    /* as themselves, or near it */
+        static const struct { unsigned short u; char t[4]; } near[] = {
+            { 0x2116, "No" }, { 0x20AC, "EUR" }, { 0xA3, "L" }, { 0xA5, "Y" }, { 0xA2, "c" }, { 0x20BD, "RUB" },
+            { 0x2122, "TM" }, { 0xAE, "(R)" }, { 0xD7, "x" }, { 0xF7, "/" }, { 0xB1, "+-" }, { 0x2248, "~" },
+            { 0x2260, "!=" }, { 0x2264, "<=" }, { 0x2265, ">=" }, { 0x221E, "oo" }, { 0x2030, "%o" },
+            { 0xBD, "1/2" }, { 0xBC, "1/4" }, { 0xBE, "3/4" }, { 0xB2, "2" }, { 0xB3, "3" }, { 0xB9, "1" },
+            { 0x2032, "'" }, { 0x2033, "\"" }, { 0x201A, "," }, { 0x201E, "\"" }, { 0x2039, "<" }, { 0x203A, ">" },
+            { 0x2020, "+" }, { 0x2021, "+" }, { 0xB5, "u" }, { 0x2010, "-" }, { 0x2011, "-" }, { 0x2012, "-" },
+            { 0x2015, "-" }, { 0x2043, "-" }, { 0x2BC, "'" }, { 0x2B9, "'" }, { 0xB4, "'" }, { 0x2DC, "~" },
+            { 0x2C6, "^" }, { 0x192, "f" }, { 0x2717, "x" }, { 0x2718, "x" }, { 0x274C, "x" }, { 0x2716, "x" },
+            { 0x2605, "*" }, { 0x2606, "*" }, { 0x2B50, "*" }, { 0x2027, "-" }, { 0x2044, "/" }, { 0x2215, "/" },
+            { 0x2191, "\x18" }, { 0x2193, "\x19" }, { 0x2194, "\x1d" }, { 0x2195, "\x12" }, { 0x21D2, "=>" },
+            { 0x21D0, "<=" }, { 0x25B2, "\x1e" }, { 0x25B4, "\x1e" }, { 0x25BC, "\x1f" }, { 0x25BE, "\x1f" },
+            { 0x25B6, "\x10" }, { 0x25BA, "\x10" }, { 0x25B8, "\x10" }, { 0x25C0, "\x11" }, { 0x25C4, "\x11" },
+            { 0x2665, "\x03" }, { 0x2764, "\x03" }, { 0x2666, "\x04" }, { 0x2663, "\x05" }, { 0x2660, "\x06" },
+            { 0x263A, "\x01" }, { 0x263B, "\x02" }, { 0x266A, "\x0d" }, { 0x266B, "\x0e" }, { 0x25CB, "\x09" },
+            { 0x25CF, "\x07" }, { 0x221A, "\xfb" }, { 0x2713, "\xfb" }, { 0x2714, "\xfb" }, { 0x2705, "\xfb" },
+            { 0xB6, "\x14" }, { 0xA7, "\x15" }, { 0x203C, "\x13" }, { 0x25A0, "\xfe" }, { 0x25AA, "\xfe" },
+            { 0x2500, "\xc4" }, { 0x2502, "\xb3" }, { 0x250C, "\xda" }, { 0x2510, "\xbf" }, { 0x2514, "\xc0" },
+            { 0x2518, "\xd9" }, { 0x251C, "\xc3" }, { 0x2524, "\xb4" }, { 0x252C, "\xc2" }, { 0x2534, "\xc1" },
+            { 0x253C, "\xc5" }, { 0x2550, "\xcd" }, { 0x2551, "\xba" }, { 0x2554, "\xc9" }, { 0x2557, "\xbb" },
+            { 0x255A, "\xc8" }, { 0x255D, "\xbc" }, { 0x2560, "\xcc" }, { 0x2563, "\xb9" }, { 0x2566, "\xcb" },
+            { 0x2569, "\xca" }, { 0x256C, "\xce" }, { 0x2580, "\xdf" }, { 0x2584, "\xdc" }, { 0x2588, "\xdb" },
+            { 0x258C, "\xdd" }, { 0x2590, "\xde" }, { 0x2591, "\xb0" }, { 0x2592, "\xb1" }, { 0x2593, "\xb2" },
+            { 0x40E, "Y" }, { 0x45E, "y" }, { 0x406, "I" }, { 0x407, "I" }, { 0x404, "E" }, { 0x490, "G" },
+            { 0x402, "D" }, { 0x452, "d" }, { 0x403, "G" }, { 0x453, "g" }, { 0x409, "Lj" }, { 0x459, "lj" },
+            { 0x40A, "Nj" }, { 0x45A, "nj" }, { 0x40B, "C" }, { 0x45B, "c" }, { 0x40C, "K" }, { 0x45C, "k" },
+            { 0x40F, "Dz" }, { 0x45F, "dz" }, { 0x405, "S" }, { 0x455, "s" }, { 0x408, "J" }, { 0x458, "j" },
+            { 0, "" } };
+        int i;
+        for (i = 0; near[i].u; i++)
+            if (near[i].u == u) {
+                int k = 0;
+                while (near[i].t[k] && k < 3) { out[k] = near[i].t[k]; k++; }
+                return k;
+            }
+    }
+    if ((u >= 0x1F300 && u <= 0x1FAFF) || (u >= 0x2600 && u <= 0x27BF)) { out[0] = '*'; return 1; }   /* emoji */
+    if (u >= 0xF0080 && u <= 0xF00FF) { out[0] = (char)(u - 0xF0000); return 1; }   /* (code page 866 as it is) */
     if (u == 0x456 || u == 0x457) { out[0] = 'i'; return 1; }   /* Ukrainian */
     if (u == 0x454) { out[0] = (char)0xA5; return 1; }
     if (u == 0x491) { out[0] = (char)0xA3; return 1; }
@@ -249,21 +319,109 @@ static int to_font(unsigned u, char *out)
     return 1;
 }
 
-/* the character at src[*p] (UTF-8), *p past it */
-static unsigned utf8(int *p)
+/* ============================================================
+ * the page's charset: UTF-8, or one of the older one-byte ones
+ * ============================================================ */
+enum { CS_UTF8, CS_1251, CS_KOI8, CS_1252, CS_8859_5, CS_866 };
+static int cs_mode;
+static const unsigned short cs_1251[64] = {
+    0x402, 0x403, 0x201A, 0x453, 0x201E, 0x2026, 0x2020, 0x2021, 0x20AC, 0x2030, 0x409, 0x2039, 0x40A, 0x40C, 0x40B, 0x40F,
+    0x452, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, '?', 0x2122, 0x459, 0x203A, 0x45A, 0x45C, 0x45B, 0x45F,
+    0xA0, 0x40E, 0x45E, 0x408, 0xA4, 0x490, 0xA6, 0xA7, 0x401, 0xA9, 0x404, 0xAB, 0xAC, 0xAD, 0xAE, 0x407,
+    0xB0, 0xB1, 0x406, 0x456, 0x491, 0xB5, 0xB6, 0xB7, 0x451, 0x2116, 0x454, 0xBB, 0x458, 0x405, 0x455, 0x457 };
+static const unsigned short cs_koi8[128] = {
+    0x2500, 0x2502, 0x250C, 0x2510, 0x2514, 0x2518, 0x251C, 0x2524, 0x252C, 0x2534, 0x253C, 0x2580, 0x2584, 0x2588, 0x258C, 0x2590,
+    0x2591, 0x2592, 0x2593, 0x2320, 0x25A0, 0x2219, 0x221A, 0x2248, 0x2264, 0x2265, 0xA0, 0x2321, 0xB0, 0xB2, 0xB7, 0xF7,
+    0x2550, 0x2551, 0x2552, 0x451, 0x2553, 0x2554, 0x2555, 0x2556, 0x2557, 0x2558, 0x2559, 0x255A, 0x255B, 0x255C, 0x255D, 0x255E,
+    0x255F, 0x2560, 0x2561, 0x401, 0x2562, 0x2563, 0x2564, 0x2565, 0x2566, 0x2567, 0x2568, 0x2569, 0x256A, 0x256B, 0x256C, 0xA9,
+    0x44E, 0x430, 0x431, 0x446, 0x434, 0x435, 0x444, 0x433, 0x445, 0x438, 0x439, 0x43A, 0x43B, 0x43C, 0x43D, 0x43E,
+    0x43F, 0x44F, 0x440, 0x441, 0x442, 0x443, 0x436, 0x432, 0x44C, 0x44B, 0x437, 0x448, 0x44D, 0x449, 0x447, 0x44A,
+    0x42E, 0x410, 0x411, 0x426, 0x414, 0x415, 0x424, 0x413, 0x425, 0x418, 0x419, 0x41A, 0x41B, 0x41C, 0x41D, 0x41E,
+    0x41F, 0x42F, 0x420, 0x421, 0x422, 0x423, 0x416, 0x412, 0x42C, 0x42B, 0x417, 0x428, 0x42D, 0x429, 0x427, 0x42A };
+static const unsigned short cs_1252[32] = {
+    0x20AC, '?', 0x201A, 0x192, 0x201E, 0x2026, 0x2020, 0x2021, 0x2C6, 0x2030, 0x160, 0x2039, 0x152, '?', 0x17D, '?',
+    '?', 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x2DC, 0x2122, 0x161, 0x203A, 0x153, '?', 0x17E, 0x178 };
+
+/* the character at b[*p] (of n), in the page's charset; *p past it */
+static unsigned dec(const char *b, int n, int *p)
 {
-    unsigned c = (unsigned char)src[*p];
-    int n = 0;
-    unsigned u;
+    unsigned c = (unsigned char)b[*p];
     (*p)++;
     if (c < 0x80) return c;
-    if ((c & 0xE0) == 0xC0) { u = c & 0x1F; n = 1; }
-    else if ((c & 0xF0) == 0xE0) { u = c & 0x0F; n = 2; }
-    else if ((c & 0xF8) == 0xF0) { u = c & 0x07; n = 3; }
-    else return '?';
-    while (n-- && *p < srclen && (src[*p] & 0xC0) == 0x80)
-        u = u << 6 | (src[(*p)++] & 0x3F);
-    return u;
+    if (cs_mode == CS_UTF8) {
+        int k = 0;
+        unsigned u;
+        if ((c & 0xE0) == 0xC0) { u = c & 0x1F; k = 1; }
+        else if ((c & 0xF0) == 0xE0) { u = c & 0x0F; k = 2; }
+        else if ((c & 0xF8) == 0xF0) { u = c & 0x07; k = 3; }
+        else return '?';
+        while (k-- && *p < n && (b[*p] & 0xC0) == 0x80) u = u << 6 | (b[(*p)++] & 0x3F);
+        return u;
+    }
+    switch (cs_mode) {
+    case CS_1251: return c >= 0xC0 ? 0x410 + c - 0xC0 : cs_1251[c - 0x80];
+    case CS_KOI8: return cs_koi8[c - 0x80];
+    case CS_1252: return c >= 0xA0 ? c : cs_1252[c - 0x80];
+    case CS_8859_5: return c >= 0xA1 && c != 0xAD ? 0x360 + c : c;
+    case CS_866: return 0xF0000 + c;
+    }
+    return c;
+}
+static unsigned next_char(int *p) { return dec(src, srclen, p); }
+static void put_char(unsigned u);
+/* an attribute's words (alt="", value="") -> put_char's */
+static void put_attr_text(const char *t)
+{
+    int n = strlen(t), p = 0;
+    while (p < n) put_char(dec(t, n, &p));
+}
+/* a charset's name -> CS_*, -1 not known */
+static int cs_named(const char *n)
+{
+    static const struct { const char *n; int m; } names[] = {
+        { "utf-8", CS_UTF8 }, { "utf8", CS_UTF8 }, { "us-ascii", CS_UTF8 }, { "ascii", CS_UTF8 },
+        { "windows-1251", CS_1251 }, { "cp1251", CS_1251 }, { "x-cp1251", CS_1251 }, { "win-1251", CS_1251 },
+        { "koi8-r", CS_KOI8 }, { "koi8-u", CS_KOI8 }, { "koi8", CS_KOI8 },
+        { "iso-8859-1", CS_1252 }, { "windows-1252", CS_1252 }, { "latin1", CS_1252 }, { "iso-8859-15", CS_1252 },
+        { "cp1252", CS_1252 }, { "iso-8859-5", CS_8859_5 }, { "ibm866", CS_866 }, { "cp866", CS_866 }, { 0, 0 } };
+    int i;
+    for (i = 0; names[i].n; i++) if (starts_ci(n, names[i].n) && !n[strlen(names[i].n)]) return names[i].m;
+    return -1;
+}
+static const char *cs_name(int m)
+{
+    static const char *n[] = { "UTF-8", "windows-1251", "KOI8-R", "windows-1252", "ISO-8859-5", "CP866" };
+    return m >= 0 && m <= CS_866 ? n[m] : "?";
+}
+/* not said: the bytes looked at - UTF-8 if they're good UTF-8; if not,
+ * letters in runs are Cyrillic (lower case mostly: E0-FF in 1251,
+ * C0-DF in KOI8-R), alone among Latin ones a Western accent */
+static int cs_guess(const char *b, int n)
+{
+    int i, bad = 0, good = 0, high = 0, runs = 0, upper = 0, lower = 0;
+    for (i = 0; i < n;) {
+        unsigned c = (unsigned char)b[i];
+        int k = 0;
+        if (c < 0x80) { i++; continue; }
+        if ((c & 0xE0) == 0xC0) k = 1; else if ((c & 0xF0) == 0xE0) k = 2; else if ((c & 0xF8) == 0xF0) k = 3;
+        if (k && i + k < n) {
+            int j;
+            for (j = 1; j <= k; j++) if (((unsigned char)b[i + j] & 0xC0) != 0x80) break;
+            if (j > k) { good++; i += k + 1; continue; }
+        }
+        bad++;
+        i++;
+    }
+    if (!bad || good > bad * 8) return CS_UTF8;
+    for (i = 0; i < n; i++) {
+        unsigned c = (unsigned char)b[i];
+        if (c < 0xC0) continue;
+        high++;
+        if (i + 1 < n && (unsigned char)b[i + 1] >= 0xC0) runs++;
+        if (c >= 0xE0) lower++; else upper++;
+    }
+    if (runs * 3 < high) return CS_1252;
+    return lower >= upper ? CS_1251 : CS_KOI8;
 }
 
 static const struct { const char *name; unsigned u; } entities[] = {
@@ -274,7 +432,29 @@ static const struct { const char *name; unsigned u; } entities[] = {
     { "lsquo", 0x2018 }, { "rsquo", 0x2019 }, { "ldquo", 0x201C }, { "rdquo", 0x201D },
     { "aacute", 0xE1 }, { "eacute", 0xE9 }, { "iacute", 0xED }, { "oacute", 0xF3 },
     { "uacute", 0xFA }, { "ntilde", 0xF1 }, { "Ntilde", 0xD1 }, { "iquest", 0xBF },
-    { "iexcl", 0xA1 }, { "uuml", 0xFC }, { 0, 0 }
+    { "iexcl", 0xA1 }, { "uuml", 0xFC }, { "shy", 0xAD }, { "euro", 0x20AC }, { "pound", 0xA3 },
+    { "cent", 0xA2 }, { "yen", 0xA5 }, { "sect", 0xA7 }, { "para", 0xB6 }, { "reg", 0xAE }, { "trade", 0x2122 },
+    { "times", 0xD7 }, { "divide", 0xF7 }, { "plusmn", 0xB1 }, { "frac12", 0xBD }, { "frac14", 0xBC },
+    { "frac34", 0xBE }, { "sup1", 0xB9 }, { "sup2", 0xB2 }, { "sup3", 0xB3 }, { "micro", 0xB5 },
+    { "ensp", 0x2002 }, { "emsp", 0x2003 }, { "thinsp", 0x2009 }, { "zwnj", 0x200C }, { "zwj", 0x200D },
+    { "lrm", 0x200E }, { "rlm", 0x200F }, { "sbquo", 0x201A }, { "bdquo", 0x201E }, { "dagger", 0x2020 },
+    { "Dagger", 0x2021 }, { "permil", 0x2030 }, { "lsaquo", 0x2039 }, { "rsaquo", 0x203A }, { "prime", 0x2032 },
+    { "Prime", 0x2033 }, { "minus", 0x2212 }, { "le", 0x2264 }, { "ge", 0x2265 }, { "ne", 0x2260 },
+    { "asymp", 0x2248 }, { "infin", 0x221E }, { "uarr", 0x2191 }, { "darr", 0x2193 }, { "harr", 0x2194 },
+    { "rArr", 0x21D2 }, { "lArr", 0x21D0 }, { "hearts", 0x2665 }, { "spades", 0x2660 }, { "clubs", 0x2663 },
+    { "diams", 0x2666 }, { "radic", 0x221A }, { "check", 0x2713 }, { "star", 0x2606 }, { "starf", 0x2605 },
+    { "numero", 0x2116 }, { "Aacute", 0xC1 }, { "Eacute", 0xC9 }, { "Iacute", 0xCD }, { "Oacute", 0xD3 },
+    { "Uacute", 0xDA }, { "Uuml", 0xDC }, { "ccedil", 0xE7 }, { "Ccedil", 0xC7 }, { "szlig", 0xDF },
+    { "ouml", 0xF6 }, { "auml", 0xE4 }, { "Ouml", 0xD6 }, { "Auml", 0xC4 }, { "eacute", 0xE9 }, { "egrave", 0xE8 },
+    { "agrave", 0xE0 }, { "acirc", 0xE2 }, { "ecirc", 0xEA }, { "ocirc", 0xF4 }, { "icirc", 0xEE }, { "ucirc", 0xFB },
+    { "atilde", 0xE3 }, { "otilde", 0xF5 }, { "aring", 0xE5 }, { "oslash", 0xF8 }, { "aelig", 0xE6 },
+    { "iuml", 0xEF }, { "euml", 0xEB }, { "yuml", 0xFF }, { "igrave", 0xEC }, { "ograve", 0xF2 }, { "ugrave", 0xF9 },
+    { "ordm", 0xBA }, { "ordf", 0xAA }, { "curren", 0xA4 }, { "brvbar", 0xA6 }, { "not", 0xAC },
+    { "macr", 0xAF }, { "acute", 0xB4 }, { "cedil", 0xB8 }, { "quest", '?' }, { "excl", '!' }, { "num", '#' },
+    { "dollar", '$' }, { "percnt", '%' }, { "lpar", '(' }, { "rpar", ')' }, { "ast", '*' }, { "plus", '+' },
+    { "comma", ',' }, { "period", '.' }, { "sol", '/' }, { "colon", ':' }, { "semi", ';' }, { "equals", '=' },
+    { "lsqb", '[' }, { "rsqb", ']' }, { "lowbar", '_' }, { "lcub", '{' }, { "rcub", '}' }, { "verbar", '|' },
+    { "Tab", 9 }, { "NewLine", 10 }, { 0, 0 }
 };
 
 /* src[*p] is '&': the character it stands for, *p past it */
@@ -295,7 +475,7 @@ static unsigned entity(int *p)
         *p = q;
         return u;
     }
-    while (q < srclen && n < 10 && ((src[q] >= 'a' && src[q] <= 'z') || (src[q] >= 'A' && src[q] <= 'Z')))
+    while (q < srclen && n < 10 && ((src[q] >= 'a' && src[q] <= 'z') || (src[q] >= 'A' && src[q] <= 'Z') || (n && src[q] >= '0' && src[q] <= '9')))
         name[n++] = src[q++];
     name[n] = 0;
     for (i = 0; entities[i].name; i++)
@@ -304,6 +484,14 @@ static unsigned entity(int *p)
             *p = q;
             return entities[i].u;
         }
+    if (n > 3 && q < srclen && src[q] == ';' &&                   /* &Xacute; &xcaron; ...: the letter */
+        (!strcmp(name + 1, "acute") || !strcmp(name + 1, "grave") || !strcmp(name + 1, "circ") ||
+         !strcmp(name + 1, "uml") || !strcmp(name + 1, "tilde") || !strcmp(name + 1, "cedil") ||
+         !strcmp(name + 1, "ring") || !strcmp(name + 1, "caron") || !strcmp(name + 1, "slash") ||
+         !strcmp(name + 1, "ogon") || !strcmp(name + 1, "macr") || !strcmp(name + 1, "breve") || !strcmp(name + 1, "dot"))) {
+        *p = q + 1;
+        return (unsigned char)name[0];
+    }
     (*p)++;
     return '&';
 }
@@ -319,12 +507,14 @@ static int ncolor;
 static char word[256];
 static int wlen;
 
+static unsigned base_text;
 static unsigned cur_color(void)
 {
-    if (cur_link >= 0) return C_LINK;
+    int dark = ((((page_bg >> 16) & 255) * 299 + ((page_bg >> 8) & 255) * 587 + (page_bg & 255) * 114) / 1000) < 110;
+    if (cur_link >= 0) return dark ? RGB(138, 180, 248) : C_LINK;
     if (ncolor) return color_stack[ncolor - 1];
-    if (head) return C_HEAD;
-    return C_TEXT;
+    if (head && !dark && base_text == C_TEXT) return C_HEAD;
+    return base_text;
 }
 
 static int cur_style(void)
@@ -361,7 +551,7 @@ static void end_line(int force)
         items[i].x += dx;
         items[i].y = y + lh - items[i].h;
     }
-    y += lh + 3;
+    y += lh + (reader ? 7 : 3);
     line_start = nitems;
     x = line_left;
     pending_space = 0;
@@ -384,13 +574,28 @@ static void set_left(int left)
 static void emit_text(const char *t, int n)
 {
     struct item *it;
-    int cw = 8 * scale, w = n * cw;
+    int cw = 8 * scale, w = n * cw, spaced = 0;
     if (pending_space && x > line_left) {
-        if (x + cw + w <= RIGHT) x += cw;
+        if (x + cw + w <= RIGHT) { x += cw; spaced = 1; }
         else end_line(0);
     }
     pending_space = 0;
     if (x + w > RIGHT && x > line_left) end_line(0);
+    if (nitems > line_start && x + w <= RIGHT) {         /* the same as the last, just after it: one piece */
+        struct item *l = &items[nitems - 1];
+        int gap = x - (l->x + l->w);
+        if (l->kind == IT_TEXT && l->text + l->len == npool && l->scale == scale && l->style == cur_style() &&
+            l->color == cur_color() && l->link == cur_link && (gap == 0 || (gap == cw && spaced)) &&
+            npool + n + 1 <= POOL_MAX) {
+            if (gap) { pool[npool++] = ' '; l->len++; l->w += cw; }
+            memcpy(pool + npool, t, n);
+            npool += n;
+            l->len += n;
+            l->w += w;
+            x += w;
+            return;
+        }
+    }
     while (n > 0) {
         int fit = (RIGHT - x) / cw, k;
         if (fit < 1) fit = 1;
@@ -597,103 +802,6 @@ static unsigned *load_png(unsigned char *b, int n, int *pw, int *ph)
     return png_pix;
 }
 
-/* https://host[:port]/path -> buf, as fetch() does it for http (-3:
- * moved, the address in buf; -2: not the page; -4: TLS failed) */
-static int parse_answer(char *buf, int len, int max);
-static int https_fetch(const char *u, char *buf, int max)
-{
-    char host[URL_MAX], path[URL_MAX];
-    int port = 443, n = 0, len;
-    const char *p = u + 8;
-    while (*p && *p != '/' && *p != ':' && n < URL_MAX - 1) host[n++] = *p++;
-    host[n] = 0;
-    if (*p == ':') { port = atoi(p + 1); while (*p && *p != '/') p++; }
-    copy(path, *p ? p : "/", URL_MAX);
-    len = tls_get(host, port, path, buf, max - 1);
-    if (len < 0) return -4;
-    return parse_answer(buf, len, max);
-}
-
-/* an HTTP answer in buf (len bytes, headers first) -> the body moved to
- * buf's start, its length; -3 moved (the address in buf), -2 not 200 */
-static int parse_answer(char *buf, int len, int max)
-{
-    int code, body, i;
-    buf[len] = 0;
-    if (len < 12 || memcmp(buf, "HTTP/", 5)) return -2;
-    code = atoi(buf + 9);
-    for (body = 0; body + 3 < len; body++)
-        if (buf[body] == '\r' && buf[body + 1] == '\n' && buf[body + 2] == '\r' && buf[body + 3] == '\n') break;
-    body += 4;
-    if (body > len) body = len;
-    if (code >= 300 && code < 400) {                     /* moved: where to */
-        for (i = 0; i < body; i++)
-            if (buf[i] == '\n' && starts_ci(buf + i + 1, "location:")) {
-                const char *l = buf + i + 10;
-                char to[URL_MAX];
-                int k = 0;
-                while (*l == ' ') l++;
-                while (*l && *l != '\r' && *l != '\n' && k < URL_MAX - 1) to[k++] = *l++;
-                to[k] = 0;
-                copy(buf, to, max);
-                return -3;
-            }
-        return -2;
-    }
-    if (code != 200) return -2;
-    {                                                    /* chunked? */
-        int chunked = 0;
-        for (i = 0; i < body; i++)
-            if (buf[i] == '\n' && starts_ci(buf + i + 1, "transfer-encoding:") && starts_ci(buf + i + 20, "chunked"))
-                chunked = 1;
-        if (!chunked) {
-            memmove(buf, buf + body, len - body);
-            return len - body;
-        }
-        {
-            int in = body, outp = 0;
-            for (;;) {
-                int size = 0;
-                while (in < len && hexval(buf[in]) >= 0) size = size * 16 + hexval(buf[in++]);
-                while (in < len && buf[in] != '\n') in++;
-                in++;
-                if (size <= 0 || in + size > len) break;
-                memmove(buf + outp, buf + in, size);
-                outp += size;
-                in += size + 2;
-            }
-            return outp;
-        }
-    }
-}
-
-/* a file (this disk) or a page (http, https) -> buf; its length, or <0 */
-static int load(const char *where, char *buf, int max)
-{
-    int fd, n, tries;
-    char u[URL_MAX];
-    if (is_http(where)) {
-        copy(u, where, URL_MAX);
-        for (tries = 0; tries < 4; tries++) {
-            n = is_https(u) ? https_fetch(u, buf, max) : fetch(u, buf, max);
-            if (n != -3) return n;
-            buf[max - 1] = 0;
-            {
-                char moved[URL_MAX];
-                resolve(u, buf, moved);
-                copy(u, moved, URL_MAX);
-            }
-            if (!is_http(u)) return -2;
-        }
-        return -1;
-    }
-    fd = open(where, O_READ);
-    if (fd < 0) return -1;
-    n = read(fd, buf, max);
-    close(fd);
-    return n;
-}
-
 /* ============================================================
  * downloads: a file (not a page) from the web, straight into
  * /DOWNLOADS as it comes (so as big as a file can be, 4MB), the status
@@ -702,7 +810,7 @@ static int load(const char *where, char *buf, int max)
 #define DL_LIST 12
 #define HDR_MAX 8192
 static struct { char name[16]; int size, ok; } dls[DL_LIST];
-static int ndls, show_dls;
+static int ndls, show_dls, show_info;
 static char dl_name[16], dl_path[64];
 static char dl_hdr[HDR_MAX + 1];
 static int dl_hlen, dl_in_body, dl_code, dl_total, dl_written, dl_fd = -1, dl_stop;
@@ -715,7 +823,9 @@ static void redraw(void);
 /* a link to a file, not to a page? (by its name's extension) */
 static int is_download(const char *u)
 {
-    static const char *pages[] = { "HTM", "HTML", "MD", "PHP", "ASP", "ASPX", "JSP", "CGI", "SHTML", "TXT", "XHTML", 0 };
+    static const char *pages[] = { "HTM", "HTML", "MD", "PHP", "ASP", "ASPX", "JSP", "CGI", "SHTML", "TXT", "XHTML",
+                                   "JSON", "XML", "RSS", "ATOM", "CSS", "JS", "CSV", "LOG", "C", "H", "PY", "ASM", "INI",
+                                   "JPG", "JPEG", "PNG", "GIF", "BMP", "SVG", "PL", "RB", "GO", "RS", "JAVA", "SH", 0 };
     const char *p, *last = u, *ext = 0;
     int i, n;
     if (!is_http(u)) return 0;
@@ -860,6 +970,7 @@ static int dl_get(const char *u)
     copy(path, *p ? p : "/", URL_MAX);
     if (is_https(u)) {
         static char none[4];
+        tls_headers = "User-Agent: Mozilla/5.0 (compatible; LexOS-Web/2.0)\r\nAccept: */*\r\nAccept-Encoding: identity\r\n";
         tls_sink = dl_sink;
         n = tls_get(host, port, path, none, 0);
         tls_sink = 0;
@@ -872,7 +983,7 @@ static int dl_get(const char *u)
         append(req, path, sizeof req);
         append(req, " HTTP/1.0\r\nHost: ", sizeof req);
         append(req, host, sizeof req);
-        append(req, "\r\nUser-Agent: LexOS-Web/1.0\r\nConnection: close\r\n\r\n", sizeof req);
+        append(req, "\r\nUser-Agent: Mozilla/5.0 (compatible; LexOS-Web/2.0)\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n", sizeof req);
         tcp_send(req, strlen(req));
         for (;;) {
             int got = tcp_recv(piece, sizeof piece, 15000);
@@ -952,31 +1063,561 @@ static void download(const char *u)
     redraw();
 }
 
+/* ============================================================
+ * fetching: http:// and https:// (or this disk), the answer a piece at
+ * a time - its headers read (the type, the charset, gzip, chunked,
+ * where it moved), its body undone (chunks joined, gzip unpacked) and
+ * sent on: a page's HTML made smaller on the way in (scripts, SVG,
+ * comments, attributes nobody here reads and runs of spaces left out -
+ * so a page of megabytes fits), its <style> read as it passes; a style
+ * sheet into css.h; a picture into a buffer
+ * ============================================================ */
+enum { T_PAGE, T_CSS, T_BUF };
+enum { PK_HTML, PK_TEXT, PK_IMAGE, PK_FILE, PK_MD, PK_SNIFF };
+static struct {                                          /* what came (Ctrl+I) */
+    int code, raw, body, kept, trunc, gz, kind, cs_how, css_files, hidden, imgs, imgs_bad, total;
+    char ctype[48], cenc[24], cs_hdr[24], cs_meta[24];
+} pi;
+static int tg;                                           /* where the body goes */
+static unsigned char *tbuf;
+static int tcap, tlen, tbuf_auto;
+#define TBUF_MAX (1024 * 1024)                           /* a picture: this big at most */
+static char ph[HDR_MAX + 1];                             /* the headers */
+static int ph_n, ph_body, ph_chunked, ph_cstate, ph_cleft, ph_stop;
+static char ph_moved[URL_MAX];
+static unsigned char *zbuf;                              /* gzip'd: gathered, then unpacked */
+static int zn, zcap;
+static char css_links[4][URL_MAX];
+static int ncss_links;
+static char base_url[URL_MAX];                           /* <base href>, or the page's address */
+static unsigned progress_at;
+
+/* ---- the HTML made smaller as it comes (T_PAGE, PK_HTML) ---- */
+enum { SS_TEXT, SS_TAG, SS_SKIP, SS_CSS, SS_COMMENT, SS_GT };
+static int st_state, st_pre, st_space, st_q, st_last, st_match, st_tn;
+static char st_tag[3072], st_end[12];
+static void st_out(int c) { if (srclen < SRC_MAX) src[srclen++] = c; else pi.trunc = 1; }
+static void st_outs(const char *t) { while (*t) st_out(*t++); }
+static void st_reset(void)
+{
+    st_state = SS_TEXT; st_pre = st_q = st_last = st_match = st_tn = 0; st_space = 1;
+}
+static const char *st_keep[] = { "href", "src", "data-src", "alt", "title", "class", "id", "style", "hidden",
+    "color", "bgcolor", "value", "type", "rel", "name", "content", "charset", "http-equiv", "open", "role",
+    "aria-hidden", "start", "media", 0 };
+/* a whole tag in st_tag: kept (its attributes that matter), or not */
+static void st_tag_done(void)
+{
+    char name[16], an[24];
+    int q = 1, n = 0, closing = 0, i, self = 0;
+    static char av[URL_MAX + 160];
+    if (st_tag[q] == '/') { closing = 1; q++; }
+    while (q < st_tn && n < 15 && ((st_tag[q] >= 'a' && st_tag[q] <= 'z') || (st_tag[q] >= 'A' && st_tag[q] <= 'Z') ||
+                                   (st_tag[q] >= '0' && st_tag[q] <= '9') || st_tag[q] == '-')) name[n++] = lower(st_tag[q++]);
+    name[n] = 0;
+    if (!n) return;                                      /* <!DOCTYPE>, <?xml?> */
+    if (st_tn > 2 && st_tag[st_tn - 2] == '/') self = 1;
+    if (!closing) {
+        if (!strcmp(name, "script") || !strcmp(name, "template") || !strcmp(name, "iframe") || !strcmp(name, "math") ||
+            (!strcmp(name, "svg") && !self)) {
+            copy(st_end, name, sizeof st_end);
+            st_state = SS_SKIP; st_match = 0;
+            return;
+        }
+        if (!strcmp(name, "style")) { css_begin(); copy(st_end, "style", sizeof st_end); st_state = SS_CSS; st_match = 0; return; }
+    }
+    if (!strcmp(name, "pre") || !strcmp(name, "textarea") || !strcmp(name, "listing") || !strcmp(name, "xmp")) {
+        if (closing) { if (st_pre) st_pre--; } else st_pre++;
+    }
+    if (closing) {
+        if (!strcmp(name, "source") || !strcmp(name, "picture") || !strcmp(name, "object")) return;
+        st_outs("</"); st_outs(name); st_out('>');
+        st_space = 0;
+        return;
+    }
+    {                                                    /* its attributes */
+        static char kept[1600];
+        int nk = 0, is_meta = !strcmp(name, "meta"), is_link = !strcmp(name, "link"), is_base = !strcmp(name, "base");
+        char rel[32] = "", href[URL_MAX] = "", media[32] = "";
+        kept[0] = 0;
+        while (q < st_tn) {
+            int k = 0, v = 0, has_v = 0;
+            while (q < st_tn && (is_space(st_tag[q]) || st_tag[q] == '/')) q++;
+            if (q >= st_tn || st_tag[q] == '>') break;
+            while (q < st_tn && !is_space(st_tag[q]) && st_tag[q] != '=' && st_tag[q] != '>') { if (k < 23) an[k++] = lower(st_tag[q]); q++; }
+            an[k] = 0;
+            while (q < st_tn && is_space(st_tag[q])) q++;
+            if (st_tag[q] == '=') {
+                has_v = 1;
+                q++;
+                while (q < st_tn && is_space(st_tag[q])) q++;
+                if (st_tag[q] == '"' || st_tag[q] == '\'') {
+                    char quote = st_tag[q++];
+                    while (q < st_tn && st_tag[q] != quote) { if (v < (int)sizeof av - 1) av[v++] = st_tag[q]; q++; }
+                    q++;
+                } else
+                    while (q < st_tn && !is_space(st_tag[q]) && st_tag[q] != '>') { if (v < (int)sizeof av - 1) av[v++] = st_tag[q]; q++; }
+            }
+            av[v] = 0;
+            if (!k) continue;
+            if (is_meta) {                               /* <meta charset>, http-equiv's */
+                const char *c = 0;
+                if (!strcmp(an, "charset")) c = av;
+                else if (!strcmp(an, "content")) { const char *t = av; while (*t && !starts_ci(t, "charset=")) t++; if (*t) c = t + 8; }
+                if (c && !pi.cs_meta[0]) { int j = 0; while (c[j] && c[j] != ';' && c[j] != ' ' && c[j] != '"' && j < 23) { pi.cs_meta[j] = lower(c[j]); j++; } pi.cs_meta[j] = 0; }
+                continue;
+            }
+            if (is_link || is_base) {
+                if (!strcmp(an, "rel")) copy(rel, av, sizeof rel);
+                else if (!strcmp(an, "href")) copy(href, av, sizeof href);
+                else if (!strcmp(an, "media")) copy(media, av, sizeof media);
+                continue;
+            }
+            for (i = 0; st_keep[i]; i++) if (!strcmp(st_keep[i], an)) break;
+            if (!st_keep[i]) continue;
+            if (starts_ci(av, "data:") || starts_ci(av, "javascript:")) continue;
+            if (v > URL_MAX - 1) av[URL_MAX - 1] = 0;
+            if (nk + k + (int)strlen(av) + 5 >= (int)sizeof kept) continue;
+            kept[nk++] = ' ';
+            memcpy(kept + nk, an, k); nk += k;
+            if (has_v) {
+                const char *t = av;
+                kept[nk++] = '='; kept[nk++] = '"';
+                while (*t && nk < (int)sizeof kept - 3) { if (*t != '"') kept[nk++] = *t; t++; }
+                kept[nk++] = '"';
+            }
+            kept[nk] = 0;
+        }
+        if (is_base) { if (href[0]) resolve(url, href, base_url); return; }
+        if (is_link) {
+            const char *r = rel;
+            while (*r && !starts_ci(r, "stylesheet")) r++;
+            if (*r && href[0] && !starts_ci(media, "print") && ncss_links < 4) copy(css_links[ncss_links++], href, URL_MAX);
+            return;
+        }
+        if (is_meta || !strcmp(name, "source") || !strcmp(name, "track") || !strcmp(name, "param") || !strcmp(name, "wbr") ||
+            !strcmp(name, "picture") || !strcmp(name, "object") || !strcmp(name, "col") || !strcmp(name, "colgroup")) return;
+        st_out('<'); st_outs(name); st_outs(kept); st_out('>');
+        st_space = 0;
+    }
+}
+static void st_feed(int c)
+{
+    switch (st_state) {
+    case SS_TEXT:
+        if (c == '<') { st_tn = 0; st_tag[st_tn++] = '<'; st_q = 0; st_last = '<'; st_state = SS_TAG; return; }
+        if (!st_pre && is_space(c)) { if (!st_space) { st_out(' '); st_space = 1; } return; }
+        st_space = 0;
+        st_out(c);
+        return;
+    case SS_TAG:
+        if (st_tn == 1 && !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '/' || c == '!' || c == '?')) {
+            st_out('<');                                 /* ("<" as text) */
+            st_state = SS_TEXT;
+            st_space = 0;
+            st_feed(c);
+            return;
+        }
+        if (st_tn < (int)sizeof st_tag - 2) st_tag[st_tn++] = c;
+        if (st_tn == 4 && !memcmp(st_tag, "<!--", 4)) { st_state = SS_COMMENT; st_match = 0; return; }
+        if (st_q) { if (c == st_q) st_q = 0; return; }
+        if ((c == '"' || c == '\'') && st_last == '=') { st_q = c; return; }
+        if (!is_space(c)) st_last = c;
+        if (c == '>') {
+            st_tag[st_tn] = 0;
+            st_state = SS_TEXT;
+            st_tag_done();
+        }
+        return;
+    case SS_COMMENT:                                     /* up to --> */
+        if (c == '-') st_match++;
+        else if (c == '>' && st_match >= 2) st_state = SS_TEXT;
+        else st_match = 0;
+        return;
+    case SS_SKIP:
+    case SS_CSS: {                                       /* up to </name */
+        int n = strlen(st_end);
+        if (st_state == SS_CSS) css_feed(c);
+        if (st_match == 0) { if (c == '<') st_match = 1; return; }
+        if (st_match == 1) { st_match = c == '/' ? 2 : c == '<' ? 1 : 0; return; }
+        if (lower(c) == st_end[st_match - 2]) {
+            if (++st_match - 2 == n) {
+                if (st_state == SS_CSS) css_begin();     /* ("</style" isn't CSS) */
+                st_state = SS_GT;
+            }
+            return;
+        }
+        st_match = c == '<' ? 1 : 0;
+        return;
+    }
+    case SS_GT:
+        if (c == '>') { st_state = SS_TEXT; st_space = 0; }
+        return;
+    }
+}
+
+/* ---- the body's bytes, undone, to where they go ---- */
+static void pg_kind_sniff(const unsigned char *d, int n)
+{
+    int i = 0;
+    if (n >= 3 && d[0] == 0xEF && d[1] == 0xBB && d[2] == 0xBF) i = 3;
+    while (i < n && is_space(d[i])) i++;
+    if (n - i >= 4 && (!memcmp(d + i, "\x89PNG", 4) || (d[i] == 0xFF && d[i + 1] == 0xD8) || !memcmp(d + i, "GIF8", 4) ||
+                       (d[i] == 'B' && d[i + 1] == 'M'))) pi.kind = PK_IMAGE;
+    else if (i < n && d[i] == '<') pi.kind = PK_HTML;
+    else {
+        int k, zeros = 0;
+        for (k = i; k < n && k < i + 512; k++) if (!d[k]) zeros++;
+        pi.kind = zeros || (n - i >= 4 && (!memcmp(d + i, "%PDF", 4) || !memcmp(d + i, "PK\3\4", 4))) ? PK_FILE : PK_TEXT;
+    }
+}
+static int pg_emit(const unsigned char *d, int n)
+{
+    int i;
+    pi.body += n;
+    if (tg == T_CSS) { for (i = 0; i < n; i++) css_feed(d[i]); return 0; }
+    if (tg == T_BUF) {
+        int k;
+        if (tbuf_auto && tlen + n > tcap && tcap < TBUF_MAX) {           /* (more room) */
+            int want = tcap ? tcap * 2 : 64 * 1024;
+            unsigned char *b;
+            while (want < tlen + n) want *= 2;
+            if (want > TBUF_MAX) want = TBUF_MAX;
+            b = malloc(want);
+            if (b) { if (tbuf) { memcpy(b, tbuf, tlen); free(tbuf); } tbuf = b; tcap = want; }
+        }
+        k = n < tcap - tlen ? n : tcap - tlen;
+        if (k > 0) { memcpy(tbuf + tlen, d, k); tlen += k; }
+        return tlen >= tcap && (!tbuf_auto || tcap >= TBUF_MAX);
+    }
+    if (pi.kind == PK_SNIFF) pg_kind_sniff(d, n);
+    if (pi.kind == PK_IMAGE || pi.kind == PK_FILE) return 1;           /* (not read here) */
+    if (pi.kind == PK_HTML && !view_source) { for (i = 0; i < n; i++) st_feed(d[i]); }
+    else for (i = 0; i < n; i++) st_out(d[i]);
+    return pi.trunc;
+}
+static int pg_put1(int c) { unsigned char b = c; return pg_emit(&b, 1); }
+static int pg_body_bytes(const unsigned char *d, int n)
+{
+    pi.raw += n;
+    if (pi.gz) {                                         /* gathered, unpacked at the end - */
+        if (!zbuf) {                                     /* in the frame's page part, drawn */
+            zbuf = (unsigned char *)(frame + VIEW_Y * W);  /* anew once it's in (1.6MB) */
+            zcap = VIEW_H * W * 4;
+        }
+        if (zn + n > zcap) { pi.trunc = 1; return 1; }
+        memcpy(zbuf + zn, d, n);
+        zn += n;
+        return 0;
+    }
+    return pg_emit(d, n);
+}
+/* the status line, now and then: how much has come */
+static void pg_progress(void)
+{
+    if (tg == T_BUF || millis() - progress_at < 250) return;
+    progress_at = millis();
+    copy(status, tg == T_CSS ? "Loading its styles... " : "Loading... ", sizeof status);
+    num_kb(status, pi.raw, sizeof status);
+    draw_status();
+    gfx_blit_rect(frame, 0, H - STATUS, W, STATUS);
+}
+/* the headers read: what it is, how it's sent */
+static void ph_headers(void)
+{
+    int j;
+    ph[ph_n] = 0;
+    pi.code = ph_n > 12 && !memcmp(ph, "HTTP/", 5) ? atoi(ph + 9) : 0;
+    for (j = 0; j < ph_n; j++) {
+        const char *h = ph + j + 1;
+        if (ph[j] != '\n') continue;
+        if (starts_ci(h, "transfer-encoding:") && starts_ci(h + 18 + (h[18] == ' '), "chunked")) ph_chunked = 1;
+        if (starts_ci(h, "content-length:")) pi.total = atoi(h + 15);
+        if (starts_ci(h, "location:")) {
+            const char *l = h + 9;
+            int k = 0;
+            while (*l == ' ') l++;
+            while (*l && *l != '\r' && *l != '\n' && k < URL_MAX - 1) ph_moved[k++] = *l++;
+            ph_moved[k] = 0;
+        }
+        if (starts_ci(h, "content-encoding:")) {
+            const char *l = h + 17;
+            int k = 0;
+            while (*l == ' ') l++;
+            while (*l && *l != '\r' && *l != '\n' && k < 23) pi.cenc[k++] = lower(*l++);
+            pi.cenc[k] = 0;
+            if (starts_ci(pi.cenc, "gzip") || starts_ci(pi.cenc, "x-gzip")) pi.gz = 1;
+            else if (starts_ci(pi.cenc, "deflate")) pi.gz = 2;
+        }
+        if (starts_ci(h, "content-type:") && tg != T_BUF) {
+            const char *l = h + 13, *c;
+            int k = 0;
+            while (*l == ' ') l++;
+            for (c = l; *c && *c != '\r' && *c != '\n' && *c != ';' && k < 47; c++) pi.ctype[k++] = lower(*c);
+            pi.ctype[k] = 0;
+            for (; *c && *c != '\r' && *c != '\n'; c++)
+                if (starts_ci(c, "charset=")) {
+                    const char *v = c + 8;
+                    k = 0;
+                    if (*v == '"') v++;
+                    while (*v && *v != '\r' && *v != '\n' && *v != ';' && *v != '"' && *v != ' ' && k < 23) pi.cs_hdr[k++] = lower(*v++);
+                    pi.cs_hdr[k] = 0;
+                    break;
+                }
+        }
+    }
+    if (tg == T_BUF && tbuf_auto && pi.total > 0 && pi.total <= TBUF_MAX && !pi.gz && pi.total > tcap) {
+        unsigned char *b = malloc(pi.total);             /* (its size said: that much) */
+        if (b) { if (tbuf) { memcpy(b, tbuf, tlen); free(tbuf); } tbuf = b; tcap = pi.total; }
+    }
+    if (tg == T_PAGE && !view_source) {                  /* the kind of thing */
+        const char *t = pi.ctype;
+        if (!*t || !strcmp(t, "application/octet-stream") || !strcmp(t, "binary/octet-stream")) pi.kind = PK_SNIFF;
+        else if (starts_ci(t, "text/html") || starts_ci(t, "application/xhtml")) pi.kind = PK_HTML;
+        else if (starts_ci(t, "image/svg")) pi.kind = PK_FILE;
+        else if (starts_ci(t, "image/")) pi.kind = PK_IMAGE;
+        else if (starts_ci(t, "text/markdown")) pi.kind = PK_MD;
+        else if (starts_ci(t, "text/") || starts_ci(t, "application/json") || starts_ci(t, "application/javascript") ||
+                 starts_ci(t, "application/xml") || starts_ci(t, "application/rss") || starts_ci(t, "application/atom") ||
+                 starts_ci(t, "application/ld+json") || starts_ci(t, "application/x-javascript")) pi.kind = PK_TEXT;
+        else pi.kind = PK_FILE;
+    }
+}
+/* chunked: the pieces joined */
+static int ph_chunks(const unsigned char *d, int n)
+{
+    int i = 0;
+    while (i < n) {
+        if (ph_cstate == 0) {                            /* its size, in hex */
+            int c = d[i++];
+            if (hexval(c) >= 0) ph_cleft = ph_cleft * 16 + hexval(c);
+            else if (c == ';') ph_cstate = 4;            /* (an extension: to the line's end) */
+            else if (c == '\n') ph_cstate = ph_cleft ? 1 : 3;
+        } else if (ph_cstate == 4) { if (d[i++] == '\n') ph_cstate = ph_cleft ? 1 : 3; }
+        else if (ph_cstate == 1) {
+            int k = n - i < ph_cleft ? n - i : ph_cleft;
+            if (pg_body_bytes(d + i, k)) return 1;
+            i += k;
+            ph_cleft -= k;
+            if (!ph_cleft) ph_cstate = 2;
+        } else if (ph_cstate == 2) { if (d[i++] == '\n') { ph_cstate = 0; ph_cleft = 0; } }
+        else return 0;                                   /* the end */
+    }
+    return 0;
+}
+/* the answer as it comes (tls_sink, or tcp_recv's pieces) */
+static int ph_feed(const unsigned char *d, int n)
+{
+    int i = 0;
+    while (!ph_body && i < n) {
+        if (ph_n < HDR_MAX) ph[ph_n++] = d[i];
+        i++;
+        if (ph_n >= 4 && !memcmp(ph + ph_n - 4, "\r\n\r\n", 4)) {
+            ph_body = 1;
+            ph_headers();
+            if (pi.code >= 300 && pi.code < 400 && ph_moved[0]) return 1;       /* moved: there instead */
+            if (pi.code == 100) { ph_n = 0; ph_body = 0; }                     /* (go on) */
+        }
+    }
+    if (i < n) { if (ph_chunked ? ph_chunks(d + i, n - i) : pg_body_bytes(d + i, n - i)) ph_stop = 1; }
+    pg_progress();
+    return ph_stop;
+}
+static int ph_sink(const unsigned char *d, int n) { return ph_feed(d, n); }
+
+/* one try at u: 0 had it, 1 moved (ph_moved), -1 no connection, -4 TLS */
+static int net_try(const char *u)
+{
+    char host[URL_MAX], path[URL_MAX];
+    const char *p = u + (is_https(u) ? 8 : 7);
+    int port = is_https(u) ? 443 : 80, n = 0;
+    static const char *hdrs_page = "User-Agent: Mozilla/5.0 (compatible; LexOS-Web/2.0)\r\n"
+                                   "Accept: text/html,application/xhtml+xml,*/*;q=0.8\r\n"
+                                   "Accept-Language: ru,en;q=0.8,es;q=0.6\r\nAccept-Encoding: gzip, deflate\r\n";
+    static const char *hdrs_plain = "User-Agent: Mozilla/5.0 (compatible; LexOS-Web/2.0)\r\nAccept: */*\r\nAccept-Encoding: identity\r\n";
+    ph_n = ph_body = ph_chunked = ph_cstate = ph_cleft = ph_stop = 0;
+    ph_moved[0] = 0;
+    while (*p && *p != '/' && *p != ':' && *p != '?' && n < URL_MAX - 1) host[n++] = *p++;
+    host[n] = 0;
+    if (*p == ':') { port = atoi(p + 1); while (*p && *p != '/' && *p != '?') p++; }
+    if (*p == '?') { copy(path, "/", URL_MAX); append(path, p, URL_MAX); }
+    else copy(path, *p ? p : "/", URL_MAX);
+    {                                                    /* (no #fragment, no spaces) */
+        int i;
+        for (i = 0; path[i]; i++) if (path[i] == '#') { path[i] = 0; break; }
+        for (i = 0; path[i]; i++) if (path[i] == ' ') path[i] = '+';
+    }
+    if (is_https(u)) {
+        static char none[4];
+        tls_headers = tg == T_PAGE ? hdrs_page : hdrs_plain;
+        tls_sink = ph_sink;
+        n = tls_get(host, port, path, none, 0);
+        tls_sink = 0;
+        if (n < 0 && !ph_body && strcmp(tls_error, "Stopped.")) return -4;
+    } else {
+        static char req[URL_MAX * 2 + 600];
+        static unsigned char piece[4096];
+        if (tcp_open(host, port) < 0) return -1;
+        copy(req, "GET ", sizeof req);
+        append(req, path, sizeof req);
+        append(req, " HTTP/1.1\r\nHost: ", sizeof req);
+        append(req, host, sizeof req);
+        append(req, "\r\n", sizeof req);
+        append(req, tg == T_PAGE ? hdrs_page : hdrs_plain, sizeof req);
+        append(req, "Connection: close\r\n\r\n", sizeof req);
+        tcp_send(req, strlen(req));
+        for (;;) {
+            int got = tcp_recv(piece, sizeof piece, 15000);
+            if (got <= 0) break;
+            if (ph_feed(piece, got)) break;
+        }
+        tcp_close();
+    }
+    if (!ph_body) return -1;
+    if (pi.code >= 300 && pi.code < 400 && ph_moved[0]) return 1;
+    return 0;
+}
+static int zb_put(int c) { return pg_put1(c); }
+/* where (http, https, or this disk) -> tg's (T_PAGE: src; T_CSS; T_BUF:
+ * tbuf, tcap): 0, or <0 (-1 no answer, -2 nothing there, -4 TLS);
+ * final: the address it ended at (moved) */
+static int net_get(const char *where, char *final)
+{
+    char u[URL_MAX];
+    int tries, r = -1;
+    zn = 0;
+    copy(u, where, URL_MAX);
+    if (!is_http(u)) {                                   /* this disk */
+        static unsigned char piece[4096];
+        int fd = open(u, O_READ), got;
+        if (fd < 0) return -1;
+        pi.code = 200;
+        while ((got = read(fd, piece, sizeof piece)) > 0) {
+            pi.raw += got;
+            if (pg_emit(piece, got)) break;
+        }
+        close(fd);
+        if (final) copy(final, u, URL_MAX);
+        return 0;
+    }
+    for (tries = 0; tries < 6; tries++) {
+        int kind = pi.kind;
+        pi.raw = pi.body = pi.gz = 0; pi.cenc[0] = 0; pi.ctype[0] = 0; pi.cs_hdr[0] = 0; pi.total = 0;
+        if (tg == T_PAGE) { srclen = 0; pi.trunc = 0; st_reset(); pi.kind = kind; }
+        if (tg == T_BUF) tlen = 0;
+        zn = 0;
+        r = net_try(u);
+        if (r != 1) break;
+        {
+            char moved[URL_MAX];
+            resolve(u, ph_moved, moved);
+            copy(u, moved, URL_MAX);
+        }
+        if (!is_http(u)) { r = -2; break; }
+    }
+    if (r == 1) r = -2;
+    if (r >= 0 && zn) {                                  /* gzip'd: unpacked now */
+        int z = pi.gz == 1 ? gunzip(zbuf, zn, zb_put) : zinflate(zbuf, zn, zb_put);
+        if (z < 0 && !pi.body) r = -2;
+    }
+    zbuf = 0; zn = zcap = 0;
+    if (final) copy(final, u, URL_MAX);
+    return r;
+}
+
+/* a picture: where -> *out (malloc'd, as big as it is), its length
+ * (or <0) */
+static int load_auto(const char *where, unsigned char **out)
+{
+    int save_tg = tg, n;
+    static char pi_copy[sizeof pi];
+    memcpy(pi_copy, &pi, sizeof pi);                     /* (the page's, kept) */
+    tg = T_BUF; tbuf = 0; tcap = 0; tlen = 0; tbuf_auto = 1;
+    n = net_get(where, 0);
+    tg = save_tg; tbuf_auto = 0;
+    memcpy(&pi, pi_copy, sizeof pi);
+    *out = tbuf;
+    tbuf = 0;
+    if (n < 0) { free(*out); *out = 0; return n; }
+    return tlen;
+}
+
+#define IMG_MAX_PAGE 16                   /* pictures read for a page, at most */
+/* a picture's 0xRRGGBB pixels -> 16-bit ones (5-6-5) in the same block,
+ * the block's other half given back to malloc */
+static void to16(unsigned *pix, int n)
+{
+    unsigned short *o = (unsigned short *)pix;
+    struct lx_block *b = (struct lx_block *)pix - 1;
+    int i, need;
+    for (i = 0; i < n; i++) {
+        unsigned c = pix[i];
+        o[i] = (c >> 8 & 0xF800) | (c >> 5 & 0x07E0) | (c >> 3 & 0x001F);
+    }
+    need = (n * 2 + 15) & ~15;
+    if (b->size >= (size_t)need + sizeof *b + 64) {       /* (split: the rest free) */
+        struct lx_block *r = (struct lx_block *)((char *)(b + 1) + need);
+        r->size = b->size - need - sizeof *b;
+        r->free = 1;
+        r->next = b->next;
+        b->next = r;
+        b->size = need;
+    }
+}
+static int img_count;
+static int is_svg(const char *u)
+{
+    int l = 0;
+    while (u[l] && u[l] != '?' && u[l] != '#') l++;
+    return l > 4 && starts_ci(u + l - 4, ".svg");
+}
 static void emit_image(const char *srcattr, const char *alt)
 {
     char where[URL_MAX];
-    int n, w = 0, h = 0, f = 1;
+    int n, w = 0, h = 0, f = 1, cap, maxw = RIGHT - line_left;
     unsigned *pix = 0;
-    unsigned char *buf = malloc(512 * 1024);
-    resolve(url, srcattr, where);
-    if (buf) {
-        n = load(where, (char *)buf, 512 * 1024);
-        if (n > 0) pix = n > 8 && (unsigned char)buf[0] == 137 && buf[1] == 'P' ? load_png((unsigned char *)buf, n, &w, &h)
-                                                                   : load_bmp(buf, n, &w, &h);
-        free(buf);
+    unsigned char *buf = 0;
+    if (maxw < 48) maxw = 48;
+    resolve(base_url[0] ? base_url : url, srcattr, where);
+    if (img_count < IMG_MAX_PAGE && !is_svg(where)) {
+        img_count++;
+        (void)cap;
+        {
+            copy(status, "Loading pictures... ", sizeof status);
+            {
+                char t[8];
+                int k = 0, v = img_count;
+                do { t[k++] = '0' + v % 10; v /= 10; } while (v);
+                while (k) { char c[2] = { t[--k], 0 }; append(status, c, sizeof status); }
+            }
+            draw_status();
+            gfx_blit_rect(frame, 0, H - STATUS, W, STATUS);
+            n = load_auto(where, &buf);
+            if (n > 8 && buf) {
+                if (buf[0] == 137 && buf[1] == 'P') pix = load_png(buf, n, &w, &h);
+                else if (buf[0] == 0xFF && buf[1] == 0xD8) pix = jpeg_load(buf, n, maxw, 1600, &w, &h);
+                else if (!memcmp(buf, "GIF8", 4)) pix = gif_load(buf, n, maxw, 1600, page_bg, &w, &h);
+                else pix = load_bmp(buf, n, &w, &h);
+            }
+            free(buf);
+        }
     }
     if (!pix) {                           /* not shown: its words instead */
         int save = ital;
         const char *a = alt && *alt ? alt : "[picture]";
+        pi.imgs_bad++;
+        if (alt && !*alt) return;                        /* (alt="": just decoration) */
         ital = 1;
         flush_word();
         pending_space = 1;
-        while (*a) put_char((unsigned char)*a++);
+        put_attr_text(a);
         flush_word();
         ital = save;
         return;
     }
-    while (w / f > RIGHT - line_left) f++;  /* too wide: smaller */
+    if (w <= 2 && h <= 2) { free(pix); return; }         /* (a counter's pixel) */
+    pi.imgs++;
+    while (w / f > maxw) f++;             /* too wide: smaller */
     if (f > 1) {
         int nw = w / f, nh = h / f, r, c;
         unsigned *small = malloc(nw * nh * 4);
@@ -989,6 +1630,7 @@ static void emit_image(const char *srcattr, const char *alt)
             h = nh;
         }
     }
+    to16(pix, w * h);                                    /* (kept in half the room) */
     flush_word();
     if (pending_space && x > line_left) x += 8;
     pending_space = 0;
@@ -1006,7 +1648,7 @@ static void emit_image(const char *srcattr, const char *alt)
 }
 
 /* --- tags --- */
-#define ATTRS 8
+#define ATTRS 12
 static char aname[ATTRS][16], aval[ATTRS][URL_MAX];
 static int nattrs;
 
@@ -1056,6 +1698,135 @@ static void skip_to_end(int *p, const char *name)
     }
 }
 
+static int strstr_ci(const char *s, const char *w)
+{
+    for (; *s; s++) if (starts_ci(s, w)) return 1;
+    return 0;
+}
+static int is_void(const char *n)
+{
+    static const char *v[] = { "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",
+                               "source", "track", "wbr", "keygen", 0 };
+    int i;
+    for (i = 0; v[i]; i++) if (!strcmp(v[i], n)) return 1;
+    return 0;
+}
+/* the rest of an element that isn't shown: up to its own end (the same
+ * tags inside it counted) */
+static void skip_element(int *p, const char *name)
+{
+    int n = strlen(name), depth = 1;
+    while (*p < srclen) {
+        if (src[*p] == '<') {
+            int q = *p + 1, closing = 0;
+            if (src[q] == '/') { closing = 1; q++; }
+            if (starts_ci(src + q, name)) {
+                char c = src[q + n];
+                if (c == '>' || c == ' ' || c == '/' || is_space(c)) {
+                    depth += closing ? -1 : 1;
+                    if (!depth) {
+                        while (*p < srclen && src[*p] != '>') (*p)++;
+                        (*p)++;
+                        return;
+                    }
+                }
+            }
+        }
+        (*p)++;
+    }
+}
+static void skip_to_end_of(int *p, const char *name) { skip_element(p, name); }
+static int luma(unsigned c) { return (((c >> 16) & 255) * 299 + ((c >> 8) & 255) * 587 + (c & 255) * 114) / 1000; }
+/* can it be read on the page's background? */
+static int readable(unsigned c)
+{
+    int d = luma(c) - luma(page_bg);
+    return d > 70 || d < -70;
+}
+/* the reader: what isn't the article's (by its tag, its class, its id) */
+static int reader_skip(const char *name)
+{
+    static const char *tags[] = { "nav", "footer", "aside", "form", "button", "select", "dialog", "iframe", "menu", 0 };
+    static const char *words[] = { "nav", "menu", "footer", "sidebar", "comment", "share", "social", "related",
+        "banner", "cookie", "subscribe", "promo", "breadcrumb", "advert", "sponsor", "popup", "modal", "newsletter",
+        "widget", "toolbar", "rating", "recommend", "signup", "login", 0 };
+    const char *cl = attr("class"), *id = attr("id");
+    int i;
+    for (i = 0; tags[i]; i++) if (!strcmp(tags[i], name)) return 1;
+    if (strcmp(name, "div") && strcmp(name, "section") && strcmp(name, "ul") && strcmp(name, "ol") && strcmp(name, "span"))
+        return 0;
+    for (i = 0; words[i]; i++)
+        if ((cl && strstr_ci(cl, words[i])) || (id && strstr_ci(id, words[i]))) return 1;
+    return 0;
+}
+/* an element's own looks (its rules, its style="", hidden...) -> 1 if
+ * it isn't shown at all */
+static int el_style(const char *name, struct css_style *st)
+{
+    static const char *hid[] = { "sr-only", "visually-hidden", "visuallyhidden", "screen-reader-text", "screenreader",
+        "hidden", "d-none", "is-hidden", "u-hidden", "hide", "invisible", "skip-link", "a11y-hidden", "sr-text", 0 };
+    const char *cl = attr("class"), *sty = attr("style"), *ah = attr("aria-hidden");
+    int i;
+    memset(st, 0, sizeof *st);
+    if (attr("hidden")) return 1;
+    if (ah && !strcmp(ah, "true")) return 1;
+    if (!strcmp(name, "dialog") && !attr("open")) return 1;
+    if (cl) for (i = 0; hid[i]; i++) if (css_has_class(cl, hid[i])) return 1;
+    if (reader && reader_skip(name)) return 1;
+    css_match(name, cl, attr("id"), st);
+    if (sty) css_inline(sty, st);
+    if (st->hide) return 1;
+    if ((!strcmp(name, "body") || !strcmp(name, "html")) && !reader) {
+        if (st->has_bg) page_bg = st->bg;
+        if (st->has_color && readable(st->color)) base_text = st->color;
+        if (luma(page_bg) < 110 && !readable(base_text)) base_text = RGB(224, 226, 230);
+        st->has_color = 0;
+    }
+    return 0;
+}
+/* its looks on while it's open (bold, italic, underlined, centered, a
+ * color), off at its end tag */
+#define CSSF_MAX 48
+static struct { char name[12]; char b, i, u, c, col; } cssf[CSSF_MAX];
+static int ncssf;
+static int is_block(const char *n)
+{
+    static const char *b[] = { "p", "div", "section", "article", "header", "footer", "main", "td", "th", "li", "h1", "h2",
+        "h3", "h4", "h5", "h6", "table", "blockquote", "figure", "figcaption", "center", "nav", "aside", "dd", "dt", 0 };
+    int i;
+    for (i = 0; b[i]; i++) if (!strcmp(b[i], n)) return 1;
+    return 0;
+}
+static void css_push(const char *name, struct css_style *st)
+{
+    int col = st->has_color && readable(st->color) && ncolor < 8;
+    int cen = st->center && is_block(name);
+    if (!st->bold && !st->ital && !st->under && !cen && !col) return;
+    if (ncssf >= CSSF_MAX) return;
+    copy(cssf[ncssf].name, name, sizeof cssf[0].name);
+    cssf[ncssf].b = st->bold; cssf[ncssf].i = st->ital; cssf[ncssf].u = st->under;
+    cssf[ncssf].c = cen; cssf[ncssf].col = col;
+    if (cen && strcmp(name, "td") && strcmp(name, "th")) end_line(0);   /* (the line before it stays where it was) */
+    bold += st->bold; ital += st->ital; under += st->under; center += cen;
+    if (col) color_stack[ncolor++] = st->color;
+    ncssf++;
+}
+static void css_pop(const char *name)
+{
+    int k;
+    for (k = ncssf - 1; k >= 0 && k >= ncssf - 8; k--) if (!strcmp(cssf[k].name, name)) break;
+    if (k < 0 || k < ncssf - 8) return;
+    while (ncssf > k) {
+        ncssf--;
+        bold -= cssf[ncssf].b; ital -= cssf[ncssf].i; under -= cssf[ncssf].u; center -= cssf[ncssf].c;
+        if (cssf[ncssf].col && ncolor) ncolor--;
+        if (bold < 0) bold = 0;
+        if (ital < 0) ital = 0;
+        if (under < 0) under = 0;
+        if (center < 0) center = 0;
+    }
+}
+
 static void list_item(void)
 {
     char mark[8];
@@ -1101,6 +1872,7 @@ static void heading(int level, int open)
     }
 }
 
+static void tag_rest(char *name, int closing, int *p);
 static void tag(int *p)
 {
     char name[16];
@@ -1156,8 +1928,7 @@ static void tag(int *p)
     }
     *p = q + 1;
 
-    if (!strcmp(name, "script") || !strcmp(name, "style") || !strcmp(name, "noscript") ||
-        !strcmp(name, "svg") || !strcmp(name, "template")) {
+    if (!strcmp(name, "script") || !strcmp(name, "style") || !strcmp(name, "svg") || !strcmp(name, "template")) {
         if (!closing) skip_to_end(p, name);
         return;
     }
@@ -1166,7 +1937,7 @@ static void tag(int *p)
         if (closing) return;
         while (*p < srclen && src[*p] != '<') {
             char out[3];
-            unsigned u = src[*p] == '&' ? entity(p) : utf8(p);
+            unsigned u = src[*p] == '&' ? entity(p) : next_char(p);
             int k, m = to_font(is_space(u) ? ' ' : u, out);
             for (k = 0; k < m && t < (int)sizeof title - 1; k++) title[t++] = out[k];
         }
@@ -1175,6 +1946,22 @@ static void tag(int *p)
         return;
     }
     flush_word();
+    if (!closing) {                                     /* hidden? its looks? (css.h) */
+        struct css_style st;
+        if (el_style(name, &st)) {
+            if (!is_void(name)) skip_element(p, name);
+            pi.hidden++;
+            return;
+        }
+        if (!is_void(name)) css_push(name, &st);
+    }
+    tag_rest(name, closing, p);
+    if (closing) css_pop(name);
+}
+
+static void tag_rest(char *name, int closing, int *p)
+{
+    (void)p;
     if (name[0] == 'h' && name[1] >= '1' && name[1] <= '6' && !name[2]) { heading(name[1] - '0', !closing); return; }
     if (!strcmp(name, "br")) { end_line(1); return; }
     if (!strcmp(name, "p") || !strcmp(name, "div") || !strcmp(name, "section") || !strcmp(name, "article") ||
@@ -1192,7 +1979,7 @@ static void tag(int *p)
         if (bold < 0) bold = 0;
         return;
     }
-    if (!strcmp(name, "center")) { block(4); center = !closing; return; }
+    if (!strcmp(name, "center")) { block(4); center += closing ? -1 : 1; if (center < 0) center = 0; return; }
     if (!strcmp(name, "blockquote")) {
         block(8);
         indent += closing ? -36 : 36;
@@ -1271,11 +2058,19 @@ static void tag(int *p)
         else if (ncolor < 8) color_stack[ncolor++] = parse_color(attr("color"), cur_color());
         return;
     }
-    if (!strcmp(name, "body")) { if (!closing) page_bg = parse_color(attr("bgcolor"), C_PAGE); return; }
-    if (!strcmp(name, "img")) { const char *s = attr("src"); if (s) emit_image(s, attr("alt")); return; }
+    if (!strcmp(name, "body")) { if (!closing && attr("bgcolor") && !reader) page_bg = parse_color(attr("bgcolor"), page_bg); return; }
+    if (!strcmp(name, "img")) {                                 /* (lazy ones: data-src the real one) */
+        const char *s = attr("src"), *ds = attr("data-src");
+        if (ds && *ds && (!s || !*s || starts_ci(s, "data:") || strstr_ci(s, "blank") || strstr_ci(s, "placeholder") ||
+                          strstr_ci(s, "lazy") || strstr_ci(s, "spacer") || strstr_ci(s, "pixel"))) s = ds;
+        if (s && *s) emit_image(s, attr("alt"));
+        return;
+    }
     if (!strcmp(name, "input") || !strcmp(name, "button") || !strcmp(name, "select") || !strcmp(name, "textarea")) {
         const char *v = attr("value");
-        if (!closing && v && *v) { pending_space = 1; put_char('['); while (*v) put_char((unsigned char)*v++); put_char(']'); flush_word(); }
+        if (!closing && v && *v && strcmp(attr("type") ? attr("type") : "", "hidden")) {
+            pending_space = 1; put_char('['); put_attr_text(v); put_char(']'); flush_word();
+        }
         return;
     }
 }
@@ -1691,11 +2486,80 @@ static void free_page(void)
     nitems = npool = nlinks = nlpool = 0;
 }
 
-static void layout(void)
+/* the reader: where the article is - <article>, or <main>, or
+ * role="main" - its start and its end (the whole page if none) */
+static void reader_range(int *from, int *to)
+{
+    static const char *starts[] = { "<article", "<main", 0 };
+    int i, p;
+    for (i = 0; starts[i]; i++)
+        for (p = 0; p < srclen; p++)
+            if (src[p] == '<' && starts_ci(src + p, starts[i]) && (src[p + strlen(starts[i])] == '>' || src[p + strlen(starts[i])] == ' ')) {
+                int q = p + 1;
+                *from = p;
+                skip_to_end_of(&q, starts[i] + 1);
+                *to = q;
+                return;
+            }
+    for (p = 0; p < srclen; p++)                         /* role="main" */
+        if (starts_ci(src + p, "role=\"main\"")) {
+            int q = p, n = 0;
+            char name[16];
+            while (q > 0 && src[q] != '<') q--;
+            *from = q;
+            q++;
+            while (n < 15 && ((src[q + n] >= 'a' && src[q + n] <= 'z') || (src[q + n] >= 'A' && src[q + n] <= 'Z') || (src[q + n] >= '0' && src[q + n] <= '9'))) { name[n] = lower(src[q + n]); n++; }
+            name[n] = 0;
+            if (!n) return;
+            q = p;
+            skip_to_end_of(&q, name);
+            *to = q;
+            return;
+        }
+}
+
+/* text as it is (a .TXT, JSON, the page's source): in its charset,
+ * lines as they are */
+static void layout_plain(void)
 {
     int p = 0;
+    pre = 1;
+    while (p < srclen) put_char(next_char(&p));
+    flush_word();
+    end_line(0);
+}
+
+/* the page's title, before it's laid out (the reader may start past it) */
+static void title_scan(void)
+{
+    int p;
+    title[0] = 0;
+    for (p = 0; p + 7 < srclen; p++)
+        if (src[p] == '<' && starts_ci(src + p + 1, "title") && (src[p + 6] == '>' || src[p + 6] == ' ')) {
+            int t = 0;
+            while (p < srclen && src[p] != '>') p++;
+            p++;
+            while (p < srclen && src[p] != '<') {
+                char out[3];
+                unsigned u = src[p] == '&' ? entity(&p) : next_char(&p);
+                int k, m = to_font(is_space(u) ? ' ' : u, out);
+                for (k = 0; k < m && t < (int)sizeof title - 1; k++)
+                    if (!(out[k] == ' ' && (!t || title[t - 1] == ' '))) title[t++] = out[k];
+            }
+            while (t && title[t - 1] == ' ') t--;
+            title[t] = 0;
+            return;
+        }
+}
+
+static void layout(void)
+{
+    int p = 0, end = srclen;
+    char keep_title[sizeof title];
     free_page();
-    x = line_left = MARGIN;
+    left_x = reader ? 96 : MARGIN;
+    right_x = W - SBW - (reader ? 96 : MARGIN);
+    x = line_left = left_x;
     y = 14;
     line_start = 0;
     pending_space = 0;
@@ -1705,16 +2569,26 @@ static void layout(void)
     cur_link = -1;
     indent = list_depth = ncolor = 0;
     wlen = 0;
-    title[0] = 0;
-    page_bg = C_PAGE;
-    while (p < srclen) {
-        unsigned char c = src[p];
-        if (c == '<') tag(&p);
-        else if (c == '&') put_char(entity(&p));
-        else put_char(utf8(&p));
+    ncssf = 0;
+    img_count = 0;
+    pi.hidden = pi.imgs = pi.imgs_bad = 0;
+    copy(keep_title, title, sizeof keep_title);
+    page_bg = reader ? RGB(250, 246, 236) : C_PAGE;
+    base_text = reader ? RGB(40, 36, 32) : C_TEXT;
+    if (pi.kind == PK_TEXT || view_source) {
+        layout_plain();
+    } else {
+        if (reader) reader_range(&p, &end);
+        while (p < end) {
+            unsigned char c = src[p];
+            if (c == '<') tag(&p);
+            else if (c == '&') put_char(entity(&p));
+            else put_char(next_char(&p));
+        }
+        flush_word();
+        end_line(0);
     }
-    flush_word();
-    end_line(0);
+    if (!title[0]) copy(title, keep_title, sizeof title);
     doc_h = y + 20;
     scroll = 0;
 }
@@ -1724,8 +2598,8 @@ static void layout(void)
  * ============================================================ */
 #define BTN_Y (BAR_Y + 6)
 #define BTN_H 24
-static const int btn_x[] = { 8, 38, 68, 98 };
-#define ADDR_X 132
+static const int btn_x[] = { 8, 38, 68, 98, 128 };
+#define ADDR_X 162
 #define GO_X (W - 78)
 #define DL_X (W - 36)
 #define ADDR_W (GO_X - 8 - ADDR_X)
@@ -1738,14 +2612,14 @@ static void bevel(int bx, int by, int bw, int bh, unsigned face)
 
 static void draw_bar(void)
 {
-    static const char *labels[] = { "\x1b", "\x1a", "R", "\x7f" };
+    static const char *labels[] = { "\x1b", "\x1a", "R", "\x7f", "Aa" };
     int i;
     fill(0, BAR_Y, W, BAR, C_BAR, 0, H);
     fill(0, BAR_Y + BAR - 1, W, 1, C_BAR_LO, 0, H);
-    for (i = 0; i < 4; i++) {
-        int dim = (i == 0 && hpos <= 0) || (i == 1 && hpos >= nhist - 1);
-        bevel(btn_x[i], BTN_Y, 26, BTN_H, hover_btn == i && !dim ? C_HOVER : C_BTN);
-        text_at(btn_x[i] + 9, BTN_Y + 4, labels[i], dim ? C_RULE : C_TEXT, ST_BOLD, 16);
+    for (i = 0; i < 5; i++) {
+        int dim = (i == 0 && hpos <= 0) || (i == 1 && hpos >= nhist - 1), on = i == 4 && reader;
+        bevel(btn_x[i], BTN_Y, 26, BTN_H, on ? C_LINK : hover_btn == i && !dim ? C_HOVER : C_BTN);
+        text_at(btn_x[i] + (i == 4 ? 5 : 9), BTN_Y + 4, labels[i], on ? C_PAGE : dim ? C_RULE : C_TEXT, ST_BOLD, 16);
     }
     fill(ADDR_X, BTN_Y, ADDR_W, BTN_H, editing ? C_LINK : C_BAR_LO, 0, H);
     fill(ADDR_X + 1, BTN_Y + 1, ADDR_W - 2, BTN_H - 2, C_PAGE, 0, H);
@@ -1804,7 +2678,12 @@ static void draw_page(void)
                 for (r = 0; r < it->h; r++) {
                     int yy = sy + r;
                     if (yy < top || yy >= bot) continue;
-                    for (c = 0; c < it->w && it->x + c < W - SBW; c++) frame[yy * W + it->x + c] = it->pix[r * it->w + c];
+                    const unsigned short *px = (const unsigned short *)it->pix + r * it->w;
+                for (c = 0; c < it->w && it->x + c < W - SBW; c++) {
+                    unsigned v = px[c];
+                    frame[yy * W + it->x + c] = (v & 0xF800) << 8 | (v & 0xE000) << 3 | (v & 0x07E0) << 5 | (v & 0x0600) >> 1 |
+                                                (v & 0x001F) << 3 | (v & 0x001C) >> 2;
+                }
                 }
                 if (it->link >= 0 && it->link == hover_link) {
                     fill(it->x, sy, it->w, 2, C_LINK, top, bot);
@@ -1901,8 +2780,16 @@ static void tab_save(void)
     t->nhist = nhist; t->hpos = hpos; t->scroll = scroll;
     copy(t->title, title, sizeof t->title);
     free(t->src);
+    free(t->css);
+    t->css = 0;
     t->src = malloc(srclen + 1);
-    if (t->src) { memcpy(t->src, src, srclen); t->srclen = srclen; }
+    if (t->src) {
+        memcpy(t->src, src, srclen);
+        t->srclen = srclen;
+        t->kind = pi.kind; t->cs = cs_mode; t->vs = view_source;
+        copy(t->base, base_url, URL_MAX);
+        if (css_nrules && !(t->css = css_save())) { free(t->src); t->src = 0; }   /* (no room: read again) */
+    }
 }
 /* tab i to the front: its page back - kept, or read again */
 static void tab_show(int i)
@@ -1918,6 +2805,13 @@ static void tab_show(int i)
         srclen = t->srclen;
         src[srclen] = 0;
         free(t->src); t->src = 0;
+        memset(&pi, 0, sizeof pi);
+        pi.kind = t->kind; cs_mode = t->cs; view_source = t->vs;
+        copy(base_url, t->base, URL_MAX);
+        css_restore(t->css);
+        free(t->css); t->css = 0;
+        pi.kept = srclen;
+        if (pi.kind == PK_HTML && !view_source) title_scan();
         layout();
         scroll = t->scroll;
         clamp_scroll();
@@ -1944,12 +2838,14 @@ static void tab_close(int i)
     if (ntabs < 2) return;
     if (i != cur_tab) {                                  /* one behind: just gone */
         free(tabs[i].src);
+        free(tabs[i].css);
         for (j = i; j < ntabs - 1; j++) tabs[j] = tabs[j + 1];
         ntabs--;
         if (cur_tab > i) cur_tab--;
         return;
     }
     free(tabs[i].src);
+    free(tabs[i].css);
     for (j = i; j < ntabs - 1; j++) tabs[j] = tabs[j + 1];
     ntabs--;
     tab_show(i < ntabs ? i : ntabs - 1);
@@ -1961,12 +2857,14 @@ static void tab_go(int i)
     tab_show(i);
 }
 
+static void draw_info(void);
 static void redraw(void)
 {
     draw_tabs();
     draw_bar();
     draw_page();
     if (show_dls) draw_downloads();
+    if (show_info) draw_info();
     draw_status();
     gfx_blit(frame);
 }
@@ -1995,49 +2893,173 @@ static void clamp_scroll(void)
     if (scroll < 0) scroll = 0;
 }
 
+/* a page's kind by its name (on this disk) */
+static int kind_by_name(const char *u)
+{
+    static const char *text[] = { "TXT", "C", "H", "ASM", "CFG", "HG", "BAS", "LOG", "JSON", "CSS", "JS", "XML", "INI", "CSV", "LNK", 0 };
+    static const char *pics[] = { "BMP", "PNG", "JPG", "JPEG", "GIF", 0 };
+    const char *e = 0, *q;
+    int i, n;
+    for (q = u; *q && *q != '?' && *q != '#'; q++) { if (*q == '.') e = q + 1; if (*q == '/') e = 0; }
+    if (!e) return PK_SNIFF;
+    n = q - e;
+    if ((n == 3 && starts_ci(e, "htm")) || (n == 4 && starts_ci(e, "html"))) return PK_HTML;
+    if ((n == 2 && starts_ci(e, "md")) || (n == 8 && starts_ci(e, "markdown"))) return PK_MD;
+    for (i = 0; text[i]; i++) if ((int)strlen(text[i]) == n && starts_ci(e, text[i])) return PK_TEXT;
+    for (i = 0; pics[i]; i++) if ((int)strlen(pics[i]) == n && starts_ci(e, pics[i])) return PK_IMAGE;
+    return PK_SNIFF;
+}
+
+/* the charset: the server's word, the page's <meta>, a BOM - or a guess */
+static void pick_charset(void)
+{
+    int m;
+    pi.cs_how = 0;
+    cs_mode = CS_UTF8;
+    if (pi.cs_hdr[0] && (m = cs_named(pi.cs_hdr)) >= 0) { cs_mode = m; pi.cs_how = 1; return; }
+    if (!pi.cs_meta[0] && pi.kind == PK_HTML) {           /* (text as it was: <meta> not read yet) */
+        int p;
+        for (p = 0; p + 12 < srclen && p < 8192; p++)
+            if (starts_ci(src + p, "charset=")) {
+                int k = 0, q = p + 8;
+                if (src[q] == '"' || src[q] == '\'') q++;
+                while (q < srclen && k < 23 && src[q] != '"' && src[q] != '\'' && src[q] != ';' && src[q] != ' ' && src[q] != '>' && src[q] != '/')
+                    pi.cs_meta[k++] = lower(src[q++]);
+                pi.cs_meta[k] = 0;
+                break;
+            }
+    }
+    if (pi.cs_meta[0] && (m = cs_named(pi.cs_meta)) >= 0) { cs_mode = m; pi.cs_how = 2; return; }
+    if (srclen >= 3 && (unsigned char)src[0] == 0xEF && (unsigned char)src[1] == 0xBB && (unsigned char)src[2] == 0xBF) { pi.cs_how = 4; return; }
+    cs_mode = cs_guess(src, srclen);
+    pi.cs_how = 3;
+}
+
+/* its <link>ed style sheets (3 at most), read into css.h's rules */
+static void load_styles(void)
+{
+    int i, n = ncss_links < 3 ? ncss_links : 3;
+    for (i = 0; i < n; i++) {
+        char w[URL_MAX];
+        int save_tg = tg, save_pi_css = pi.css_files;
+        static char pi_copy[sizeof pi];
+        resolve(base_url, css_links[i], w);
+        memcpy(pi_copy, &pi, sizeof pi);                 /* (the page's own, kept) */
+        tg = T_CSS;
+        css_begin();
+        if (net_get(w, 0) >= 0) save_pi_css++;
+        css_end();
+        tg = save_tg;
+        memcpy(&pi, pi_copy, sizeof pi);
+        pi.css_files = save_pi_css;
+    }
+}
+
+/* a picture or a file, not a page: a page about it */
+static void about_page(const char *where)
+{
+    char *s = src;
+    *s = 0;
+    if (pi.kind == PK_IMAGE) {
+        append(s, "<html><body bgcolor=\"#2a2d34\"><center><img src=\"", SRC_MAX);
+        append(s, where, SRC_MAX);
+        append(s, "\" alt=\"(this picture couldn't be shown)\"></center></body></html>", SRC_MAX);
+    } else {
+        char t[32];
+        t[0] = 0;
+        append(s, "<title>A file, not a page</title><body><h1>A file, not a page</h1><p>This address is ", SRC_MAX);
+        append(s, pi.ctype[0] ? pi.ctype : "a file", SRC_MAX);
+        if (pi.total > 0) { num_kb(t, pi.total, sizeof t); append(s, " (", SRC_MAX); append(s, t, SRC_MAX); append(s, ")", SRC_MAX); }
+        append(s, ".</p><p><b><a href=\"download:", SRC_MAX);
+        append(s, where, SRC_MAX);
+        append(s, "\">Download it into /DOWNLOADS</a></b></p>", SRC_MAX);
+    }
+    srclen = strlen(src);
+    pi.kind = PK_HTML;
+}
+
 static void go(const char *to, int remember)
 {
-    int n;
-    char where[URL_MAX];
+    int n, vs = 0;
+    char where[URL_MAX], final[URL_MAX];
     copy(where, to, URL_MAX);
     if (!where[0]) return;
+    if (starts_ci(where, "view-source:")) { vs = 1; memmove(where, where + 12, strlen(where + 12) + 1); }
     if (!is_http(where) && where[0] != '/' &&
         (starts_ci(where, "www.") || (strlen(where) > 4 && !starts_ci(where + strlen(where) - 4, ".htm") &&
                                      !starts_ci(where + strlen(where) - 5, ".html")))) {
-        char t[URL_MAX];                  /* "example.com" -> http:// */
+        char t[URL_MAX];                  /* "example.com" -> https:// */
         copy(t, "https://", URL_MAX);
         append(t, where, URL_MAX);
         copy(where, t, URL_MAX);
     }
-    if (is_download(where)) { download(where); return; }
+    if (!vs && is_download(where)) { download(where); return; }
     copy(url, where, URL_MAX);
     copy(status, "Loading ", sizeof status);
     append(status, where, sizeof status);
     append(status, " ...", sizeof status);
     hover_link = -1;
+    show_info = 0;
     redraw();
-    {
-        n = load(where, src, SRC_MAX);
-        if (n >= 0) srclen = n;
-        else if (n == -4) {
-            static char why[200];
-            copy(why, "The encrypted connection (TLS 1.3) didn't work: ", sizeof why);
-            append(why, tls_error, sizeof why);
-            error_page(why, where);
-        } else error_page(n == -2 ? "The server answered, but not with the page (not found, or not allowed)."
-                                  : is_http(where) ? "No answer - is the network up? (ifconfig, dhcp)"
-                                                   : "There's no such file on this disk.", where);
+    memset(&pi, 0, sizeof pi);
+    pi.kind = is_http(where) ? PK_HTML : kind_by_name(where);
+    view_source = vs;
+    tg = T_PAGE;
+    srclen = 0;
+    st_reset();
+    css_reset();
+    ncss_links = 0;
+    base_url[0] = 0;
+    cs_mode = CS_UTF8;
+    title[0] = 0;
+    n = net_get(where, final);
+    if (n >= 0 && strcmp(final, where)) copy(where, final, URL_MAX);       /* (moved: there) */
+    if (!base_url[0]) copy(base_url, where, URL_MAX);
+    copy(url, where, URL_MAX);
+    if (vs) { char t[URL_MAX]; copy(t, "view-source:", URL_MAX); append(t, where, URL_MAX); copy(url, t, URL_MAX); }
+    if (n < 0 || (pi.code >= 400 && srclen < 16 && pi.kind != PK_IMAGE && pi.kind != PK_FILE)) {
+        static char why[200];
+        if (n == -4) { copy(why, "The encrypted connection (TLS 1.3) didn't work: ", sizeof why); append(why, tls_error, sizeof why); }
+        else if (n >= 0 || n == -2) {
+            char c[8];
+            int k = 0, v = pi.code;
+            copy(why, "The server answered, but not with the page", sizeof why);
+            if (v > 0) {
+                append(why, " (", sizeof why);
+                do { c[k++] = '0' + v % 10; v /= 10; } while (v && k < 7);
+                while (k) { char one[2] = { c[--k], 0 }; append(why, one, sizeof why); }
+                append(why, ")", sizeof why);
+            }
+            append(why, ".", sizeof why);
+        } else copy(why, is_http(where) ? "No answer - is the network up? (ifconfig, dhcp)" : "There's no such file on this disk.", sizeof why);
+        error_page(why, where);
+        pi.kind = PK_HTML;
+        view_source = 0;
+        cs_mode = CS_UTF8;
+    } else if (!vs && (pi.kind == PK_IMAGE || pi.kind == PK_FILE)) {
+        about_page(where);
+        cs_mode = CS_UTF8;
+    } else {
+        if (pi.kind == PK_SNIFF) pi.kind = PK_HTML;
+        src[srclen] = 0;
+        pick_charset();
+        if (pi.kind == PK_TEXT && is_markdown(where)) pi.kind = PK_MD;
+        if (pi.kind == PK_MD && !vs) { markdown(); pi.kind = PK_HTML; }
+        if (pi.kind == PK_HTML && !vs && ncss_links) load_styles();
     }
+    pi.kept = srclen;
     src[srclen] = 0;
-    if (is_markdown(where)) { markdown(); src[srclen] = 0; }
     if (remember) {
         if (hpos < HIST_MAX - 1) hpos++;
         else memmove(hist[0], hist[1], sizeof hist[0] * (HIST_MAX - 1));
         copy(hist[hpos], url, URL_MAX);
         nhist = hpos + 1;
     }
+    if (pi.kind == PK_HTML && !view_source) title_scan();
     layout();
     status[0] = 0;
+    if (pi.trunc) copy(status, "A big page: shown up to 256KB of it.", sizeof status);
+    else if (pi.code >= 400) copy(status, "The server said this page isn't there (or isn't for us).", sizeof status);
     redraw();
 }
 
@@ -2057,10 +3079,96 @@ static int button_at(int mx, int my)
     int i;
     if (my < BTN_Y || my >= BTN_Y + BTN_H) return -1;
     for (i = 0; i < 4; i++) if (mx >= btn_x[i] && mx < btn_x[i] + 26) return i;
+    if (mx >= btn_x[4] && mx < btn_x[4] + 26) return 7;
     if (mx >= GO_X && mx < GO_X + 36) return 4;
     if (mx >= DL_X && mx < DL_X + 28) return 6;
     if (mx >= ADDR_X && mx < ADDR_X + ADDR_W) return 5;
     return -1;
+}
+
+/* the reader on / off: the same page, laid out again */
+static void toggle_reader(void)
+{
+    reader = !reader;
+    if (pi.kind == PK_HTML && !view_source) title_scan();
+    layout();
+    copy(status, reader ? "Reader: the article alone (F9 or Aa: the whole page again)" : "", sizeof status);
+    redraw();
+}
+
+/* Ctrl+I: what came, and how it was read */
+static void info_line(int bx, int *by, const char *label, const char *v1, const char *v2)
+{
+    char t[160];
+    text_at(bx + 10, *by, label, C_GRAY, 0, 110);
+    copy(t, v1, sizeof t);
+    if (v2) append(t, v2, sizeof t);
+    text_at(bx + 120, *by, t, C_TEXT, 0, 440);
+    *by += 20;
+}
+static void num_str(char *t, int v, int size)
+{
+    char d[12];
+    int i = 11;
+    d[i] = 0;
+    if (v < 0) v = 0;
+    do { d[--i] = '0' + v % 10; v /= 10; } while (v);
+    append(t, d + i, size);
+}
+static void draw_info(void)
+{
+    int bw = 580, bh = 272, bx = (W - SBW - bw) / 2, by = VIEW_Y + 20, ly;
+    char t[160];
+    static const char *how[] = { " (the default)", " - the server says", " - the page says (<meta>)", " - guessed from its bytes",
+                                 " - its byte order mark" };
+    static const char *kinds[] = { "a page (HTML)", "text", "a picture", "a file", "Markdown", "?" };
+    fill(bx + 3, by + 3, bw, bh, RGB(150, 156, 170), 0, H);
+    fill(bx, by, bw, bh, C_BAR_LO, 0, H);
+    fill(bx + 1, by + 1, bw - 2, bh - 2, C_PAGE, 0, H);
+    text_at(bx + 10, by + 8, "About this page", C_HEAD, ST_BOLD, bw - 20);
+    text_at(bx + bw - 130, by + 8, "(Ctrl+I, Esc)", C_GRAY, 0, 120);
+    ly = by + 34;
+    info_line(bx, &ly, "Address", url, 0);
+    t[0] = 0;
+    if (is_http(url) || starts_ci(url, "view-source:")) { num_str(t, pi.code, sizeof t); } else copy(t, "(this disk)", sizeof t);
+    info_line(bx, &ly, "Answer", t, 0);
+    info_line(bx, &ly, "Type", pi.ctype[0] ? pi.ctype : "(not said)", 0);
+    copy(t, " - ", sizeof t);
+    append(t, kinds[pi.kind <= PK_SNIFF ? pi.kind : 5], sizeof t);
+    info_line(bx, &ly, "Shown as", view_source ? "its source, as text" : kinds[pi.kind <= PK_SNIFF ? pi.kind : 5], 0);
+    info_line(bx, &ly, "Charset", cs_name(cs_mode), how[pi.cs_how <= 4 ? pi.cs_how : 0]);
+    t[0] = 0;
+    if (pi.gz) { copy(t, pi.cenc, sizeof t); append(t, ": ", sizeof t); num_kb(t, pi.raw, sizeof t); append(t, " unpacked to ", sizeof t); num_kb(t, pi.body, sizeof t); }
+    else { copy(t, pi.cenc[0] ? pi.cenc : "as it is", sizeof t); append(t, ", ", sizeof t); num_kb(t, pi.raw, sizeof t); }
+    info_line(bx, &ly, "Sent", t, 0);
+    t[0] = 0;
+    num_kb(t, pi.kept, sizeof t);
+    if (pi.kind == PK_HTML && !view_source) append(t, " kept (scripts, comments, spaces left out)", sizeof t);
+    if (pi.trunc) append(t, " - cut off: too big", sizeof t);
+    info_line(bx, &ly, "Kept", t, 0);
+    t[0] = 0;
+    num_str(t, css_nrules, sizeof t);
+    append(t, " rules; files read: ", sizeof t);
+    num_str(t, pi.css_files, sizeof t);
+    append(t, " of ", sizeof t);
+    num_str(t, ncss_links, sizeof t);
+    info_line(bx, &ly, "Styles", t, 0);
+    t[0] = 0;
+    num_str(t, pi.hidden, sizeof t);
+    append(t, " parts not shown (hidden by the page)", sizeof t);
+    info_line(bx, &ly, "Hidden", t, 0);
+    t[0] = 0;
+    num_str(t, pi.imgs, sizeof t);
+    append(t, " shown, ", sizeof t);
+    num_str(t, pi.imgs_bad, sizeof t);
+    append(t, " not (at most 16 read)", sizeof t);
+    info_line(bx, &ly, "Pictures", t, 0);
+    t[0] = 0;
+    num_str(t, nlinks, sizeof t);
+    append(t, " links, ", sizeof t);
+    num_str(t, nitems, sizeof t);
+    append(t, " pieces laid out", sizeof t);
+    info_line(bx, &ly, "Laid out", t, 0);
 }
 
 static void press(int b)
@@ -2072,6 +3180,7 @@ static void press(int b)
     else if (b == 4) { editing = 0; go(edit_url, 1); }
     else if (b == 5 && !editing) { editing = 1; edit_fresh = 1; copy(edit_url, url, URL_MAX); redraw(); }
     else if (b == 6) { show_dls = !show_dls; redraw(); }
+    else if (b == 7) toggle_reader();
 }
 
 int main(int argc, char **argv)
@@ -2100,17 +3209,26 @@ int main(int argc, char **argv)
                     edit_url[l + 1] = 0;
                 }
                 changed = 1;
-            } else if (ch == 27) break;
+            } else if (ch == 27 && show_info) { show_info = 0; changed = 1; }
+            else if (ch == 27) break;
+            else if (ch == 21) {                                            /* Ctrl+U: its source */
+                char t[URL_MAX];
+                if (!starts_ci(url, "view-source:") && url[0]) { copy(t, "view-source:", URL_MAX); append(t, url, URL_MAX); tab_new(t); }
+                continue;
+            }
             else if (ch == 20) { tab_new(home); continue; }                 /* Ctrl+T */
             else if (ch == 19) {                                            /* Ctrl+S: this page, kept */
-                if (is_http(url)) download(url);
+                if (starts_ci(url, "view-source:") && is_http(url + 12)) download(url + 12);
+                else if (is_http(url)) download(url);
                 else { copy(status, "It's on this disk already.", sizeof status); changed = 1; }
             }
             else if (ch == 23) { tab_close(cur_tab); changed = 1; }         /* Ctrl+W */
+            else if (ch == 9 && keydown(KEY_CTRL) && (sc == 0x17)) { show_info = !show_info; changed = 1; }   /* Ctrl+I */
             else if (ch == 9 && keydown(KEY_CTRL)) { tab_go((cur_tab + 1) % ntabs); changed = 1; }
             else if (ch == 9 || ch == 12) { press(5); }
             else if (ch == 8) press(0);
             else if (sc == 0x3F) press(2);                    /* F5 */
+            else if (sc == 0x43) toggle_reader();             /* F9: the reader */
             else {
                 int s = scroll;
                 if (sc == 0x48) scroll -= 48;
@@ -2160,10 +3278,15 @@ int main(int argc, char **argv)
                     if (editing && hb != 4 && hb != 5) editing = 0;
                     press(hb);
                     changed = 1;
+                } else if (show_info) { show_info = 0; changed = 1;
+                } else if (hl >= 0 && starts_ci(lpool + link_off[hl], "download:")) {
+                    download(lpool + link_off[hl] + 9);
+                    was_down = down;
+                    continue;
                 } else if (hl >= 0) {
                     char to[URL_MAX];
                     editing = 0;
-                    resolve(url, lpool + link_off[hl], to);
+                    resolve(base_url[0] ? base_url : url, lpool + link_off[hl], to);
                     if (keydown(KEY_CTRL)) tab_new(to);             /* Ctrl: a new tab */
                     else go(to, 1);
                     was_down = down;

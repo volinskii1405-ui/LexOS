@@ -187,7 +187,7 @@ $(BUILD_DIR)/crt0.o: apps/crt0.asm | $(BUILD_DIR)
 
 # one C program per file: apps/guess.c -> disk/APPS/GUESS.APP, and so on
 define C_APP_RULE
-disk/APPS/$(call upper,$(1)).APP: apps/$(1).c apps/lexos.h apps/gui.h apps/mod.h apps/png.h apps/deflate.h apps/app.ld $(BUILD_DIR)/crt0.o
+disk/APPS/$(call upper,$(1)).APP: apps/$(1).c apps/lexos.h apps/gui.h apps/mod.h apps/png.h apps/deflate.h apps/inflate.h apps/jpeg.h apps/gif.h apps/css.h apps/tls.h apps/app.ld $(BUILD_DIR)/crt0.o
 	gcc $$(APP_CFLAGS) -c apps/$(1).c -o $(BUILD_DIR)/$(1).o
 	ld -m elf_i386 -T apps/app.ld --oformat binary -o $$@ $(BUILD_DIR)/crt0.o $(BUILD_DIR)/$(1).o
 endef

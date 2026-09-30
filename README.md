@@ -198,6 +198,10 @@ All taken in QEMU (1024x768) - more in [docs/screenshots](docs/screenshots).
 <td align="center" valign="top"><img src="docs/screenshots/81-clock-stopwatch.png" alt="The Clock's stopwatch" width="400"><br><sub>The Clock's alarm, timer and stopwatch (in Russian here)</sub></td>
 <td align="center" valign="top"><img src="docs/screenshots/83-paint-text-select.png" alt="Paint: text, selection" width="400"><br><sub>Paint: text, a selection copied with Ctrl, the clipboard</sub></td>
 </tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/97-browser-news.png" alt="A gzip'd windows-1251 page" width="400"><br><sub>LexOS Web: a gzip'd windows-1251 page, its CSS, a JPEG</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/99-browser-reader.png" alt="Reader mode" width="400"><br><sub>Reader mode (Aa or F9): the article alone</sub></td>
+</tr>
 </table>
 
 Every screenshot, described in Russian: [docs/screenshots/README.md](docs/screenshots/README.md).
@@ -678,10 +682,32 @@ tester@/DESKTOP$ run snake.app
   bold/italic/underlined and colored text, links (relative ones too),
   lists (nested, bullets and numbers), `<pre>`, `<hr>`, `<blockquote>`,
   `<center>`, tables as rows of cells, `<body bgcolor>` and pictures -
-  `<img>` of `.BMP` (8, 24 or 32 bits) and `.PNG` files; text in UTF-8, entities;
-  scripts and styles are skipped. Back / forward / reload / home, an
-  address bar (Tab, or click it), a scrollbar, the wheel, links lighting
-  up under the pointer with their address in the status line.
+  `<img>` of `.BMP` (8, 24 or 32 bits), `.PNG`, `.JPG` (baseline and
+  progressive, `apps/jpeg.h`) and `.GIF` (the first frame, `apps/gif.h`),
+  lazy ones' `data-src` too, up to 16 a page. Back / forward / reload /
+  home, an address bar (Tab, or click it), a scrollbar, the wheel, links
+  lighting up under the pointer with their address in the status line.
+  **No gibberish**: pages sent gzip'd or deflated are unpacked
+  (`apps/inflate.h`); the charset comes from the server's header, the
+  page's `<meta>`, a BOM, or is guessed from the text - UTF-8,
+  windows-1251, KOI8-R, CP866, ISO-8859-5, windows-1252/Latin-1; what
+  the font hasn't got is shown as near as it can be (`№` as No, `€` as
+  EUR, box drawing, arrows; emoji as `*`; zero-width spaces, soft hyphens
+  and BOMs not at all). Pages are read as they come - scripts, SVG,
+  comments and most attributes are left out on the way - so a page of
+  a few MB fits in the 256KB kept. A **little CSS** (`apps/css.h`, the
+  page's `<style>`, up to 3 stylesheets and `style=""`; tag, `.class`
+  and `#id` selectors, `@media` as for an 800x600 screen): `display:none`,
+  `visibility:hidden`, `hidden`, `aria-hidden` and screen-reader-only
+  classes aren't shown; bold, italic, underline, colors (only if they can
+  be read), centering, the page's background. JSON and text are shown as
+  text, a picture on its own as a picture, anything else is offered as a
+  download. **Reader mode** (the **Aa** button or F9): only the article
+  (`<article>`, `<main>`), without menus, sidebars, share buttons,
+  comments and footers, in a narrower column on a warm background.
+  **Ctrl+I** - about this page (the answer, the type, the charset and
+  where it came from, gzip'd and unpacked sizes, CSS rules, what was
+  hidden, pictures); **Ctrl+U** - its source, in a new tab.
   **Downloads**: a link to something that isn't a page (a `.ZIP`, a
   picture, a program...) is saved straight to `/DOWNLOADS` - streamed
   to the disk as it comes, over `http` or `https`, chunked or not, a
@@ -1466,6 +1492,7 @@ kernel.asm             32-bit kernel entry point; %includes everything below.
 apps/                  example ring-3 programs (`make apps`): lexos.inc for
                        assembly, lexos.h + crt0.asm + app.ld for C;
                        browser.c (LexOS Web) and tls.h (its TLS 1.3),
+                       inflate.h (gzip), css.h, jpeg.h, gif.h,
                        cc.c (the C compiler), notepad.c (Notepad),
                        zip.c (ZIP archives), paint.c (Paint), calc.c
                        (the Calculator), snake.c / tetris.c /
