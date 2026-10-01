@@ -7,7 +7,7 @@
  * kernel's TCP: tcp_open() and the rest). It knows the HTML a simple
  * page needs: headings, paragraphs, line breaks, bold/italic/underlined
  * text, links, lists (bullets and numbers), <pre>, <hr>, <blockquote>, <center>,
- * tables as rows of cells, <font color>, <body bgcolor>, and pictures -
+ * tables as grids, <font color>, <body bgcolor>, and pictures -
  * <img> of .BMP (8, 24 or 32 bits), .PNG (png.h), .JPG (jpeg.h) and
  * .GIF (gif.h), up to 64 a page. Text is shown in LexOS's font (Russian
  * and Spanish letters too, the rest as near as it can be).
@@ -21,6 +21,8 @@
  * A little CSS (css.h): what's hidden stays hidden; bold, italic,
  * colors, centering, the background. JSON and text are shown as text,
  * a picture as a picture, the rest is offered as a download.
+ * Pictures and style sheets are kept in /TMP/WEB (the cache: F5 reads
+ * past it).
  *
  * Reader mode (Aa, F9): the article alone. Ctrl+I: about this page.
  * Ctrl+U: its source, in a new tab.
@@ -531,6 +533,7 @@ static unsigned entity(int *p)
 static int x, y, line_start, line_left, pending_space, last_gap;
 static int bold, ital, under, pre, center, scale, head, cur_link;
 static int indent, list_depth, list_num[8], list_ordered[8];
+static int base_left;                    /* where lines start: the page's left, or a table cell's */
 static unsigned color_stack[8];
 static int ncolor;
 static char word[256];
@@ -1140,7 +1143,7 @@ static void st_reset(void)
 }
 static const char *st_keep[] = { "href", "src", "data-src", "alt", "title", "class", "id", "style", "hidden",
     "color", "bgcolor", "value", "type", "rel", "name", "content", "charset", "http-equiv", "open", "role",
-    "aria-hidden", "start", "media", 0 };
+    "aria-hidden", "start", "media", "colspan", "border", "width", "align", 0 };
 /* a whole tag in st_tag: kept (its attributes that matter), or not */
 static void st_tag_done(void)
 {
@@ -1574,6 +1577,66 @@ static int load_auto(const char *where, unsigned char **out)
     return tlen;
 }
 
+/* ---- the cache: pictures and style sheets from the web, kept in
+ * /TMP/WEB (TMP's an ordinary folder on the disk: they stay there
+ * across restarts). 64 files, W00..W3F, one per address's hash - a new
+ * one with the same hash takes its place, so it never grows past 64
+ * (each 512KB at most); each begins with "LXC1", the address's length
+ * and the address, then what came. F5 reads past it. ---- */
+#define CACHE_SLOTS 64
+#define CACHE_MAX (512 * 1024)
+static int cache_reload, cache_hits, cache_dir_made;
+static void cache_name(const char *u, char *out)
+{
+    unsigned h = 2166136261u;
+    int i, v;
+    for (i = 0; u[i]; i++) h = (h ^ (unsigned char)u[i]) * 16777619u;
+    v = (h ^ h >> 16) % CACHE_SLOTS;
+    copy(out, "/TMP/WEB/W00", 16);
+    out[10] = "0123456789ABCDEF"[v >> 4];
+    out[11] = "0123456789ABCDEF"[v & 15];
+}
+static int cache_get(const char *u, unsigned char **out)
+{
+    char nm[16], had[URL_MAX];
+    unsigned char hd[6];
+    int fd, l = strlen(u), n;
+    cache_name(u, nm);
+    if ((fd = open(nm, O_READ)) < 0) return -1;
+    n = fsize(fd) - 6 - l;
+    if (read(fd, hd, 6) != 6 || memcmp(hd, "LXC1", 4) || (hd[4] | hd[5] << 8) != l || l >= URL_MAX ||
+        read(fd, had, l) != l || memcmp(had, u, l) || n <= 0 || !(*out = malloc(n))) { close(fd); return -1; }
+    if (read(fd, *out, n) != n) { close(fd); free(*out); *out = 0; return -1; }
+    close(fd);
+    cache_hits++;
+    return n;
+}
+static void cache_put(const char *u, const unsigned char *d, int n)
+{
+    char nm[16];
+    unsigned char hd[6];
+    int fd, l = strlen(u);
+    if (n <= 0 || n > CACHE_MAX || l >= URL_MAX) return;
+    if (!cache_dir_made) { mkdir("/TMP/WEB"); cache_dir_made = 1; }
+    cache_name(u, nm);
+    if ((fd = open(nm, O_WRITE)) < 0) return;
+    memcpy(hd, "LXC1", 4); hd[4] = l & 255; hd[5] = l >> 8;
+    fwrite(fd, hd, 6);
+    fwrite(fd, u, l);
+    fwrite(fd, d, n);
+    close(fd);
+}
+/* where -> *out, from the cache if it's there (the web's only), else
+ * read - and then kept */
+static int load_cached(const char *where, unsigned char **out)
+{
+    int n;
+    if (is_http(where) && !cache_reload && (n = cache_get(where, out)) > 0) return n;
+    n = load_auto(where, out);
+    if (n > 0 && *out && is_http(where)) cache_put(where, *out, n);
+    return n;
+}
+
 #define IMG_MAX_PAGE 64                   /* pictures read for a page, at most */
 /* a picture's 0xRRGGBB pixels -> 16-bit ones (5-6-5) in the same block,
  * the block's other half given back to malloc */
@@ -1615,7 +1678,7 @@ static void emit_image(const char *srcattr, const char *alt)
             }
             draw_status();
             gfx_blit_rect(frame, 0, H - STATUS, W, STATUS);
-            n = load_auto(where, &buf);
+            n = load_cached(where, &buf);
             if (n > 8 && buf) {
                 if (buf[0] == 137 && buf[1] == 'P') pix = load_png(buf, n, &w, &h);
                 else if (buf[0] == 0xFF && buf[1] == 0xD8) pix = jpeg_load(buf, n, maxw, 1600, &w, &h);
@@ -1895,6 +1958,261 @@ static void heading(int level, int open)
     }
 }
 
+/* ---- tables, as grids ----
+ * The outermost table's cells are measured first (tb_measure: each
+ * column's longest word and longest line), its columns given widths
+ * from that - as wide as their text if it all fits, else each its
+ * longest word and the rest shared out - and each cell then laid out
+ * in its own column, the row as tall as its tallest cell; borders and
+ * bgcolor as boxes and rules. Tables inside a cell: as before, their
+ * cells one after another in it. */
+#define TB_COLS 40
+#define TB_PAD 6
+static int tb_depth, tb_on, tb_ncol, tb_x, tb_w, tb_col[TB_COLS + 1];
+static int tb_cmin[TB_COLS], tb_cmax[TB_COLS];
+static int tb_row, tb_row_top, tb_row_bot, tb_ci, tb_cell, tb_cell_th, tb_cell_ctr, tb_border;
+static int tb_left0, tb_right0, tb_base0, tb_box[TB_COLS], tb_nbox, tb_edge[TB_COLS], tb_nedge;
+static unsigned tb_row_bg, tb_tbl_bg;
+static void tb_reset(void) { tb_depth = tb_on = tb_row = tb_cell = 0; }
+
+static int tb_attr_num(const char *t, int n, const char *name)    /* name="12" in a tag's text */
+{
+    int i, l = strlen(name), v = 0;
+    for (i = 0; i + l < n; i++)
+        if (starts_ci(t + i, name) && t[i + l] == '=') {
+            i += l + 1;
+            if (t[i] == '"' || t[i] == '\'') i++;
+            while (i < n && t[i] >= '0' && t[i] <= '9') v = v * 10 + t[i++] - '0';
+            return v;
+        }
+    return -1;
+}
+/* src from p (just past <table>) to its </table>: tb_ncol, tb_cmin, tb_cmax */
+static void tb_measure(int p)
+{
+    int depth = 1, ci = -1, span = 1, len = 0, mline = 0, wd = 0, mword = 0, sp = 0, in_cell = 0;
+    tb_ncol = 0;
+    memset(tb_cmin, 0, sizeof tb_cmin);
+    memset(tb_cmax, 0, sizeof tb_cmax);
+#define TB_CELL_END() do { if (in_cell) { if (wd > mword) mword = wd; if (len > mline) mline = len; \
+        if (ci >= 0 && ci < TB_COLS && span == 1) { if (mword * 8 > tb_cmin[ci]) tb_cmin[ci] = mword * 8; \
+                                                   if (mline * 8 > tb_cmax[ci]) tb_cmax[ci] = mline * 8; } \
+        ci += span; if (ci > tb_ncol) tb_ncol = ci; in_cell = 0; } } while (0)
+    while (p < srclen) {
+        unsigned char c = src[p];
+        if (c == '<') {
+            char nm[12];
+            int q = p + 1, k = 0, cl = 0, t0;
+            if (src[q] == '/') { cl = 1; q++; }
+            while (q < srclen && k < 11 && ((src[q] >= 'a' && src[q] <= 'z') || (src[q] >= 'A' && src[q] <= 'Z') || (src[q] >= '0' && src[q] <= '9')))
+                nm[k++] = lower(src[q++]);
+            nm[k] = 0;
+            t0 = q;
+            while (q < srclen && src[q] != '>') q++;
+            p = q + 1;
+            if (!k) continue;
+            if (!strcmp(nm, "script") || !strcmp(nm, "style")) { if (!cl) skip_to_end(&p, nm); continue; }
+            if (!strcmp(nm, "table")) {
+                if (!cl) { depth++; continue; }
+                if (--depth == 0) break;
+                continue;
+            }
+            if (depth == 1) {
+                if (!strcmp(nm, "tr")) { TB_CELL_END(); if (!cl) ci = 0; continue; }
+                if (!strcmp(nm, "td") || !strcmp(nm, "th")) {
+                    TB_CELL_END();
+                    if (cl) continue;
+                    if (ci < 0) ci = 0;
+                    span = tb_attr_num(src + t0, q - t0, "colspan");
+                    if (span < 1) span = 1;
+                    in_cell = 1; len = mline = wd = mword = 0; sp = 1;
+                    continue;
+                }
+            }
+            if (!in_cell) continue;
+            if (!strcmp(nm, "img")) {                    /* a picture: as wide as it says */
+                int w = tb_attr_num(src + t0, q - t0, "width");
+                w = (w > 0 ? w : 64) / 8 + 1;
+                if (wd + w > mword) mword = wd + w;
+                len += w;
+                continue;
+            }
+            if (!strcmp(nm, "br") || !strcmp(nm, "p") || !strcmp(nm, "div") || !strcmp(nm, "li") ||
+                !strcmp(nm, "tr") || (nm[0] == 'h' && nm[1] >= '1' && nm[1] <= '6')) {
+                if (wd > mword) mword = wd;
+                if (len > mline) mline = len;
+                len = wd = 0; sp = 1;
+            }
+            continue;
+        }
+        p++;
+        if (!in_cell) continue;
+        if (c == '&') { while (p < srclen && src[p] != ';' && src[p] != '<' && !is_space(src[p])) p++; if (src[p] == ';') p++; }
+        else if (is_space(c)) { if (wd > mword) mword = wd; wd = 0; if (!sp) { len++; sp = 1; } continue; }
+        else if ((c & 0xC0) == 0x80 && cs_mode == 0) continue;     /* (UTF-8: one letter) */
+        len++; wd++; sp = 0;
+    }
+    TB_CELL_END();
+#undef TB_CELL_END
+    if (tb_ncol > TB_COLS) tb_ncol = TB_COLS;
+}
+/* the columns' widths and where they start (tb_col), in avail */
+static void tb_widths(int avail, int full)
+{
+    int i, smin = 0, smax = 0, w[TB_COLS], tot = 0;
+    for (i = 0; i < tb_ncol; i++) {
+        int mx = tb_cmax[i] > avail ? avail : tb_cmax[i];
+        tb_cmin[i] += 2 * TB_PAD; mx += 2 * TB_PAD;
+        if (tb_cmin[i] > mx) mx = tb_cmin[i];
+        tb_cmax[i] = mx;
+        smin += tb_cmin[i]; smax += mx;
+    }
+    for (i = 0; i < tb_ncol; i++) {
+        if (smax <= avail) w[i] = full && smax ? tb_cmax[i] + (avail - smax) * tb_cmax[i] / smax : tb_cmax[i];
+        else if (smin >= avail) w[i] = smin ? tb_cmin[i] * avail / smin : avail / tb_ncol;
+        else w[i] = tb_cmin[i] + (tb_cmax[i] - tb_cmin[i]) * (avail - smin) / (smax - smin);
+        if (w[i] < 2 * TB_PAD + 8) w[i] = 2 * TB_PAD + 8;
+    }
+    tb_col[0] = tb_x;
+    for (i = 0; i < tb_ncol; i++) { tot += w[i]; tb_col[i + 1] = tb_x + tot; }
+    tb_w = tot;
+}
+static void tb_rule(int rx, int ry, int rw, int rh)
+{
+    struct item *it = new_item(IT_RULE);
+    if (it) { it->x = rx; it->y = ry; it->w = rw; it->h = rh; it->color = C_RULE; }
+    line_start = nitems;
+}
+static void tb_cell_end(void)
+{
+    if (!tb_cell) return;
+    end_line(0);
+    if (y + TB_PAD > tb_row_bot) tb_row_bot = y + TB_PAD;
+    if (tb_cell_th) { if (bold) bold--; }
+    if (tb_cell_ctr && center) center--;
+    tb_cell = 0;
+    indent = 0; list_depth = 0;
+    base_left = tb_x;
+    right_x = tb_x + tb_w;
+    set_left(tb_x);
+}
+static void tb_row_end(void)
+{
+    int i;
+    tb_cell_end();
+    if (!tb_row) return;
+    for (i = 0; i < tb_nbox; i++) items[tb_box[i]].h = tb_row_bot - tb_row_top;
+    if (tb_border) {
+        for (i = 0; i < tb_nedge; i++) tb_rule(tb_col[tb_edge[i]], tb_row_top, 1, tb_row_bot - tb_row_top);
+        tb_rule(tb_col[tb_ncol] - 1, tb_row_top, 1, tb_row_bot - tb_row_top);   /* (each cell's left edge, the right one) */
+        tb_rule(tb_x, tb_row_bot, tb_w, 1);
+    }
+    y = tb_row_bot + (tb_border ? 1 : 0);
+    x = line_left;
+    last_gap = 0;
+    tb_row = 0;
+}
+static void tb_row_start(void)
+{
+    tb_row_end();
+    tb_row = 1;
+    tb_ci = 0;
+    tb_nbox = tb_nedge = 0;
+    tb_row_top = tb_row_bot = y;
+}
+static void tb_cell_start(int th)
+{
+    int span = 1, l, r;
+    const char *a;
+    unsigned bg;
+    tb_cell_end();
+    if (!tb_row) tb_row_start();
+    if ((a = attr("colspan"))) span = atoi(a);
+    if (span < 1) span = 1;
+    if (tb_ci >= tb_ncol) tb_ci = tb_ncol - 1;            /* (more cells than measured: the last) */
+    if (tb_ci + span > tb_ncol) span = tb_ncol - tb_ci;
+    l = tb_col[tb_ci]; r = tb_col[tb_ci + span];
+    if (tb_nedge < TB_COLS) tb_edge[tb_nedge++] = tb_ci;
+    tb_ci += span;
+    bg = th && !reader ? RGB(236, 240, 247) : tb_row_bg;
+    if ((a = attr("bgcolor")) && !reader) bg = parse_color(a, bg);
+    if (bg != 0xFFFFFFFFu && tb_nbox < TB_COLS) {
+        struct item *it = new_item(IT_BOX);
+        if (it) { it->x = l; it->y = tb_row_top; it->w = r - l; it->color = bg; tb_box[tb_nbox++] = nitems - 1; }
+    }
+    base_left = l + TB_PAD;
+    right_x = r - TB_PAD;
+    if (right_x < base_left + 8) right_x = base_left + 8;
+    line_left = base_left;
+    x = base_left;
+    y = tb_row_top + TB_PAD;
+    line_start = nitems;
+    pending_space = 0;
+    last_gap = 99;                                       /* (no gap at its top) */
+    indent = list_depth = 0;
+    tb_cell = 1;
+    tb_cell_th = th;
+    if (th) bold++;
+    a = attr("align");
+    tb_cell_ctr = (a && starts_ci(a, "center")) || (th && !a);
+    if (tb_cell_ctr) center++;
+}
+/* <table>, <tr>, <td>/<th> and their ends -> 1 if it's handled here */
+static int tb_tag(const char *name, int closing, int *p)
+{
+    if (!strcmp(name, "table")) {
+        if (!closing) {
+            const char *a;
+            tb_depth++;
+            if (tb_depth > 1 || pre) return 0;
+            block(10);
+            tb_measure(*p);
+            if (tb_ncol < 1) return 0;
+            tb_on = 1;
+            tb_left0 = line_left; tb_right0 = right_x; tb_base0 = base_left;
+            tb_x = line_left;
+            a = attr("width");
+            tb_widths(RIGHT - line_left, a && a[0] && a[strlen(a) - 1] == '%' && atoi(a) >= 90);
+            a = attr("border");
+            tb_border = a && atoi(a) > 0;
+            tb_tbl_bg = 0xFFFFFFFFu;
+            if ((a = attr("bgcolor")) && !reader) tb_tbl_bg = parse_color(a, page_bg);
+            tb_row_bg = tb_tbl_bg;
+            tb_row = tb_cell = 0;
+            base_left = tb_x;
+            right_x = tb_x + tb_w;
+            set_left(tb_x);
+            if (tb_border) tb_rule(tb_x, y, tb_w, 1), y++;
+            return 1;
+        }
+        if (tb_depth > 0) tb_depth--;
+        if (!tb_on || tb_depth > 0) return 0;
+        tb_row_end();
+        tb_on = 0;
+        right_x = tb_right0; base_left = tb_base0;
+        line_left = tb_left0; x = line_left;
+        line_start = nitems;
+        last_gap = 0;
+        block(10);
+        return 1;
+    }
+    if (!tb_on || tb_depth != 1) return 0;
+    if (!strcmp(name, "tr")) {
+        const char *a;
+        if (closing) { tb_row_end(); return 1; }
+        tb_row_start();
+        tb_row_bg = tb_tbl_bg;
+        if ((a = attr("bgcolor")) && !reader) tb_row_bg = parse_color(a, page_bg);
+        return 1;
+    }
+    if (!strcmp(name, "td") || !strcmp(name, "th")) {
+        if (closing) tb_cell_end();
+        else tb_cell_start(name[1] == 'h');
+        return 1;
+    }
+    return 0;
+}
+
 static void tag_rest(char *name, int closing, int *p);
 static void tag(int *p)
 {
@@ -1984,7 +2302,7 @@ static void tag(int *p)
 
 static void tag_rest(char *name, int closing, int *p)
 {
-    (void)p;
+    if (tb_tag(name, closing, p)) return;
     if (name[0] == 'h' && name[1] >= '1' && name[1] <= '6' && !name[2]) { heading(name[1] - '0', !closing); return; }
     if (!strcmp(name, "br")) { end_line(1); return; }
     if (!strcmp(name, "p") || !strcmp(name, "div") || !strcmp(name, "section") || !strcmp(name, "article") ||
@@ -2007,7 +2325,7 @@ static void tag_rest(char *name, int closing, int *p)
         block(8);
         indent += closing ? -36 : 36;
         if (indent < 0) indent = 0;
-        set_left(MARGIN + indent + list_depth * 28);
+        set_left(base_left + indent + list_depth * 28);
         if (!closing) ital++; else if (ital) ital--;
         return;
     }
@@ -2017,7 +2335,7 @@ static void tag_rest(char *name, int closing, int *p)
             if (list_depth < 8) { list_ordered[list_depth] = name[0] == 'o'; list_num[list_depth] = 0; }
             list_depth++;
         } else if (list_depth) list_depth--;
-        set_left(MARGIN + indent + list_depth * 28);
+        set_left(base_left + indent + list_depth * 28);
         return;
     }
     if (!strcmp(name, "li")) { if (!closing) list_item(); return; }
@@ -2591,6 +2909,8 @@ static void layout(void)
     scale = 1;
     cur_link = -1;
     indent = list_depth = ncolor = 0;
+    base_left = left_x;
+    tb_reset();
     wlen = 0;
     ncssf = 0;
     img_count = 0;
@@ -2966,12 +3286,16 @@ static void load_styles(void)
         char w[URL_MAX];
         int save_tg = tg, save_pi_css = pi.css_files;
         static char pi_copy[sizeof pi];
+        unsigned char *b = 0;
+        int k, got;
         resolve(base_url, css_links[i], w);
         memcpy(pi_copy, &pi, sizeof pi);                 /* (the page's own, kept) */
+        got = load_cached(w, &b);                        /* (the cache's, if it's there) */
         tg = T_CSS;
         css_begin();
-        if (net_get(w, 0) >= 0) save_pi_css++;
+        if (got >= 0 && b) { for (k = 0; k < got; k++) css_feed(b[k]); save_pi_css++; }
         css_end();
+        free(b);
         tg = save_tg;
         memcpy(&pi, pi_copy, sizeof pi);
         pi.css_files = save_pi_css;
@@ -3032,6 +3356,7 @@ static void go(const char *to, int remember)
     st_reset();
     css_reset();
     ncss_links = 0;
+    cache_hits = 0;
     base_url[0] = 0;
     cs_mode = CS_UTF8;
     title[0] = 0;
@@ -3140,7 +3465,7 @@ static void num_str(char *t, int v, int size)
 }
 static void draw_info(void)
 {
-    int bw = 580, bh = 272, bx = (W - SBW - bw) / 2, by = VIEW_Y + 20, ly;
+    int bw = 580, bh = 296, bx = (W - SBW - bw) / 2, by = VIEW_Y + 20, ly;
     char t[160];
     static const char *how[] = { " (the default)", " - the server says", " - the page says (<meta>)", " - guessed from its bytes",
                                  " - its byte order mark" };
@@ -3181,6 +3506,10 @@ static void draw_info(void)
     append(t, " parts not shown (hidden by the page)", sizeof t);
     info_line(bx, &ly, "Hidden", t, 0);
     t[0] = 0;
+    num_str(t, cache_hits, sizeof t);
+    append(t, " from /TMP/WEB (F5: all read again)", sizeof t);
+    info_line(bx, &ly, "Cache", t, 0);
+    t[0] = 0;
     num_str(t, pi.imgs, sizeof t);
     append(t, " shown, ", sizeof t);
     num_str(t, pi.imgs_bad, sizeof t);
@@ -3198,7 +3527,7 @@ static void press(int b)
 {
     if (b == 0 && hpos > 0) { hpos--; go(hist[hpos], 0); }
     else if (b == 1 && hpos < nhist - 1) { hpos++; go(hist[hpos], 0); }
-    else if (b == 2) { int s = scroll; go(url, 0); scroll = s; clamp_scroll(); redraw(); }
+    else if (b == 2) { int s = scroll; cache_reload = 1; go(url, 0); cache_reload = 0; scroll = s; clamp_scroll(); redraw(); }
     else if (b == 3) go(home, 1);
     else if (b == 4) { editing = 0; go(edit_url, 1); }
     else if (b == 5 && !editing) { editing = 1; edit_fresh = 1; copy(edit_url, url, URL_MAX); redraw(); }

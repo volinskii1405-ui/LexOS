@@ -206,6 +206,14 @@ All taken in QEMU (1024x768) - more in [docs/screenshots](docs/screenshots).
 <td align="center" valign="top"><img src="docs/screenshots/100-fat32.png" alt="FAT32" width="400"><br><sub>LexOS's disk is FAT32: <code>df</code>, <code>ls -l</code>, <code>fsck</code></sub></td>
 <td align="center" valign="top"><img src="docs/screenshots/101-browser-huge.png" alt="A huge page" width="400"><br><sub>A 6MB page, all of it (the kernel's extra memory)</sub></td>
 </tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/102-browser-tables.png" alt="Tables" width="400"><br><sub>LexOS Web: tables as grids - columns sized by their text</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/105-many-files.png" alt="Thousands of files" width="400"><br><sub>Files: a folder of 3301 (8192 slots, folders anywhere)</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/103-long-names-dialog.png" alt="Long names in Notepad" width="400"><br><sub>Long names in programs' Open/Save dialogs</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/104-long-names-shell.png" alt="Long names in the Terminal" width="400"><br><sub>Long names in the Terminal: quotes, Tab</sub></td>
+</tr>
 </table>
 
 Every screenshot, described in Russian: [docs/screenshots/README.md](docs/screenshots/README.md).
@@ -359,25 +367,26 @@ tester@/DESKTOP$ run snake.app
   `DESKTOP` (the desktop's icons) and `SYSTEM` (the translations).
 - `ls` prints folders in bright yellow so they stand out from regular
   files, which stay whatever color you've set with `color`.
-- `df` (or `free`) shows how many of the 1024 slots (the files and
-  folders LexOS keeps track of), how much of the disk (in KB) and how
-  many of the 8 `TMP` RAM slots (see below) are in use.
+- `df` (or `free`) shows how many of the 8192 slots (the files and
+  folders LexOS keeps track of) and how much of the disk (in KB) are
+  in use.
 - `bld <n>` creates a new, empty file `n` in the current folder.
-- LexOS keeps track of up to 1024 files and folders on the disk (up to
-  255 of them folders - more than that, and the rest aren't shown),
-  nested as deep as you like; a single file can be as big as the free
-  space. The records and the FAT are in RAM, so `ls`/`cd`/`tree` don't
+- LexOS keeps track of up to 8192 files and folders on the disk, any
+  of them folders (a record's parent is 16 bits), nested as deep as you
+  like; a single file can be as big as the free space. Files lists up
+  to 4096 things in one folder. The records and the FAT are in RAM, so `ls`/`cd`/`tree` don't
   hit the disk; files are read and written a cluster or more at a time
   (DMA, up to 64KB a command).
-- `TMP` is a RAM disk: create a file while `cd`'d directly into it (not
-  a subfolder within it) and its up-to-127-byte primary record lives
-  entirely in memory instead of costing one of the real directory
-  slots - `ls`, `cat`, `rm`, wildcards and everything else treat it like
-  any other file, but it vanishes on reboot along with everything else
-  that was only ever in RAM - and it holds 127 bytes at most. Placing
-  a file into `TMP` by path from a different directory (`cp x.txt tmp`
-  while elsewhere) still creates a normal disk-backed file - only
-  creating it while actually `cd`'d into `TMP` gets the RAM slot.
+- `TMP` is an ordinary folder on the disk (it used to be 8 RAM-only
+  slots): what's put there stays across restarts - LexOS Web keeps its
+  cache of pictures and style sheets in `/TMP/WEB`.
+- Long names in the Terminal: a quoted word, or one with Russian
+  letters, is a long name - `cat "My notes.txt"`, `cd "Мои документы"`,
+  paths too; the shell turns it into the short name before the command
+  runs. Where a command makes a name (`mkdir`, `ren`, `cp`, `uranium`,
+  `bld`, `hostget`, `recv`, `>` and `>>`), a new long name gets a short
+  one (`NOVAYA~1`) and the long one beside it. Tab finishes a long name
+  (in quotes if it has spaces).
 
 ### Shell
 - **Pipes and redirection** (src/pipe.asm): `ls | grep APP | head 3`,
@@ -577,7 +586,10 @@ tester@/DESKTOP$ run snake.app
   room for); C programs get `malloc`/`free`/`realloc` over their 4MB -
   and, when that runs out, over extra memory the kernel maps them on
   request (`SYS_MORE`: 4MB pages from 0x40000000, up to 64MB more per
-  program while the pool of 80MB has any; given back when it ends). `gfx_mode(1)`
+  program while the pool of 80MB has any; given back when it ends) -
+  free blocks are on lists by size (malloc never walks every block),
+  `free` joins neighbours at once, and `realloc` grows a block where it
+  is when it can (nothing copied). `gfx_mode(1)`
   switches to 320x200 in 256 colors: a program draws into a buffer of
   its own and `gfx_blit`s it to the screen, can set any palette color,
   and `keydown(scancode)` tells whether a key is held - what games
@@ -641,7 +653,8 @@ tester@/DESKTOP$ run snake.app
   hands it the system's 8x16 font, Russian and Spanish letters included;
   `tcp_open`/`tcp_send`/`tcp_recv`/`tcp_close` give it a TCP connection
   of its own (the browser's TLS runs on that); `readdir`/`mkdir` walk
-  and make folders; `keymode(1)` makes Ctrl+letters the program's own
+  and make folders (long names: `readdir` gives a file's long name and
+  its short one, `open`/`mkdir` take long names and paths of them); `keymode(1)` makes Ctrl+letters the program's own
   (coded 1-26 - on the desktop Ctrl+C would end it); `notify(text)` puts
   a line at the top of the desktop (src/appext.asm); `inbox(buf, n)`
   takes a file the desktop hands over (Files opening a text in the
@@ -707,7 +720,8 @@ tester@/DESKTOP$ run snake.app
   `10.0.2.2:8000` in the address bar). It shows headings, paragraphs,
   bold/italic/underlined and colored text, links (relative ones too),
   lists (nested, bullets and numbers), `<pre>`, `<hr>`, `<blockquote>`,
-  `<center>`, tables as rows of cells, `<body bgcolor>` and pictures -
+  `<center>`, tables as grids (columns as wide as their text, borders,
+  `bgcolor`, `colspan`, `<th>`), `<body bgcolor>` and pictures -
   `<img>` of `.BMP` (8, 24 or 32 bits), `.PNG`, `.JPG` (baseline and
   progressive, `apps/jpeg.h`) and `.GIF` (the first frame, `apps/gif.h`),
   lazy ones' `data-src` too, up to 64 a page. Back / forward / reload /
@@ -1386,7 +1400,7 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `open <n>` | open it as a double click on the desktop would - a picture in Pictures, a text in Notepad, a program, a folder in Files |
 | `clip <n>`, `<command> \| clip` | a file's text - or a command's output - onto the clipboard (Ctrl+V pastes) |
 | `basic [n]` | Tiny BASIC; with a name, load and run that program first |
-| `reboot` / `shutdown` | restart / power off |
+| `reboot` / `shutdown` | restart / power off (ACPI: the firmware's own tables, then QEMU/Bochs/VirtualBox's ports) |
 | `history` | list previously run commands, numbered oldest first |
 | `!!` | run the last command again (it's shown first) |
 | `df` / `free` | show how many files LexOS tracks and how full the disk is |
@@ -1560,10 +1574,12 @@ src/
                        rather than further down, so its init function's
                        address stays safely below 0x10000 (see the note
                        in devices.asm).
-  filesystem.asm       folder-aware filesystem on top of the ATA driver,
-                       including the RAM-backed TMP folder (fs_find_free/
-                       fs_read_slot/fs_write_slot - see data.asm's note
-                       above FS_RAM_FILE_COUNT).
+  filesystem.asm       folder-aware filesystem on top of the ATA driver
+                       (fs_find_free/fs_read_slot/fs_write_slot; a
+                       record's parent is a word - fs_scratch_parent).
+  longname.asm         long names in the shell (a line's long names ->
+                       short ones), Tab, programs' open()/mkdir().
+  acpi.asm             power off the firmware's way (RSDP, FADT, \_S5).
   fs_extra.asm         whole files: fs_load_to / fs_load_content (read
                        into memory), fs_stream_write (written from a
                        stream of bytes), append.
@@ -1699,15 +1715,6 @@ src/
 
 ## Known limitations
 
-- `TMP`'s RAM benefit only applies to a file created while actually
-  `cd`'d into it, and only to that file's own up-to-127-byte primary
-  record - a subfolder created inside `TMP` gets its own RAM slot the
-  same way, but files placed inside *that* subfolder fall back to the
-  normal disk pool (its current directory is the subfolder, not `TMP`
-  itself), and content past 127 bytes always chains into the ordinary
-  disk-backed extra-sector pool regardless of where the file lives.
-  There are only 8 RAM slots total (`FS_RAM_FILE_COUNT` in
-  `src/data.asm`).
 - ATA DMA only looks at PCI bus 0, function 0 (see `ata_dma_probe` in
   `src/atadma.asm`) and only understands an I/O-space BAR4 - enough for
   QEMU's own IDE controller (what this project is tested against), but
@@ -1721,30 +1728,32 @@ src/
   Labels/relocations aren't a concern (a `.com` is already position-
   independent machine code by convention), but there's no `.exe` (MZ)
   support - no header parsing, no segment relocation.
-- LexOS keeps track of up to 1024 files and folders on the disk (255 of
-  them folders); a disk with more (made elsewhere) shows the first ones
-  found. Long names past 63 characters are cut short in LexOS (and
-  written back cut if the file's renamed or moved there). A file in the
-  `TMP` RAM folder holds 127 bytes at most. A name the shell and the commands
-  take is at most 15 characters, the extension included (`hostput`
-  wants a DOS 8.3 name for the host's side); a long name (up to 63) is
-  the desktop's - Files, the icons, Properties, `ls` show it, but in the
-  Terminal a file is reached by its short one (`cat TRIPTO~1.TXT`), a
-  `mv`/`ren` there drops it, and programs' file dialogs show short
-  names.
+- LexOS keeps track of up to 8192 files and folders on the disk; a
+  disk with more (made elsewhere) shows the first ones found. Long names
+  past 63 characters are cut short in LexOS (and written back cut if the
+  file's renamed or moved there). A command line is 63 characters at
+  most, long names included (the shell turns them into short ones, so a
+  path of long names has to fit in that). `cat`, `rm` and the other
+  one-name commands work in the current folder, as before - paths are
+  for `cd`, `cp`, `mv` and programs. Russian names show as Russian in the
+  Terminal only with the Russian system language (the text mode's font);
+  the desktop's windows always show them.
 - The journal covers the filesystem's own records (the FAT's sectors and
   the folders'); a file's data goes straight to its clusters (before the
   records that point to it). One change bigger than 120 record sectors
   (writing a very big file - each FAT sector covers 256KB of it - or
   `rm -a` in a big folder) is committed in parts. The journal is LexOS's
   own: another system writing to the disk doesn't know about it (it only
-  matters if LexOS was cut off with a commit unfinished). `fsck` looks
-  at the disk's files, not the 8 `TMP` RAM slots.
+  matters if LexOS was cut off with a commit unfinished).
 - Pipes pass files, not streams: a command's whole output is caught
   first (up to 20KB per console), then handed on - and a command that
   waits for keys (`uranium`, a game) can't be piped.
-- LexOS Web knows no CSS, JavaScript, forms or frames; tables are rows
-  of cells, pictures are `.BMP` and `.PNG`, a page up to 256KB. Its https
+- LexOS Web knows only a little CSS, no JavaScript, forms or frames;
+  only the outermost table is a grid (a table inside a cell has its
+  cells one after another in it), no rowspan. Its cache is 64 files in
+  `/TMP/WEB` (512KB each at most), kept until the same slot's needed
+  again - F5 reads past it, but nothing checks whether a picture
+  changed on the server otherwise. Its https
   offers only TLS 1.3 with X25519 (servers asking for another key
   exchange are refused) and doesn't check certificates (see above).
 - `cc.app` has no structs, unions, floats, multi-dimensional arrays or
