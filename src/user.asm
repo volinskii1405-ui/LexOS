@@ -382,10 +382,8 @@ user_run_setup_wizard:
     mov dl, FS_TYPE_FILE
     call fs_scratch_write_byte
 
-    call fs_get_current_parent_byte
-    mov dl, al
-    mov ax, FS_PARENT_OFFSET
-    call fs_scratch_write_byte
+    mov ax, [fs_current_dir]
+    call fs_scratch_set_parent
 
     ; --- content: nickname, CRLF, the typed timezone text (still in
     ; buffer from the read_command_line above), CRLF ---

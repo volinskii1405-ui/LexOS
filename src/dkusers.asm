@@ -24,7 +24,7 @@ DKN_PASSWORD   equ 15
 ; Folders and files
 ; ============================================================
 
-; -> al = /HOME's slot byte (made in the root if it isn't there);
+; -> eax = /HOME's slot (made in the root if it isn't there);
 ; carry=1 if there's no room for it
 dkus_home:
     push esi
@@ -32,18 +32,18 @@ dkus_home:
     call dkus_find_dir_root
     jnc .done
     mov esi, dkus_n_home
-    mov dl, FS_ROOT_BYTE
+    mov dx, FS_ROOT
     call dkus_mkdir
 .done:
     pop esi
     ret
 
-; esi = a folder's name in the root -> al = its slot byte, carry=1: none
+; esi = a folder's name in the root -> eax = its slot, carry=1: none
 dkus_find_dir_root:
     push ebx
     push ecx
     push edx
-    mov dl, FS_ROOT_BYTE
+    mov dx, FS_ROOT
     call aext_find_in                     ; (src/appext.asm) -> eax
     cmp eax, -1
     je .none
@@ -61,8 +61,8 @@ dkus_find_dir_root:
     stc
     ret
 
-; esi = a name, dl = the folder to make it in -> al = the new folder's
-; slot byte; carry=1: no room
+; esi = a name, dx = the folder to make it in -> eax = the new folder's
+; slot; carry=1: no room
 dkus_mkdir:
     push ebx
     push ecx
@@ -80,7 +80,8 @@ dkus_mkdir:
     mov edi, SCRATCH_ADDR
     call dki_copy
     mov byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
-    mov [SCRATCH_ADDR + FS_PARENT_OFFSET], dl
+    mov ax, dx
+    call fs_scratch_set_parent
     mov word [SCRATCH_ADDR + FS_CHAIN_OFFSET], FS_NO_CHAIN
     pop eax
     call fs_write_slot
@@ -97,7 +98,7 @@ dkus_mkdir:
     stc
     ret
 
-; esi = a name, dl = its folder, edi = its text, ecx = how long (under
+; esi = a name, dx = its folder, edi = its text, ecx = how long (under
 ; 127): a small file made there
 dkus_mkfile:
     pushad
@@ -121,7 +122,10 @@ dkus_mkfile:
     call dki_copy
     pop esi
     mov byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_FILE
-    mov [SCRATCH_ADDR + FS_PARENT_OFFSET], dl
+    push eax
+    mov ax, dx
+    call fs_scratch_set_parent
+    pop eax
     mov edi, SCRATCH_ADDR + FS_CONTENT_OFFSET
     push ecx
     rep movsb
@@ -134,24 +138,26 @@ dkus_mkfile:
     popad
     ret
 
-; esi = a name, dl = the folder it's in, dh = the one it goes into: moved
+; esi = a name, dx = the folder it's in, cx = the one it goes into: moved
 ; (if it's there, and the name's free where it goes)
 dkus_move:
     pushad
-    mov [dkus_to], dh
+    mov [dkus_to], cx
     call aext_find_in                     ; -> eax
     cmp eax, -1
     je .done
     push eax
-    mov dl, [dkus_to]
+    mov dx, [dkus_to]
     call aext_find_in                     ; (taken there?)
     mov ecx, eax
     pop eax
     cmp ecx, -1
     jne .done
     call fs_read_slot
-    mov dl, [dkus_to]
-    mov [SCRATCH_ADDR + FS_PARENT_OFFSET], dl
+    push eax
+    mov ax, [dkus_to]
+    call fs_scratch_set_parent
+    pop eax
     call fs_write_slot
 .done:
     popad
@@ -209,10 +215,10 @@ dkus_list:
     mov esi, dkus_p_home
     call dkus_find_dir_root               ; -> al
     jc .done
-    mov [dkus_hb], al
+    mov [dkus_hb], ax
     xor ebx, ebx
 .slot:
-    cmp ebx, FS_TOTAL_SLOTS
+    cmp ebx, [fs_slot_top]
     jae .done
     cmp dword [dkus_n], DKUS_MAX
     jae .done
@@ -220,8 +226,8 @@ dkus_list:
     call fs_read_slot
     cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
     jne .next
-    mov al, [SCRATCH_ADDR + FS_PARENT_OFFSET]
-    cmp al, [dkus_hb]
+    call fs_scratch_parent
+    cmp ax, [dkus_hb]
     jne .next
     mov edi, [dkus_n]                     ; its folder's name
     shl edi, 4
@@ -229,7 +235,7 @@ dkus_list:
     mov esi, SCRATCH_ADDR
     call dki_copy
     push ebx
-    mov dl, bl                            ; its USER.CFG
+    mov dx, bx                            ; its USER.CFG
     mov esi, user_cfg_name
     call aext_find_in                     ; -> eax
     pop ebx
@@ -422,33 +428,33 @@ dkus_switch:
     mov word [fs_current_dir], FS_ROOT
     call dkus_home                        ; -> al
     jc .done
-    mov [dkus_hb], al
+    mov [dkus_hb], ax
     mov esi, user_nickname                ; the one before: their folder
     call dkus_folder_name
     mov esi, dkus_fname
-    mov dl, [dkus_hb]
+    mov dx, [dkus_hb]
     call aext_find_in                     ; -> eax
     cmp eax, -1
     jne .have_old
     mov esi, dkus_fname
-    mov dl, [dkus_hb]
+    mov dx, [dkus_hb]
     call dkus_mkdir
     jc .done
 .have_old:
-    mov [dkus_old], al
+    mov [dkus_old], ax
     mov esi, [dkus_idx]                   ; the new one's folder
     shl esi, 4
     add esi, dkus_folders
-    mov dl, [dkus_hb]
+    mov dx, [dkus_hb]
     call aext_find_in
     cmp eax, -1
     je .done
-    mov [dkus_new], al
+    mov [dkus_new], ax
     xor ebp, ebp                          ; the three, each way
 .item:
     mov esi, [dkus_items + ebp*4]
-    mov dl, FS_ROOT_BYTE
-    mov dh, [dkus_old]
+    mov dx, FS_ROOT
+    mov cx, [dkus_old]
     call dkus_move
     inc ebp
     cmp ebp, 3
@@ -456,8 +462,8 @@ dkus_switch:
     xor ebp, ebp
 .item_in:
     mov esi, [dkus_items + ebp*4]
-    mov dl, [dkus_new]
-    mov dh, FS_ROOT_BYTE
+    mov dx, [dkus_new]
+    mov cx, FS_ROOT
     call dkus_move
     inc ebp
     cmp ebp, 3
@@ -466,10 +472,10 @@ dkus_switch:
     call dkus_find_dir_root               ; a few shortcuts on it
     jnc .desk_there
     mov esi, dkus_n_desktop
-    mov dl, FS_ROOT_BYTE
+    mov dx, FS_ROOT
     call dkus_mkdir
     jc .reload
-    mov dl, al
+    mov dx, ax
     xor ebp, ebp
 .link:
     mov esi, [dkus_links + ebp*8]
@@ -538,7 +544,7 @@ dkus_add_do:
     je .taken
     call dkus_home                        ; -> al
     jc .full
-    mov dl, al
+    mov dx, ax
     mov esi, dkus_fname
     call aext_find_in
     cmp eax, -1
@@ -546,7 +552,7 @@ dkus_add_do:
     mov esi, dkus_fname
     call dkus_mkdir                       ; -> al
     jc .full
-    mov dl, al
+    mov dx, ax
     push edx
     mov edi, dkus_cfg                     ; USER.CFG: the name, the time zone,
     mov esi, dkn_text                     ; no password, the layouts, the
@@ -680,11 +686,11 @@ DKUS_LINKS     equ 5
 dkus_n         dd 0
 dkus_sel       dd 0
 dkus_sel_hash  dd 0
-dkus_hb        db 0
-dkus_old       db 0
-dkus_to        db 0
+dkus_hb        dw 0
+dkus_old       dw 0
+dkus_to        dw 0
 dkus_idx       dd 0
-dkus_new       db 0
+dkus_new       dw 0
 dkus_sel_nick  times DKUS_NICK + 4 db 0
 dkus_nicks     times DKUS_MAX * DKUS_NICK db 0
 dkus_folders   times DKUS_MAX * 16 db 0

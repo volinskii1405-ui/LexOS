@@ -84,7 +84,7 @@ aext_take_path:
     clc
     ret
 
-; aext_path (a folder) -> al = its slot byte (FS_ROOT_BYTE the root);
+; aext_path (a folder) -> eax = its slot (FS_ROOT the root);
 ; carry=1 if it isn't one
 aext_folder:
     push esi
@@ -102,11 +102,15 @@ aext_folder:
     cmp byte [esi], 0                     ; "/": the root
     je .root
     push edx
-    mov esi, aext_path
-    cmp byte [esi], '/'                   ; (relative: from the current one,
-    je .absolute                          ;  a part at a time - "A/B")
-    call fs_get_current_parent_byte       ; -> al
-    mov dl, al
+    mov esi, aext_path                    ; a part at a time - "A/B", from
+    mov dx, [fs_current_dir]              ; the current one, or "/A/B" from
+.lead:                                    ; the root (long names too)
+    cmp byte [esi], '/'
+    jne .from
+    mov dx, FS_ROOT
+    inc esi
+    jmp .lead
+.from:
     push ebx
     push ecx
     push edi
@@ -120,7 +124,7 @@ aext_folder:
     inc esi
     cmp al, '/'
     je .part_end
-    cmp ecx, FS_NAME_LEN
+    cmp ecx, FS_LNAME_MAX - 1
     jae .part_char
     mov [edi + ecx], al
     inc ecx
@@ -135,17 +139,13 @@ aext_folder:
     je .parts_done
     cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
     jne .parts_done
-    mov dl, al
+    mov dx, ax
     cmp byte [esi], 0
     jne .part
 .parts_done:
     pop edi
     pop ecx
     pop ebx
-    jmp .resolved
-.absolute:
-    call dki_resolve                      ; -> eax
-.resolved:
     pop edx
     cmp eax, -1
     je .no
@@ -155,12 +155,12 @@ aext_folder:
     clc
     ret
 .current:
-    call fs_get_current_parent_byte
+    movzx eax, word [fs_current_dir]
     pop esi
     clc
     ret
 .root:
-    mov al, FS_ROOT_BYTE
+    mov eax, FS_ROOT
     pop esi
     clc
     ret
@@ -169,19 +169,23 @@ aext_folder:
     stc
     ret
 
-; esi = a name, dl = a folder's slot byte -> eax = the slot of that name
-; in it (read into scratch), or -1
+; esi = a name, dx = a folder's slot (or FS_ROOT) -> eax = the slot of
+; that name in it (read into scratch), or -1
 aext_find_in:
     xor ebx, ebx
 .slot:
-    cmp ebx, FS_TOTAL_SLOTS
+    cmp ebx, [fs_slot_top]
     jae .none
+    mov eax, ebx                          ; (the cache first: quick)
+    shl eax, 9
+    cmp byte [FS_SLOT_CACHE + eax + FS_TYPE_OFFSET], FS_TYPE_FREE
+    je .next
+    cmp [FS_SLOT_CACHE + eax + FS_PARENT_LO_OFFSET], dl
+    jne .next
+    cmp [FS_SLOT_CACHE + eax + FS_PARENT_HI_OFFSET], dh
+    jne .next
     mov eax, ebx
     call fs_read_slot
-    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_FREE
-    je .next
-    cmp [SCRATCH_ADDR + FS_PARENT_OFFSET], dl
-    jne .next
     xor ecx, ecx
 .cmp:
     mov al, [esi + ecx]
@@ -199,33 +203,60 @@ aext_find_in:
     inc ebx
     jmp .slot
 .none:
+    push word [fs_current_dir]            ; its long name, then?
+    mov [fs_current_dir], dx
+    call fsl_find_long                    ; -> eax (the slot read)
+    pop word [fs_current_dir]
+    jnc .long
     mov eax, -1
+.long:
     ret
 
+; readdir's newer form (syscall 46): 96 bytes - the long name (or the
+; short one) in 64, the type, the size, the time, then the short name
+sys_readdir_long:
+    mov byte [aext_rd_long], 1
+    mov ecx, 96
+    jmp aext_readdir
 sys_readdir:
-    mov eax, [ebp + 20]                   ; out: 32 bytes of the program's
+    mov byte [aext_rd_long], 0
+    mov ecx, 32
+aext_readdir:
+    mov eax, [ebp + 20]                   ; out: 32 (96) bytes of the program's
     cmp eax, APP_BASE
     jb .bad
-    add eax, 32
+    add eax, ecx
     jc .bad
     cmp eax, APP_STACK_TOP
     ja .bad
     mov eax, [ebp + 16]
     call aext_take_path
     jc .bad
-    call aext_folder                      ; -> al
+    call aext_folder                      ; -> eax
     jc .bad
-    mov dl, al
+    mov edx, eax
     mov ecx, [ebp + 24]                   ; which
     xor ebx, ebx
+    cmp edx, [aext_rd_dir]                ; (the one after the last asked
+    jne .slot                             ;  for, in the same folder: on
+    mov eax, [aext_rd_idx]                ;  from there - a whole folder
+    inc eax                               ;  read in turn isn't N*N)
+    cmp ecx, eax
+    jne .slot
+    xor ecx, ecx
+    mov ebx, [aext_rd_slot]
+    inc ebx
 .slot:
-    cmp ebx, FS_TOTAL_SLOTS
+    cmp ebx, [fs_slot_top]
     jae .bad
     mov eax, ebx
-    call fs_read_slot
-    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_FREE
+    shl eax, 9
+    add eax, FS_SLOT_CACHE
+    cmp byte [eax + FS_TYPE_OFFSET], FS_TYPE_FREE
     je .next
-    cmp [SCRATCH_ADDR + FS_PARENT_OFFSET], dl
+    cmp [eax + FS_PARENT_LO_OFFSET], dl
+    jne .next
+    cmp [eax + FS_PARENT_HI_OFFSET], dh
     jne .next
     or ecx, ecx
     jz .this
@@ -234,12 +265,46 @@ sys_readdir:
     inc ebx
     jmp .slot
 .this:
+    mov [aext_rd_dir], edx
+    mov eax, [ebp + 24]
+    mov [aext_rd_idx], eax
+    mov [aext_rd_slot], ebx
+    mov eax, ebx
+    call fs_read_slot
     mov edi, [ebp + 20]
+    cld
+    cmp byte [aext_rd_long], 0
+    je .short_form
+    push edi                              ; the short name, at 80
+    add edi, 80
     mov esi, SCRATCH_ADDR
     mov ecx, FS_NAME_LEN
-    cld
     rep movsb
     mov byte [edi - 1], 0
+    pop edi
+    push edi
+    call fsl_get                          ; the long one, at 0 (or the short)
+    jnc .long_name
+    mov esi, SCRATCH_ADDR
+.long_name:
+    mov ecx, FS_LNAME_MAX - 1
+.ln_char:
+    lodsb
+    or al, al
+    jz .ln_end
+    stosb
+    loop .ln_char
+.ln_end:
+    mov byte [edi], 0
+    pop edi
+    add edi, 64
+    jmp .tail
+.short_form:
+    mov esi, SCRATCH_ADDR
+    mov ecx, FS_NAME_LEN
+    rep movsb
+    mov byte [edi - 1], 0
+.tail:
     movzx eax, byte [SCRATCH_ADDR + FS_TYPE_OFFSET]
     mov [edi], eax
     cmp al, FS_TYPE_DIR
@@ -296,39 +361,51 @@ sys_mkdir:
     jne .folder
     mov word [aext_path], '/'
 .folder:
-    call aext_folder                      ; -> al
+    call aext_folder                      ; -> eax
     jc .bad
     jmp .in
 .here:
     mov esi, aext_path
     mov edi, aext_name
     call dki_copy
-    call fs_get_current_parent_byte
+    mov ax, [fs_current_dir]
 .in:
-    mov [aext_dir], al
-    movzx eax, al                         ; that folder: the current one
-    cmp al, FS_ROOT_BYTE
-    jne .dir
-    mov eax, FS_ROOT
-.dir:
-    mov [fs_current_dir], ax
+    mov [aext_dir], ax
+    mov [fs_current_dir], ax              ; that folder: the current one
+    mov byte [lng_mk_on], 0
     mov esi, aext_name                    ; a name that can be?
-    xor ecx, ecx
-.check:
-    mov al, [esi + ecx]
-    or al, al
-    jz .checked
-    cmp al, ' '
-    jbe .bad
-    cmp al, '/'
+    cmp byte [esi], 0
     je .bad
-    inc ecx
-    cmp ecx, FS_NAME_LEN - 1
-    ja .bad
-    jmp .check
+    call fsl_is_short
+    jnc .checked
+    mov esi, [ebp + 16]                   ; a long one: as the program
+    mov edx, esi                          ; wrote it (not in capitals),
+.last:                                    ; its last part
+    lodsb
+    or al, al
+    jz .lasted
+    cmp al, '/'
+    jne .last
+    mov edx, esi
+    jmp .last
+.lasted:
+    mov esi, edx
+    mov edi, fs_tmp_name
+    mov ecx, FS_LNAME_MAX - 1
+.long_char:
+    lodsb
+    or al, al
+    jz .long_end
+    stosb
+    loop .long_char
+.long_end:
+    mov byte [edi], 0
+    call lng_name_fix                     ; -> fs_tmp_name (src/longname.asm)
+    jc .bad
+    mov esi, fs_tmp_name
+    mov edi, aext_name
+    call dki_copy
 .checked:
-    or ecx, ecx
-    jz .bad
     mov esi, aext_name                    ; taken?
     mov edi, fs_tmp_name
     call dki_copy
@@ -349,9 +426,10 @@ sys_mkdir:
     mov edi, SCRATCH_ADDR
     call dki_copy
     mov byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
-    mov al, [aext_dir]
-    mov [SCRATCH_ADDR + FS_PARENT_OFFSET], al
+    mov ax, [aext_dir]
+    call fs_scratch_set_parent
     mov word [SCRATCH_ADDR + FS_CHAIN_OFFSET], FS_NO_CHAIN
+    call lng_name_apply                   ; (a long name: beside it)
     mov eax, ebx
     call fs_write_slot
     mov byte [dk_fm_refresh], 1           ; (Files, the desktop: see it)
@@ -603,7 +681,11 @@ aext_cmd_prev    db "|PREV", 0
 aext_clip_pic    times AEXT_PATH_MAX + 8 db 0
 aext_inbox       times AEXT_PATH_MAX + 20 db 0
 aext_inbox_con   db 0xFF
-aext_dir         db 0
+aext_dir         dw 0
+aext_rd_long     db 0
+aext_rd_dir      dd -1                    ; sys_readdir's last: the folder,
+aext_rd_idx      dd 0                     ; which it was asked for, and the
+aext_rd_slot     dd 0                     ; slot that was
 aext_path        times AEXT_PATH_MAX + 8 db 0
 aext_name        times AEXT_PATH_MAX + 8 db 0
-aext_part        times FS_NAME_LEN + 2 db 0
+aext_part        times FS_LNAME_MAX + 2 db 0

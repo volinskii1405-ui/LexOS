@@ -46,7 +46,7 @@ shx_find:
     cmp byte [esi], '/'
     je .copy
     push esi                              ; relative: the current folder's
-    call fs_get_current_parent_byte       ; path first
+    mov ax, [fs_current_dir]              ; path first
     mov edi, shx_path
     call dk_dir_path
     xor al, al

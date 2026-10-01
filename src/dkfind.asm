@@ -60,11 +60,19 @@ dk_fm_arrange:
     jmp .each
 .filtered:
     mov edx, edi
-.sort:                                    ; insertion sort, by dk_fm_before
-    lea ebx, [ebp + 1]
+.sort:                                    ; Shell sort, by dk_fm_before (a
+    mov dword [dk_fm_gap_i], 0            ;  folder of thousands: not N*N)
+.gap:
+    mov eax, [dk_fm_gap_i]
+    mov eax, [dk_fm_gaps + eax*4]
+    or eax, eax
+    jz .done
+    inc dword [dk_fm_gap_i]
+    mov [dk_fm_gap], eax
+    lea ebx, [ebp + eax]                  ; each one from ebp + gap on
 .outer:
     cmp ebx, edx
-    jae .done
+    jae .gap
     mov esi, ebx                          ; this one, aside
     shl esi, 5
     add esi, DESK_FILES
@@ -72,35 +80,35 @@ dk_fm_arrange:
     mov ecx, FM_ENTRY / 4
     cld
     rep movsd
-    mov ecx, ebx                          ; move the later ones up past it
+    mov ecx, ebx                          ; the ones a gap before it: up
 .inner:
-    cmp ecx, ebp
-    jbe .place
-    lea eax, [ecx - 1]
+    mov eax, ecx
+    sub eax, [dk_fm_gap]
+    jb .place
+    cmp eax, ebp
+    jb .place
     shl eax, 5
     add eax, DESK_FILES
-    push esi
     mov esi, dk_fm_tmp
     call dk_fm_before                     ; tmp before [eax]?
-    pop esi
     jnc .place
     push ecx
-    lea esi, [eax]
-    lea edi, [eax + FM_ENTRY]
+    mov esi, eax
+    mov edi, ecx
+    shl edi, 5
+    add edi, DESK_FILES
     mov ecx, FM_ENTRY / 4
     rep movsd
     pop ecx
-    dec ecx
+    sub ecx, [dk_fm_gap]
     jmp .inner
 .place:
     mov edi, ecx
     shl edi, 5
     add edi, DESK_FILES
     mov esi, dk_fm_tmp
-    push ecx
     mov ecx, FM_ENTRY / 4
     rep movsd
-    pop ecx
     inc ebx
     jmp .outer
 .done:
@@ -456,6 +464,9 @@ dk_fm_keys_work:
 dk_fm_find        times FM_FIND_MAX + 2 db 0
 dk_fm_find_len    dd 0
 dk_fm_sort        dd 0
+dk_fm_gaps        dd 3548, 1577, 701, 301, 132, 57, 23, 10, 4, 1, 0
+dk_fm_gap_i       dd 0
+dk_fm_gap         dd 0
 dk_fm_typing      db 0
 dk_fm_keys        times 16 dw 0
 dk_fm_khead       db 0

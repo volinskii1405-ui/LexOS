@@ -915,8 +915,8 @@ dkv_count:
     call fs_read_slot
     cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_FILE
     jne .next
-    mov al, [SCRATCH_ADDR + FS_PARENT_OFFSET]
-    cmp al, [dk_pic_dir]
+    call fs_scratch_parent
+    cmp ax, [dk_pic_dir]
     jne .next
     pushad
     mov esi, SCRATCH_ADDR
@@ -931,7 +931,7 @@ dkv_count:
     inc edi
 .next:
     inc ebx
-    cmp ebx, FS_TOTAL_SLOTS
+    cmp ebx, [fs_slot_top]
     jb .slot
     mov [dkv_total], ebp
     mov [dkv_index], edi

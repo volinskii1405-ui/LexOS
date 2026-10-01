@@ -896,10 +896,10 @@ dkf_go:
     je .none
     cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
     jne .none
-    mov [dk_fm_dir], al
+    mov [dk_fm_dir], ax
     jmp .path
 .root:
-    mov byte [dk_fm_dir], FS_ROOT_BYTE
+    mov word [dk_fm_dir], FS_ROOT
 .path:
     mov byte [dkf_recent], 0
     mov edi, dk_fm_path
@@ -1122,20 +1122,20 @@ dkf_open:
     mov esi, dk_fm_path
     mov edi, dkf_save_path
     call dki_copy
-    mov al, [dk_fm_dir]
-    mov [dkf_save_dir], al
+    mov ax, [dk_fm_dir]
+    mov [dkf_save_dir], ax
     imul esi, ebx, DKF_REC_SIZE
     add esi, dkf_rec + 16
     mov edi, dk_fm_path
     call dki_copy
-    mov byte [dk_fm_dir], FS_ROOT_BYTE
+    mov word [dk_fm_dir], FS_ROOT
     cmp word [dk_fm_path], '/'
     je .go
     mov esi, dk_fm_path
     call dki_resolve                      ; -> eax
     cmp eax, -1
     je .back
-    mov [dk_fm_dir], al
+    mov [dk_fm_dir], ax
 .go:
     mov byte [dkf_recent], 0
     mov eax, [dkf_open_idx]
@@ -1145,8 +1145,8 @@ dkf_open:
     mov esi, dkf_save_path
     mov edi, dk_fm_path
     call dki_copy
-    mov al, [dkf_save_dir]
-    mov [dk_fm_dir], al
+    mov ax, [dkf_save_dir]
+    mov [dk_fm_dir], ax
     mov byte [dk_fm_refresh], 1
 .done:
     popad
@@ -1593,7 +1593,7 @@ dkf_th_next      dd 0
 dkf_th_at        dd 0
 dkf_rec_n        dd 0
 dkf_open_idx     dd 0
-dkf_save_dir     db 0
+dkf_save_dir     dw 0
 dkf_save_path    times 128 db 0
 dkf_r_name       dd 0
 dkf_r_path       dd 0

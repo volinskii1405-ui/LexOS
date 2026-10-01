@@ -2,13 +2,15 @@
 ;
 ; Whatever's moved (into TRASH, or anywhere: Files' Delete, cut and
 ; paste, a desktop icon's Delete) keeps the folder it was in, in its
-; slot (bytes 154, 155: the folder's slot byte and DKT_MARK). In TRASH,
+; slot (bytes 154, 155, 159: the folder's slot's low byte, DKT_MARK and
+; its high byte). In TRASH,
 ; Files' menu has "Restore": back into that folder - or, if it's gone
 ; (or the name's taken there), into the root.
 ; Exports: dkt_note_origin, dkt_restore
 
 DKT_ORIGIN     equ 154
 DKT_MARKER     equ 155
+DKT_ORIGIN_HI  equ 159
 DKT_MARK       equ 0xB7
 
 ; SCRATCH_ADDR = a slot about to get a new parent: the one it has, kept
@@ -17,8 +19,9 @@ dkt_note_origin:
     je .done                              ; (a program's bytes run past it)
     call dku_note_move                    ; (Undo's: src/dkundo.asm)
     push eax
-    mov al, [SCRATCH_ADDR + FS_PARENT_OFFSET]
+    call fs_scratch_parent
     mov [SCRATCH_ADDR + DKT_ORIGIN], al
+    mov [SCRATCH_ADDR + DKT_ORIGIN_HI], ah
     mov byte [SCRATCH_ADDR + DKT_MARKER], DKT_MARK
     pop eax
 .done:
@@ -42,24 +45,25 @@ dkt_restore:
     je .next
     movzx eax, word [DESK_FILES + esi + 20]
     call fs_read_slot
-    mov dl, FS_ROOT_BYTE                  ; where to: the root, unless...
+    mov dx, FS_ROOT                       ; where to: the root, unless...
     cmp byte [SCRATCH_ADDR + DKT_MARKER], DKT_MARK
     jne .dest
     mov al, [SCRATCH_ADDR + DKT_ORIGIN]
-    cmp al, FS_ROOT_BYTE
+    mov ah, [SCRATCH_ADDR + DKT_ORIGIN_HI]
+    cmp ax, FS_ROOT
     je .dest
-    cmp al, [dk_fm_dir]                   ; (TRASH itself: no)
+    cmp ax, [dk_fm_dir]                   ; (TRASH itself: no)
     je .dest
-    movzx eax, al                         ; ...its folder's still there
+    movzx eax, ax                         ; ...its folder's still there
     call fs_read_slot
     cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
     jne .dest
-    mov dl, al
+    mov dx, ax
     call dkt_name_free                    ; (and the name's free in it)
     jnc .dest
-    mov dl, FS_ROOT_BYTE
+    mov dx, FS_ROOT
 .dest:
-    mov [dk_fm_dest], dl
+    mov [dk_fm_dest], dx
     mov eax, ebx
     call dk_move_entry
 .next:
@@ -79,13 +83,12 @@ dkt_restore:
     popad
     ret
 
-; dl = a folder's slot byte, ebx = a Files entry: carry=1 if its name's
+; dx = a folder's slot, ebx = a Files entry: carry=1 if its name's
 ; taken in that folder
 dkt_name_free:
     pushad
     push word [fs_current_dir]
-    movzx eax, dl
-    mov [fs_current_dir], ax
+    mov [fs_current_dir], dx
     mov esi, ebx
     shl esi, 5
     add esi, DESK_FILES
@@ -354,16 +357,16 @@ dkt_icon_add:
     mov byte [dkn_req], 1
     jmp .empty
 .there:
-    mov dl, al
+    mov dx, ax
     xor ebx, ebx
 .slot:
-    cmp ebx, FS_TOTAL_SLOTS
+    cmp ebx, [fs_slot_top]
     jae .empty
     mov eax, ebx
     call fs_read_slot
     cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_FREE
     je .next
-    cmp [SCRATCH_ADDR + FS_PARENT_OFFSET], dl
+    call fs_scratch_parent_is_dx
     je .full
 .next:
     inc ebx
@@ -376,18 +379,19 @@ dkt_icon_add:
 .done:
     ret
 
-; -> al = /TRASH's slot byte; carry=1 if there's none (dk_shell_idle first)
+; -> eax = /TRASH's slot; carry=1 if there's none (dk_shell_idle first)
 dkt_find:
     push ebx
     xor ebx, ebx
 .slot:
-    cmp ebx, FS_TOTAL_SLOTS
+    cmp ebx, [fs_slot_top]
     jae .none
     mov eax, ebx
     call fs_read_slot
     cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
     jne .next
-    cmp byte [SCRATCH_ADDR + FS_PARENT_OFFSET], FS_ROOT_BYTE
+    call fs_scratch_parent
+    cmp ax, FS_ROOT
     jne .next
     cmp dword [SCRATCH_ADDR], 'TRAS'
     jne .next
@@ -544,7 +548,7 @@ dkt_empty_do:
     mov dword [dkt_gone], 0
     call dkt_find
     jc .said
-    mov dl, al
+    mov dx, ax
     mov ecx, 8
     call dkt_del_in
 .said:
@@ -567,19 +571,19 @@ dkt_empty_do:
     popad
     ret
 
-; dl = a folder's slot byte, ecx = how deep still: what's in it deleted
+; dx = a folder's slot, ecx = how deep still: what's in it deleted
 ; (a folder, when what was in it is gone)
 dkt_del_in:
     pushad
     xor ebx, ebx
 .slot:
-    cmp ebx, FS_TOTAL_SLOTS
+    cmp ebx, [fs_slot_top]
     jae .done
     mov eax, ebx
     call fs_read_slot
     cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_FREE
     je .next
-    cmp [SCRATCH_ADDR + FS_PARENT_OFFSET], dl
+    call fs_scratch_parent_is_dx
     jne .next
     call dkt_del_slot
 .next:
@@ -603,11 +607,10 @@ dkt_del_slot:
     jne .file
     jecxz .done
     push edx
-    mov dl, bl                            ; what's in it first
+    mov dx, bx                            ; what's in it first
     dec ecx
     call dkt_del_in
-    mov dh, bl                            ; anything left in it? it stays
-    call dkt_has_any
+    call dkt_has_any                      ; anything left in it? it stays
     pop edx
     jnc .done
     jmp .free
@@ -632,18 +635,18 @@ dkt_del_slot:
     popad
     ret
 
-; dh = a folder's slot byte: carry=0 if anything's in it
+; dx = a folder's slot: carry=0 if anything's in it
 dkt_has_any:
     pushad
     xor ebx, ebx
 .slot:
-    cmp ebx, FS_TOTAL_SLOTS
+    cmp ebx, [fs_slot_top]
     jae .none
     mov eax, ebx
     call fs_read_slot
     cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_FREE
     je .next
-    cmp [SCRATCH_ADDR + FS_PARENT_OFFSET], dh
+    call fs_scratch_parent_is_dx
     je .some
 .next:
     inc ebx
@@ -808,9 +811,9 @@ dkt_note_where:
     mov byte [dkt_fm_in_trash], 0
     cmp byte [dkf_recent], 0              ; (Recent: not the trash)
     jne .done
-    call dkt_find                         ; -> al
+    call dkt_find                         ; -> eax
     jc .done
-    cmp al, [dk_fm_dir]
+    cmp ax, [dk_fm_dir]
     jne .done
     mov byte [dkt_fm_in_trash], 1
 .done:

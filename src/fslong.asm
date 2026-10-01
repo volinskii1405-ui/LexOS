@@ -298,18 +298,23 @@ fsl_end:
 fsl_find_long:
     pushad
     mov [fsl_src], esi
-    call fs_get_current_parent_byte       ; -> al
-    mov dl, al
+    mov dx, [fs_current_dir]
     xor ebx, ebx
 .slot:
-    cmp ebx, FS_FILE_COUNT
+    cmp ebx, [fs_slot_top]
     jae .none
+    mov eax, ebx                          ; (the cache first: quick)
+    shl eax, 9
+    cmp byte [FS_SLOT_CACHE + eax + FS_TYPE_OFFSET], FS_TYPE_FREE
+    je .next
+    cmp [FS_SLOT_CACHE + eax + FS_PARENT_LO_OFFSET], dl
+    jne .next
+    cmp [FS_SLOT_CACHE + eax + FS_PARENT_HI_OFFSET], dh
+    jne .next
+    cmp byte [FS_SLOT_CACHE + eax + FS_LNAME_OFFSET], 0
+    je .next
     mov ax, bx
     call fs_read_slot
-    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_FREE
-    je .next
-    cmp [SCRATCH_ADDR + FS_PARENT_OFFSET], dl
-    jne .next
     call fsl_get                          ; -> esi
     jc .next
     mov edi, [fsl_src]

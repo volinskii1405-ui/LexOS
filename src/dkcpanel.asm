@@ -543,7 +543,7 @@ dkc_set_users:                            ; Add... / Password... / Switch user
     or eax, eax
     jnz .not_add
     mov al, DKN_ADDUSER                   ; (src/dkusers.asm)
-    mov bl, FS_ROOT_BYTE
+    mov bx, FS_ROOT
     xor ecx, ecx
     xor esi, esi
     call dkn_ask
@@ -552,7 +552,7 @@ dkc_set_users:                            ; Add... / Password... / Switch user
     cmp eax, 1
     jne .switch
     mov al, DKN_PASSWORD
-    mov bl, FS_ROOT_BYTE
+    mov bx, FS_ROOT
     xor ecx, ecx
     xor esi, esi
     call dkn_ask

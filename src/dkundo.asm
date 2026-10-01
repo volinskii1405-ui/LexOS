@@ -11,8 +11,9 @@
 ; Exports: dku_note_move, dku_note_rename, dku_key, dku_work, dku_do
 
 DKU_MAX        equ 48
-DKU_SIZE       equ 24                   ; kind, old parent, slot (word),
-                                        ; step (dword), old name (16)
+DKU_SIZE       equ 26                   ; kind, old parent's low byte, slot
+                                        ; (word), step (dword), old name
+                                        ; (16), old parent's high byte
 DKU_MOVE       equ 1
 DKU_RENAME     equ 2
 DKN_UNDO       equ 12                   ; (src/dkname.asm's dkn_do)
@@ -45,8 +46,9 @@ dku_note_move:
     pushad
     call dku_new
     mov byte [edi], DKU_MOVE
-    mov al, [SCRATCH_ADDR + FS_PARENT_OFFSET]
+    call fs_scratch_parent
     mov [edi + 1], al
+    mov [edi + 24], ah
     mov eax, [esp + 28]                   ; (pushad's eax: the slot)
     mov [edi + 2], ax
     mov eax, [dk_frames]
@@ -61,8 +63,9 @@ dku_note_rename:
     pushad
     call dku_new
     mov byte [edi], DKU_RENAME
-    mov al, [SCRATCH_ADDR + FS_PARENT_OFFSET]
+    call fs_scratch_parent
     mov [edi + 1], al
+    mov [edi + 24], ah
     mov eax, [dkn_slot]
     mov [edi + 2], ax
     mov eax, [dk_frames]
@@ -155,6 +158,7 @@ dku_do:
     je .rename
     ; a move: back into its old folder - if its name's free there
     mov dl, [edi + 1]
+    mov dh, [edi + 24]
     mov esi, SCRATCH_ADDR                 ; (its name, aside)
     push edi
     mov edi, dku_name
@@ -167,14 +171,19 @@ dku_do:
     jnc .each
     mov eax, [dku_slot]
     call fs_read_slot
-    mov dl, [edi + 1]
-    mov [SCRATCH_ADDR + FS_PARENT_OFFSET], dl
+    mov al, [edi + 1]
+    mov ah, [edi + 24]
+    call fs_scratch_set_parent
+    mov eax, [dku_slot]
     call fs_write_slot
     inc dword [dku_done]
     jmp .each
 .rename:
     ; a rename: its old name back - if that's free where it is
-    mov dl, [SCRATCH_ADDR + FS_PARENT_OFFSET]
+    push eax
+    call fs_scratch_parent
+    mov dx, ax
+    pop eax
     lea esi, [edi + 8]
     call dku_taken
     jnc .each
@@ -223,13 +232,13 @@ dku_do:
     popad
     ret
 
-; esi = a name, dl = a folder -> carry=1 if the name's free there (but
+; esi = a name, dx = a folder -> carry=1 if the name's free there (but
 ; for dku_slot itself), carry=0 if something else has it
 dku_taken:
     pushad
     xor ebx, ebx
 .slot:
-    cmp ebx, FS_TOTAL_SLOTS
+    cmp ebx, [fs_slot_top]
     jae .free
     cmp ebx, [dku_slot]
     je .next
@@ -237,7 +246,7 @@ dku_taken:
     call fs_read_slot
     cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_FREE
     je .next
-    cmp [SCRATCH_ADDR + FS_PARENT_OFFSET], dl
+    call fs_scratch_parent_is_dx
     jne .next
     xor ecx, ecx
 .cmp:

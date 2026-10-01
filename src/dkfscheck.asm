@@ -106,7 +106,7 @@ dkfs_run:
     mov byte [edi], 0
     cmp byte [dkfs_gfx], 0
     je .text
-    mov ebx, FS_FILE_COUNT                ; the bar full, the result
+    mov ebx, [fs_slot_top]                ; the bar full, the result
     call dkfs_bar
     call dkfs_card_text_clear
     mov esi, dkfs_buf
@@ -229,7 +229,11 @@ dkfs_bar:
     mov eax, [esp + 16]                   ; (pushad's ebx: the slot)
     imul eax, DKFS_BAR_W
     xor edx, edx
-    mov ecx, FS_FILE_COUNT
+    mov ecx, [fs_slot_top]
+    or ecx, ecx
+    jnz .of
+    inc ecx
+.of:
     div ecx
     cmp eax, DKFS_BAR_W
     jbe .w

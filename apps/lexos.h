@@ -134,18 +134,22 @@ static inline void keymode(int raw)                       { lx_syscall(36, raw, 
 
 /* --- folders ---
  * readdir("/DEMOS", i, &e): the i-th thing in a folder ("/" the root,
- * "" the current one) -> 0, or -1 past the last one. mkdir("NAME") or
- * mkdir("/A/NAME") -> 0, or -1 (taken, no such folder, no room). */
+ * "" the current one) -> 0, or -1 past the last one. Its name is its
+ * long one ("Holiday photos.png"), if it has one - open() and paths take
+ * those as well as short ones - and sname the short one (HOLIDA~1.PNG).
+ * mkdir("NAME") or mkdir("/A/Long name") -> 0, or -1 (taken, no such
+ * folder, no room). */
 struct lx_dirent {
-    char name[16];
+    char name[64];
     int type;                           /* LX_FILE, LX_DIR, LX_PROGRAM */
     unsigned size;
     unsigned char time[8];              /* yy mm dd hh mi (0: none) */
+    char sname[16];
 };
 #define LX_FILE    1
 #define LX_DIR     2
 #define LX_PROGRAM 3
-static inline int readdir(const char *path, int i, struct lx_dirent *e) { return lx_syscall3(37, (int)path, i, (int)e); }
+static inline int readdir(const char *path, int i, struct lx_dirent *e) { return lx_syscall3(46, (int)path, i, (int)e); }
 static inline int mkdir(const char *path)                 { return lx_syscall(38, (int)path, 0); }
 /* notify("Done: X.ZIP"): a line at the top of the desktop for a few
  * seconds (Files and the desktop's icons look at the disk again). */
@@ -282,73 +286,172 @@ static inline void print_float(double v, int decimals)
     }
 }
 
-/* --- malloc/free: first fit over the memory from the program's end
- * (app.ld's _end) up to 256KB below the top, where the stack lives -
- * and past that, over extra memory the kernel hands out (SYS_MORE, 4MB
- * at a time from 0x40000000, up to 64MB more while there's any). --- */
+/* --- malloc/free over the memory from the program's end (app.ld's
+ * _end) up to 256KB below the top, where the stack lives - and past
+ * that, over extra memory the kernel hands out (SYS_MORE, 4MB at a time
+ * from 0x40000000, up to 64MB more while there's any).
+ * Every block has a header: its size, whether it's free, the blocks
+ * before and after it in memory. The free ones are also on lists by
+ * size (bins: 16-31 bytes, 32-63, ... - their links in their own
+ * bytes), so malloc looks only at free blocks big enough, never at all
+ * of them; free() joins a block with free neighbours at once, and
+ * realloc() grows a block where it is when what's after it is free (or
+ * it's the last one) - nothing copied. --- */
 #define LX_HEAP_END 0xBC0000
 #define LX_HIGH_BASE 0x40000000u
+#define LX_BINS 28
 extern char _end[];
-struct lx_block { size_t size; int free; struct lx_block *next; int pad; };
+struct lx_block { size_t size; int free; struct lx_block *next, *prev; };
+struct lx_free { struct lx_block *fnext, *fprev; };    /* (in a free block's bytes) */
 struct lx_block *__lx_heap __attribute__((weak));
+struct lx_block *__lx_tail __attribute__((weak));
+struct lx_block *__lx_bins[LX_BINS] __attribute__((weak));
 unsigned __lx_high_top __attribute__((weak));
 /* more memory: n bytes more past what there is -> its new top, 0 if none */
 static inline unsigned lx_more(unsigned n) { return (unsigned)lx_syscall(45, (int)n, 0); }
 
+#define LX_FL(b) ((struct lx_free *)((b) + 1))
+static inline int lx_bin(size_t n)
+{
+    int i = 0;
+    n >>= 5;
+    while (n && i < LX_BINS - 1) { n >>= 1; i++; }
+    return i;
+}
+static inline void lx_bin_add(struct lx_block *b)
+{
+    int i = lx_bin(b->size);
+    b->free = 1;
+    LX_FL(b)->fprev = 0;
+    LX_FL(b)->fnext = __lx_bins[i];
+    if (__lx_bins[i]) LX_FL(__lx_bins[i])->fprev = b;
+    __lx_bins[i] = b;
+}
+static inline void lx_bin_del(struct lx_block *b)
+{
+    struct lx_free *f = LX_FL(b);
+    if (f->fprev) LX_FL(f->fprev)->fnext = f->fnext;
+    else __lx_bins[lx_bin(b->size)] = f->fnext;
+    if (f->fnext) LX_FL(f->fnext)->fprev = f->fprev;
+    b->free = 0;
+}
+/* the block right after b in memory, if that's where b->next is */
+static inline int lx_touch(struct lx_block *b, struct lx_block *n)
+{ return n && (char *)(b + 1) + b->size == (char *)n; }
+/* b (in use) cut to n bytes: the rest a free block of its own */
+static inline void lx_split(struct lx_block *b, size_t n)
+{
+    struct lx_block *r;
+    if (b->size < n + sizeof *b + 32) return;
+    r = (struct lx_block *)((char *)(b + 1) + n);
+    r->size = b->size - n - sizeof *b;
+    r->next = b->next; r->prev = b;
+    if (b->next) b->next->prev = r; else __lx_tail = r;
+    b->next = r; b->size = n;
+    if (lx_touch(r, r->next) && r->next->free) {   /* (and joined to a free one after) */
+        struct lx_block *x = r->next;
+        lx_bin_del(x);
+        r->size += sizeof *x + x->size;
+        r->next = x->next;
+        if (x->next) x->next->prev = r; else __lx_tail = r;
+    }
+    lx_bin_add(r);
+}
+/* the memory up to end there? (the extra memory got as it's needed) */
+static inline int lx_room(unsigned start, unsigned end)
+{
+    unsigned top;
+    if (end < start) return 0;
+    if (start < LX_HIGH_BASE) return end <= LX_HEAP_END;
+    top = __lx_high_top ? __lx_high_top : LX_HIGH_BASE;
+    if (end > top) {
+        top = lx_more(end - top);
+        if (!top) return 0;
+        __lx_high_top = top;
+        if (end > top) return 0;
+    }
+    return 1;
+}
+
 LX_LIB void *malloc(size_t n)
 {
-    struct lx_block *b, *last = NULL;
+    struct lx_block *b, *t;
+    int i;
     if (n > 0x7FFFFFF0u) return NULL;
-    n = (n + 15) & ~15u;
-    for (b = __lx_heap; b; last = b, b = b->next)
-        if (b->free && b->size >= n) {
-            if (b->size >= n + sizeof *b + 16) {     /* split off the rest */
-                struct lx_block *r = (struct lx_block *)((char *)(b + 1) + n);
-                r->size = b->size - n - sizeof *b; r->free = 1; r->next = b->next;
-                b->size = n; b->next = r;
-            }
-            b->free = 0;
-            return b + 1;
-        }
-    b = last ? (struct lx_block *)((char *)(last + 1) + last->size)
-             : (struct lx_block *)(((unsigned)_end + 15) & ~15u);
-    if ((unsigned)b < LX_HIGH_BASE && (unsigned)(b + 1) + n > LX_HEAP_END)
-        b = (struct lx_block *)LX_HIGH_BASE;          /* on into the extra memory */
-    if ((unsigned)b >= LX_HIGH_BASE) {
-        unsigned end = (unsigned)(b + 1) + n, top = __lx_high_top ? __lx_high_top : LX_HIGH_BASE;
-        if (end < (unsigned)b) return NULL;
-        if (end > top) {
-            top = lx_more(end - top);
-            if (!top) return NULL;
-            __lx_high_top = top;
-            if (end > top) return NULL;
-        }
+    n = n < 16 ? 16 : (n + 15) & ~15u;
+    for (i = lx_bin(n); i < LX_BINS; i++)            /* a free block big enough */
+        for (b = __lx_bins[i]; b; b = LX_FL(b)->fnext)
+            if (b->size >= n) { lx_bin_del(b); lx_split(b, n); return b + 1; }
+    t = __lx_tail;                                   /* none: at the end */
+    if (t && t->free && lx_room((unsigned)(t + 1), (unsigned)(t + 1) + n)) {
+        lx_bin_del(t);                               /* (the free last one, made longer) */
+        t->size = n;
+        return t + 1;
     }
-    b->size = n; b->free = 0; b->next = NULL;
-    if (last) last->next = b; else __lx_heap = b;
+    b = t ? (struct lx_block *)((char *)(t + 1) + t->size)
+          : (struct lx_block *)(((unsigned)_end + 15) & ~15u);
+    if (!lx_room((unsigned)b, (unsigned)(b + 1) + n)) {
+        if ((unsigned)b >= LX_HIGH_BASE) return NULL;
+        b = (struct lx_block *)LX_HIGH_BASE;          /* on into the extra memory */
+        if (!lx_room((unsigned)b, (unsigned)(b + 1) + n)) return NULL;
+    }
+    b->size = n; b->free = 0; b->next = NULL; b->prev = t;
+    if (t) t->next = b; else __lx_heap = b;
+    __lx_tail = b;
     return b + 1;
 }
 LX_LIB void free(void *p)
 {
-    struct lx_block *b;
+    struct lx_block *b, *x;
     if (!p) return;
-    ((struct lx_block *)p - 1)->free = 1;
-    for (b = __lx_heap; b; b = b->next)             /* merge free neighbors */
-        while (b->free && b->next && b->next->free &&
-               (char *)(b + 1) + b->size == (char *)b->next) {
-            b->size += sizeof *b + b->next->size;
-            b->next = b->next->next;
-        }
+    b = (struct lx_block *)p - 1;
+    if (b->free) return;
+    x = b->next;                                     /* joined with the one after */
+    if (lx_touch(b, x) && x->free) {
+        lx_bin_del(x);
+        b->size += sizeof *x + x->size;
+        b->next = x->next;
+        if (x->next) x->next->prev = b; else __lx_tail = b;
+    }
+    x = b->prev;                                     /* and the one before */
+    if (x && x->free && lx_touch(x, b)) {
+        lx_bin_del(x);
+        x->size += sizeof *b + b->size;
+        x->next = b->next;
+        if (b->next) b->next->prev = x; else __lx_tail = x;
+        b = x;
+    }
+    lx_bin_add(b);
 }
 LX_LIB void *calloc(size_t n, size_t m)
 { void *p = malloc(n * m); if (p) memset(p, 0, n * m); return p; }
 LX_LIB void *realloc(void *p, size_t n)
 {
+    struct lx_block *b, *x;
     void *q;
     if (!p) return malloc(n);
-    if (((struct lx_block *)p - 1)->size >= n) return p;
+    if (n > 0x7FFFFFF0u) return NULL;
+    b = (struct lx_block *)p - 1;
+    n = n < 16 ? 16 : (n + 15) & ~15u;
+    if (b->size >= n) {                              /* smaller: the rest given back */
+        if (b->size >= n + 4096) lx_split(b, n);
+        return p;
+    }
+    x = b->next;                                     /* bigger, where it is: the free */
+    if (lx_touch(b, x) && x->free && b->size + sizeof *x + x->size >= n) {
+        lx_bin_del(x);                               /* one after it taken in */
+        b->size += sizeof *x + x->size;
+        b->next = x->next;
+        if (x->next) x->next->prev = b; else __lx_tail = b;
+        lx_split(b, n);
+        return p;
+    }
+    if (b == __lx_tail && lx_room((unsigned)p, (unsigned)p + n)) {
+        b->size = n;                                 /* (the last one: just longer) */
+        return p;
+    }
     q = malloc(n);
-    if (q) { memcpy(q, p, ((struct lx_block *)p - 1)->size); free(p); }
+    if (q) { memcpy(q, p, b->size); free(p); }
     return q;
 }
 

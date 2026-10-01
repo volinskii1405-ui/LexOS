@@ -289,8 +289,10 @@ static int stat_of(const char *path, struct lx_dirent *out)
     else { int l = base - path - 1; copy(dir, path, l > 0 ? l + 1 : 2); if (!l) copy(dir, "/", 2); }
     for (i = 0; readdir(dir, i, out) == 0; i++) {
         int k;
-        for (k = 0; base[k] && upper(base[k]) == out->name[k]; k++);
+        for (k = 0; base[k] && upper(base[k]) == upper(out->name[k]); k++);
         if (!base[k] && !out->name[k]) return 0;
+        for (k = 0; base[k] && upper(base[k]) == out->sname[k]; k++);    /* (or its short name) */
+        if (!base[k] && !out->sname[k]) return 0;
     }
     return -1;
 }

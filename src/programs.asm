@@ -227,18 +227,18 @@ fs_retire_programs_dir:
     je .done
     cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
     jne .done
-    movzx ebp, ax                        ; the folder's slot = its parent byte
+    movzx ebp, ax                        ; the folder's slot = its children's parent
     xor ebx, ebx
     xor edi, edi                         ; anything else left in it
 .slot:
-    cmp ebx, FS_TOTAL_SLOTS
+    cmp ebx, [fs_slot_top]
     jae .scanned
     mov eax, ebx
     call fs_read_slot
     cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_FREE
     je .next
-    mov eax, ebp
-    cmp [SCRATCH_ADDR + FS_PARENT_OFFSET], al
+    call fs_scratch_parent
+    cmp ax, bp
     jne .next
     cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_PROGRAM
     jne .keep
@@ -265,16 +265,9 @@ fs_retire_programs_dir:
 
 ; ============================================================
 ; Creates the TMP folder in the root (if it doesn't exist yet), and
-; either way caches its
-; slot index in fs_tmp_dir_slot (kernel.asm) - fs_find_free
-; (src/filesystem.asm) checks fs_current_dir against that to decide
-; whether a new file/folder should get a RAM-backed slot instead of a
-; real disk one (see the note above FS_RAM_FILE_COUNT in data.asm).
-; Called once at boot, while fs_current_dir is still FS_ROOT - so
-; fs_find_free's own call here (to allocate
-; TMP's OWN slot) still correctly searches the real disk slots: at that
-; point fs_tmp_dir_slot is still FS_TMP_DIR_UNSET, which fs_current_dir
-; (FS_ROOT here) can never equal.
+; either way keeps its slot in fs_tmp_dir_slot (kernel.asm). An
+; ordinary folder on the disk: what's put there stays (LexOS Web keeps
+; its cache in it). Called once at boot, while fs_current_dir is FS_ROOT.
 ; Output: ax = its slot index; -1 if the slot table is full.
 ; ============================================================
 fs_ensure_tmp_dir:
@@ -324,9 +317,8 @@ fs_ensure_tmp_dir:
     mov dl, FS_TYPE_DIR
     call fs_scratch_write_byte
 
-    mov ax, FS_PARENT_OFFSET
-    mov dl, FS_ROOT_BYTE
-    call fs_scratch_write_byte
+    mov ax, FS_ROOT
+    call fs_scratch_set_parent
 
     mov ax, [fs_tmp_slot]
     call fs_write_slot           ; ax is preserved (see fs_write_slot) = the new slot

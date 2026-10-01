@@ -201,6 +201,8 @@ fs_stream_prepare:
     jmp .fail
 
 .fresh_file:
+    call lng_name_fix             ; a long name: a short one for it (src/longname.asm)
+    jc .fail
     call fs_find_free
     cmp ax, -1
     jne .have_slot
@@ -242,10 +244,8 @@ fs_stream_prepare:
     mov dl, FS_TYPE_FILE
     call fs_scratch_write_byte
 
-    call fs_get_current_parent_byte
-    mov dl, al
-    mov ax, FS_PARENT_OFFSET
-    call fs_scratch_write_byte
+    mov ax, [fs_current_dir]
+    call fs_scratch_set_parent
 
     mov ax, FS_TOTAL_LEN_OFFSET
     xor dx, dx
@@ -253,6 +253,7 @@ fs_stream_prepare:
     mov ax, FS_CHAIN_OFFSET
     mov dx, FS_NO_CHAIN
     call fs_scratch_write_word
+    call lng_name_apply           ; (and the long one beside it)
 
     mov ax, [fs_tmp_slot]
     call fs_write_slot
@@ -573,10 +574,8 @@ fs_ensure_license:
     mov dl, FS_TYPE_FILE
     call fs_scratch_write_byte
 
-    call fs_get_current_parent_byte
-    mov dl, al
-    mov ax, FS_PARENT_OFFSET
-    call fs_scratch_write_byte
+    mov ax, [fs_current_dir]
+    call fs_scratch_set_parent
 
     mov ax, FS_TOTAL_LEN_OFFSET
     xor dx, dx

@@ -508,20 +508,21 @@ fs_list_long:
     pushad
     mov al, [current_color]
     mov [jnl_color], al
-    call fs_get_current_parent_byte
-    mov [jnl_parent], al
+    mov ax, [fs_current_dir]
+    mov [jnl_parent], ax
     mov dword [jnl_found], 0
     xor ebx, ebx
 .scan:
-    cmp ebx, FS_TOTAL_SLOTS
+    cmp ebx, [fs_slot_top]
     jae .scanned
     mov eax, ebx
     call fs_read_slot
     mov al, [SCRATCH_ADDR + FS_TYPE_OFFSET]
     cmp al, FS_TYPE_FREE
     je .next
-    mov dl, [SCRATCH_ADDR + FS_PARENT_OFFSET]
-    cmp dl, [jnl_parent]
+    mov dl, [SCRATCH_ADDR + FS_PARENT_LO_OFFSET]
+    mov dh, [SCRATCH_ADDR + FS_PARENT_HI_OFFSET]
+    cmp dx, [jnl_parent]
     jne .next
     inc dword [jnl_found]
     mov dl, al                            ; dl = the type
@@ -827,7 +828,7 @@ fs_fsck:
     call fat_fsck_start
     xor ebx, ebx                          ; each slot on the disk
 .slot:
-    cmp ebx, FS_FILE_COUNT
+    cmp ebx, [fs_slot_top]
     jae .slots_done
     mov [jnl_slot], ebx
     mov eax, ebx
@@ -965,7 +966,7 @@ jnl_idle_ms      dd 0
 jnl_last_ms      dd 0
 jnl_lbas         times JNL_MAX dd 0
 jnl_color        db 0
-jnl_parent       db 0
+jnl_parent       dw 0
 jnl_found        dd 0
 jnl_numbuf       times 12 db 0
 jnl_attr_op      db 0

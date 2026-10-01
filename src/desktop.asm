@@ -53,7 +53,7 @@ DESK_TEXT         equ 0x6310000           ; each console's text, 4KB apart
 DESK_FRONT0       equ 0x7D00000           ; what's on each video page (3MB)
 DESK_FRONT1       equ 0x7400000
 DESK_SHOWN        equ 0x6320000           ; each window's text as last drawn
-DESK_FILES        equ 0x6330000           ; the Files window's list
+DESK_FILES        equ 0x3E00000           ; the Files window's list (128KB)
 
 DK_BORDER         equ 3
 DK_TITLE_H        equ 22
@@ -1944,8 +1944,8 @@ dk_menu_choose:
     cmp eax, K_PICS
     jne .open
     push eax
-    call fs_get_current_parent_byte       ; Pictures: the current folder's
-    mov [dk_pic_dir], al
+    mov ax, [fs_current_dir]              ; Pictures: the current folder's
+    mov [dk_pic_dir], ax
     mov dword [dk_pic_slot], -1
     mov byte [dk_pic_state], 1
     pop eax

@@ -278,14 +278,13 @@ httpd_print_word:
     ret
 
 ; httpd_path -> httpd_found_type (0 = not found, else FS_TYPE_*),
-; httpd_found_slot, httpd_dir_byte (for a folder: its children's
-; parent byte). Walks from the root, one /segment at a time.
+; httpd_found_slot, httpd_dir (for a folder: its slot, or FS_ROOT). Walks from the root, one /segment at a time.
 httpd_lookup:
     pushad
     push word [fs_current_dir]
     mov word [fs_current_dir], FS_ROOT
     mov byte [httpd_found_type], FS_TYPE_DIR   ; "/" is the root
-    mov byte [httpd_dir_byte], FS_ROOT_BYTE
+    mov word [httpd_dir], FS_ROOT
     mov esi, httpd_path
 .segment:
     cmp byte [esi], '/'
@@ -326,7 +325,7 @@ httpd_lookup:
     cmp byte [httpd_found_type], FS_TYPE_DIR
     jne .segment
     mov [fs_current_dir], ax
-    mov [httpd_dir_byte], al
+    mov [httpd_dir], ax
     jmp .segment
 .missing:
     mov byte [httpd_found_type], 0
@@ -420,16 +419,12 @@ httpd_content_type:
     pop eax
     ret
 
-; The folder httpd_found_type/httpd_dir_byte: its INDEX.HTM if it has
+; The folder httpd_found_type/httpd_dir: its INDEX.HTM if it has
 ; one, else a page listing it
 httpd_send_directory:
     pushad
     push word [fs_current_dir]
-    movzx ax, byte [httpd_dir_byte]
-    cmp al, FS_ROOT_BYTE
-    jne .dir_set
-    mov ax, FS_ROOT
-.dir_set:
+    mov ax, [httpd_dir]
     mov [fs_current_dir], ax
     mov esi, httpd_index_names
 .index:
@@ -465,7 +460,7 @@ httpd_send_directory:
     call httpd_append_html
     mov esi, httpd_list_head3
     call wget_append
-    cmp byte [httpd_dir_byte], FS_ROOT_BYTE
+    cmp word [httpd_dir], FS_ROOT
     je .entries
     mov esi, httpd_list_item              ; <li><a href="/the/parent/">..
     call wget_append
@@ -487,7 +482,7 @@ httpd_send_directory:
 .entries:
     xor ebx, ebx
 .slot:
-    cmp ebx, FS_TOTAL_SLOTS
+    cmp ebx, [fs_slot_top]
     jae .listed
     push edi
     mov ax, bx
@@ -496,8 +491,10 @@ httpd_send_directory:
     mov al, [SCRATCH_ADDR + FS_TYPE_OFFSET]
     cmp al, FS_TYPE_FREE
     je .next_slot
-    mov ah, [SCRATCH_ADDR + FS_PARENT_OFFSET]
-    cmp ah, [httpd_dir_byte]
+    push eax
+    call fs_scratch_parent
+    cmp ax, [httpd_dir]
+    pop eax
     jne .next_slot
     mov [httpd_entry_type], al
     mov esi, SCRATCH_ADDR                 ; the name, 0-terminated
@@ -647,7 +644,7 @@ httpd_deadline      dd 0
 httpd_head_only     db 0
 httpd_found_slot    dw 0
 httpd_found_type    db 0
-httpd_dir_byte      db 0
+httpd_dir           dw 0
 httpd_entry_type    db 0
 httpd_entry_size    dd 0
 httpd_entry_name    times FS_NAME_LEN + 1 db 0

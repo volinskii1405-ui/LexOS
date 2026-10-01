@@ -118,6 +118,11 @@ static int ndents, dlg_scroll, dlg_sel = -1, dlg_fresh;
  * little helpers
  * ============================================================ */
 static int upper(int c) { return c >= 'a' && c <= 'z' ? c - 32 : c; }
+static int same_ci(const char *a, const char *b)
+{
+    while (*a && upper(*a) == upper(*b)) { a++; b++; }
+    return upper(*a) == upper(*b);
+}
 static void copy(char *d, const char *s, int n) { int i = 0; while (s[i] && i < n - 1) { d[i] = s[i]; i++; } d[i] = 0; }
 static void append(char *d, const char *s, int n) { int l = strlen(d); copy(d + l, s, n - l); }
 static void append_num(char *d, int v, int n)
@@ -1352,10 +1357,9 @@ static void dialog_ok(void)
     }
     if (!dlg_name[0]) return;
     for (i = 0; i < ndents; i++)                 /* a folder's name: into it */
-        if (dents[i].type == LX_DIR && !strcmp(dents[i].name, dlg_name)) { enter_dir(dlg_name); dlg_name[0] = 0; return; }
+        if (dents[i].type == LX_DIR && same_ci(dents[i].name, dlg_name)) { enter_dir(dents[i].name); dlg_name[0] = 0; return; }
     if (dlg_name[0] == '/') copy(p, dlg_name, PATH_MAX);
     else join(p, dlg_dir, dlg_name);
-    for (i = 0; p[i]; i++) p[i] = upper(p[i]);
     copy(last_dir, dlg_dir, PATH_MAX);
     if (dlg == DLG_OPEN) { dlg = 0; load_picture(p); clamp_view(); return; }
     if (!ends_ci(p, ".BMP") && !ends_ci(p, ".PNG") && strlen(p) + 4 < PATH_MAX) append(p, ".BMP", PATH_MAX);
@@ -1394,7 +1398,7 @@ static void key(int c, int sc)
         else if (sc == 0x50 && dlg_sel < ndents - 1) { dlg_sel++; if (dents[dlg_sel].type != LX_DIR) copy(dlg_name, dents[dlg_sel].name, FIELD_MAX); }
         else if (c >= 32 && c < 127) {
             if (dlg_fresh) { dlg_name[0] = 0; l = 0; dlg_fresh = 0; }
-            if (l < FIELD_MAX - 1) { dlg_name[l] = upper(c); dlg_name[l + 1] = 0; }
+            if (l < FIELD_MAX - 1) { dlg_name[l] = c; dlg_name[l + 1] = 0; }
         }
         if (dlg_sel >= 0) {
             if (dlg_sel < dlg_scroll) dlg_scroll = dlg_sel;

@@ -53,7 +53,7 @@ app_copy_name:
     mov al, [esi]
     or al, al
     jz .end
-    cmp ecx, FS_NAME_LEN
+    cmp ecx, FS_LNAME_MAX - 1             ; (a long name, too)
     jae .bad
     mov [fs_tmp_name + ecx], al
     inc ecx
@@ -102,7 +102,7 @@ fh_lookup:
     jne .bad
     movzx esi, word [fh_slot + edi*2]
     push esi
-    call fs_ram_record_or_cache           ; -> esi = its record
+    call fs_slot_record                   ; -> esi = its record
     cmp byte [esi + FS_TYPE_OFFSET], FS_TYPE_FILE
     pop esi
     jne .bad
@@ -153,37 +153,31 @@ app_split_path:
 .next:
     inc esi
     inc ecx
-    cmp ecx, BUFFER_MAX
+    cmp ecx, 127
     jb .scan
     jmp .bad
 .scanned:
     or edi, edi
     jz .done                              ; (no path: here)
-    push eax                              ; the folder part -> buffer
+    push eax                              ; the folder part -> app_path_buf
     mov esi, eax
     mov ecx, edi
     sub ecx, eax
-    mov edi, buffer
+    mov edi, app_path_buf
     cld
     rep movsb
     mov byte [edi], 0
-    cmp edi, buffer                       ; ("/NAME": the root)
+    cmp edi, app_path_buf                 ; ("/NAME": the root)
     jne .resolve
-    mov word [buffer], '/'
+    mov word [app_path_buf], '/'
 .resolve:
     push ebx
     push edx
-    mov si, buffer
-    call fs_resolve_path                  ; -> ax, or -1
+    mov si, app_path_buf
+    call fs_resolve_path                  ; -> ax, or carry=1
     pop edx
     pop ebx
-    cmp ax, -1
-    je .bad_pop
-    movzx eax, al
-    cmp al, FS_ROOT_BYTE
-    jne .dir
-    mov eax, FS_ROOT
-.dir:
+    jc .bad_pop
     mov [fs_current_dir], ax
     pop eax
     push eax                              ; the name: past the last '/'

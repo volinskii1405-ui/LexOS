@@ -33,12 +33,12 @@ DKN_NEWLNK     equ 5
 DKN_COPYTO     equ 6
 DKN_TRASH      equ 7                      ; (no dialog: done straight away)
 
-; al = DKN_*, bl = the folder (a slot byte), ecx = the slot it's about
+; al = DKN_*, bx = the folder (a slot, or FS_ROOT), ecx = the slot it's about
 ; (Rename, Copy to), esi = the text it starts with (0: none)
 dkn_ask:
     pushad
     mov [dkn_op], al
-    mov [dkn_dir], bl
+    mov [dkn_dir], bx
     mov [dkn_slot], ecx
     mov dword [dkn_err], 0
     mov byte [dkn_khead], 0
@@ -211,11 +211,7 @@ dkn_do:
     mov al, [pipe_on + ebx]
     push eax
     mov byte [pipe_on + ebx], 2
-    movzx eax, byte [dkn_dir]             ; the folder: the current one
-    cmp al, FS_ROOT_BYTE
-    jne .dir
-    mov eax, FS_ROOT
-.dir:
+    mov ax, [dkn_dir]                     ; the folder: the current one
     mov [fs_current_dir], ax
     mov dword [dkn_err], 0
     movzx eax, byte [dkn_op]
@@ -352,8 +348,8 @@ dkn_do:
     mov edi, SCRATCH_ADDR
     call dki_copy
     mov byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
-    mov al, [dkn_dir]
-    mov [SCRATCH_ADDR + FS_PARENT_OFFSET], al
+    mov ax, [dkn_dir]
+    call fs_scratch_set_parent
     mov word [SCRATCH_ADDR + FS_CHAIN_OFFSET], FS_NO_CHAIN
     pop eax
     call fs_write_slot
@@ -477,13 +473,16 @@ dkn_do:
     call jnl_attr_of
     test al, FS_ATTR_RO
     jnz .read_only
-    call dkn_trash_dir                    ; -> al (carry: no room)
+    call dkn_trash_dir                    ; -> ax (carry: no room)
     jc .full
-    mov dl, al
+    mov dx, ax
     mov eax, [dkn_slot]
     call fs_read_slot
     call dkt_note_origin                  ; (src/dktrash.asm: Restore's)
-    mov [SCRATCH_ADDR + FS_PARENT_OFFSET], dl
+    push eax
+    mov ax, dx
+    call fs_scratch_set_parent
+    pop eax
     call fs_write_slot
     mov eax, SND_TRASH                    ; (a whoosh)
     call snd_play
@@ -714,7 +713,7 @@ dkn_write_file:
     stc
     ret
 
-; The root's TRASH folder (made if there's none) -> al; carry=1 no room
+; The root's TRASH folder (made if there's none) -> eax; carry=1 no room
 dkn_trash_dir:
     push ebx
     push ecx
@@ -727,7 +726,8 @@ dkn_trash_dir:
     call fs_read_slot
     cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
     jne .next
-    cmp byte [SCRATCH_ADDR + FS_PARENT_OFFSET], FS_ROOT_BYTE
+    call fs_scratch_parent
+    cmp ax, FS_ROOT
     jne .next
     cmp dword [SCRATCH_ADDR], 'TRAS'
     jne .next
@@ -751,7 +751,8 @@ dkn_trash_dir:
     mov dword [SCRATCH_ADDR], 'TRAS'
     mov byte [SCRATCH_ADDR + 4], 'H'
     mov byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
-    mov byte [SCRATCH_ADDR + FS_PARENT_OFFSET], FS_ROOT_BYTE
+    mov ax, FS_ROOT
+    call fs_scratch_set_parent
     mov word [SCRATCH_ADDR + FS_CHAIN_OFFSET], FS_NO_CHAIN
     mov eax, ebx
     call fs_write_slot
@@ -1152,7 +1153,7 @@ dk_draw_sub:
 dkn_open         db 0
 dkn_fresh        db 0
 dkn_op           db 0
-dkn_dir          db 0
+dkn_dir          dw 0
 dkn_req          db 0
 dkn_slot         dd 0
 dkn_len          dd 0
