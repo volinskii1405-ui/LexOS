@@ -217,5 +217,15 @@ gdt_descriptor:
 CODE_SEG equ gdt_code - gdt_start
 DATA_SEG equ gdt_data - gdt_start
 
+; The partition table: one FAT32 (LBA) partition, from 1MB to the end
+; of the 256MB disk - LexOS's files (src/fat32.asm, tools/mkdisk.py).
+; The sectors before it: this one, the kernel, the journal.
+times 446-($-$$) db 0
+    db 0x80                     ; (bootable)
+    db 0xFE, 0xFF, 0xFF         ; (CHS: past what it can say - LBA's used)
+    db 0x0C                     ; FAT32, LBA
+    db 0xFE, 0xFF, 0xFF
+    dd 2048                     ; its first sector
+    dd 256 * 2048 - 2048        ; its sectors
 times 510-($-$$) db 0
 dw 0xAA55

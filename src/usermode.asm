@@ -81,7 +81,19 @@ SYS_AUDIO_CLOSE equ 25
 SYS_MILLIS      equ 26                ; -> eax = milliseconds since boot
 SYS_SLEEP_UNTIL equ 27                ; ebx = a SYS_MILLIS value to wait for
 SYS_AUDIO_VOLUME equ 28               ; ebx = 0-100
-SYS_COUNT       equ 44                ; (files/graphics: src/appsys.asm)
+SYS_MORE        equ 45                ; ebx = bytes more -> eax = the top of its
+                                      ; extra memory (0: no more to be had)
+SYS_COUNT       equ 46                ; (files/graphics: src/appsys.asm)
+
+; A program's extra memory (SYS_MORE): 4MB pages from a pool of them
+; above the kernel's own memory, mapped from APP_HIGH_BASE up - so a
+; program needing more than its 4MB (LexOS Web, a big page) gets up to
+; APP_HIGH_MAX of them more, while there are any. They go back to the
+; pool when it ends.
+APP_HIGH_BASE   equ 0x40000000
+APP_HIGH_MAX    equ 16                ; 4MB pages: 64MB
+MEM_POOL_BASE   equ 0xB000000         ; (past src/fat32.asm's buffers)
+MEM_POOL_PAGES  equ 20                ; 80MB, up to 256MB
 
 ; ============================================================
 ; Paging, the TSS, the ring-3 entry points into the kernel (int 0x80,
@@ -361,6 +373,7 @@ app_abort:
     call app_audio_off                    ; silence, if it was playing
     call fpu_forget_current
     call fh_close_all                     ; saves what it wrote
+    call app_more_free                    ; its extra memory: back
     call speaker_off
     ; a fresh line, unless the program left the cursor at the start of one
     cmp word [cursor_col], 0
@@ -384,6 +397,131 @@ app_abort:
     ret
 
 APP_EXIT_CRASHED equ 0x80000000
+
+; eax = a program's pointer, ecx = a length -> carry=0 if all of it is
+; the program's: its 4MB, or the extra memory it has (SYS_MORE)
+app_mem_ok:
+    push eax
+    push edx
+    mov edx, eax
+    add edx, ecx
+    jc .bad
+    cmp eax, APP_BASE
+    jb .bad
+    cmp edx, APP_STACK_TOP
+    jbe .ok
+    cmp eax, APP_HIGH_BASE
+    jb .bad
+    push ecx
+    mov ecx, [sched_current]
+    movzx ecx, byte [task_high + ecx]
+    shl ecx, 22
+    add ecx, APP_HIGH_BASE
+    cmp edx, ecx
+    pop ecx
+    ja .bad
+.ok:
+    pop edx
+    pop eax
+    clc
+    ret
+.bad:
+    pop edx
+    pop eax
+    stc
+    ret
+
+; SYS_MORE: ebx = how many bytes more it wants -> eax = the top of its
+; extra memory now (from APP_HIGH_BASE; 0 if not that much was to be had)
+sys_more:
+    mov ecx, [sched_current]
+    mov eax, [ebp + 16]
+    add eax, 0x3FFFFF
+    jc .fail
+    shr eax, 22                           ; 4MB pages wanted
+    mov [app_more_want], eax
+.each:
+    cmp dword [app_more_want], 0
+    je .top
+    movzx edx, byte [task_high + ecx]
+    cmp edx, APP_HIGH_MAX
+    jae .fail
+    xor ebx, ebx                          ; a free one in the pool
+.find:
+    cmp byte [mem_pool_owner + ebx], 0
+    je .got
+    inc ebx
+    cmp ebx, MEM_POOL_PAGES
+    jb .find
+    jmp .fail
+.got:
+    lea eax, [ecx + 1]
+    mov [mem_pool_owner + ebx], al
+    mov edi, ebx                          ; zeros all over it
+    shl edi, 22
+    add edi, MEM_POOL_BASE
+    push edi
+    push ecx
+    mov ecx, 0x100000
+    xor eax, eax
+    cld
+    rep stosd
+    pop ecx
+    pop eax
+    or eax, 0x87                          ; present, writable, user, 4MB
+    mov edi, cr3
+    and edi, 0xFFFFF000
+    mov [edi + (APP_HIGH_BASE >> 22) * 4 + edx*4], eax
+    inc byte [task_high + ecx]
+    dec dword [app_more_want]
+    mov eax, cr3                          ; (the TLB: told)
+    mov cr3, eax
+    jmp .each
+.top:
+    movzx eax, byte [task_high + ecx]
+    shl eax, 22
+    add eax, APP_HIGH_BASE
+    ret
+.fail:
+    xor eax, eax
+    ret
+
+; The program's ended: its extra memory back to the pool
+app_more_free:
+    pushad
+    mov ecx, [sched_current]
+    movzx edx, byte [task_high + ecx]
+    or edx, edx
+    jz .done
+    mov edi, cr3
+    and edi, 0xFFFFF000
+    add edi, (APP_HIGH_BASE >> 22) * 4
+    push ecx
+    mov ecx, edx
+    xor eax, eax
+    cld
+    rep stosd
+    pop ecx
+    mov byte [task_high + ecx], 0
+    lea eax, [ecx + 1]
+    xor ebx, ebx
+.each:
+    cmp [mem_pool_owner + ebx], al
+    jne .next
+    mov byte [mem_pool_owner + ebx], 0
+.next:
+    inc ebx
+    cmp ebx, MEM_POOL_PAGES
+    jb .each
+    mov eax, cr3
+    mov cr3, eax
+.done:
+    popad
+    ret
+
+task_high       times SCHED_MAX db 0  ; each task's program: its extra 4MB pages
+mem_pool_owner  times MEM_POOL_PAGES db 0 ; each pool page's task + 1 (0: free)
+app_more_want   dd 0
 
 ; Ctrl+C, acted on by timer_isr (src/interrupts.asm) while in ring 3.
 app_ctrl_c:
@@ -445,6 +583,7 @@ syscall_table:
     dd sys_tcp_open, sys_tcp_send, sys_tcp_recv, sys_tcp_close
     dd sys_keymode, sys_readdir, sys_mkdir, sys_notify  ; (src/appext.asm)
     dd sys_inbox, sys_opl, sys_audio_queued, sys_clip_pic
+    dd sys_music_state, sys_more
 
 sys_exit:
     mov eax, [ebp + 16]
@@ -454,13 +593,12 @@ sys_exit:
 ; or the program is ended for passing it.
 app_check_range:
     push eax
+    push ecx
     mov eax, [ebp + 16]
-    cmp eax, APP_BASE
-    jb .bad
-    add eax, [ebp + 24]
+    mov ecx, [ebp + 24]
+    call app_mem_ok
+    pop ecx
     jc .bad
-    cmp eax, APP_STACK_TOP
-    ja .bad
     pop eax
     ret
 .bad:

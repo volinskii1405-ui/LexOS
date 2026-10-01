@@ -277,9 +277,41 @@ dkx_win_key:
     call dk_win_x                         ; (as its [x])
 .no_close:
     cmp byte [dkx_logout_req], 0          ; Win+L
-    je .done
+    je .no_logout
     mov byte [dkx_logout_req], 0
     call dkx_logout
+.no_logout:
+    movzx edx, byte [dkx_snap_req]        ; Win+arrows
+    or edx, edx
+    jz .done
+    mov byte [dkx_snap_req], 0
+    call dk_top_window
+    cmp eax, -1
+    je .done
+    cmp edx, 4
+    je .down
+    cmp edx, 3
+    jne .side
+    call dk_can_max                       ; up: the whole screen (if it can -
+    jc .done                              ;  from a half too)
+    cmp byte [dkw_max + eax], 0
+    je .side
+    call dk_win_maximize                  ; (as it was, first)
+.side:
+    mov [dk_drag_win], eax                ; (dk_snap_rect's: this one)
+    call dk_win_snap
+    jmp .done
+.down:
+    cmp byte [dkw_max + eax], 0           ; down: back to its own size, or
+    je .minimize                          ; down to the taskbar
+    call snd_click
+    call dk_win_maximize
+    jmp .done
+.minimize:
+    call snd_click
+    mov byte [dkw_hidden + eax], 1
+    mov byte [dk_redraw_all], 1
+    call dka_minimize
 .done:
     popad
     ret
@@ -427,6 +459,15 @@ dk_snap_zone:
 dk_snap_halves:
     cmp byte [dkw_kind + eax], K_TERM     ; (its 80 columns wouldn't fit)
     je .no
+    cmp byte [dkw_kind + eax], K_APP      ; a program's picture wider than
+    jne dk_can_max                        ; half the screen: at that side,
+    push eax                              ; its own size
+    mov eax, [dkw_param + eax*4]
+    mov eax, [dk_app_w + eax*4]
+    add eax, DK_BORDER * 2
+    cmp eax, [dk_w2]
+    pop eax
+    ja .no
     jmp dk_can_max
 .no:
     stc
@@ -568,6 +609,11 @@ dk_win_snap:
     call dk_win_maximize
     jmp .done
 .fixed:
+    cmp byte [dkw_max + ebp], 0           ; (maximized: as it was, first)
+    je .own_size
+    mov eax, ebp
+    call dk_win_maximize
+.own_size:
     call dk_snap_rect                     ; (dk_drag_win: this one)
     push eax
     mov eax, ebp
@@ -662,6 +708,8 @@ dkx_ctx_items:
     mov al, DKC_CATPET
     call dk_ctx_add
     mov al, DKC_CATPLAY
+    call dk_ctx_add
+    mov al, DKC_CATBALL
     call dk_ctx_add
     mov al, DKC_CATHOW
     call dk_ctx_add
@@ -869,20 +917,36 @@ dkx_ctx_create:
 dkx_arrange_icons:
     pushad
     xor ecx, ecx
+    xor edi, edi                          ; (its place in the columns)
 .each:
     cmp ecx, [dki_n]
     jae .done
-    mov eax, ecx
+    mov eax, ecx                          ; (the trash stays in its corner)
+    shl eax, 4
+    cmp byte [dki_file + eax], '*'
+    je .next
+    mov eax, [dk_h]                       ; (as many rows as fit under it)
+    sub eax, DK_TASKBAR_H
+    sub eax, [dki_top]
     xor edx, edx
-    mov ebx, DKI_ROWS
+    div dword [dki_ch]
+    mov ebx, eax
+    or ebx, ebx
+    jnz .rows
+    inc ebx
+.rows:
+    mov eax, edi
+    xor edx, edx
     div ebx
-    imul eax, -(DKI_W + 10)               ; its column
+    imul eax, [dki_cw_neg]               ; its column
     add eax, [dk_w]
-    add eax, 0 - DKI_W - 10
-    imul edx, DKI_H + 8
-    add edx, DKI_TOP
+    sub eax, [dki_cw]
+    imul edx, [dki_ch]
+    add edx, [dki_top]
     mov [dki_x + ecx*4], eax
     mov [dki_y + ecx*4], edx
+    inc edi
+.next:
     inc ecx
     jmp .each
 .done:
@@ -1989,6 +2053,7 @@ dkx_files_req    db 0
 dkx_tasks_req    db 0
 dkx_close_req    db 0
 dkx_logout_req   db 0
+dkx_snap_req     db 0                     ; Win+arrows: 1 left 2 right 3 up 4 down
 dkx_desk_hid     times DK_MAX_WIN db 0
 dk_snap_now      dd 0
 DKX_FC_MAX       equ 16

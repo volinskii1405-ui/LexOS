@@ -1,14 +1,14 @@
 ; dkgrid.asm - the desktop's icons on an invisible grid
 ;
-; Cells of DKI_W+10 by DKI_H+8, in columns from the screen's right edge,
-; rows from y=50 down to the taskbar (the row at DKI_TOP, under the
+; Cells of dki_w+10 by dki_h+8 (the icons' size), in columns from the screen's right edge,
+; rows from y=50 down to the taskbar (the row at dki_top, under the
 ; clock, is one of them - so the default columns fit it). A new icon
 ; takes the first free cell - right column first, from under the clock
 ; down, then the rows above it - and one let go of after a drag lands in
 ; the nearest free cell: never on top of another.
 ; Exports: dkg_default_place, dkg_snap
 
-DKG_TOP        equ DKI_TOP - 3 * (DKI_H + 8)      ; (50)
+DKG_TOP        equ 50
 ; how many columns and rows: the screen's (dkg_resize, dk_res_set)
 
 ; ecx = a cell number (column * DKG_ROWS + row) -> eax, edx = its x, y
@@ -18,10 +18,10 @@ dkg_cell_xy:
     xor edx, edx
     mov ecx, [dkg_rows]
     div ecx                               ; eax = the column, edx = the row
-    imul eax, -(DKI_W + 10)
+    imul eax, [dki_cw_neg]
     add eax, [dk_w]
-    add eax, 0 - DKI_W - 10
-    imul edx, DKI_H + 8
+    sub eax, [dki_cw]
+    imul edx, [dki_ch]
     add edx, DKG_TOP
     pop ecx
     ret
@@ -48,14 +48,14 @@ dkg_taken:
     cdq
     xor eax, edx
     sub eax, edx
-    cmp eax, DKI_W
+    cmp eax, [dki_w]
     jae .next
     mov eax, [esp]
     sub eax, [edi + ecx*4]
     cdq
     xor eax, edx
     sub eax, edx
-    cmp eax, DKI_H
+    cmp eax, [dki_h]
     jae .next
     pop edx
     pop eax
@@ -91,11 +91,13 @@ dkg_covered:
     add ebx, 4
     test ecx, 1
     jz .left
-    add eax, DKI_W - 8
+    add eax, [dki_w]
+    sub eax, 8
 .left:
     cmp ecx, 2
     ja .top
-    add ebx, DKI_H - 8
+    add ebx, [dki_h]
+    sub ebx, 8
 .top:
     push ecx
     call dk_window_at                     ; -> esi
@@ -166,8 +168,8 @@ dkg_default_place:
     cmp dword [dkg_pass], 2
     jb .pass
     mov eax, [dk_w] ; (full: where it always went)
-    add eax, 0 - DKI_W - 10
-    mov edx, DKI_TOP
+    sub eax, [dki_cw]
+    mov edx, [dki_top]
     jmp .out
 .found:
     pop ecx
@@ -194,7 +196,8 @@ dkg_snap:
     call dkg_cell_xy
     push eax
     mov eax, [dk_h]
-    add eax, 0 - DK_TASKBAR_H - DKI_H
+    sub eax, DK_TASKBAR_H
+    sub eax, [dki_h]
     mov [dk_ctmp], eax
     pop eax
     cmp edx, [dk_ctmp]
@@ -239,13 +242,13 @@ dkg_resize:
     mov eax, [dk_w]
     sub eax, 10
     xor edx, edx
-    mov ecx, DKI_W + 10
+    mov ecx, [dki_cw]
     div ecx
     mov [dkg_cols], eax
     mov eax, [dk_h]                       ; (clear of the name in the
     sub eax, DK_TASKBAR_H + DKG_TOP + 40  ;  corner, too)
     xor edx, edx
-    mov ecx, DKI_H + 8
+    mov ecx, [dki_ch]
     div ecx
     mov [dkg_rows], eax
     imul eax, [dkg_cols]

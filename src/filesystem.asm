@@ -16,23 +16,21 @@
 ;          fs_find_prefix_match, fs_name_has_prefix, fs_read_slot_name,
 ;          fs_name_matches_wildcard
 
-; --- Reads a slot (index in ax) into SCRATCH_ADDR: a real disk sector
-;     for ax < FS_FILE_COUNT, or a copy from fs_ram_slots (kernel.asm)
-;     for a RAM slot (FS_FILE_COUNT..FS_TOTAL_SLOTS-1) - see the note
-;     above FS_RAM_FILE_COUNT in data.asm. ---
+; --- Reads a slot (index in ax) into SCRATCH_ADDR: from the slots'
+;     cache (every file and folder on the disk is there: src/fat32.asm's
+;     fat_mount read them all at boot), or a copy from fs_ram_slots
+;     (kernel.asm) for a RAM slot (FS_FILE_COUNT..FS_TOTAL_SLOTS-1) - see
+;     the note above FS_RAM_FILE_COUNT in data.asm. carry=0. ---
 fs_read_slot:
     push ax
 
     cmp ax, FS_FILE_COUNT
     jae .ram_slot
 
-    ; the slot cache (FS_SLOT_CACHE, data.asm) first
     push ecx
     push esi
     push edi
     movzx ecx, ax
-    bt [FS_SLOT_VALID], ecx
-    jnc .miss
     shl ecx, 9
     lea esi, [FS_SLOT_CACHE + ecx]
     mov edi, SCRATCH_ADDR
@@ -45,26 +43,17 @@ fs_read_slot:
     pop ax
     clc
     ret
-.miss:
-    add ax, FS_START_SECTOR       ; ax = absolute LBA sector
-    call ata_read_sector
-    jc .uncached
-    call fs_cache_store           ; ecx = the slot
-.uncached:
-    pop edi
-    pop esi
-    pop ecx
-    pop ax
-    ret
 
 .ram_slot:
     call fs_ram_slot_read
     pop ax
     ret
 
-; --- Writes SCRATCH_ADDR into a slot (index in ax) - real disk or RAM,
-;     same split as fs_read_slot above.
-;     Returns: carry=0 on success, carry=1 on error. ---
+; --- Writes SCRATCH_ADDR into a slot (index in ax) - on the disk that's
+;     what the change means there (src/fat32.asm's fat_sync_slot: an
+;     entry made, removed, renamed, moved, the content written), then the
+;     cache; a RAM slot's just memory.
+;     Returns: carry=0 on success, carry=1 on error (the disk full...). ---
 fs_write_slot:
     call jnl_stamp                ; when it changed (src/fsjournal.asm)
     push ax
@@ -72,19 +61,43 @@ fs_write_slot:
     cmp ax, FS_FILE_COUNT
     jae .ram_slot
 
-    add ax, FS_START_SECTOR
-    call jnl_write_sector         ; (through the journal)
+    pushad
+    movzx ebx, ax
+    mov esi, SCRATCH_ADDR
+    mov edi, FAT_NEW
+    mov ecx, 128
+    cld
+    rep movsd
+    call fat_sync_slot            ; (the cache: still what it was)
     setc [fs_last_carry]
+    mov edi, ebx                  ; the new record into the cache - its
+    shl edi, 9                    ; size and first bytes as they are now
+    add edi, FS_SLOT_CACHE
+    cmp byte [FAT_NEW + FS_TYPE_OFFSET], FS_TYPE_FREE
+    je .store
+    cmp byte [FAT_NEW + FS_TYPE_OFFSET], FS_TYPE_DIR
+    je .store
+    mov ax, [edi + FS_TOTAL_LEN_OFFSET]
+    mov [FAT_NEW + FS_TOTAL_LEN_OFFSET], ax
+    mov ax, [edi + FS_TOTAL_LEN_HI_OFFSET]
+    mov [FAT_NEW + FS_TOTAL_LEN_HI_OFFSET], ax
+    lea esi, [edi + FS_CONTENT_OFFSET]
+    push edi
+    mov edi, FAT_NEW + FS_CONTENT_OFFSET
+    mov ecx, FS_CONTENT_LEN - 1
+    rep movsb
+    pop edi
+.store:
+    mov word [FAT_NEW + FS_CHAIN_OFFSET], FS_NO_CHAIN
+    mov word [FAT_NEW + FS_TAG_OFFSET], 'FX'
+    mov [FAT_NEW + FS_TAG_OFFSET + 2], bx
+    mov esi, FAT_NEW
+    mov ecx, 128
+    rep movsd
+    bts [FS_SLOT_VALID], ebx
+    popad
 
     pop ax
-    cmp byte [fs_last_carry], 0
-    jne .not_cached
-    push ecx
-    movzx ecx, ax
-    call fs_cache_store
-    pop ecx
-.not_cached:
-
     cmp byte [fs_last_carry], 0
     je .ok
     stc
@@ -100,6 +113,22 @@ fs_write_slot:
     ret
 
 fs_last_carry  db 0
+
+; --- esi = a slot's index -> esi = its record: in the cache, or a RAM
+;     slot's in fs_ram_slots ---
+fs_ram_record_or_cache:
+    cmp esi, FS_FILE_COUNT
+    jae fs_ram_record
+    shl esi, 9
+    add esi, FS_SLOT_CACHE
+    ret
+
+; --- esi = a RAM slot's index -> esi = its record (fs_ram_slots) ---
+fs_ram_record:
+    sub esi, FS_FILE_COUNT
+    shl esi, 9
+    add esi, fs_ram_slots
+    ret
 
 ; --- Reads a byte from the scratch buffer at offset (in ax) -> al ---
 fs_scratch_read_byte:
@@ -574,6 +603,8 @@ fs_cache_store:
     push ecx
     push esi
     push edi
+    mov word [SCRATCH_ADDR + FS_TAG_OFFSET], 'FX'
+    mov [SCRATCH_ADDR + FS_TAG_OFFSET + 2], cx
     bts [FS_SLOT_VALID], ecx
     shl ecx, 9
     lea edi, [FS_SLOT_CACHE + ecx]
@@ -623,46 +654,28 @@ fs_cat:
     jmp .end
 
 .is_file:
-    push eax
-    call fs_get_size
-    mov [fs_cat_remaining], eax
-    mov ax, [SCRATCH_ADDR + FS_CHAIN_OFFSET]
-    mov [fs_cat_chain], ax
-    pop eax
-
-    push ecx
-    push esi
-    mov esi, SCRATCH_ADDR + FS_CONTENT_OFFSET
-    mov ecx, FS_CONTENT_LEN - 1       ; ecx = min(127, remaining) - how many
-    cmp ecx, [fs_cat_remaining]       ; bytes to print from the inline part
-    jbe .inline
-    mov ecx, [fs_cat_remaining]
-.inline:
-    call .print_run
-
-.chain_loop:
-    cmp dword [fs_cat_remaining], 0
-    je .print_done
-    cmp word [fs_cat_chain], FS_NO_CHAIN
-    je .print_done
+    pushad
+    movzx edx, ax                     ; edx = the slot
+    xor ebx, ebx                      ; where in it
+.piece:
     call net_check_esc                ; ESC stops a long one
     jc .print_done
-    mov ax, [fs_cat_chain]
-    call fs_extra_read
-    mov ax, [SCRATCH_ADDR + FS_EXTRA_NEXT_OFFSET]
-    mov [fs_cat_chain], ax
-    mov esi, SCRATCH_ADDR
-    mov ecx, FS_EXTRA_CONTENT_LEN
-    cmp ecx, [fs_cat_remaining]
-    jbe .extra
-    mov ecx, [fs_cat_remaining]
-.extra:
-    call .print_run
-    jmp .chain_loop
-
+    mov eax, edx
+    mov edi, FAT_IO
+    mov ecx, 4096
+    call fat_read                     ; -> ecx
+    jc .print_done
+    jecxz .print_done
+    add ebx, ecx
+    mov esi, FAT_IO
+.char:
+    mov al, [esi]
+    call print_char
+    inc esi
+    loop .char
+    jmp .piece
 .print_done:
-    pop esi
-    pop ecx
+    popad
     mov si, msg_newline
     call print_string
 
@@ -670,18 +683,6 @@ fs_cat:
     pop si
     pop bx
     pop ax
-    ret
-
-; prints ecx bytes from esi, counting them off fs_cat_remaining
-.print_run:
-    sub [fs_cat_remaining], ecx
-    jecxz .run_done
-.run_char:
-    mov al, [esi]
-    call print_char
-    inc esi
-    loop .run_char
-.run_done:
     ret
 
 fs_cat_remaining dd 0
@@ -969,9 +970,8 @@ fs_list:
     pop ax
     ret
 
-; --- df / free : shows how full the directory-slot table and the
-;     extra-sector pool are (see FS_FILE_COUNT/FS_EXTRA_COUNT in
-;     src/data.asm) ---
+; --- df / free : shows how full the slot table (FS_FILE_COUNT: the
+;     files and folders LexOS keeps track of) and the disk (FAT32) are ---
 fs_df:
     push ax
     push bx
@@ -1012,34 +1012,27 @@ fs_df:
     mov si, msg_df_free
     call print_string
 
-    mov si, msg_df_extra_label
+    mov si, msg_df_extra_label    ; the disk: KB used / all of them
     call print_string
-
-    xor ebx, ebx                  ; (from the in-RAM bitmap, src/fs_extra.asm)
-    xor ecx, ecx                  ; cx = number of used extra sectors
-.scan_extra:
-    cmp ebx, FS_EXTRA_COUNT
-    jae .extra_done
-    cmp byte [FS_BITMAP_CACHE + ebx], 0
-    je .extra_free
-    inc ecx
-.extra_free:
-    inc ebx
-    jmp .scan_extra
-.extra_done:
-    mov ax, cx
-    call print_dec_word
+    pushad
+    call fat_total_kb
+    mov ebx, eax
+    call fat_free_kb
+    sub ebx, eax
+    push eax
+    mov eax, ebx
+    call basic_print_num
     mov si, msg_df_slash
     call print_string
-    mov ax, FS_EXTRA_COUNT
-    call print_dec_word
-    mov si, msg_df_used
+    call fat_total_kb
+    call basic_print_num
+    mov si, msg_df_kb_used
     call print_string
-    mov ax, FS_EXTRA_COUNT
-    sub ax, cx
-    call print_dec_word
-    mov si, msg_df_free
+    pop eax
+    call basic_print_num
+    mov si, msg_df_kb_free
     call print_string
+    popad
 
     mov si, msg_df_ram_label
     call print_string

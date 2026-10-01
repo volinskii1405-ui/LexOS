@@ -196,7 +196,7 @@ static int voice(int rate, int ch)
 {
     if (voice_open && voice_rate == rate && voice_ch == ch) { audio_queued(1); return 1; }
     if (voice_open) { audio_queued(1); audio_close(); voice_open = 0; }
-    if (audio_open(rate, ch) < 0) { strcpy(status, "No sound card (QEMU: -device sb16)."); sound_ok = 0; return 0; }
+    if (audio_open(rate, ch) < 0) { strcpy(status, "No sound card (QEMU: -device AC97)."); sound_ok = 0; return 0; }
     voice_open = 1; voice_rate = rate; voice_ch = ch;
     audio_volume(volume);
     sound_ok = 1;
@@ -518,6 +518,7 @@ int main(int argc, char **argv)
 {
     int m[4], was = 0, i;
     unsigned last_click = 0, last_draw = 0;
+    int told = -1;
     if (gui_open(W, H) < 0) { puts("music: needs a 560x460 window in 32 bits\n"); return 1; }
     seed = millis();
     volume = gui_cfg_get("musicvol", 80);
@@ -537,10 +538,12 @@ int main(int argc, char **argv)
     for (;;) {
         int k, changed = 0;
         char in[128];
+        in[0] = 0;
+        if (state != told) { music_state(state); told = state; }   /* (the tray's note) */
         while ((k = pollkey())) {
             int ch = k & 0xFF, sc = (k >> 8) & 0xFF;
             changed = 1;
-            if (sc == KEY_ESC) { stop_all(); if (voice_open) audio_close(); gui_cfg_set("musicvol", volume); return 0; }
+            if (sc == KEY_ESC) { stop_all(); music_state(0); if (voice_open) audio_close(); gui_cfg_set("musicvol", volume); return 0; }
             if (ch == ' ') pause_toggle();
             else if (ch == 13) { if (sel >= 0) play(sel); }
             else if (ch == 's' || ch == 'S') stop_all();
@@ -558,7 +561,12 @@ int main(int argc, char **argv)
             if (sel >= 0 && sel < top) top = sel;
             if (sel >= top + LIST_ROWS) top = sel - LIST_ROWS + 1;
         }
-        if (inbox(in, sizeof in) > 0) {                   /* a file from Files: in, and on */
+        if (inbox(in, sizeof in) > 0 && in[0] == '|') {  /* the tray's note */
+            if (!strcmp(in, "|PAUSE")) { if (state) pause_toggle(); else if (ntracks) play(sel >= 0 ? sel : 0); }
+            else if (!strcmp(in, "|NEXT")) press(3, 0);
+            else if (!strcmp(in, "|PREV")) press(0, 0);
+            changed = 1;
+        } else if (in[0]) {                               /* a file from Files: in, and on */
             add(in);
             for (i = 0; i < ntracks; i++) if (!strcmp(list[i].path, in)) play(i);
             changed = 1;

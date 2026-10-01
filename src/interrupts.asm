@@ -353,10 +353,52 @@ keyboard_isr:
 
     cmp byte [dk_active], 0        ; the desktop's own keys
     je .not_desk_keys              ; (src/dkextra.asm)
-    cmp bh, 0
-    jne .not_desk_keys
     cmp byte [dkl_grab], 0         ; (locked, the saver out: theirs)
     jne .not_desk_keys
+    cmp byte [dch_open], 0         ; Win+V's panel out: Up, Down, Enter,
+    je .no_dch                     ; Esc are its (src/dkchist.asm)
+    mov cl, 1
+    cmp al, 0x48
+    je .dch_key
+    mov cl, 2
+    cmp al, 0x50
+    je .dch_key
+    mov cl, 3
+    cmp al, 0x1C
+    je .dch_key
+    mov cl, 4
+    cmp al, 0x01
+    jne .no_dch
+.dch_key:
+    mov [dch_key], cl
+    jmp .eoi
+.no_dch:
+    cmp bh, 0
+    je .desk_plain
+    cmp byte [dkx_win_held], 0     ; Win+arrows: the window in front to
+    je .not_desk_keys              ; the left / right half, the whole
+    cmp al, 0x4B                   ; screen, back or down to the taskbar
+    je .warrow_left
+    cmp al, 0x4D
+    je .warrow_right
+    cmp al, 0x48
+    je .warrow_up
+    cmp al, 0x50
+    jne .not_desk_keys
+    mov byte [dkx_snap_req], 4
+    jmp .win_arrow
+.warrow_left:
+    mov byte [dkx_snap_req], 1
+    jmp .win_arrow
+.warrow_right:
+    mov byte [dkx_snap_req], 2
+    jmp .win_arrow
+.warrow_up:
+    mov byte [dkx_snap_req], 3
+.win_arrow:
+    mov byte [dkx_win_combo], 1
+    jmp .eoi
+.desk_plain:
     cmp al, 0x2C                   ; Ctrl+Z: the last thing done to files,
     jne .not_undo                  ; undone (src/dkundo.asm)
     cmp byte [lang_ctrl_held], 0
@@ -396,6 +438,34 @@ keyboard_isr:
     mov byte [dkx_files_req], 1
     jmp .eoi
 .not_win_e:
+    cmp al, 0x2F                   ; V: the clipboard's history
+    jne .not_win_v                 ; (src/dkchist.asm)
+    mov byte [dch_req], 1
+    jmp .eoi
+.not_win_v:
+    cmp al, 0x0D                   ; + (= or the keypad's): the magnifier,
+    je .win_plus                   ; x2, then x4; - back down, Esc away
+    cmp al, 0x4E                   ; (src/dkmag.asm)
+    je .win_plus
+    cmp al, 0x0C
+    je .win_minus
+    cmp al, 0x4A
+    je .win_minus
+    cmp al, 0x01
+    jne .not_win_mag
+    mov byte [dmag_zoom], 0
+    jmp .eoi
+.win_plus:
+    cmp byte [dmag_zoom], 4
+    jae .eoi
+    add byte [dmag_zoom], 2
+    jmp .eoi
+.win_minus:
+    cmp byte [dmag_zoom], 0
+    je .eoi
+    sub byte [dmag_zoom], 2
+    jmp .eoi
+.not_win_mag:
     cmp al, 0x26                   ; L: locked (src/dklock.asm)
     jne .eoi
     mov byte [dkl_req], 1

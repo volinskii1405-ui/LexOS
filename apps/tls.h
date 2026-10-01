@@ -27,6 +27,9 @@ static const char *tls_error = "";
 /* if set: the answer's bytes go to it as they come (not into out[]);
  * nonzero stops it there (tls_get then returns -1, tls_error "Stopped.") */
 static int (*tls_sink)(const unsigned char *d, int n);
+/* the request's headers (each ending "\r\n"), between Host and
+ * Connection: close */
+static const char *tls_headers = "User-Agent: LexOS-Web/1.0\r\nAccept: text/html, */*\r\n";
 
 /* ============================================================
  * SHA-256
@@ -779,13 +782,15 @@ static int tls_get(const char *host, int port, const char *path, char *out, int 
 
     /* the request, and the answer */
     {
-        char req[600];
+        char req[1100];
         req[0] = 0;
         strcpy(req, "GET ");
         strcpy(req + strlen(req), path);
         strcpy(req + strlen(req), " HTTP/1.1\r\nHost: ");
         strcpy(req + strlen(req), host);
-        strcpy(req + strlen(req), "\r\nUser-Agent: LexOS-Web/1.0\r\nAccept: text/html, */*\r\nConnection: close\r\n\r\n");
+        strcpy(req + strlen(req), "\r\n");
+        if (strlen(tls_headers) < 600) strcpy(req + strlen(req), tls_headers);
+        strcpy(req + strlen(req), "Connection: close\r\n\r\n");
         if (!send_record(23, (const u8 *)req, strlen(req))) { tls_error = "Can't send."; goto fail; }
     }
     for (;;) {

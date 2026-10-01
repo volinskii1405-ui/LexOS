@@ -294,6 +294,9 @@ dkc_cols         dd SCREEN_COLS
 dkc_drag         db 0
 dk_copy_req      db 0                     ; (the keyboard interrupt's asks)
 dk_paste_req     db 0
+dch_req          db 0                     ; Win+V (src/dkchist.asm)
+dch_key          db 0                     ; its keys: 1 Up, 2 Down, 3 Enter, 4 Esc
+dch_open         db 0                     ; its panel's out
 dkc_len          dd 0
 dkc_text         times DKC_MAX db 0
 dkc_msg_copied   db "Copied: ", 0

@@ -1,6 +1,6 @@
 ASM = nasm
 BUILD_DIR = build
-SRC_FILES = kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/serial.asm src/mouse.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/parse.asm src/vga.asm src/view.asm src/rtc.asm src/speaker.asm src/sound.asm src/mixer.asm src/chip8.asm src/turtle.asm src/hostfs.asm src/basic.asm src/net.asm src/inet.asm src/httpd.asm src/chat.asm src/sched.asm src/usermode.asm src/appsys.asm src/console.asm src/desktop.asm src/dkwins.asm src/dkstyle.asm src/dksound.asm src/dkicons.asm src/lang.asm src/font866.inc src/dkclip.asm src/dkfind.asm src/dkextra.asm src/neofetch.asm src/langui.asm src/dkcat.asm src/grep.asm src/headtail.asm src/uranium.asm src/user.asm src/welcome.asm src/tabcomplete.asm src/script.asm src/pipe.asm src/fsjournal.asm src/fslong.asm src/dkname.asm src/dkgrid.asm src/dkprops.asm src/dktrash.asm src/dkdrop.asm src/appext.asm src/dkart.asm src/dkshot.asm src/dkfview.asm src/dkwall.asm src/dkmsel.asm src/dkundo.asm src/dklock.asm src/dkusers.asm src/dkcpanel.asm src/dksaver.asm src/dkfscheck.asm src/dkpng.asm src/dkpics.asm src/dknotify.asm src/dkanim.asm src/dkres.asm src/dkswitch.asm src/dkregion.asm src/dkclock.asm src/dkart.inc
+SRC_FILES = src/fat32.asm src/atadma.asm kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/serial.asm src/mouse.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/parse.asm src/vga.asm src/view.asm src/rtc.asm src/speaker.asm src/sound.asm src/mixer.asm src/ac97.asm src/chip8.asm src/turtle.asm src/hostfs.asm src/basic.asm src/net.asm src/inet.asm src/httpd.asm src/chat.asm src/sched.asm src/usermode.asm src/appsys.asm src/console.asm src/desktop.asm src/dkwins.asm src/dkstyle.asm src/dksound.asm src/dkicons.asm src/lang.asm src/font866.inc src/dkclip.asm src/dkfind.asm src/dkextra.asm src/neofetch.asm src/langui.asm src/dkcat.asm src/grep.asm src/headtail.asm src/uranium.asm src/user.asm src/welcome.asm src/tabcomplete.asm src/script.asm src/pipe.asm src/shellx.asm src/dkmag.asm src/fsjournal.asm src/fslong.asm src/dkname.asm src/dkgrid.asm src/dkprops.asm src/dktrash.asm src/dkdrop.asm src/appext.asm src/dkart.asm src/dkshot.asm src/dkfview.asm src/dkwall.asm src/dkmsel.asm src/dkundo.asm src/dklock.asm src/dkusers.asm src/dkcpanel.asm src/dksaver.asm src/dkfscheck.asm src/dkpng.asm src/dkpics.asm src/dknotify.asm src/dkanim.asm src/dkres.asm src/dkswitch.asm src/dkregion.asm src/dkclock.asm src/dknight.asm src/dkchist.asm src/dkmfind.asm src/dkart.inc
 
 .PHONY: all run run-serial lan1 lan2 clean apps fresh-disk
 
@@ -61,7 +61,7 @@ $(BUILD_DIR)/os-image.bin: $(BUILD_DIR)/system.bin $(DISK_FILES) tools/mkdisk.py
 	else \
 		cp $(BUILD_DIR)/system.bin $@; \
 	fi
-	truncate -s '>16M' $@
+	truncate -s '>256M' $@
 	python3 tools/mkdisk.py $@ disk
 	@touch $@
 
@@ -92,13 +92,27 @@ endif
 #   make run AUDIOTIMER=20000              QEMU's audio timer period (us;
 #                                          its default is 10000)
 #   make run ACCEL=kvm                     (whpx on Windows, hvf on macOS)
+#   make run SOUNDCARDS=                   no sound cards at all (only the
+#                                          PC speaker): is it QEMU's
+#                                          emulation of the cards?
+#   make run SOUNDCARDS="-device AC97,audiodev=snd0"   no AdLib (IMF silent)
+#   make run CARD=sb16                     the Sound Blaster 16 instead of
+#                                          the AC'97 (LexOS takes either)
+#   make run QEMUFLAGS="-display sdl"      anything else for QEMU
 AUDIOBUF ?=
 AUDIOTIMER ?=
 ACCEL ?=
 comma := ,
 AUDIO_OPTS = $(if $(AUDIOBUF),$(comma)out.buffer-length=$(AUDIOBUF))$(if $(AUDIOTIMER),$(comma)timer-period=$(AUDIOTIMER))
 AUDIO = -audiodev $(AUDIODEV),id=snd0$(AUDIO_OPTS)
-QEMU_ACCEL = $(if $(ACCEL),-accel $(ACCEL))
+QEMU_ACCEL = $(if $(ACCEL),-accel $(ACCEL)) $(QEMUFLAGS)
+# The sound: an AC'97 (a PCI bus master - QEMU's Sound Blaster, whose
+# emulated ISA DMA shares the main loop with the window, stalled that
+# window on QEMU 10 / Fedora) and the AdLib for .IMF music
+SB16 = -device adlib,audiodev=snd0,iobase=0x220 -device sb16,audiodev=snd0
+CARD ?= ac97
+SOUNDCARDS ?= $(if $(filter sb16,$(CARD)),$(SB16),-device AC97,audiodev=snd0 -device adlib,audiodev=snd0$(comma)iobase=0x220)
+QEMUFLAGS ?=
 
 # The host folder LexOS's `hostls`/`hostget` see (src/hostfs.asm): QEMU
 # presents it to the guest as a whole FAT16 disk - the primary IDE
@@ -118,7 +132,7 @@ run: $(BUILD_DIR)/os-image.bin
 	qemu-system-i386 $(QEMU_ACCEL) -m 256 -drive format=raw,file=$(BUILD_DIR)/os-image.bin,if=ide,index=0 \
 		$(SHARED_DRIVE) $(NIC) \
 		$(AUDIO) -machine pcspk-audiodev=snd0 \
-		-device adlib,audiodev=snd0,iobase=0x220 -device sb16,audiodev=snd0
+		$(SOUNDCARDS)
 
 # Same as `run`, but also exposes COM1 as a TCP socket on localhost, so
 # `recv <name> <hex size>` (see README) has something to actually receive
@@ -130,7 +144,7 @@ run-serial: $(BUILD_DIR)/os-image.bin
 	qemu-system-i386 $(QEMU_ACCEL) -m 256 -drive format=raw,file=$(BUILD_DIR)/os-image.bin,if=ide,index=0 \
 		$(SHARED_DRIVE) $(NIC) \
 		$(AUDIO) -machine pcspk-audiodev=snd0 \
-		-device adlib,audiodev=snd0,iobase=0x220 -device sb16,audiodev=snd0 \
+		$(SOUNDCARDS) \
 		-serial tcp::$(SERIALPORT),server,nowait
 
 # Two LexOS machines on one network, for `chat` (src/chat.asm): run
@@ -142,7 +156,7 @@ run-serial: $(BUILD_DIR)/os-image.bin
 LAN_PORT ?= 5560
 LAN_QEMU = qemu-system-i386 $(QEMU_ACCEL) -m 256 \
 	$(AUDIO) -machine pcspk-audiodev=snd0 \
-	-device sb16,audiodev=snd0
+	-device AC97,audiodev=snd0
 lan1: $(BUILD_DIR)/os-image.bin
 	$(LAN_QEMU) -drive format=raw,file=$(BUILD_DIR)/os-image.bin,if=ide,index=0 \
 		-nic socket,model=rtl8139,listen=:$(LAN_PORT),mac=52:54:00:4c:58:15
@@ -173,7 +187,7 @@ $(BUILD_DIR)/crt0.o: apps/crt0.asm | $(BUILD_DIR)
 
 # one C program per file: apps/guess.c -> disk/APPS/GUESS.APP, and so on
 define C_APP_RULE
-disk/APPS/$(call upper,$(1)).APP: apps/$(1).c apps/lexos.h apps/gui.h apps/mod.h apps/png.h apps/deflate.h apps/app.ld $(BUILD_DIR)/crt0.o
+disk/APPS/$(call upper,$(1)).APP: apps/$(1).c apps/lexos.h apps/gui.h apps/mod.h apps/png.h apps/deflate.h apps/inflate.h apps/jpeg.h apps/gif.h apps/css.h apps/tls.h apps/app.ld $(BUILD_DIR)/crt0.o
 	gcc $$(APP_CFLAGS) -c apps/$(1).c -o $(BUILD_DIR)/$(1).o
 	ld -m elf_i386 -T apps/app.ld --oformat binary -o $$@ $(BUILD_DIR)/crt0.o $(BUILD_DIR)/$(1).o
 endef

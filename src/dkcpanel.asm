@@ -18,7 +18,7 @@ DKC_TAB_H      equ 30
 DKC_TABS       equ 7
 DKC_X0         equ DKC_TABS_W + 16      ; a page: its left edge
 DKC_ROW_Y      equ 50                   ; its first row
-DKC_ROW_H      equ 38
+DKC_ROW_H      equ 34
 DKC_LABEL_W    equ 130
 DKC_BTN_H      equ 24
 DKC_GAP        equ 6
@@ -367,6 +367,25 @@ dkc_set_saver:
     mov byte [dk_cfg_dirty], 1
     ret
 
+dkc_get_icons:                            ; 0 small, 1 normal, 2 big
+    movzx eax, byte [dki_size]            ; (src/dkicons.asm)
+    ret
+dkc_set_icons:
+    cmp al, [dki_size]
+    je .same
+    call dki_resize                       ; (and put in order again)
+    mov byte [dk_cfg_dirty], 1
+.same:
+    ret
+
+dkc_get_saverkind:                        ; 0 the stars, 1 Lex's night
+    movzx eax, byte [dkss_kind]
+    ret
+dkc_set_saverkind:
+    mov [dkss_kind], al
+    mov byte [dk_cfg_dirty], 1
+    ret
+
 dkc_get_sounds:                           ; 0 On, 1 Off
     movzx eax, byte [snd_ui_on]
     or eax, eax
@@ -388,6 +407,22 @@ dkc_set_anim:
     or eax, eax
     setz al
     mov [dka_enabled], al
+    mov byte [dk_cfg_dirty], 1
+    ret
+
+dkc_get_night:                            ; 0 Off, 1 On, 2 Evening
+    movzx eax, byte [dnl_night_mode]      ; (src/dknight.asm)
+    ret
+dkc_set_night:
+    call dnl_set_night
+    mov byte [dk_cfg_dirty], 1
+    ret
+
+dkc_get_termcol:                          ; Classic, Green, Amber, Light
+    movzx eax, byte [dnl_term_scheme]
+    ret
+dkc_set_termcol:
+    call dnl_set_term
     mov byte [dk_cfg_dirty], 1
     ret
 
@@ -767,9 +802,37 @@ dkc_cfg_save:
     stosb
     mov ax, 0x0A0D
     stosw
+    mov esi, dkc_cfg_icons
+    call wget_append
+    mov al, [dki_size]
+    add al, '0'
+    stosb
+    mov ax, 0x0A0D
+    stosw
+    mov esi, dkc_cfg_saverkind
+    call wget_append
+    mov al, [dkss_kind]
+    add al, '0'
+    stosb
+    mov ax, 0x0A0D
+    stosw
     mov esi, dkc_cfg_anim
     call wget_append
     mov al, [dka_enabled]
+    add al, '0'
+    stosb
+    mov ax, 0x0A0D
+    stosw
+    mov esi, dkc_cfg_night
+    call wget_append
+    mov al, [dnl_night_mode]
+    add al, '0'
+    stosb
+    mov ax, 0x0A0D
+    stosw
+    mov esi, dkc_cfg_termcol
+    call wget_append
+    mov al, [dnl_term_scheme]
     add al, '0'
     stosb
     mov ax, 0x0A0D
@@ -793,6 +856,7 @@ dkc_cfg_load:
     mov dword [dk_dbl_ms], 450
     mov byte [dkss_delay_i], 1
     mov byte [dka_enabled], 1
+    mov byte [dkss_kind], 0
     mov dword [dk_res_want], 1
     mov esi, dkc_cfg_mouse
     call dk_cfg_value                     ; -> eax
@@ -810,7 +874,27 @@ dkc_cfg_load:
     jae .no_dbl
     call dkc_set_dbl
 .no_dbl:
+    mov esi, dkc_cfg_night                ; (none: off, Classic)
+    call dk_cfg_value
+    jc .no_night
+    cmp eax, 3
+    jb .night
+.no_night:
+    xor eax, eax
+.night:
+    call dnl_set_night
+    mov esi, dkc_cfg_termcol
+    call dk_cfg_value
+    jc .no_term
+    cmp eax, DNL_SCHEMES
+    jb .term
+.no_term:
+    xor eax, eax
+.term:
+    call dnl_set_term
     call dkclk_cfg_load                   ; (the alarm: src/dkclock.asm)
+    call dch_forget                       ; (a new user: not the last one's
+                                          ;  clipboard history, dkchist.asm)
     mov esi, dkc_cfg_res
     call dk_cfg_value
     jc .no_res
@@ -825,6 +909,22 @@ dkc_cfg_load:
     jae .no_anim
     mov [dka_enabled], al
 .no_anim:
+    mov esi, dkc_cfg_icons                ; (none: normal)
+    call dk_cfg_value
+    jc .normal_icons
+    cmp eax, 3
+    jb .icons
+.normal_icons:
+    mov eax, 1
+.icons:
+    call dki_set_size
+    mov esi, dkc_cfg_saverkind
+    call dk_cfg_value
+    jc .no_kind
+    cmp eax, 2
+    jae .no_kind
+    mov [dkss_kind], al
+.no_kind:
     mov esi, dkc_cfg_saver
     call dk_cfg_value
     jc .done
@@ -857,10 +957,14 @@ dkc_extras     dd 0, dkc_x_appearance, 0, dkc_x_keyboard, dkc_x_time, 0, dkc_x_u
 dkc_rows_look  dd dk_msg_theme, dkc_o_theme, DK_THEMES, 66, dkc_get_theme, dkc_set_theme
                dd dk_msg_backdrop, dk_backdrop_names, DK_BACKDROPS, 66, dkc_get_backdrop, dkc_set_backdrop
                dd dkc_l_wall, dkc_o_wall, 3, 72, dkc_get_wall, dkc_set_wall
+               dd dkc_l_icons, dkc_o_icons, 3, 72, dkc_get_icons, dkc_set_icons
                dd dkc_l_lex, dkc_o_onoff, 2, 72, dkc_get_lex, dkc_set_lex
                dd dkc_l_saver, dkc_o_saver, 4, 72, dkc_get_saver, dkc_set_saver
+               dd dkc_l_saverkind, dkc_o_saverkind, 2, 72, dkc_get_saverkind, dkc_set_saverkind
                dd dkc_l_anim, dkc_o_onoff, 2, 72, dkc_get_anim, dkc_set_anim
                dd dkc_l_screen, dkc_o_screen, 4, 84, dkc_get_screen, dkc_set_screen
+               dd dkc_l_night, dkc_o_night, 3, 72, dkc_get_night, dkc_set_night
+               dd dkc_l_termcol, dkc_o_termcol, 4, 72, dkc_get_termcol, dkc_set_termcol
                dd 0
 dkc_rows_sound dd dk_msg_sounds, dkc_o_onoff, 2, 72, dkc_get_sounds, dkc_set_sounds
                dd dkc_l_volume, dkc_o_mixer, 1, 120, dkc_get_none, dkc_set_mixer
@@ -881,6 +985,10 @@ dkc_o_wall     dd dkc_l_none, dkc_l_sunset, dkc_l_aurora
 dkc_o_onoff    dd dk_msg_on, dk_msg_off
 dkc_o_screen   dd dkc_l_800, dkc_l_1024, dkc_l_1280w, dkc_l_1280
 dkc_o_saver    dd dkc_l_off, dkc_l_1min, dkc_l_3min, dkc_l_10min
+dkc_o_saverkind dd dkc_l_stars, dkc_l_lexnight
+dkc_o_icons    dd dkc_l_small, dkc_l_inormal, dkc_l_big
+dkc_o_night    dd dkc_l_off, dk_msg_on, dkc_l_evening
+dkc_o_termcol  dd dkc_l_classic, dkc_l_green, dkc_l_amber, dkc_l_light
 dkc_o_mixer    dd dkc_l_mixer
 dkc_o_lang     dd dkc_n_en, lang_n_ru, lang_n_es
 dkc_o_tz       dd dkc_l_minus, dkc_l_plus
@@ -897,8 +1005,22 @@ dkc_n_en       db "English ", 0                ; (a name: not translated)
 dkc_l_wall     db "Wallpaper", 0
 dkc_l_lex      db "Lex the cat", 0
 dkc_l_saver    db "Screen saver", 0
+dkc_l_saverkind db "Saver picture", 0
+dkc_l_icons    db "Icons", 0
+dkc_l_small    db "Small", 0
+dkc_l_big      db "Big", 0
+dkc_l_inormal  db "Normal", 0
+dkc_l_stars    db "Stars", 0
+dkc_l_lexnight db "Lex", 0
 dkc_l_anim     db "Animations", 0
 dkc_l_screen   db "Screen", 0
+dkc_l_night    db "Night light", 0
+dkc_l_evening  db "Evening", 0
+dkc_l_termcol  db "Terminal colors", 0
+dkc_l_classic  db "Classic", 0
+dkc_l_green    db "Green", 0
+dkc_l_amber    db "Amber", 0
+dkc_l_light    db "Light", 0
 dkc_l_800      db "800x600", 0
 dkc_l_1024     db "1024x768", 0
 dkc_l_1280w    db "1280x720", 0
@@ -942,4 +1064,8 @@ dkc_cfg_mouse  db "mouse=", 0
 dkc_cfg_dbl    db "dbl=", 0
 dkc_cfg_saver  db "saver=", 0
 dkc_cfg_anim   db "anim=", 0
+dkc_cfg_saverkind db "saverkind=", 0
+dkc_cfg_icons  db "iconsize=", 0
 dkc_cfg_res    db "res=", 0
+dkc_cfg_night  db "night=", 0
+dkc_cfg_termcol db "termcol=", 0

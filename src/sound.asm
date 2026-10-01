@@ -99,10 +99,19 @@ play_file:
     jmp .end
 
 .have_name:
+    movzx esi, word [esp + 2]             ; a path ("/DEMOS/TUNE.IMF"): that
+    call shx_has_slash                    ; (src/shellx.asm)
+    jnc .by_name
+    call shx_find                         ; -> eax, fs_tmp_name
+    cmp ax, -1
+    jne .found
+    jmp .missing
+.by_name:
     mov si, fs_tmp_name
     call fs_find_by_name
     cmp ax, -1
     jne .found
+.missing:
     mov si, msg_fs_notfound
     call print_string
     jmp .end
@@ -644,7 +653,7 @@ play_wav_file:
     cmp dword [wav_data_size], 0
     je .end
 
-    call sb_detect
+    call sb_stream_init                   ; (an AC'97 or a Sound Blaster)
     jc .speaker
     call mixer_play_wav
     jmp .end
@@ -1012,6 +1021,14 @@ play_spawn:
     loop .copy
     mov byte [edi], 0
 .copied:
+    mov esi, play_bg_arg                  ; (there at all? else said now,
+    call shx_find                         ;  not from the task, later)
+    cmp eax, -1
+    jne .there
+    mov si, msg_fs_notfound
+    call print_string
+    jmp .done
+.there:
     ; the task's name: "play NAME"
     mov esi, play_bg_task_name_prefix
     mov edi, play_bg_task_name
@@ -1033,10 +1050,12 @@ play_spawn:
     mov eax, play_bg_task
     mov esi, play_bg_task_name
     mov bl, SCHED_PRIO_HIGH
-    call task_create
-    cmp eax, -1
-    je .full
+    inc dword [sched_lock]                ; (its pid kept before it can run:
+    call task_create                      ;  a file not found ends it at
+    cmp eax, -1                           ;  once, and it clears the pid)
+    je .full_unlock
     mov [play_bg_pid], eax
+    dec dword [sched_lock]
     mov si, msg_play_bg_started
     call print_string
     call basic_print_num
@@ -1047,7 +1066,8 @@ play_spawn:
     mov si, msg_play_bg_busy
     call print_string
     jmp .done
-.full:
+.full_unlock:
+    dec dword [sched_lock]
     mov si, msg_task_table_full
     call print_string
 .done:
@@ -1165,6 +1185,8 @@ sb_stream_init:
     cmp byte [sb_stream_ready], 0
     jne .ok
     pushad
+    call ac97_init                        ; an AC'97 first (src/ac97.asm)
+    jnc .ready
     call sb_detect
     jc .fail
     call sb_reset
@@ -1177,6 +1199,7 @@ sb_stream_init:
     in al, PIC1_DATA
     and al, ~0x20
     out PIC1_DATA, al
+.ready:
     mov byte [sb_stream_ready], 1
     popad
 .ok:
@@ -1192,6 +1215,8 @@ sb_stream_init:
 ; mixed first - so what was just queued is heard at once. Interrupts
 ; off (the mixer's mix_kick)
 sb_stream_start:
+    cmp byte [ac97_present], 0            ; (the AC'97's own)
+    jne ac97_start
     pushad
     cmp byte [sb_streaming], 0            ; playing: paused first
     je .stopped
@@ -1249,6 +1274,18 @@ sb_stream_start:
     call sb_write
     mov byte [sb_streaming], 1
     popad
+    ret
+
+; eax = a rate, ecx = channels -> what the card plays instead (the
+; AC'97: always stereo; 48000Hz if it has no variable rate)
+sb_stream_fit:
+    cmp byte [ac97_present], 0
+    je .done
+    mov ecx, 2
+    cmp byte [ac97_rate_fixed], 0
+    je .done
+    mov eax, 48000
+.done:
     ret
 
 ; IRQ5: a half has been played - refill it; two silent ones in a row:

@@ -513,7 +513,7 @@ lex_command:                              ; esi = the text after "lex" (or 0)
     jmp .skip
 .have:
     cmp byte [esi], 0
-    jne .said
+    jne .words
 .own:
     rdtsc                                 ; one of his sayings, at random
     xor edx, edx
@@ -521,6 +521,21 @@ lex_command:                              ; esi = the text after "lex" (or 0)
     div ecx
     mov esi, [lex_sayings + edx*4]
     call tr_lookup                        ; (src/langui.asm: in the system's
+    jmp .said
+.words:
+    mov eax, [esi]                        ; "lex diary": his day (src/dkcat.asm)
+    or eax, 0x20202020
+    cmp eax, 'diar'
+    jne .said
+    mov al, [esi + 4]
+    or al, 0x20
+    cmp al, 'y'
+    jne .said
+    cmp byte [esi + 5], ' '
+    ja .said
+    call lex_diary
+    popad
+    ret
 .said:                                    ;  language)
     mov [lex_text], esi
     xor ecx, ecx                          ; its length (at most 60 shown)

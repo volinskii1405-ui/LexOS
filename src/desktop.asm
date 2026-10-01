@@ -63,8 +63,8 @@ DK_TITLE_LEN      equ 32
 DK_MENU_W         equ 170
 DK_MENU_ITEM_H    equ 24
 DK_MENU_ITEMS     equ 12
-DK_TRAY_W         equ 188                 ; the taskbar's right end: volume,
-                                          ; network, the time
+DK_TRAY_W         equ 216                 ; the taskbar's right end: music,
+                                          ; volume, network, the time
 DK_CAL_W          equ 340                 ; the calendar, the notifications
 DK_CAL_H          equ 196 + DNC_H         ; above it (src/dknotify.asm)
 DK_PROG_W         equ 230                 ; the Programs submenu
@@ -274,6 +274,7 @@ dk_video_mode:
     mov dword [dk_prev_n], 0
     mov byte [dk_pg_ptr_on], 0
     mov byte [dk_pg_ptr_on + 1], 0
+    mov word [dmag_pg_on], 0              ; (src/dkmag.asm)
     call dk_front_forget
     popad
     ret
@@ -364,6 +365,7 @@ desktop_resume_hook:
 desktop_task:
     mov eax, SND_START                    ; (src/dksound.asm: a tune)
     call snd_play
+    call dkx_cat_greet                    ; (Lex says hello: src/dkcat.asm)
     mov eax, [timer_ms]
     mov [dk_next_frame], eax
 .frame:
@@ -399,7 +401,10 @@ desktop_task:
     call dkx_win_key                      ;  the Win key)
     call dk_alt_tab_work
     call drs_work                         ; (src/dkregion.asm: Shift+PrtSc)
+    call shx_work                         ; (src/shellx.asm: `open`)
     call dkclk_work                       ; (src/dkclock.asm: alarm, timer)
+    call dnl_work                         ; (src/dknight.asm: the night light)
+    call dch_work                         ; (src/dkchist.asm: Win+V)
     call dk_shot_capture                  ; (src/dkwins.asm)
     call dk_toast_work
     call dk_wheel_work                    ; (src/dkwins.asm)
@@ -1238,6 +1243,13 @@ dk_mouse_event:
     mov [dk_my], ebx
     mov ch, [dk_last_buttons]
     mov [dk_last_buttons], cl
+    cmp cl, 1                             ; pressed on a toast that does
+    jne .no_toast                         ; something (src/dkwins.asm)
+    or ch, ch
+    jnz .no_toast
+    call dk_toast_click
+    jnc .done
+.no_toast:
 
     cmp byte [dk_resizing], 0
     je .not_resizing
@@ -1411,6 +1423,8 @@ dk_click:
     pushad
     call dkn_click                        ; the name dialog's (src/dkname.asm)
     jnc .done
+    call dch_click                        ; Win+V's panel (src/dkchist.asm)
+    jnc .done
     cmp byte [dk_ctx_open], 0             ; a context menu: an item, or
     je .no_ctx                            ; away it goes
     call dk_ctx_click                     ; (src/dkwins.asm)
@@ -1483,6 +1497,11 @@ dk_click:
     xor edx, edx
     mov ecx, DK_MENU_ITEM_H
     div ecx
+    cmp eax, [dk_prog_vn]                 ; (past the programs: "Files",
+    jb .run_prog                          ;  then the files found)
+    je .done
+    dec eax
+.run_prog:
     call dk_prog_run                      ; (src/dkwins.asm)
     jmp .done
 .no_sub:
@@ -2053,6 +2072,7 @@ dk_render:
     call dk_snap_draw                     ; (src/dkextra.asm: an edge's outline)
     call dka_draw                         ; (src/dkanim.asm: a window growing)
     call dsw_draw                         ; (src/dkswitch.asm: Alt+Tab's panel)
+    call dch_draw                         ; (src/dkchist.asm: Win+V's)
     call drs_draw                         ; (src/dkregion.asm: a part chosen)
     call dk_draw_toast
     call dkt_draw                         ; (src/dkextra.asm: the tooltip)
@@ -2782,6 +2802,9 @@ dk_blit:
     cmp eax, [edi]
     je .scan
     mov [edi], eax
+    cmp byte [dk_night_on], 0             ; the night light: warmer
+    jne .warm
+.put:
     mov [edi + ebp], eax
     add esi, 4
     add edi, 4
@@ -2797,6 +2820,12 @@ dk_blit:
 .done:
     popad
     ret
+.warm:                                    ; (0xRRGGBB: less green, less blue)
+    movzx ebx, ah
+    mov ah, [dk_night_g + ebx]
+    movzx ebx, al
+    mov al, [dk_night_b + ebx]
+    jmp .put
 
 ; The frame onto the screen. There are two pages of video memory: one
 ; shown, and one drawn into while it isn't, then shown in one step (the
@@ -2819,6 +2848,10 @@ dk_present:
     cmp byte [dk_fm_state], 3             ; (a dragged icon follows too)
     je .go
     cmp byte [dk_ptr_ghost], 0            ; (just dropped: the icon goes)
+    jne .go
+    cmp byte [dmag_zoom], 0               ; (the magnifier: every frame)
+    jne .go
+    cmp word [dmag_pg_on], 0
     jne .go
     jmp .done
 .go:
@@ -2844,6 +2877,19 @@ dk_present:
     mov ecx, 1
     call .rects
 .no_old:
+    cmp byte [dmag_pg_on + ebp], 0        ; the magnifier as drawn here
+    je .no_lens
+    mov esi, ebp
+    shl esi, 4
+    add esi, dmag_pg
+    mov ecx, 1
+    call .rects
+    mov byte [dmag_pg_on + ebp], 0
+.no_lens:
+    cmp byte [dmag_zoom], 0               ; and where it is now (src/dkmag.asm)
+    je .lens_done
+    call dmag_draw
+.lens_done:
     call dk_draw_pointer
     call dk_ptr_rect
     mov esi, ebp
@@ -3047,6 +3093,19 @@ dk_quit           db 0
 dk_suspended      db 0
 dk_in_transition  db 0
 dk_redraw_all     db 0
+dk_night_on       db 0                         ; (src/dknight.asm)
+dk_night_g:
+%assign i 0
+%rep 256
+                  db (i * 215) / 255
+%assign i i + 1
+%endrep
+dk_night_b:
+%assign i 0
+%rep 256
+                  db (i * 165) / 255
+%assign i i + 1
+%endrep
 DK_DIRTY_MAX      equ 8
 dk_nrects         dd 0
 dk_rects          times DK_DIRTY_MAX * 4 dd 0  ; x0, y0, x1, y1 each
@@ -3161,7 +3220,7 @@ dk_zcount         dd 0
 dk_def_x          dd 30,   684,  240,  170,  40,   250,  420,  200
 dk_def_y          dd 24,   30,   120,  90,   90,   90,   260,  60
 dk_def_w          dd 640,  CLK_W, 320, 660,  680,  520,  400,  320
-dk_def_h          dd 400,  252,  200,  420,  380,  400,  210,  200
+dk_def_h          dd 400,  252,  200,  520,  380,  400,  210,  200
 dk_kind_names     dd dk_title_terminal, dk_title_clock, dk_title_pictures, dk_title_system
                   dd dk_title_files, dk_title_tasks, dk_title_mixer, dk_title_program
 dk_menu_labels    dd dk_menu_programs

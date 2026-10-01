@@ -284,7 +284,7 @@ bkl_drop:
     mov eax, [sched_current]
     cmp [bkl_owner], eax
     jne .done
-    call jnl_commit                       ; (its changes, written as one:
+    call jnl_commit_lazy                  ; (its changes, written as one:
     mov dword [bkl_owner], -1             ;  src/fsjournal.asm)
 .done:
     pop eax
@@ -332,7 +332,7 @@ task_wait:
     cmp [bkl_owner], ebx
     pop eax
     jne .not_held
-    call jnl_commit                       ; (src/fsjournal.asm)
+    call jnl_commit_lazy                  ; (src/fsjournal.asm)
     mov dword [bkl_owner], -1
     call task_wait_raw
     call bkl_take

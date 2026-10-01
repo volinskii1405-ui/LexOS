@@ -70,6 +70,15 @@ fs_run:
     jmp .end
 
 .have_name:
+    movzx esi, word [esp + 2]      ; a path ("/APPS/SNAKE.APP"): that
+                                   ; (the word, as it came: on the stack)
+    call shx_has_slash
+    jnc .by_name
+    call shx_find                  ; (src/shellx.asm) -> eax, fs_tmp_name
+    cmp ax, -1
+    jne .found
+    jmp .not_found
+.by_name:
     mov si, fs_tmp_name
     call fs_find_by_name
     cmp ax, -1
@@ -77,7 +86,7 @@ fs_run:
     call fs_find_in_apps           ; not here: the APPS folder, then?
     cmp ax, -1
     jne .found
-
+.not_found:
     mov si, msg_fs_notfound
     call print_string
     jmp .end

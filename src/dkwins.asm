@@ -101,10 +101,10 @@ dk_draw_terminal:
     push edi
     mov esi, eax
     and eax, 0x0F
-    mov edx, [dk_ega + eax*4]             ; foreground
-    shr esi, 4
+    mov edx, [dk_term_pal + eax*4]        ; foreground (the scheme's:
+    shr esi, 4                            ;  src/dknight.asm)
     and esi, 0x07
-    mov esi, [dk_ega + esi*4]             ; background
+    mov esi, [dk_term_pal + esi*4]        ; background
     cmp byte [dk_term_sel], 0             ; (selected: the colors swapped)
     je .colors
     xchg edx, esi
@@ -131,7 +131,7 @@ dk_draw_terminal:
     mov ecx, [dkw_w + ebp*4]
     sub ecx, SCREEN_COLS * 8
     mov edx, [dkw_h + ebp*4]
-    xor esi, esi
+    mov esi, [dk_term_pal]                ; (the scheme's black)
     call dk_fill
     mov eax, [dk_term_xrows]
     add eax, SCREEN_ROWS
@@ -178,7 +178,7 @@ dk_draw_terminal:
     add ebx, 13
     mov ecx, 8
     mov edx, 2
-    mov esi, 0xC0C0C0
+    mov esi, [dk_term_pal + 7*4]          ; (the scheme's text color)
     call dk_fill
     jmp dk_contents_done
 
@@ -2405,13 +2405,21 @@ dk_prog_filter:
 .filtered:
     mov [dk_prog_vn], edx
     call dkx_recent_order                 ; (src/dkextra.asm: recent ones first)
+    call dmf_filter                       ; (files too: src/dkmfind.asm)
     mov dword [dk_prog_sel], -1
     cmp byte [dk_search], 0
     je .rows
-    or edx, edx
+    mov eax, edx
+    add eax, [dmf_n]
     jz .rows
     mov dword [dk_prog_sel], 0
 .rows:
+    mov eax, [dmf_n]                      ; ("Files" and them: rows too)
+    or eax, eax
+    jz .no_files
+    inc eax
+.no_files:
+    add edx, eax
     or edx, edx
     jnz .shown
     inc edx                               ; ("nothing" takes a row)
@@ -2495,8 +2503,9 @@ dk_menu_keys_work:
     call dk_prog_filter
     jmp .key
 .special:
-    cmp dword [dk_prog_vn], 0
-    je .key
+    mov edx, [dk_prog_vn]                 ; (the programs, then the files)
+    add edx, [dmf_n]
+    jz .key
     mov ecx, [dk_prog_sel]
     cmp ah, 0x48                          ; Up
     jne .down
@@ -2512,11 +2521,14 @@ dk_menu_keys_work:
     mov byte [dk_prog_open], 1
     call dk_prog_scan
     mov ecx, -1
+    mov edx, [dk_prog_vn]
+    add edx, [dmf_n]
+    jz .key
 .have_list:
     inc ecx
-    cmp ecx, [dk_prog_vn]
+    cmp ecx, edx
     jb .picked
-    mov ecx, [dk_prog_vn]
+    mov ecx, edx
     dec ecx
 .picked:
     mov [dk_prog_sel], ecx
@@ -2654,8 +2666,11 @@ dk_draw_programs:
     mov ecx, DK_PROG_W
     mov esi, COL_SUBMENU
     call dk_fill
+    call dmf_draw                         ; (the files found: src/dkmfind.asm)
     cmp dword [dk_prog_vn], 0
     jne .items
+    cmp dword [dmf_n], 0
+    jne .done
     add eax, 14
     add ebx, 4
     mov esi, dk_prog_none
@@ -2712,7 +2727,7 @@ dk_draw_programs:
 dk_prog_run:
     pushad
     cmp eax, [dk_prog_vn]
-    jae .done
+    jae .file
     mov eax, [dk_prog_view + eax*4]
     mov esi, eax
     shl esi, 4
@@ -2721,6 +2736,10 @@ dk_prog_run:
     shl edi, 5
     add edi, dk_prog_paths
     call dk_launch
+    jmp .done
+.file:
+    sub eax, [dk_prog_vn]                 ; a file found (src/dkmfind.asm)
+    call dmf_open
 .done:
     popad
     ret
@@ -2925,6 +2944,32 @@ dk_draw_tray:
     pushad
     mov ebp, [dk_h] ; (the icons' top)
     add ebp, 0 - DK_TASKBAR_H + 7
+    cmp byte [aext_music], 0              ; a player playing: a note
+    je .no_music                          ; (src/appext.asm's music_state)
+    movzx ebx, byte [aext_music_con]
+    call dk_app_window_of
+    cmp eax, -1
+    jne .music_on
+    mov byte [aext_music], 0              ; (its window's gone: so is it)
+    jmp .no_music
+.music_on:
+    mov eax, [dk_w]
+    add eax, ( 0 - 212 )
+    lea ebx, [ebp - 2]
+    mov ecx, 24
+    mov edx, 18
+    mov esi, COL_TITLE_ON
+    cmp byte [aext_music], 1
+    je .music_box
+    mov esi, COL_TASKBTN                  ; (paused)
+.music_box:
+    call dk_fill
+    add eax, 8
+    inc ebx
+    mov esi, dk_msg_note
+    mov edx, COL_WHITE
+    call dk_text
+.no_music:
     cmp byte [kbd_caps_on], 0             ; Caps Lock on: an "A" lit
     je .no_caps
     mov eax, [dk_w]
@@ -3038,6 +3083,18 @@ dk_draw_tray:
     popad
     ret
 
+; The tray's note: to be drawn again
+dk_mark_tray_music:
+    pushad
+    mov eax, [dk_w]
+    add eax, ( 0 - 212 )
+    mov ebx, [dk_task_y]
+    mov ecx, 24
+    mov edx, DK_TASKBAR_H
+    call dk_mark
+    popad
+    ret
+
 ; dk_line with ebx..edx as dk_line wants it, esi the color (a helper)
 dk_line_c:
     call dk_line
@@ -3046,6 +3103,17 @@ dk_line_c:
 ; eax = x of a click on the tray
 dk_tray_click:
     pushad
+    mov edx, [dk_w]                       ; the note: the player paused /
+    add edx, 0 - 188                      ; on again
+    cmp eax, edx
+    jae .not_music
+    cmp byte [aext_music], 0
+    je .done
+    mov esi, aext_cmd_pause
+    call aext_music_send
+    call snd_click
+    jmp .done
+.not_music:
     push edx
     mov edx, [dk_w]
     add edx, ( 0 - 152 ) - 4
@@ -3106,6 +3174,20 @@ dk_tray_wheel:
     jb .done
     mov eax, [dk_mx]
     sub eax, [dk_w]
+    cmp eax, -212 - 4                     ; the note's: the next / the one
+    jl .done                              ; before
+    cmp eax, -188
+    jge .not_music
+    cmp byte [aext_music], 0
+    je .done
+    mov esi, aext_cmd_next
+    or ebp, ebp
+    jns .music_cmd
+    mov esi, aext_cmd_prev
+.music_cmd:
+    call aext_music_send
+    jmp .done
+.not_music:
     cmp eax, -118 - 4                     ; (the volume's, from the right)
     jl .done
     cmp eax, -92 - 4
@@ -3561,6 +3643,7 @@ DKC_PAINT    equ 44                   ; Edit in Paint (src/dktrash.asm)
 DKC_WALL     equ 45                   ; Set as wallpaper (src/dkwall.asm)
 DKC_LOCATE   equ 46                   ; Recent: Open its folder (src/dkfview.asm)
 DKC_HEX      equ 47                   ; Open in the Hex editor (src/dktrash.asm)
+DKC_CATBALL  equ 48                   ; Lex: throw the ball (src/dkcat.asm)
 DK_CTX_W    equ 160
 DK_CTX_ITEM equ 22
 
@@ -3843,6 +3926,12 @@ dk_text_raw_all:
 ; eax = a context menu item (DKC_*): done
 dk_ctx_do:
     pushad
+    cmp eax, DKC_CATBALL                  ; Lex: the ball (src/dkcat.asm)
+    jne .not_ball
+    call dkx_cat_act
+    popad
+    ret
+.not_ball:
     cmp eax, DKC_TRESTORE                 ; (src/dktrash.asm: Restore,
     jb .not_more                          ;  Edit, ...)
     mov dword [dk_fm_msg], 0
@@ -4203,6 +4292,8 @@ dk_shot_capture:
 DK_TOAST_W equ 420
 dk_toast:
     pushad
+    mov byte [dk_toast_act], 0            ; (a click on it: nothing - unless
+                                          ;  its caller says, after this)
     call dnc_record                       ; (src/dknotify.asm: kept)
     cmp byte [dnc_quiet], 0               ; (do not disturb: only kept)
     jne .quiet
@@ -4261,8 +4352,75 @@ dk_draw_toast:
     mov edi, (DK_TOAST_W - 24) / 8
     call dk_text_n
     pop edi
+    movzx ecx, byte [dk_toast_act]        ; something a click does: said
+    jecxz .done                           ; at its right end
+    mov esi, [dk_toast_act_l + ecx*4 - 4]
+    call tr_lookup
+    call dki_strlen
+    shl ecx, 3
+    mov eax, [dk_w2]
+    add eax, DK_TOAST_W / 2 - 12
+    sub eax, ecx
+    sub eax, 6
+    push ecx
+    add ecx, 12
+    mov edx, 20
+    sub ebx, 2
+    push esi
+    mov esi, COL_TITLE_ON
+    call dk_fill
+    pop esi
+    pop ecx
+    add eax, 6
+    add ebx, 2
+    mov edx, COL_WHITE
+    call dk_text
 .done:
     popad
+    ret
+
+; A left click at eax, ebx: on a toast that does something (a
+; screenshot: opened in Pictures; the Clock ringing: stopped)? -> carry=0
+dk_toast_click:
+    cmp byte [dk_toast_on], 0
+    je .no
+    cmp byte [dk_toast_act], 0
+    je .no
+    cmp ebx, 8
+    jb .no
+    cmp ebx, 8 + 30
+    jae .no
+    push eax
+    sub eax, [dk_w2]
+    add eax, DK_TOAST_W / 2
+    cmp eax, DK_TOAST_W
+    pop eax
+    jae .no
+    pushad
+    cmp byte [dk_toast_act], 1
+    jne .not_pic
+    mov eax, [dk_toast_slot]              ; a picture: Pictures, on it
+    dec eax
+    mov [dk_pic_slot], eax
+    mov al, [dk_toast_dir]
+    mov [dk_pic_dir], al
+    mov byte [dk_pic_state], 1
+    mov eax, K_PICS
+    call dk_win_single
+    jmp .gone
+.not_pic:
+    mov byte [dkclk_ringing], 0           ; the Clock: quiet (src/dkclock.asm)
+    call dkclk_mark
+.gone:
+    call snd_click
+    mov byte [dk_toast_on], 0
+    mov byte [dk_toast_act], 0
+    call dk_mark_toast
+    popad
+    clc
+    ret
+.no:
+    stc
     ret
 
 ; -> bl = the console to type a command into: the one on screen, if
@@ -5672,7 +5830,7 @@ dk_ctx_labels     dd dk_ctx_l_open, dk_ctx_l_rename, dk_ctx_l_copy, dk_ctx_l_del
                   dd dkx_l_newlnk, dkx_l_iopen, dkx_l_irename, dkx_l_idelete
                   dd dkx_l_iprops, dkt_l_restore, dkt_l_edit, dkt_l_zip
                   dd dkt_l_unzip, dkt_l_tempty, dkw_l_paint, dkw_l_set
-                  dd dkf_l_locate, dkt_l_hex
+                  dd dkf_l_locate, dkt_l_hex, dkx_l_catball
 dk_ctx_l_open     db "Open", 0
 dk_ctx_l_rename   db "Rename...", 0
 dk_ctx_l_copy     db "Copy to...", 0
@@ -5740,6 +5898,13 @@ dk_fm_cols        dd 6                    ; Files: the grid the window has
 dk_fm_rows        dd 4                    ; room for (dk_fm_layout)
 dk_fm_page_n      dd 24
 dk_pic_state      db 0                    ; 0 -, 1 to load, 2 shown, 3 none
+dk_msg_note       db 0x0E, 0            ; (the tray's note: the font's own)
+dk_toast_act      db 0                  ; a click on the toast: 1 open a
+dk_toast_dir      db 0                  ; picture (its slot, its folder),
+dk_toast_slot     dd 0                  ; 2 stop the Clock's ringing
+dk_toast_act_l    dd dk_l_toast_open, dk_l_toast_stop
+dk_l_toast_open   db "Open", 0
+dk_l_toast_stop   db "Stop", 0
 dk_pic_slot       dd -1
 dk_pic_dir        db FS_ROOT_BYTE
 dk_pic_win        dd 0
@@ -5816,6 +5981,9 @@ dk_app_pal        times DK_APPS * 256 dd 0
 dk_cube_levels    db 0, 51, 102, 153, 204, 255
 ; the 16 text colors, as 0xRRGGBB
 dk_ega            dd 0x000000, 0x0000AA, 0x00AA00, 0x00AAAA, 0xAA0000, 0xAA00AA, 0xAA5500, 0xAAAAAA
+                  dd 0x555555, 0x5555FF, 0x55FF55, 0x55FFFF, 0xFF5555, 0xFF55FF, 0xFFFF55, 0xFFFFFF
+; the Terminal's 16: the Control panel's scheme (src/dknight.asm)
+dk_term_pal       dd 0x000000, 0x0000AA, 0x00AA00, 0x00AAAA, 0xAA0000, 0xAA00AA, 0xAA5500, 0xAAAAAA
                   dd 0x555555, 0x5555FF, 0x55FF55, 0x55FFFF, 0xFF5555, 0xFF55FF, 0xFFFF55, 0xFFFFFF
 ; sin(i * 6 degrees) * 1000, i = 0..59
 dk_sin60 dw 0, 105, 208, 309, 407, 500, 588, 669, 743, 809, 866, 914, 951, 978, 995, 1000, 995, 978, 951, 914, 866, 809, 743, 669, 588, 500, 407, 309, 208, 105

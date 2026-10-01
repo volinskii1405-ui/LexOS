@@ -253,8 +253,7 @@ view_draw_resolution_label:
 
 ; ============================================================
 ; Reads fs_tmp_slot's .BMP content and writes its pixel data into the
-; framebuffer (the file's inline bytes, then its chain of extra
-; sectors).
+; framebuffer (the file's inline bytes, then the rest of it).
 ; ============================================================
 view_load_bmp:
     pusha
@@ -354,37 +353,33 @@ view_load_bmp:
     rep stosb
 .placement_done:
 
-    mov ax, FS_CHAIN_OFFSET
-    call fs_scratch_read_word
-    mov [view_read_chain], ax
-
-.chain_loop:
-    cmp word [view_read_chain], FS_NO_CHAIN
-    je .chain_done
-
-    mov ax, [view_read_chain]
-    call fs_extra_read
-
-    xor bx, bx
-.fill_loop:
-    cmp bx, 508
-    jae .fill_done
+    ; the rest of the file, 4KB at a time
+.piece:
     mov ecx, [view_read_pos]
     cmp ecx, [view_total_size]
-    jae .skip_consume
-    mov ax, bx
-    call fs_scratch_read_byte
+    jae .chain_done
+    pushad
+    movzx eax, word [fs_tmp_slot]
+    mov ebx, [view_read_pos]
+    mov edi, FAT_IO
+    mov ecx, 4096
+    call fat_read                    ; -> ecx
+    mov [view_piece], ecx
+    popad
+    cmp dword [view_piece], 0
+    je .chain_done
+    xor ebx, ebx
+.fill_loop:
+    cmp ebx, [view_piece]
+    jae .piece
+    mov ecx, [view_read_pos]
+    cmp ecx, [view_total_size]
+    jae .chain_done
+    mov al, [FAT_IO + ebx]
     call view_consume_byte
-.skip_consume:
     inc dword [view_read_pos]
-    inc bx
+    inc ebx
     jmp .fill_loop
-.fill_done:
-
-    mov ax, FS_EXTRA_NEXT_OFFSET
-    call fs_scratch_read_word
-    mov [view_read_chain], ax
-    jmp .chain_loop
 
 .chain_done:
     popa
@@ -441,7 +436,7 @@ view_word_to_dec:
     ret
 
 view_read_pos      dd 0
-view_read_chain    dw 0
+view_piece         dd 0
 view_bmp_w         dd 0
 view_bmp_h         dd 0
 view_total_size    dd 0

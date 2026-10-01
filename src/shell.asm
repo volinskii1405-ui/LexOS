@@ -546,6 +546,27 @@ handle_command:
     cmp ax, 1
     je .do_df
 
+    mov si, buffer                 ; open / clip (src/shellx.asm)
+    mov di, cmd_open_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_open
+    mov si, buffer
+    mov di, cmd_open
+    call strcmp_eq
+    cmp ax, 1
+    je .do_open
+    mov si, buffer
+    mov di, cmd_clip_prefix
+    call strcmp_prefix
+    cmp ax, 1
+    je .do_clip
+    mov si, buffer
+    mov di, cmd_clip
+    call strcmp_eq
+    cmp ax, 1
+    je .do_clip
+
     ; Empty line (just Enter) - do nothing
     cmp byte [buffer], 0
     je .done
@@ -557,6 +578,15 @@ handle_command:
     cmp ax, 1
     jne .truly_unknown
     call script_run
+    jmp .done
+
+.do_open:
+    mov esi, buffer + 4
+    call shell_open
+    jmp .done
+.do_clip:
+    mov esi, buffer + 4
+    call shell_clip
     jmp .done
 
 .truly_unknown:
@@ -1115,6 +1145,7 @@ show_help:
 ; ============================================================
 do_shutdown:
     call dkfs_clean                ; (ended properly: src/dkfscheck.asm)
+    call fat_shutdown              ; (and so the FAT says: src/fat32.asm)
     call jnl_commit                ; (nothing left half written)
     call ata_flush                 ; (and all of it out of the disk's cache)
     mov ax, 0x2000
@@ -1135,6 +1166,7 @@ do_shutdown:
 ; ============================================================
 do_reboot:
     call dkfs_clean
+    call fat_shutdown
     call jnl_commit
     call ata_flush                 ; (what's written: out of the disk's cache)
     cli

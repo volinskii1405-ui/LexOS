@@ -194,7 +194,7 @@ dk_res_apply:
     add eax, edx
 .shifted:
     mov ecx, [dk_w]
-    sub ecx, DKI_W
+    sub ecx, [dki_w]
     cmp eax, ecx
     jle .x_in
     mov eax, ecx
@@ -205,8 +205,10 @@ dk_res_apply:
 .x_ok:
     mov [dki_x + ebx*4], eax
     mov eax, [dki_y + ebx*4]              ; (past the grid's last row)
-    imul ecx, [dkg_rows], DKI_H + 8
-    add ecx, DKG_TOP - DKI_H
+    mov ecx, [dkg_rows]
+    imul ecx, [dki_ch]
+    add ecx, DKG_TOP
+    sub ecx, [dki_h]
     cmp eax, ecx
     jle .y_ok
     mov dword [dki_x + ebx*4], -1         ; (below it now: a free cell,

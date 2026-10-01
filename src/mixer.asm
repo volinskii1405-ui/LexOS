@@ -272,6 +272,7 @@ mix_kick:
     mov eax, MIX_RATE
     mov ecx, 2
 .needed:
+    call sb_stream_fit                    ; (what the card can: src/sound.asm)
     cmp byte [sb_streaming], 0
     je .start
     cmp eax, [mix_out_rate]               ; playing, and good enough

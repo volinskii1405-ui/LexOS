@@ -847,153 +847,18 @@ uranium_backspace:
 
 ; ============================================================
 ; Writes content_buf[0..content_buf_len) to disk into the slot (index
-; in ax): first frees the old chain of extra sectors, writes the
-; inline part (up to 127 bytes), and the remainder - into a new chain
-; of extra sectors (per the fs_append protocol: used/next fields, see src/fs_extra.asm).
+; in ax): the file emptied, then all of it written (src/fat32.asm).
+; carry=1 if the disk was full (then it's what fit).
 ; ============================================================
 fs_save_content:
-    push ax
-    push bx
-    push cx
-    push dx
-    push si
-
+    pushad
     mov [fs_tmp_slot], ax
-    call fs_free_chain
-    mov ax, [fs_tmp_slot]
-    call fs_read_slot
-
-    mov cx, [content_buf_len]
-    cmp cx, FS_CONTENT_LEN - 1
-    jbe .inline_fits
-    mov cx, FS_CONTENT_LEN - 1
-.inline_fits:
-    mov [fs_save_inline_count], cx
-
-    xor bx, bx
-.inline_loop:
-    cmp bx, cx
-    jae .inline_done
-    mov al, [content_buf + bx]
-    mov dl, al
-    mov ax, bx
-    add ax, FS_CONTENT_OFFSET
-    call fs_scratch_write_byte
-    inc bx
-    jmp .inline_loop
-.inline_done:
-
-    mov ax, FS_TOTAL_LEN_OFFSET
-    mov dx, [content_buf_len]
-    call fs_scratch_write_size16
-
-    mov cx, [content_buf_len]
-    cmp cx, [fs_save_inline_count]
-    ja .need_chain
-
-    mov ax, FS_CHAIN_OFFSET
-    mov dx, FS_NO_CHAIN
-    call fs_scratch_write_word
-    mov ax, [fs_tmp_slot]
-    call fs_write_slot
-    jmp .end
-
-.need_chain:
-    mov ax, [fs_tmp_slot]
-    call fs_write_slot
-
-    mov si, [fs_save_inline_count]
-    mov word [fs_save_prev], FS_NO_CHAIN
-
-.chain_loop:
-    cmp si, [content_buf_len]
-    jae .end
-
-    call fs_extra_alloc
-    jc .full
-
-    mov bx, ax
-
-    mov ax, FS_EXTRA_USED_OFFSET
-    xor dx, dx
-    call fs_scratch_write_word
-    mov ax, FS_EXTRA_NEXT_OFFSET
-    mov dx, FS_NO_CHAIN
-    call fs_scratch_write_word
-    mov ax, bx
-    call fs_extra_write
-
-    cmp word [fs_save_prev], FS_NO_CHAIN
-    jne .link_prev
-
-    mov ax, [fs_tmp_slot]
-    call fs_read_slot
-    mov ax, FS_CHAIN_OFFSET
-    mov dx, bx
-    call fs_scratch_write_word
-    mov ax, [fs_tmp_slot]
-    call fs_write_slot
-    jmp .have_sector
-
-.link_prev:
-    mov ax, [fs_save_prev]
-    call fs_extra_read
-    mov ax, FS_EXTRA_NEXT_OFFSET
-    mov dx, bx
-    call fs_scratch_write_word
-    mov ax, [fs_save_prev]
-    call fs_extra_write
-
-.have_sector:
-    mov ax, bx
-    call fs_extra_read
-
-    xor cx, cx
-.fill_loop:
-    cmp cx, FS_EXTRA_CONTENT_LEN
-    jae .sector_done
-    cmp si, [content_buf_len]
-    jae .sector_done
-
-    mov al, [content_buf + si]
-    mov dl, al
-    mov ax, cx
-    call fs_scratch_write_byte
-
-    inc si
-    inc cx
-    jmp .fill_loop
-
-.sector_done:
-    push cx
-    mov ax, FS_EXTRA_USED_OFFSET
-    mov dx, cx
-    call fs_scratch_write_word
-    pop cx
-
-    mov ax, bx
-    call fs_extra_write
-
-    mov [fs_save_prev], bx
-    jmp .chain_loop
-
-.full:
-    mov ax, [fs_tmp_slot]
-    call fs_read_slot
-    mov ax, FS_TOTAL_LEN_OFFSET
-    mov dx, si
-    call fs_scratch_write_size16
-    mov ax, [fs_tmp_slot]
-    call fs_write_slot
-
-.end:
-    pop si
-    pop dx
-    pop cx
-    pop bx
-    pop ax
+    movzx eax, ax
+    xor ebx, ebx
+    call fat_truncate
+    mov esi, content_buf
+    movzx ecx, word [content_buf_len]
+    call fat_write
+    popad
     ret
-
-fs_save_inline_count dw 0
-fs_save_prev          dw 0
 

@@ -198,6 +198,14 @@ All taken in QEMU (1024x768) - more in [docs/screenshots](docs/screenshots).
 <td align="center" valign="top"><img src="docs/screenshots/81-clock-stopwatch.png" alt="The Clock's stopwatch" width="400"><br><sub>The Clock's alarm, timer and stopwatch (in Russian here)</sub></td>
 <td align="center" valign="top"><img src="docs/screenshots/83-paint-text-select.png" alt="Paint: text, selection" width="400"><br><sub>Paint: text, a selection copied with Ctrl, the clipboard</sub></td>
 </tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/97-browser-news.png" alt="A gzip'd windows-1251 page" width="400"><br><sub>LexOS Web: a gzip'd windows-1251 page, its CSS, a JPEG</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/99-browser-reader.png" alt="Reader mode" width="400"><br><sub>Reader mode (Aa or F9): the article alone</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/100-fat32.png" alt="FAT32" width="400"><br><sub>LexOS's disk is FAT32: <code>df</code>, <code>ls -l</code>, <code>fsck</code></sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/101-browser-huge.png" alt="A huge page" width="400"><br><sub>A 6MB page, all of it (the kernel's extra memory)</sub></td>
+</tr>
 </table>
 
 Every screenshot, described in Russian: [docs/screenshots/README.md](docs/screenshots/README.md).
@@ -240,23 +248,47 @@ tester@/DESKTOP$ run snake.app
   the machine.
 
 ### Filesystem
-- A simple folder-aware filesystem on top of the ATA driver — files and
-  folders live in fixed-size sectors, with parent pointers for
-  subdirectories (`mkdir`, `cd`, `pwd`, `tree`, `mv`, `cp`, `ren`).
+- **FAT32** (src/fat32.asm). LexOS's disk is an ordinary 256MB hard
+  disk: the boot sector with a partition table, the kernel after it,
+  the journal (sectors 1024-1144), and from 1MB on one FAT32 partition
+  with all of LexOS's files - so the same image opens anywhere else
+  (`mdir -i build/os-image.bin@@1M ::/APPS`, `mcopy`, or
+  `mount -o loop,offset=1048576` on Linux; `fsck.fat` finds nothing
+  wrong with it). Long names (VFAT/LFN, up to 63 characters in LexOS,
+  spaces, mixed case and Cyrillic too - in UTF-16 on the disk, CP866 in
+  LexOS), file times, the read-only attribute, folders as deep as you
+  like (`mkdir`, `cd`, `pwd`, `tree`, `mv`, `cp`, `ren`); files of any
+  size up to FAT32's own 4GB, as big as the disk lets them be, read and
+  written in place. 2KB clusters; the whole FAT is kept in RAM. Files
+  and folders made on Linux or Windows show up in LexOS with their long
+  names. Shutting down sets FAT32's "unmounted properly" bit and the
+  free-space count in FSInfo, as other systems expect.
+- Inside the kernel every file and folder still has its 512-byte record
+  (a slot: name, type, folder, first 127 bytes, size, time, attributes,
+  long name), read from the FAT32 tree at boot and kept in RAM; writing
+  one (`fs_write_slot`) is turned into what it means on the disk - an
+  entry made, removed, renamed or moved, the content written. A record
+  copied into another slot (`cp`, copy and paste in Files, Ctrl+drag) is
+  a copy, its data and all.
+- An older disk in LexOS's own previous format (a sector per file from
+  sector 578) is brought over by `tools/mkdisk.py` on the next build:
+  every file and folder, their times, long names and the read-only mark.
 - **A journal** (src/fsjournal.asm): a write cut short - the power, QEMU
   closed, a crash - can't leave the filesystem half changed. Its own
-  records (the directory slots and the free-space map) don't go straight
-  to the disk: they're kept in RAM, each sector once, and then written
-  out together - first into a journal area past the filesystem, then a
+  records (the FAT's sectors and the folders') don't go straight to the
+  disk: they're kept in RAM, each sector once, and then written out
+  together - first into the journal area before the partition, then a
   header with where each belongs and a checksum (from that moment the
   change counts), then each to its own place, then the header cleared.
   At boot an unfinished commit is finished ("Journal: a write cut short
   was finished"); before the header, nothing had changed. A commit
   happens whenever the kernel lock is let go - a command done, a program
-  back in ring 3 - when the desktop's idle, and before switching off. A
-  file's data is written before the records pointing to it, and a sector
-  a file lets go of isn't given to another until the change counts, so a
-  file being replaced keeps its old content until the new one is safe.
+  back in ring 3 (at most twice a second: a program writing a big file a
+  piece at a time doesn't wait for a commit per piece) - when the
+  desktop's idle, and before switching off. A file's data is written
+  before the records pointing to it, and a cluster a file lets go of
+  isn't given to another until the change counts, so a file being
+  replaced keeps its old content until the new one is safe.
   The disk's cache is flushed (FLUSH CACHE) at the commit's barriers -
   before the header, after it, before it's cleared - and when switching
   off, not after every sector (under QEMU each flush is the host syncing
@@ -268,16 +300,12 @@ tester@/DESKTOP$ run snake.app
   `attrib <name> +r` makes a file or folder read-only - `rm`, `ren`,
   `mv`, `uranium` and programs' `open` for writing refuse it - and
   `attrib <name> -r` undoes it.
-- **`fsck`** checks the whole filesystem: each slot's kind and folder,
-  each file's chain of sectors (in range, marked used, nobody else's, no
-  loop, as long as its size says) and sectors in use by nothing.
-  `fsck fix` puts right what it finds: bad slots freed, lost files moved
-  to `/`, broken or shared chains cut short, sizes set to what the chain
-  holds, the free-space map made to match.
-- Files aren't stuck at one sector: content grows past its initial 127
-  inline bytes into a chain of extra disk sectors, tracked by a small
-  on-disk bitmap. `cat`, `size`, `head`, `tail`, `grep`, `cp`, and `rm` all
-  understand the chain.
+- **`fsck`** checks the whole filesystem: each file's and folder's chain
+  of clusters (in range, nobody else's, no loop, as long as its size
+  says) and clusters in use by nothing. `fsck fix` puts right what it
+  finds: broken or shared chains cut short, sizes set to what the chain
+  holds, what's too long or lost freed. After a power cut it runs by
+  itself at boot.
 - **Scripts.** Typing a `*.hg` file's name (with arguments if you like:
   `quiz.hg 10`) runs it: each line goes to the shell as a command, with
   a small language on top (src/script.asm):
@@ -321,8 +349,7 @@ tester@/DESKTOP$ run snake.app
 - `head`/`tail` print the first/last lines of a file (10 by default, or a
   given count).
 - On first boot the root folder is seeded with `README`, a `LICENSE` file
-  holding the project's own license text (long enough to spill from the
-  inline area into chained extra sectors), and a `TMP` folder for
+  holding the project's own license text, and a `TMP` folder for
   scratch files (see below). (Older disks had a `PROGRAMS` folder of
   `.BIN` demos; the games are programs in `APPS` now, and at boot the
   old folder's `.BIN` files are removed - and the folder, once it's
@@ -332,21 +359,22 @@ tester@/DESKTOP$ run snake.app
   `DESKTOP` (the desktop's icons) and `SYSTEM` (the translations).
 - `ls` prints folders in bright yellow so they stand out from regular
   files, which stay whatever color you've set with `color`.
-- `df` (or `free`) shows how many of the 1024 directory slots, 30000
-  extra disk sectors, and 8 `TMP` RAM slots (see below) are in use.
+- `df` (or `free`) shows how many of the 1024 slots (the files and
+  folders LexOS keeps track of), how much of the disk (in KB) and how
+  many of the 8 `TMP` RAM slots (see below) are in use.
 - `bld <n>` creates a new, empty file `n` in the current folder.
-- The filesystem holds up to 1024 files and folders (up to 255 of them
-  folders), nested as deep as you like, and a single file can be up to
-  16MB (the extra-sector pool is ~15MB in total). Directory slots and
-  the free-space map are cached in RAM, so `ls`/`cd`/`tree` don't hit
-  the disk, and big files are written one disk write per sector.
+- LexOS keeps track of up to 1024 files and folders on the disk (up to
+  255 of them folders - more than that, and the rest aren't shown),
+  nested as deep as you like; a single file can be as big as the free
+  space. The records and the FAT are in RAM, so `ls`/`cd`/`tree` don't
+  hit the disk; files are read and written a cluster or more at a time
+  (DMA, up to 64KB a command).
 - `TMP` is a RAM disk: create a file while `cd`'d directly into it (not
   a subfolder within it) and its up-to-127-byte primary record lives
   entirely in memory instead of costing one of the real directory
   slots - `ls`, `cat`, `rm`, wildcards and everything else treat it like
   any other file, but it vanishes on reboot along with everything else
-  that was only ever in RAM. Content past 127 bytes still chains into
-  the ordinary disk-backed extra-sector pool, same as any file. Placing
+  that was only ever in RAM - and it holds 127 bytes at most. Placing
   a file into `TMP` by path from a different directory (`cp x.txt tmp`
   while elsewhere) still creates a normal disk-backed file - only
   creating it while actually `cd`'d into `TMP` gets the RAM slot.
@@ -494,12 +522,12 @@ tester@/DESKTOP$ run snake.app
   `/DEMOS/CATCH.BAS` (catch falling stars with A/D or the arrows).
 - **Sound.** `play <n.imf>` plays AdLib music (OPL2, Type-0 IMF at
   560Hz); `play <n.wav>` plays uncompressed PCM - 8- or 16-bit, mono or
-  stereo, any rate - through a **Sound Blaster 16**: the DSP is found
-  and reset at 0x220, and the samples go to it by ISA DMA (channel 1
-  for 8-bit, 5 for 16-bit) straight from memory, so it's real digital
-  sound and costs the CPU nothing while it plays. Without an SB16, 8-bit
+  stereo, any rate - through an **AC'97** (PCI bus-master DMA) or a
+  **Sound Blaster 16** (the DSP found and reset at 0x220, the samples
+  going to it by ISA DMA on channel 5), straight from memory, so it's
+  real digital sound. Without either, 8-bit
   mono WAVs still play, 1-bit, on the PC speaker. `make run` gives QEMU
-  both an AdLib and an SB16. ESC stops playback; `&` puts it in the
+  an AdLib and an AC'97 (`CARD=sb16`: the SB16). ESC stops playback; `&` puts it in the
   background (below).
 - **Virtual consoles.** Alt+T opens another console with a shell of
   its own, Alt+1..Alt+9 switch between them, `exit` closes the one
@@ -545,9 +573,11 @@ tester@/DESKTOP$ run snake.app
   line to the program - `main(argc, argv)` in C, `ebx` points to it
   in assembly. Programs open files in the current folder with
   `open`/`read`/`fwrite`/`seek`/`fsize`/`close` (read, write, append
-  or update; up to 4MB each, 4 open at once - whatever was written is
-  saved on close, or when the program ends, even by a crash); C
-  programs get `malloc`/`free`/`realloc` over their 4MB. `gfx_mode(1)`
+  or update; 4 open at once; straight on the disk, so as big as there's
+  room for); C programs get `malloc`/`free`/`realloc` over their 4MB -
+  and, when that runs out, over extra memory the kernel maps them on
+  request (`SYS_MORE`: 4MB pages from 0x40000000, up to 64MB more per
+  program while the pool of 80MB has any; given back when it ends). `gfx_mode(1)`
   switches to 320x200 in 256 colors: a program draws into a buffer of
   its own and `gfx_blit`s it to the screen, can set any palette color,
   and `keydown(scancode)` tells whether a key is held - what games
@@ -564,7 +594,10 @@ tester@/DESKTOP$ run snake.app
   at its own rate (converted on the fly to 22050Hz stereo) with its own
   volume, mixed by the IRQ handler - so a game's sound plays over
   `play music.wav &`, and `.WAV` files (now up to 8MB) play through it
-  too. It's kept light for QEMU, whose Sound Blaster pushes every byte
+  too. The stream goes to an AC'97 if there is one (src/ac97.asm: a
+  PCI bus master reading a ring of 32 buffer descriptors - the same two
+  halves - its interrupt refilling one), else to the Sound Blaster.
+  It's kept light for QEMU, whose Sound Blaster pushes every byte
   through an emulated ISA DMA in the same loop that draws its window:
   each half is ~93ms; while every voice is mono at 11025Hz or less (the
   desktop's own sounds are) the stream is 11025Hz mono - a quarter of
@@ -618,7 +651,9 @@ tester@/DESKTOP$ run snake.app
   waiting, or none of it any more; `clip_pic_get(buf, n)` /
   `clip_pic_set(path)` - the clipboard's picture, a path to a .BMP or
   .PNG (the last screenshot, a picture copied in Files, what Paint
-  copied). A file dragged onto a program's window comes to its inbox
+  copied); `music_state(n)` - a player saying it plays (1) or is paused
+  (2): the tray's note, whose click and wheel come to its inbox as
+  `|PAUSE`, `|NEXT`, `|PREV`. A file dragged onto a program's window comes to its inbox
   too.
 - **Paint** (`apps/paint.c`, `/APPS/PAINT.APP`; Files' **Edit in Paint**
   on a `.BMP`): pencil, brush, eraser, line, rectangle, filled box,
@@ -673,14 +708,39 @@ tester@/DESKTOP$ run snake.app
   bold/italic/underlined and colored text, links (relative ones too),
   lists (nested, bullets and numbers), `<pre>`, `<hr>`, `<blockquote>`,
   `<center>`, tables as rows of cells, `<body bgcolor>` and pictures -
-  `<img>` of `.BMP` (8, 24 or 32 bits) and `.PNG` files; text in UTF-8, entities;
-  scripts and styles are skipped. Back / forward / reload / home, an
-  address bar (Tab, or click it), a scrollbar, the wheel, links lighting
-  up under the pointer with their address in the status line.
+  `<img>` of `.BMP` (8, 24 or 32 bits), `.PNG`, `.JPG` (baseline and
+  progressive, `apps/jpeg.h`) and `.GIF` (the first frame, `apps/gif.h`),
+  lazy ones' `data-src` too, up to 64 a page. Back / forward / reload /
+  home, an address bar (Tab, or click it), a scrollbar, the wheel, links
+  lighting up under the pointer with their address in the status line.
+  **No gibberish**: pages sent gzip'd or deflated are unpacked
+  (`apps/inflate.h`); the charset comes from the server's header, the
+  page's `<meta>`, a BOM, or is guessed from the text - UTF-8,
+  windows-1251, KOI8-R, CP866, ISO-8859-5, windows-1252/Latin-1; what
+  the font hasn't got is shown as near as it can be (`№` as No, `€` as
+  EUR, box drawing, arrows; emoji as `*`; zero-width spaces, soft hyphens
+  and BOMs not at all). Pages are read as they come - scripts, SVG,
+  comments and most attributes are left out on the way - and kept
+  whole, however big (up to 48MB of what's left, in memory the kernel
+  hands the browser past its own 4MB: a page of 40000 paragraphs, 6MB of
+  text, is no trouble). A **little CSS** (`apps/css.h`, the
+  page's `<style>`, up to 3 stylesheets and `style=""`; tag, `.class`
+  and `#id` selectors, `@media` as for an 800x600 screen): `display:none`,
+  `visibility:hidden`, `hidden`, `aria-hidden` and screen-reader-only
+  classes aren't shown; bold, italic, underline, colors (only if they can
+  be read), centering, the page's background. JSON and text are shown as
+  text, a picture on its own as a picture, anything else is offered as a
+  download. **Reader mode** (the **Aa** button or F9): only the article
+  (`<article>`, `<main>`), without menus, sidebars, share buttons,
+  comments and footers, in a narrower column on a warm background.
+  **Ctrl+I** - about this page (the answer, the type, the charset and
+  where it came from, gzip'd and unpacked sizes, CSS rules, what was
+  hidden, pictures); **Ctrl+U** - its source, in a new tab.
   **Downloads**: a link to something that isn't a page (a `.ZIP`, a
   picture, a program...) is saved straight to `/DOWNLOADS` - streamed
-  to the disk as it comes, over `http` or `https`, chunked or not, a
-  name of its own if that one's taken - with its progress in the
+  to the disk as it comes, any size the disk has room for, over `http`
+  or `https`, chunked or not, a name of its own if that one's taken
+  (and said so if the connection ends before all of it came) - with its progress in the
   Downloads panel (the button by the address bar), and Ctrl+S saves the
   page being shown.
   **Markdown** (a `.MD` page, from the disk or the web - Files opens
@@ -723,17 +783,24 @@ tester@/DESKTOP$ run snake.app
   Keys: **Alt+F4** closes the window in front, **Win+D** (or the thin
   strip at the taskbar's right end) shows the desktop and brings the
   windows back, **Win+E** opens Files, **Win+L** locks the screen,
-  **Ctrl+Shift+Esc** opens Tasks. Right-click a taskbar button:
+  **Ctrl+Shift+Esc** opens Tasks, **Win+V** the clipboard's history,
+  **Win+Plus** the magnifier, **Win+←/→** puts the window in front
+  into the left / right half (a program's picture wider than that: at
+  that side, its own size), **Win+↑** maximizes it, **Win+↓** gives it
+  its own size back, or down to the taskbar. Right-click a taskbar button:
   Minimize / Restore, Maximize, Close; right-click the desktop: New
   Terminal, Files, Tasks, System, Arrange icons, Next backdrop.
   **Caps Lock** works (with its light), an "A" in the tray while it's
   on.
-  A taskbar with a button per window and a tray - volume (click: the
-  Mixer, wheel: the master volume), network (green once it's set up),
+  A taskbar with a button per window and a tray - a note while Music
+  plays (click: pause / on again, wheel: the next / the one before),
+  volume (click: the Mixer, wheel: the master volume), network (green once it's set up),
   the time (click: the **notification center** - every line that came
   up at the top of the screen, the last six with their times, Clear and
   Do not disturb (they're kept, not shown or sounded), a red dot by the
-  time when there are new ones - over this month's calendar;
+  time when there are new ones - over this month's calendar; a line
+  that does something has a button at its end - a screenshot's
+  **Open** shows it in Pictures, the Clock's **Stop** quiets it;
   double-click: the Clock;
   the pointer resting on it: today's date) - and a start menu (the
   Win key opens it too): Programs (every .APP/.COM/.BIN on the disk),
@@ -749,15 +816,51 @@ tester@/DESKTOP$ run snake.app
   `DESKTOP.CFG`).
   - **Lex**, the cat LexOS is named after (src/dkcat.asm), lives on the
     taskbar: he walks along it, sits, curls up and sleeps (Zzz); click
-    him and he meows. The desktop's right-click menu hides him or calls
-    him back. He's a tamagotchi, too: food, joy and energy run down as
+    him and he meows. The desktop's right-click menu hides him - he
+    jumps, and falls away below the screen - or calls him back: up he
+    flies from below, and lands. The Clock's alarm makes him jump. He's a tamagotchi, too: food, joy and energy run down as
     time goes by (energy while he's awake - sleep brings it back). Right-
     click him: **Feed** (a bowl), **Pet** (a heart and a purr), **Play**
     (for a while he chases the pointer), **How is Lex?** (three bars
     over him). Hungry or lonely, he's sad - he stops walking and sits with
     his eyes shut and a tear, and says so now and then; tired, he sleeps
     more. It's kept in `DESKTOP.CFG` with the time, and the time the
-    machine was off counts too.
+    machine was off counts too. At the login he greets you by the time
+    of day ("Good evening, tester!"); the pointer held over the taskbar
+    for 3 seconds, he starts hunting it; and while music plays (Music,
+    `play`, any sound) he puts headphones on and nods along, a note
+    over his head. Now and then he **hops up onto the window in front**
+    and walks - or naps - along its top; move it, close it or bring
+    another forward and down he jumps. **Throw the ball** (his menu): it
+    bounces along the taskbar, he runs after it and brings it back
+    ("Again! Again!"). **The seasons**: a Santa's hat in December (to 7
+    January), a pumpkin by the taskbar from 24 October, a party hat on
+    his birthday - the day he came to live with you, kept in
+    `DESKTOP.CFG` - and New Year's, Halloween's and his birthday's
+    greetings. **`lex diary`**: what he did today - fed, petted, played
+    with, the ball thrown and brought back, the meows, how long he slept,
+    how he is now - and a line on how the day was.
+  - **Lex's night**, the other screen saver (Control panel - Appearance -
+    Saver picture: Stars or Lex, src/dksaver.asm): stars fall out of the
+    dark, Lex - big - runs along the ground under the lowest one and
+    jumps for it; a sparkle and a count for each caught.
+  - **Icon size** (Control panel - Appearance - Icons: Small 16x16,
+    Normal 32x32, Big 64x64): the desktop's icons, their grid and their
+    names follow (src/dkicons.asm); changing it puts them in order again
+    (the trash keeps its corner).
+  - **Win+V: the clipboard's history** (src/dkchist.asm): the last 8
+    texts (a Terminal's selection, `clip`) and pictures (a screenshot,
+    Paint's Ctrl+C, a picture copied in Files) in a panel over the
+    taskbar, the newest first; a click - or Up / Down, Enter - makes one
+    the clipboard again: a text is typed where Ctrl+V would type it, a
+    picture waits for Paint's Ctrl+V. Clear forgets them, Esc closes.
+  - **The magnifier** (src/dkmag.asm): **Win+Plus** shows a lens round
+    the pointer at x2, again x4; **Win+Minus** back down, **Win+Esc**
+    away. It's drawn onto the screen like the pointer, over everything.
+  - **Files in the start menu's search** (src/dkmfind.asm): under the
+    programs, "Files" - any file on the disk with the typed text in its
+    name (long or short), with its folder; Enter or a click opens it as
+    a double click would (a shortcut opens what it points to).
   - **Files without a Terminal** (src/dkname.asm): a right click on the
     desktop or on Files' empty space has **Create >** - its submenu
     opens under the pointer: Create a folder, Create a TXT, Create a HG
@@ -819,12 +922,16 @@ tester@/DESKTOP$ run snake.app
     Users - Add...) starts with a few shortcuts and no password.
   - **The Control panel** (src/dkcpanel.asm, the start menu's Control
     panel): System (how it's running), Appearance (theme, backdrop,
-    wallpaper, Lex, the screen saver, window **animations** - a window
+    wallpaper, the icons' size, Lex, the screen saver and its picture
+    (stars or Lex's night), window **animations** - a window
     grows out of its middle as it opens, shrinks into its taskbar button
     minimized and grows back out of it - and the **screen size**:
     800x600, 1024x768, 1280x720 or 1280x1024, changed at once, the
     windows and icons kept on it; the two 1280-wide ones need 256MB -
-    `make run` gives QEMU that), Sound (on/off, the Mixer),
+    `make run` gives QEMU that), the **night light** (Off, On, or
+    Evening - 19:00 to 7:00 - a warmer screen, less blue: src/dknight.asm)
+    and the **Terminal's colors** (Classic, Green, Amber, or Light - dark
+    text on paper), Sound (on/off, the Mixer),
     Keyboard (the system's language - at once - and the layouts), Date &
     time (the time zone), Mouse (pointer speed, double-click speed),
     Users (Add..., Password..., Switch user).
@@ -862,8 +969,8 @@ tester@/DESKTOP$ run snake.app
     icon onto Files goes into the folder shown there (or the one under
     the pointer), onto another icon that's a folder, into it. **Ctrl**
     held when it's let go of: a copy instead - in Files too.
-  - A double click on the empty desktop opens a Terminal; Esc closes a
-    Clock, System, Tasks, Mixer or Pictures window in front.
+  - Esc closes a Clock, System, Tasks, Mixer or Pictures window in
+    front.
   - **Icons on the desktop**: whatever's in `/DESKTOP` (src/dkicons.asm).
     A `.LNK` file there is a shortcut - its text is the path it opens
     (`/APPS/FIRE.APP`, a folder like `/DEMOS`). Double-click opens,
@@ -1170,16 +1277,22 @@ qemu-system-i386 -m 256 -drive format=raw,file=os-image.bin
 
 That's enough for the setup, the desktop, the shell and the programs.
 For everything else, give QEMU the devices `make run` gives it (see the
-`Makefile`): the RTL8139 network card, an AdLib and a Sound Blaster 16,
-and a real audio backend (QEMU's default is `none`, so nothing would be
-heard, `beep` included):
+`Makefile`): the RTL8139 network card, an AC'97 sound card and an
+AdLib, and a real audio backend (QEMU's default is `none`, so nothing
+would be heard, `beep` included):
 
 ```sh
 qemu-system-i386 -m 256 -drive format=raw,file=os-image.bin \
     -nic user,model=rtl8139 \
     -audiodev pa,id=snd0 -machine pcspk-audiodev=snd0 \
-    -device adlib,audiodev=snd0,iobase=0x220 -device sb16,audiodev=snd0
+    -device AC97,audiodev=snd0 -device adlib,audiodev=snd0,iobase=0x220
 ```
+
+LexOS takes a Sound Blaster 16 too (`-device sb16,audiodev=snd0`, or
+`make run CARD=sb16`) - but QEMU's Sound Blaster copies every byte
+through an emulated ISA DMA controller, and on QEMU 10 (Fedora) that
+froze QEMU's whole window while a sound played; the AC'97 reads its
+samples itself (a PCI bus master), and doesn't.
 
 (swap `pa` for `pipewire`/`alsa`/`sdl`/`coreaudio`/`dsound` depending
 on your host; run `qemu-system-i386 -audiodev help` to see which
@@ -1196,7 +1309,11 @@ run`, or the same options on the command line):
 | `AUDIODEV=sdl` (or `pipewire`, `alsa`) | `-audiodev sdl,id=snd0` | another backend - SDL plays from a thread of its own |
 | `AUDIOBUF=100000` | `-audiodev pa,id=snd0,out.buffer-length=100000` | a longer backend buffer (microseconds) |
 | `AUDIOTIMER=20000` | `...,timer-period=20000` | QEMU's audio timer less often (default 10000us) |
-| `ACCEL=kvm` (`whpx` on Windows, `hvf` on macOS) | `-accel kvm` | the CPU not emulated: much less for the main loop to do | On a PipeWire system (Fedora, recent Ubuntu) use
+| `ACCEL=kvm` (`whpx` on Windows, `hvf` on macOS) | `-accel kvm` | the CPU not emulated: much less for the main loop to do |
+| `SOUNDCARDS=` | (no `-device AC97`, `-device adlib`) | no sound cards at all: is it QEMU's emulation of them? |
+| `SOUNDCARDS="-device AC97,audiodev=snd0"` | (no `-device adlib`) | no AdLib (.IMF music silent): is it the AdLib's? |
+| `CARD=sb16` | `-device sb16,audiodev=snd0` (instead of the AC'97) | the Sound Blaster 16 |
+| `QEMUFLAGS="-display sdl"` | `-display sdl` (or `gtk`, `cocoa`) | another window for QEMU; any other flags go here too | On a PipeWire system (Fedora, recent Ubuntu) use
 `pipewire` - through PipeWire's PulseAudio stand-in QEMU stalls the
 whole machine while a sound plays. `make run` picks `pipewire` by itself
 when QEMU has it (QEMU 8.1+; on Fedora the `qemu-audio-pipewire`
@@ -1253,7 +1370,7 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `httpd [port]` | serve this disk on the web (`make run`: http://localhost:8080/) |
 | `ntp [server]` | set the clock from a time server (default `pool.ntp.org`) |
 | `dhcp` | get an address from the DHCP server again |
-| `run <n>.app [args]` | run a protected (ring 3) program - see `apps/` |
+| `run <n>.app [args]` | run a protected (ring 3) program - see `apps/` (a name: here, then `/APPS`; or a path, `run /apps/snake.app`) |
 | `run browser.app [url]` | LexOS Web, the browser (or the WEB icon) |
 | `run cc.app <f.c> [-o <n>.app]` | compile C into a program, inside LexOS |
 | Alt+T / Alt+1..9 / `exit` | open a new console / switch to console N / close this one |
@@ -1263,13 +1380,16 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `uptime` | how long since boot, the consoles and tasks |
 | `neofetch` | the system at a glance, next to Lex the cat (ASCII, in color) |
 | `lex [text]` | Lex the cat says something in a speech bubble (or your text) |
-| `play <n.imf \| n.wav>` | play AdLib music or a WAV (Sound Blaster 16, or PC speaker) |
-| `play <n> &` | play it in the background |
+| `lex diary` | Lex's day: fed, petted, played with, the ball, the meows, sleep, how he is |
+| `play <n.imf \| n.wav>` | play AdLib music or a WAV (an AC'97 or a Sound Blaster 16, or the PC speaker) |
+| `play <n> &` | play it in the background (a name or a path) |
+| `open <n>` | open it as a double click on the desktop would - a picture in Pictures, a text in Notepad, a program, a folder in Files |
+| `clip <n>`, `<command> \| clip` | a file's text - or a command's output - onto the clipboard (Ctrl+V pastes) |
 | `basic [n]` | Tiny BASIC; with a name, load and run that program first |
 | `reboot` / `shutdown` | restart / power off |
 | `history` | list previously run commands, numbered oldest first |
 | `!!` | run the last command again (it's shown first) |
-| `df` / `free` | show directory slot / extra sector usage |
+| `df` / `free` | show how many files LexOS tracks and how full the disk is |
 | **Filesystem** | |
 | `ls` | list files and folders in the current directory (folders in yellow) |
 | `pwd` | show the current folder path |
@@ -1358,7 +1478,9 @@ outside the kernel image need a full 32-bit linear address:
 | Consoles' page tables (directory, first 4MB, program: 12KB each) | `0x510000` – `0x52AFFF` |
 | A ring-3 program's own 4MB | `0x800000` – `0xBFFFFF` |
 | Consoles' own memory (5MB each: program, kernel pages, text screen) | `0x1000000` – `0x3CFFFFF` |
-| Programs' open-file buffers (4 x 4MB) | `0x4000000` – `0x4FFFFFF` |
+| (free: once the programs' open-file buffers) | `0x4000000` – `0x4FFFFFF` |
+| FAT32: the FAT, its changed sectors, cluster buffers, fsck's map | `0xA000000` – `0xA47FFFF` |
+| Programs' extra memory (SYS_MORE: 20 x 4MB pages) | `0xB000000` – `0xFFFFFFF` |
 | Program windows' pixels (3 x 2MB) | `0x5000000` – `0x55FFFFF` |
 | Mixer voice queues (4 x 64KB) + scratch | `0x5600000` – `0x5647FFF` |
 | Consoles' mode 13h in a window (9 x 64KB) | `0x5680000` – `0x570FFFF` |
@@ -1380,17 +1502,17 @@ outside the kernel image need a full 32-bit linear address:
 | Kernel code/data | `0x8000` – `0x4FFFF` (576 sectors) |
 | Boot sector | `0x7C00` |
 
-On disk, sectors are laid out as: boot sector, then the kernel (576
-sectors, one spare after it), then 1024 directory slots (one file/folder
-per 512-byte sector —
-name, type, parent pointer, a 32-bit size, up to 127 bytes of inline
-content; folders only ever take slots 0-254, so a parent pointer still
-fits in one byte), a 59-sector free-space map (one byte per extra
-sector), then 30000 extra 512-byte sectors that files chain into once
-they outgrow the inline area (508 data bytes each), then the journal: a
-header sector and room for 120 sectors. A slot also keeps its last
-change's time (bytes 148-152: year, month, day, hour, minute) and its
-attributes (153).
+On disk (256MB), sectors are laid out as: the boot sector (with the
+partition table), then the kernel (576 sectors), then the journal from
+sector 1024 (a header sector and room for 120 sectors), the "shut down
+properly?" sector at 1152, and from sector 2048 (1MB) to the end one
+FAT32 partition (type 0x0C): 32 reserved sectors (boot sector, FSInfo,
+their backups), two FATs, then 2KB clusters - the root folder in cluster
+2. In RAM the kernel keeps a 512-byte record per file and folder (a
+slot: name, type, parent, a 32-bit size, its first 127 bytes, its last
+change's time at bytes 148-152, attributes at 153, long name at
+160-223) - folders only ever take slots 0-254, so a parent pointer
+fits in one byte - plus the whole FAT.
 
 ## Project layout
 
@@ -1401,6 +1523,7 @@ kernel.asm             32-bit kernel entry point; %includes everything below.
 apps/                  example ring-3 programs (`make apps`): lexos.inc for
                        assembly, lexos.h + crt0.asm + app.ld for C;
                        browser.c (LexOS Web) and tls.h (its TLS 1.3),
+                       inflate.h (gzip), css.h, jpeg.h, gif.h,
                        cc.c (the C compiler), notepad.c (Notepad),
                        zip.c (ZIP archives), paint.c (Paint), calc.c
                        (the Calculator), snake.c / tetris.c /
@@ -1441,9 +1564,12 @@ src/
                        including the RAM-backed TMP folder (fs_find_free/
                        fs_read_slot/fs_write_slot - see data.asm's note
                        above FS_RAM_FILE_COUNT).
-  fs_extra.asm         chained extra sectors for files > 127 bytes, and
-                       fs_load_content - the shared file-content reader
-                       used by grep/head/tail/uranium.
+  fs_extra.asm         whole files: fs_load_to / fs_load_content (read
+                       into memory), fs_stream_write (written from a
+                       stream of bytes), append.
+  fat32.asm            the disk's FAT32: mount, the FAT in RAM, long
+                       names, the slots turned into entries, files read
+                       and written in place, fsck's checks.
   programs.asm         `run`, the TMP folder, and an old disk's PROGRAMS
                        folder retired at boot.
   parse.asm            numbers typed at the prompt (decimal, 0x hex).
@@ -1458,6 +1584,7 @@ src/
                        script interpreter - vga.asm's mode switch too.
   mouse.asm            the PS/2 mouse (IRQ12), with the wheel.
   sound.asm            `play`: AdLib (.IMF), the Sound Blaster 16 (.WAV).
+  ac97.asm             the AC'97 (QEMU's -device AC97): the mixer's stream.
   mixer.asm            the SB16's mixer: 4 voices, each with its own rate
                        and volume; `mixer`.
   hostfs.asm           the host's shared folder (FAT16): hostls/hostget/
@@ -1483,7 +1610,8 @@ src/
                        the taskbar's and desktop's menus, recent
                        programs, Caps Lock, /DESKTOP/STARTUP.
   neofetch.asm         `neofetch` (with Lex the cat), `uptime`, `lex`.
-  dkcat.asm            Lex on the taskbar, and his food, joy, energy.
+  dkcat.asm            Lex on the taskbar, and his food, joy, energy;
+                       up on windows, the ball, the seasons, his diary.
   dkname.asm           Create > and the name dialog: files made, renamed,
                        copied, deleted with the mouse.
   dkgrid.asm           the desktop icons' invisible grid.
@@ -1507,7 +1635,7 @@ src/
   dklock.asm           Win+L: the lock screen.
   dkusers.asm          users, each with their own desktop.
   dkcpanel.asm         the Control panel.
-  dksaver.asm          the screen saver.
+  dksaver.asm          the screen savers: stars, and Lex's night.
   dkfscheck.asm        the disk checked at boot after a crash.
   dkpng.asm            /SYSTEM/PNG.BIN loaded, a PNG made a BMP.
   dkpics.asm           Pictures: the viewer (zoom, slideshow, its bar).
@@ -1517,6 +1645,9 @@ src/
   dkswitch.asm         Alt+Tab's panel of the windows.
   dkregion.asm         Shift+PrintScreen: a part of the screen.
   dkclock.asm          the Clock's alarm, timer and stopwatch.
+  dknight.asm          the night light; the Terminal's color schemes.
+  dkchist.asm          Win+V: the clipboard's history.
+  dkmfind.asm          the start menu's search: files too.
                        (These are the kernel's extension - KEXT:
                        assembled with the kernel, cut off by the
                        Makefile into /SYSTEM/KEXT.BIN, loaded at boot
@@ -1562,6 +1693,8 @@ src/
   script.asm           *.hg scripts: variables, expressions, if/while/
                        for/goto, set/vars/input/sleep, AUTOEXEC.HG.
   pipe.asm             pipes and redirection: a | b, a > f, a >> f.
+  shellx.asm           paths for `run` and `play`; `open`, `clip`.
+  dkmag.asm            the magnifier (Win+Plus).
 ```
 
 ## Known limitations
@@ -1588,20 +1721,25 @@ src/
   Labels/relocations aren't a concern (a `.com` is already position-
   independent machine code by convention), but there's no `.exe` (MZ)
   support - no header parsing, no segment relocation.
-- One file's inline metadata + content lives in a single 512-byte sector;
-  content past that grows through a chain of extra sectors, but the pool
-  is fixed at 30000 sectors (~15MB). A name the shell and the commands
+- LexOS keeps track of up to 1024 files and folders on the disk (255 of
+  them folders); a disk with more (made elsewhere) shows the first ones
+  found. Long names past 63 characters are cut short in LexOS (and
+  written back cut if the file's renamed or moved there). A file in the
+  `TMP` RAM folder holds 127 bytes at most. A name the shell and the commands
   take is at most 15 characters, the extension included (`hostput`
   wants a DOS 8.3 name for the host's side); a long name (up to 63) is
   the desktop's - Files, the icons, Properties, `ls` show it, but in the
   Terminal a file is reached by its short one (`cat TRIPTO~1.TXT`), a
   `mv`/`ren` there drops it, and programs' file dialogs show short
   names.
-- The journal covers the filesystem's own records; a file's data goes
-  straight to its sectors (before the records that point to it). One
-  command that changes more than 120 different record sectors at once
-  (`rm -a` in a big folder) is committed in parts. `fsck` looks at the
-  disk's slots, not the 8 `TMP` RAM slots' names.
+- The journal covers the filesystem's own records (the FAT's sectors and
+  the folders'); a file's data goes straight to its clusters (before the
+  records that point to it). One change bigger than 120 record sectors
+  (writing a very big file - each FAT sector covers 256KB of it - or
+  `rm -a` in a big folder) is committed in parts. The journal is LexOS's
+  own: another system writing to the disk doesn't know about it (it only
+  matters if LexOS was cut off with a commit unfinished). `fsck` looks
+  at the disk's files, not the 8 `TMP` RAM slots.
 - Pipes pass files, not streams: a command's whole output is caught
   first (up to 20KB per console), then handed on - and a command that
   waits for keys (`uranium`, a game) can't be piped.
