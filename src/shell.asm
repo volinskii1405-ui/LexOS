@@ -1148,6 +1148,7 @@ do_shutdown:
     call fat_shutdown              ; (and so the FAT says: src/fat32.asm)
     call jnl_commit                ; (nothing left half written)
     call ata_flush                 ; (and all of it out of the disk's cache)
+    call acpi_off                  ; the firmware's own way (src/acpi.asm)
     mov ax, 0x2000
     mov dx, 0x604                  ; QEMU
     out dx, ax

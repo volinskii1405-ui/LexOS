@@ -53,6 +53,7 @@ kernel_start:
     call pm_init             ; paging, TSS, ring 3 (src/usermode.asm)
     call fs_cache_init       ; the FAT32 disk read into the slots (src/fs_extra.asm)
     call kext_load           ; /SYSTEM/KEXT.BIN: the rest of the kernel (below)
+    call acpi_init           ; how to switch off, from the firmware (src/acpi.asm)
     call dkpng_load          ; /SYSTEM/PNG.BIN: PNG pictures (src/dkpng.asm)
     call console_init        ; (src/console.asm)
 
@@ -67,9 +68,7 @@ kernel_start:
 
     call fs_retire_programs_dir  ; an old disk's PROGRAMS (the games are .APPs now)
 
-    call fs_ensure_tmp_dir   ; creates the TMP folder in the root if needed, and
-                             ; caches its slot index so fs_find_free knows when
-                             ; to hand out a RAM-backed slot instead of a disk one
+    call fs_ensure_tmp_dir   ; creates the TMP folder in the root if needed
 
     call fs_ensure_license   ; creates LICENSE in the root if it doesn't exist yet
     call fs_ensure_user_cfg  ; loads USER.CFG, or runs first-boot setup to create it
@@ -370,6 +369,7 @@ kext_start:
 %include "src/dkpics.asm"
 %include "src/dknotify.asm"
 %include "src/dkanim.asm"
+%include "src/acpi.asm"
 %include "src/dkres.asm"
 %include "src/dkswitch.asm"
 %include "src/dkregion.asm"

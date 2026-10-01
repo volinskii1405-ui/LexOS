@@ -1589,16 +1589,21 @@ dkx_power:
     call snd_click
     ret
 
-; Each frame: DESKTOP.CFG saved? then after a second, off
+; Each frame: DESKTOP.CFG saved? then after a second, off - or after
+; five, saved or not (a program in a Terminal holding the disk, say:
+; the settings wait, the power doesn't)
 dkx_power_work:
     cmp byte [dkx_power_what], 0
     je .done
-    cmp byte [dk_cfg_dirty], 0            ; (dk_settings_work still to write it)
-    jne .done
     mov eax, [timer_ms]
     sub eax, [dkx_power_since]
+    cmp eax, 5000
+    jae .go
+    cmp byte [dk_cfg_dirty], 0            ; (dk_settings_work still to write it)
+    jne .done
     cmp eax, 1200
     jb .done
+.go:
     cmp byte [dkx_power_what], 2
     je .reboot
     call do_shutdown
