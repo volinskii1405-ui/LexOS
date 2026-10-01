@@ -180,72 +180,27 @@ dks_start:
     popad
     ret
 
-; The next DKS_BATCH sectors, linked on; the slot's size brought up to
-; them -> carry=0 more to come; carry=1 done (ZF=1: the disk was full)
+; The next DKS_BATCH sectors' worth written on (src/fat32.asm) ->
+; carry=0 more to come; carry=1 done (ZF=1: the disk was full)
 dks_piece:
     pushad
-    call fs_extra_alloc                   ; -> ax, its first sector
-    jc .full
-    movzx edx, ax
-    mov eax, [dks_last]                   ; linked from what came before
-    cmp eax, -1
-    jne .after_sector
-    mov eax, [dks_slot]
-    call fs_read_slot
-    mov [SCRATCH_ADDR + FS_CHAIN_OFFSET], dx
-    call fs_write_slot
-    jmp .linked
-.after_sector:
-    call fs_extra_read
-    mov [SCRATCH_ADDR + FS_EXTRA_NEXT_OFFSET], dx
-    mov eax, [dks_last]
-    call fs_extra_write
-.linked:
-    mov ebp, DKS_BATCH
-.sector:
-    mov ecx, [dks_len]                    ; this one's bytes
+    mov ecx, [dks_len]
     sub ecx, [dks_pos]
-    cmp ecx, FS_EXTRA_CONTENT_LEN
+    cmp ecx, DKS_BATCH * 512
     jbe .count
-    mov ecx, FS_EXTRA_CONTENT_LEN
+    mov ecx, DKS_BATCH * 512
 .count:
-    mov esi, [dks_pos]
-    add esi, [dk_shot_buf]
-    mov edi, SCRATCH_ADDR
-    mov [SCRATCH_ADDR + FS_EXTRA_USED_OFFSET], cx
-    add [dks_pos], ecx
-    cld
-    rep movsb
-    mov word [SCRATCH_ADDR + FS_EXTRA_NEXT_OFFSET], FS_NO_CHAIN
-    dec ebp
-    jz .last                              ; (this piece's last)
-    push eax
-    mov eax, [dks_pos]
-    cmp eax, [dks_len]
-    pop eax
-    jae .last
-    call fs_extra_alloc                   ; the next, first - so this one
-    jc .last                              ; goes out pointing at it
-    mov [SCRATCH_ADDR + FS_EXTRA_NEXT_OFFSET], ax
-    movzx ebx, ax
-    mov eax, edx
-    call fs_extra_write
-    mov edx, ebx
-    jmp .sector
-.last:
-    mov eax, edx
-    call fs_extra_write
-    mov [dks_last], edx
-    mov eax, [dks_slot]                   ; the size: what's there now
-    call fs_read_slot
-    mov eax, [dks_pos]
-    call fs_set_size
     mov eax, [dks_slot]
-    call fs_write_slot
-    push eax
+    mov ebx, [dks_pos]
+    mov esi, [dk_shot_buf]
+    add esi, ebx
+    call fat_write                        ; -> ecx written
+    pushfd
+    add [dks_pos], ecx
+    popfd
+    jc .full
     mov eax, [dks_pos]
     cmp eax, [dks_len]
-    pop eax
     jae .all
     popad
     clc

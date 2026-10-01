@@ -11,7 +11,8 @@
 ;                         dispatches to src/atadma.asm's DMA path when available
 ;   src/atadma.asm      - Bus Master IDE (ATA DMA) via direct PCI access
 ;   src/filesystem.asm  - filesystem layered on top of ATA
-;   src/fs_extra.asm    - extra sector chains for files > 127 bytes (append, batch)
+;   src/fs_extra.asm    - whole files: load, stream, append (on src/fat32.asm)
+;   src/fat32.asm       - the disk's FAT32 filesystem (at the tail: shared)
 ;   src/programs.asm    - executable files (run), hex editor, TEST.BIN example
 ;   src/dosrun.asm      - runs a *.com MS-DOS program (run <n>.com)
 ;   src/assembler.asm   - single-line mini-assembler for the hex editor
@@ -50,7 +51,7 @@ kernel_start:
     call sched_init          ; this flow becomes task 0 (src/sched.asm)
     call devmgr_init         ; initializes all devices (screen/keyboard/disk/timer)
     call pm_init             ; paging, TSS, ring 3 (src/usermode.asm)
-    call fs_cache_init       ; slot cache + extra-sector bitmap (src/fs_extra.asm)
+    call fs_cache_init       ; the FAT32 disk read into the slots (src/fs_extra.asm)
     call kext_load           ; /SYSTEM/KEXT.BIN: the rest of the kernel (below)
     call dkpng_load          ; /SYSTEM/PNG.BIN: PNG pictures (src/dkpng.asm)
     call console_init        ; (src/console.asm)
@@ -187,6 +188,7 @@ align 4096, db 0
 align 4096, db 0
 shared_tail_start:                ; (src/console.asm: from here to the end)
 %include "src/atadma.asm"
+%include "src/fat32.asm"           ; (the disk's FAT32: one, whichever console)
 
 ; src/dosrun.asm (.com program support) is included here for the same
 ; reason as src/atadma.asm just above: none of its own code needs
@@ -228,6 +230,8 @@ ata_prdt_len        dw 0     ; byte count for that one entry (always 512)
 ata_prdt_flags      dw 0     ; 0x8000 = end-of-table
 ata_bmide_base      dw 0     ; Bus Master IDE base I/O port (0 until found)
 ata_dma_available   db 0     ; 1 once ata_dma_probe finds a controller
+align 16
+ata_prdt2           times 4 dd 0  ; ata_read_lba/ata_write_lba's: two entries
 
 ; --- fs_read_slot/fs_write_slot's (src/filesystem.asm) RAM-backed
 ; slots, see the note above FS_RAM_FILE_COUNT in data.asm. Living here

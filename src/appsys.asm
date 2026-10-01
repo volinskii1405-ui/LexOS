@@ -1,14 +1,12 @@
 ; appsys.asm — the system calls that give ring-3 programs (src/usermode.asm)
 ; files, their command line and a 320x200 graphics screen.
 ;
-; Files: SYS_OPEN hands out one of FH_COUNT handles, each with a 4MB
-; buffer of its own at FH_BUF_BASE (above everything else in the memory
-; map, and outside the program's reach - only these calls touch it).
-; Opening loads the whole file into the buffer; read/write/seek work
-; on the buffer; closing a handle that was written to saves the buffer
-; back through fs_stream_prepare/fs_stream_write, the same path hostget
-; takes. A program that ends - however it ends - has its handles closed
-; (and saved) for it. Names are looked up in the shell's current folder.
+; Files: SYS_OPEN hands out one of FH_COUNT handles - a file and a
+; place in it; read, write and seek go straight to the disk's FAT32
+; (src/fat32.asm's fat_read / fat_write), so a file can be as big as the
+; disk lets it be (4GB at most: FAT32's own limit). A program that ends
+; - however it ends - has its handles closed for it. Names are looked
+; up in the shell's current folder.
 ;
 ; Graphics: SYS_GFX 1 switches to mode 13h (src/vga.asm) with a
 ; 256-color palette - the 16 text colors, 16 grays, a 6x6x6 color cube
@@ -29,8 +27,6 @@
 ; ============================================================
 
 FH_COUNT        equ 4
-FH_BUF_BASE     equ 0x4000000            ; 64MB: 4 x 4MB, up to 0x5000000
-FH_BUF_SIZE     equ 0x400000
 
 FH_MODE_READ    equ 0                    ; an existing file, from the start
 FH_MODE_WRITE   equ 1                    ; created, or emptied
@@ -97,8 +93,9 @@ app_check_buf:
     mov eax, APP_EXIT_CRASHED
     jmp app_abort
 
-; The caller's handle (ebx) -> edi = its index, esi = its buffer.
-; carry=1 if it isn't an open handle of this program's.
+; The caller's handle (ebx) -> edi = its index, esi = its file's slot.
+; carry=1 if it isn't an open handle of this program's (or its file's
+; gone meanwhile).
 fh_lookup:
     mov edi, [ebp + 16]
     cmp edi, FH_COUNT
@@ -107,9 +104,12 @@ fh_lookup:
     inc eax
     cmp [fh_owner + edi], al
     jne .bad
-    mov esi, edi
-    imul esi, FH_BUF_SIZE
-    add esi, FH_BUF_BASE
+    movzx esi, word [fh_slot + edi*2]
+    push esi
+    call fs_ram_record_or_cache           ; -> esi = its record
+    cmp byte [esi + FS_TYPE_OFFSET], FS_TYPE_FILE
+    pop esi
+    jne .bad
     clc
     ret
 .bad:
@@ -249,22 +249,13 @@ sys_open_here:
     call fs_get_type
     cmp ax, FS_TYPE_FILE
     jne .fail
-    mov ax, [fh_cur_slot]
-    call fs_read_slot
-    call fs_get_size
-    cmp eax, FH_BUF_SIZE
-    ja .fail                              ; too big to hold
-    mov edi, [fh_cur]
-    imul edi, FH_BUF_SIZE
-    add edi, FH_BUF_BASE
-    mov ecx, FH_BUF_SIZE
-    mov ax, [fh_cur_slot]
-    call fs_load_to                       ; -> ecx = its size
+    movzx eax, word [fh_cur_slot]
+    call fat_size_of                      ; -> ecx
     xor edx, edx                          ; position: the start...
     cmp dword [ebp + 24], FH_MODE_APPEND
-    jne .opened
+    jne .have
     mov edx, ecx                          ; ...or the end
-    jmp .opened
+    jmp .have
 
 .missing:
     cmp dword [ebp + 24], FH_MODE_WRITE
@@ -274,19 +265,14 @@ sys_open_here:
 .create:
     call fs_stream_prepare                ; a new empty file, or an old one
     jc .fail                              ; to overwrite (says why not)
-    mov ax, [fs_tmp_slot]
+    movzx eax, word [fs_tmp_slot]
     mov [fh_cur_slot], ax
-    xor ecx, ecx
+    xor ebx, ebx
+    call fat_truncate                     ; (emptied)
     xor edx, edx
-    mov edi, [fh_cur]
-    mov byte [fh_dirty + edi], 1          ; saved (as empty) even if never written
-    jmp .have
 
-.opened:
-    mov edi, [fh_cur]
-    mov byte [fh_dirty + edi], 0
 .have:
-    mov [fh_size + edi*4], ecx
+    mov edi, [fh_cur]
     mov [fh_pos + edi*4], edx
     mov ax, [fh_cur_slot]
     mov [fh_slot + edi*2], ax
@@ -309,20 +295,15 @@ sys_read:
     mov eax, [ebp + 24]
     mov ecx, [ebp + 20]
     call app_check_buf
-    mov eax, [fh_size + edi*4]
-    sub eax, [fh_pos + edi*4]
-    cmp ecx, eax
-    jbe .count
-    mov ecx, eax
-.count:
-    add esi, [fh_pos + edi*4]
+    push edi
+    mov eax, esi                          ; the slot
+    mov ebx, [fh_pos + edi*4]
+    mov edi, [ebp + 24]
+    call fat_read                         ; -> ecx
+    pop edi
+    jc .fail
     add [fh_pos + edi*4], ecx
     mov eax, ecx
-    push edi
-    mov edi, [ebp + 24]
-    cld
-    rep movsb
-    pop edi
     ret
 .fail:
     mov eax, -1
@@ -330,7 +311,7 @@ sys_read:
 
 ; ============================================================
 ; SYS_FWRITE: ebx = handle, ecx = data, edx = count -> eax = bytes
-; written (fewer once the file reaches 4MB), or -1
+; written (fewer once the disk's full), or -1
 ; ============================================================
 sys_fwrite:
     call fh_lookup
@@ -338,27 +319,12 @@ sys_fwrite:
     mov eax, [ebp + 24]
     mov ecx, [ebp + 20]
     call app_check_buf
-    mov eax, FH_BUF_SIZE
-    sub eax, [fh_pos + edi*4]
-    cmp ecx, eax
-    jbe .count
-    mov ecx, eax
-.count:
-    mov byte [fh_dirty + edi], 1
-    push edi
-    mov eax, ecx
-    add esi, [fh_pos + edi*4]
-    xchg esi, edi                         ; edi = into the buffer
+    mov eax, esi                          ; the slot
+    mov ebx, [fh_pos + edi*4]
     mov esi, [ebp + 24]
-    cld
-    rep movsb
-    pop edi
-    add [fh_pos + edi*4], eax
-    mov ecx, [fh_pos + edi*4]
-    cmp ecx, [fh_size + edi*4]
-    jbe .done
-    mov [fh_size + edi*4], ecx
-.done:
+    call fat_write                        ; -> ecx (carry: not all of it)
+    add [fh_pos + edi*4], ecx
+    mov eax, ecx
     ret
 .fail:
     mov eax, -1
@@ -369,10 +335,12 @@ sys_fwrite:
 sys_seek:
     call fh_lookup
     jc .fail
+    mov eax, esi
+    call fat_size_of                      ; -> ecx
     mov eax, [ebp + 24]
-    cmp eax, [fh_size + edi*4]
+    cmp eax, ecx
     jbe .set
-    mov eax, [fh_size + edi*4]
+    mov eax, ecx
 .set:
     mov [fh_pos + edi*4], eax
     ret
@@ -384,64 +352,38 @@ sys_seek:
 sys_fsize:
     call fh_lookup
     jc .fail
-    mov eax, [fh_size + edi*4]
+    mov eax, esi
+    call fat_size_of
+    mov eax, ecx
     ret
 .fail:
     mov eax, -1
     ret
 
-; SYS_CLOSE: ebx = handle -> eax = 0, or -1 (not open, or the disk was
-; too full to save all of it)
+; SYS_CLOSE: ebx = handle -> eax = 0, or -1 (not open)
 sys_close:
-    call fh_lookup
-    jc .fail
+    mov edi, [ebp + 16]
+    cmp edi, FH_COUNT
+    jae .fail
+    mov eax, [sched_current]
+    inc eax
+    cmp [fh_owner + edi], al
+    jne .fail
     call fh_close
-    jc .fail
     xor eax, eax
     ret
 .fail:
     mov eax, -1
     ret
 
-; Closes handle edi, saving its buffer first if it was written to.
-; carry=1 if the save didn't fit on disk.
+; Closes handle edi (what's written: already on the disk)
 fh_close:
-    pushad
     mov byte [fh_owner + edi], 0
-    cmp byte [fh_dirty + edi], 0
-    je .ok
-    mov byte [fh_dirty + edi], 0
-    mov ax, [fh_slot + edi*2]
-    mov [fs_tmp_slot], ax
-    mov eax, [fh_size + edi*4]
-    mov [fs_stream_size], eax
-    imul edi, FH_BUF_SIZE
-    add edi, FH_BUF_BASE
-    mov [fh_src_ptr], edi
-    mov dword [fs_stream_source], fh_stream_byte
-    call fs_stream_write
-    jc .full
-.ok:
-    popad
     clc
     ret
-.full:
-    popad
-    stc
-    ret
 
-; fs_stream_write's byte source for fh_close: al = the next byte.
-fh_stream_byte:
-    push esi
-    mov esi, [fh_src_ptr]
-    mov al, [esi]
-    inc esi
-    mov [fh_src_ptr], esi
-    pop esi
-    ret
-
-; Closes (and saves) every handle the current task still has open -
-; for app_abort, however the program ended.
+; Closes every handle the current task still has open - for app_abort,
+; however the program ended.
 fh_close_all:
     pushad
     mov eax, [sched_current]
@@ -456,6 +398,17 @@ fh_close_all:
     cmp edi, FH_COUNT
     jb .next
     popad
+    ret
+
+; A byte source for fs_stream_write (desktop and shell code writing a
+; buffer out as a file): al = the next byte at fh_src_ptr.
+fh_stream_byte:
+    push esi
+    mov esi, [fh_src_ptr]
+    mov al, [esi]
+    inc esi
+    mov [fh_src_ptr], esi
+    pop esi
     ret
 
 ; ============================================================
@@ -1529,9 +1482,7 @@ app_build_cmdline:
 ; describe are outside any console's saved memory)
 ; ============================================================
 fh_owner     times FH_COUNT db 0      ; task id + 1, 0 = free
-fh_dirty     times FH_COUNT db 0
 fh_slot      times FH_COUNT dw 0
-fh_size      times FH_COUNT dd 0
 fh_pos       times FH_COUNT dd 0
 fh_cur       dd 0
 fh_cur_slot  dw 0

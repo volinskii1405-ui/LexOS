@@ -296,3 +296,210 @@ ata_dma_wait:
     pop eax
     clc
     ret
+
+; ============================================================
+; ata_read_lba / ata_write_lba: any number of sectors at once, anywhere
+; on the disk (28-bit LBA - up to 128GB), straight into / out of any
+; buffer - what the FAT32 filesystem (src/fat32.asm) reads and writes
+; its clusters with. eax = the first sector's LBA, ecx = how many,
+; edi = where to (read) / esi = where from (write). carry=1 on an error.
+; Keeps every register. Through the Bus Master IDE when there is one
+; (up to 128 sectors a command: two PRD entries, split at a 64KB line),
+; the ports otherwise.
+; ============================================================
+ata_read_lba:
+    pushad
+    mov byte [ata_rw_dir], 0
+    jmp ata_rw_lba
+ata_write_lba:
+    pushad
+    mov byte [ata_rw_dir], 1
+    mov edi, esi
+ata_rw_lba:
+    mov [ata_rw_lba_at], eax
+.chunk:
+    or ecx, ecx
+    jz .ok
+    mov edx, ecx
+    cmp edx, 128
+    jbe .sized
+    mov edx, 128
+.sized:
+    mov [ata_rw_n], edx
+    cmp byte [ata_dma_available], 0
+    je .pio
+    call ata_rw_dma
+    jc .fail
+    jmp .next
+.pio:
+    call ata_rw_pio
+    jc .fail
+.next:
+    mov edx, [ata_rw_n]
+    add [ata_rw_lba_at], edx
+    sub ecx, edx
+    shl edx, 9
+    add edi, edx
+    jmp .chunk
+.ok:
+    popad
+    clc
+    ret
+.fail:
+    popad
+    stc
+    ret
+
+; the command's registers: [ata_rw_lba_at], [ata_rw_n] sectors, al = the command
+ata_rw_regs:
+    push eax
+    call ata_wait_bsy_clear
+    mov dx, ATA_DRIVE_HEAD
+    mov eax, [ata_rw_lba_at]
+    shr eax, 24
+    and al, 0x0F
+    or al, 0xE0                           ; master, LBA, bits 24-27
+    out dx, al
+    mov dx, ATA_SECCOUNT
+    mov al, [ata_rw_n]
+    out dx, al
+    mov dx, ATA_LBA_LO
+    mov eax, [ata_rw_lba_at]
+    out dx, al
+    mov dx, ATA_LBA_MID
+    shr eax, 8
+    out dx, al
+    mov dx, ATA_LBA_HI
+    shr eax, 8
+    out dx, al
+    pop eax
+    mov dx, ATA_COMMAND
+    out dx, al
+    ret
+
+; [ata_rw_n] sectors at edi, through the ports
+ata_rw_pio:
+    push ecx
+    push edi
+    push esi
+    mov al, 0x20                          ; READ SECTORS
+    cmp byte [ata_rw_dir], 0
+    je .cmd
+    mov al, 0x30                          ; WRITE SECTORS
+.cmd:
+    call ata_rw_regs
+    mov ebx, [ata_rw_n]
+.sector:
+    call ata_wait_bsy_clear
+    mov dx, ATA_STATUS
+    in al, dx
+    test al, ATA_STATUS_ERR
+    jnz .fail
+    call ata_wait_drq
+    mov dx, ATA_DATA
+    mov ecx, 256
+    cld
+    cmp byte [ata_rw_dir], 0
+    jne .out
+    rep insw
+    jmp .done1
+.out:
+    mov esi, edi
+    rep outsw
+    mov edi, esi
+.done1:
+    dec ebx
+    jnz .sector
+    call ata_wait_bsy_clear
+    mov dx, ATA_STATUS
+    in al, dx
+    test al, ATA_STATUS_ERR
+    jnz .fail
+    pop esi
+    pop edi
+    pop ecx
+    clc
+    ret
+.fail:
+    pop esi
+    pop edi
+    pop ecx
+    stc
+    ret
+
+; [ata_rw_n] sectors at edi, through the Bus Master IDE
+ata_rw_dma:
+    push ecx
+    push edi
+    mov eax, [ata_rw_n]
+    shl eax, 9                            ; bytes
+    mov ecx, edi
+    and ecx, 0xFFFF
+    neg ecx
+    add ecx, 0x10000                      ; to the next 64KB line
+    mov [ata_prdt2], edi
+    mov word [ata_prdt2 + 6], 0
+    cmp eax, ecx
+    ja .two
+    mov [ata_prdt2 + 4], ax               ; (0 = 64KB)
+    mov word [ata_prdt2 + 6], 0x8000
+    jmp .table
+.two:
+    mov [ata_prdt2 + 4], cx
+    add ecx, edi
+    mov [ata_prdt2 + 8], ecx
+    sub eax, [ata_prdt2 + 4]
+    cmp word [ata_prdt2 + 4], 0
+    jne .len2
+    sub eax, 0x10000
+.len2:
+    mov [ata_prdt2 + 12], ax
+    mov word [ata_prdt2 + 14], 0x8000
+.table:
+    movzx edx, word [ata_bmide_base]
+    add dx, BM_CMD
+    xor al, al
+    out dx, al
+    movzx edx, word [ata_bmide_base]
+    add dx, BM_STATUS
+    in al, dx
+    or al, 0x06
+    out dx, al
+    movzx edx, word [ata_bmide_base]
+    add dx, BM_PRDT
+    mov eax, ata_prdt2
+    out dx, eax
+    mov al, 0xC8                          ; READ DMA
+    mov ah, 0x09                          ; (to memory, start)
+    cmp byte [ata_rw_dir], 0
+    je .cmd
+    mov al, 0xCA                          ; WRITE DMA
+    mov ah, 0x01
+.cmd:
+    push eax
+    call ata_rw_regs
+    pop eax
+    movzx edx, word [ata_bmide_base]
+    add dx, BM_CMD
+    mov al, ah
+    out dx, al
+    call ata_dma_wait
+    jc .fail
+    call ata_wait_bsy_clear
+    mov dx, ATA_STATUS
+    in al, dx
+    test al, ATA_STATUS_ERR
+    jnz .fail
+    pop edi
+    pop ecx
+    clc
+    ret
+.fail:
+    pop edi
+    pop ecx
+    stc
+    ret
+
+ata_rw_dir    db 0
+ata_rw_lba_at dd 0
+ata_rw_n      dd 0

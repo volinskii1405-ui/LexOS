@@ -1145,6 +1145,7 @@ show_help:
 ; ============================================================
 do_shutdown:
     call dkfs_clean                ; (ended properly: src/dkfscheck.asm)
+    call fat_shutdown              ; (and so the FAT says: src/fat32.asm)
     call jnl_commit                ; (nothing left half written)
     call ata_flush                 ; (and all of it out of the disk's cache)
     mov ax, 0x2000
@@ -1165,6 +1166,7 @@ do_shutdown:
 ; ============================================================
 do_reboot:
     call dkfs_clean
+    call fat_shutdown
     call jnl_commit
     call ata_flush                 ; (what's written: out of the disk's cache)
     cli

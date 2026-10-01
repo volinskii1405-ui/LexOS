@@ -23,19 +23,26 @@ SCRATCH_ADDR equ 0x91000     ; scratch buffer for reading/writing one sector
 SECTOR_COUNT equ 8
 
 ; --- Filesystem ---
-; Layout of one record (1 record = 1 disk sector):
+; The disk is FAT32 (src/fat32.asm); the kernel keeps a 512-byte record,
+; a slot, per file and folder on it, in RAM (FS_SLOT_CACHE) - read at
+; boot, and turned into what it means on the disk whenever it's written
+; (fs_write_slot). A slot's layout:
 ;   bytes 0..15  - name (ASCII, zero-padded)
 ;   byte 16      - type (0=free, 1=file, 2=folder)
 ;   byte 17      - parent (slot index of the parent folder, 0xFF = root)
 ;   bytes 18..145 - inline content (the first 127 bytes)
 ;   bytes 146-147 - total length, high word (see FS_TOTAL_LEN_HI_OFFSET)
-;   bytes 508-511 - total length low word, first extra sector
+;   bytes 148-153 - when it changed, its attributes (src/fsjournal.asm)
+;   bytes 160-239 - its long name (src/fslong.asm)
+;   bytes 240-243 - "FX" + the slot the record's from (src/fat32.asm)
+;   bytes 508-511 - total length low word, FS_NO_CHAIN
 ;
 ; 1024 slots. A parent is still one byte, because folders only ever live
 ; in slots 0..FS_DIR_SLOT_LIMIT-1 (fs_find_free_dir) - files take the
 ; rest first (fs_find_free), so up to 255 folders, nested as deep as you
 ; like, and the other ~770 slots for files.
-FS_START_SECTOR   equ 578     ; sector 1=bootloader, 2..577=kernel (576 sectors)
+FS_START_SECTOR   equ 578     ; sector 1=bootloader, 2..577=kernel (576 sectors);
+                              ; the journal from 1024, FAT32 from 2048
 FS_FILE_COUNT     equ 1024
 FS_DIR_SLOT_LIMIT equ 255
 FS_NAME_LEN       equ 16
@@ -50,10 +57,8 @@ FS_SCRATCH_ADDR   equ SCRATCH_ADDR
 ; Every other filesystem function (ls, cat, rm, find-by-name, wildcard
 ; cp/mv, ...) just iterates 0..FS_TOTAL_SLOTS-1 instead of
 ; 0..FS_FILE_COUNT-1, so a RAM slot is indistinguishable from a disk one
-; except in that one guaranteed-not-persisted-across-reboots way. Content
-; past the 127 inline bytes still chains into the ordinary (disk-backed)
-; extra-sector pool like any other file - only the up-to-127-byte
-; primary record itself is RAM-only.
+; except in that one guaranteed-not-persisted-across-reboots way - and
+; that a RAM file holds 127 bytes at most (its record's own).
 FS_RAM_FILE_COUNT equ 8
 FS_TOTAL_SLOTS    equ FS_FILE_COUNT + FS_RAM_FILE_COUNT
 
@@ -74,40 +79,20 @@ FS_TYPE_FILE equ 1
 FS_TYPE_DIR  equ 2
 FS_TYPE_PROGRAM equ 3
 
-; --- Chains of extra sectors (for files larger than 127 bytes,
-;     see src/fs_extra.asm and the append command) ---
-; In every directory slot bytes 146-507 aren't used for inline content
-; (max inline content ends at 145) - that leaves room for auxiliary
-; fields without shifting the existing layout:
-FS_TOTAL_LEN_OFFSET equ 508    ; (FS_TYPE_FILE only) total length, low word
+; A file's size, in its record (bytes 146-147 and 508-509)
+FS_TOTAL_LEN_OFFSET equ 508    ; total length, low word
 FS_TOTAL_LEN_HI_OFFSET equ 146 ; ... and its high word (files > 64KB).
                                ; Old 16-bit writers go through
                                ; fs_scratch_write_size16, which zeroes it;
                                ; fs_get_size / fs_set_size do both words
-FS_CHAIN_OFFSET     equ 510    ; index of the first extra sector, FS_NO_CHAIN=none
+FS_CHAIN_OFFSET     equ 510    ; (LexOS's older format's chain: always FS_NO_CHAIN)
 FS_NO_CHAIN         equ 0xFFFF
 
-; Layout of an extra sector (has no directory header, entirely its own
-; pool): bytes 0-507 - content, bytes 508-509 - how many of them are used,
-; bytes 510-511 - index of the next extra sector (FS_NO_CHAIN = end).
-FS_EXTRA_CONTENT_LEN equ 508
-FS_EXTRA_USED_OFFSET equ 508
-FS_EXTRA_NEXT_OFFSET equ 510
-
-FS_EXTRA_COUNT equ 30000       ; ~15MB of file data
-FS_BITMAP_SECTORS equ (FS_EXTRA_COUNT + 511) / 512   ; one byte per extra sector
-FS_BITMAP_SECTOR equ FS_START_SECTOR + FS_FILE_COUNT
-FS_EXTRA_START_SECTOR equ FS_BITMAP_SECTOR + FS_BITMAP_SECTORS
-FS_MAX_FILE equ FS_EXTRA_COUNT * FS_EXTRA_CONTENT_LEN   ; (a bound, not a promise)
-
 ; --- High memory (above the kernel image), shared by all consoles ---
-; The filesystem's in-RAM caches (write-through: every change goes to
-; disk at once, the cache only saves re-reading): all 1024 directory
-; slots, and the whole extra-sector bitmap.
+; The slots of every file and folder on the disk (src/fat32.asm keeps
+; them, and the FAT, in RAM)
 FS_SLOT_CACHE     equ 0x3E00000             ; 1024 x 512 bytes
 FS_SLOT_VALID     equ FS_SLOT_CACHE + FS_FILE_COUNT * 512   ; 1 bit per slot
-FS_BITMAP_CACHE   equ FS_SLOT_VALID + FS_FILE_COUNT / 8
-FS_SCRATCH_SAVE   equ FS_BITMAP_CACHE + FS_BITMAP_SECTORS * 512
 ; A big buffer for whole-file work (hostput, wget, a program's files)
 BIG_FILE_BUF      equ 0x6400000             ; 100MB, up to 9MB (then a PNG's
 BIG_FILE_MAX      equ 0x900000              ;  BMP, the wallpaper, thumbnails)
@@ -273,7 +258,9 @@ msg_sector_error db "Disk read error while reading sectors.", 13, 10, 0
 msg_history_empty db "No command history yet.", 13, 10, 0
 
 msg_df_slots_label db "Directory slots: ", 0
-msg_df_extra_label db "Extra sectors:   ", 0
+msg_df_extra_label db "Disk (FAT32):    ", 0
+msg_df_kb_used     db " KB used, ", 0
+msg_df_kb_free     db " KB free", 13, 10, 0
 msg_df_ram_label   db "RAM slots (TMP): ", 0
 msg_df_slash       db "/", 0
 msg_df_used        db " used, ", 0
