@@ -211,12 +211,28 @@ fs_parent_of:
     mov ax, FS_ROOT
     ret
 
-; --- Converts the character in al to uppercase (a-z -> A-Z), otherwise leaves it alone ---
+; --- Converts the character in al to uppercase (a-z -> A-Z, and the
+;     Russian letters of code page 866), otherwise leaves it alone ---
 to_upper_al:
     cmp al, 'a'
     jb .done
     cmp al, 'z'
-    ja .done
+    jbe .sub20
+    cmp al, 0xA0                  ; (a..p: 0xA0-0xAF -> 0x80-0x8F)
+    jb .done
+    cmp al, 0xAF
+    jbe .sub20
+    cmp al, 0xE0                  ; (r..ya: 0xE0-0xEF -> 0x90-0x9F)
+    jb .done
+    cmp al, 0xEF
+    jbe .sub50
+    cmp al, 0xF1                  ; (yo)
+    jne .done
+    dec al
+    ret
+.sub50:
+    sub al, 0x30
+.sub20:
     sub al, 0x20
 .done:
     ret
@@ -279,37 +295,46 @@ fs_name_matches:
     xor ax, ax
     ret
 
-; --- Looks up a file/folder by name DS:SI IN THE CURRENT DIRECTORY.
-;     Returns: ax = slot index, or -1 if not found. ---
+; --- Looks up a file/folder by name DS:SI IN THE CURRENT DIRECTORY -
+;     its short name, or else its long one (src/fslong.asm).
+;     Returns: ax = slot index, or -1 if not found (the slot found is
+;     in the scratch buffer). ---
 fs_find_by_name:
     push bx
-    push si
+    push esi
     push cx
     push dx
 
     mov cx, si
     mov dx, [fs_current_dir]
 
+    movzx esi, si                 ; longer than a short name can be?
+    xor bx, bx
+.len:
+    cmp byte [esi + ebx], 0
+    je .len_ok
+    inc bx
+    cmp bx, FS_NAME_LEN
+    jb .len
+    jmp .long
+.len_ok:
+
     xor bx, bx
 .scan:
     cmp bx, [fs_slot_top]
-    jae .not_found
+    jae .long
 
-    push ax
-    mov ax, bx
-    call fs_read_slot
-    pop ax
-
-    push ax
-    mov ax, FS_TYPE_OFFSET
-    call fs_scratch_read_byte
-    cmp al, FS_TYPE_FREE
-    pop ax
+    movzx esi, bx                 ; (the cache, as it is: quick)
+    shl esi, 9
+    cmp byte [FS_SLOT_CACHE + esi + FS_TYPE_OFFSET], FS_TYPE_FREE
     je .next
-
-    call fs_scratch_parent_is_dx
+    cmp [FS_SLOT_CACHE + esi + FS_PARENT_LO_OFFSET], dl
+    jne .next
+    cmp [FS_SLOT_CACHE + esi + FS_PARENT_HI_OFFSET], dh
     jne .next
 
+    mov ax, bx
+    call fs_read_slot
     mov si, cx
     call fs_name_matches
     cmp ax, 1
@@ -323,13 +348,18 @@ fs_find_by_name:
     mov ax, bx
     jmp .end
 
+.long:
+    movzx esi, cx
+    call fsl_find_long            ; -> eax
+    jnc .end
+
 .not_found:
     mov ax, -1
 
 .end:
     pop dx
     pop cx
-    pop si
+    pop esi
     pop bx
     ret
 
@@ -1402,7 +1432,7 @@ fs_resolve_path:
     je .seg_done
     cmp al, '/'
     je .seg_done
-    cmp cx, FS_NAME_LEN
+    cmp cx, FS_LNAME_MAX - 1      ; (a long name, too)
     jae .seg_skip
     mov [di], al
     inc di

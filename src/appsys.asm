@@ -53,7 +53,7 @@ app_copy_name:
     mov al, [esi]
     or al, al
     jz .end
-    cmp ecx, FS_NAME_LEN
+    cmp ecx, FS_LNAME_MAX - 1             ; (a long name, too)
     jae .bad
     mov [fs_tmp_name + ecx], al
     inc ecx
@@ -153,27 +153,27 @@ app_split_path:
 .next:
     inc esi
     inc ecx
-    cmp ecx, BUFFER_MAX
+    cmp ecx, 127
     jb .scan
     jmp .bad
 .scanned:
     or edi, edi
     jz .done                              ; (no path: here)
-    push eax                              ; the folder part -> buffer
+    push eax                              ; the folder part -> app_path_buf
     mov esi, eax
     mov ecx, edi
     sub ecx, eax
-    mov edi, buffer
+    mov edi, app_path_buf
     cld
     rep movsb
     mov byte [edi], 0
-    cmp edi, buffer                       ; ("/NAME": the root)
+    cmp edi, app_path_buf                 ; ("/NAME": the root)
     jne .resolve
-    mov word [buffer], '/'
+    mov word [app_path_buf], '/'
 .resolve:
     push ebx
     push edx
-    mov si, buffer
+    mov si, app_path_buf
     call fs_resolve_path                  ; -> ax, or carry=1
     pop edx
     pop ebx

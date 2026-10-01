@@ -662,8 +662,9 @@ EDITOR_BAR_BG   equ 0x20   ; plain green - used only for the blank fill
 EDITOR_BAR_TEXT equ 0x2F   ; bright white on green - used for the bar's text
 screen_bar_saved_color db 0
 
-fs_tmp_name times (FS_NAME_LEN + 1) db 0
-fs_tmp_name2 times (FS_NAME_LEN + 1) db 0
+fs_tmp_name times 64 db 0       ; (a long name fits: FS_LNAME_MAX)
+fs_tmp_name2 times 64 db 0
+app_path_buf times 128 db 0     ; (src/appsys.asm: a program's path's folder)
 fs_rm_pattern_buf    times (FS_NAME_LEN + 5) db 0
 fs_rm_batch_name_buf times (FS_NAME_LEN + 1) db 0
 

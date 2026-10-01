@@ -231,6 +231,12 @@ GUI_FN int gui_ctrl(int ch, int sc)
     return keydown(KEY_CTRL);
 }
 GUI_FN char gui_upper(char c) { return c >= 'a' && c <= 'z' ? c - 32 : c; }
+/* the same name, in capitals or not (short names are all capitals) */
+GUI_FN int gui_same(const char *a, const char *b)
+{
+    while (*a && gui_upper(*a) == gui_upper(*b)) { a++; b++; }
+    return gui_upper(*a) == gui_upper(*b);
+}
 
 /* ---- a file to open, or a name to save as ----
  * A box over the picture: the folder's list (folders first; with exts,
@@ -297,7 +303,7 @@ GUI_FN int gui_file_dialog(const char *title, char *path, int save, const char *
             if (l > 1) {
                 char up[128]; memcpy(up, path, cut); up[cut ? cut : 1] = 0; if (!cut) strcpy(up, "/");
                 for (i = 0; readdir(up, i, &e) == 0; i++)
-                    if (e.type == LX_DIR && !strcmp(e.name, path + cut + 1)) is_dir = 1;
+                    if (e.type == LX_DIR && gui_same(e.name, path + cut + 1)) is_dir = 1;
             } else is_dir = 1;
             if (is_dir) strcpy(dir, path);
             else {
@@ -319,7 +325,7 @@ GUI_FN int gui_file_dialog(const char *title, char *path, int save, const char *
             if (ch == 13) { result = 2; break; }       /* (2: as OK) */
             if (sc == KEY_UP && !ch) { if (sel > 0) sel--; }
             else if (sc == KEY_DOWN && !ch) { if (sel < g_ndents - 1) sel++; }
-            else { gui_field_key(name, sizeof name, gui_upper(ch)); continue; }
+            else { gui_field_key(name, sizeof name, ch); continue; }
             if (sel >= 0 && g_dents[sel].type != LX_DIR) strcpy(name, g_dents[sel].name);
             if (sel >= 0 && sel < top) top = sel;
             if (sel >= top + rows) top = sel - rows + 1;
@@ -356,7 +362,7 @@ GUI_FN int gui_file_dialog(const char *title, char *path, int save, const char *
             int into = -1;
             if (result == 3 && sel >= 0 && g_dents[sel].type == LX_DIR) into = sel;
             for (i = 0; i < g_ndents && into < 0 && name[0]; i++)
-                if (g_dents[i].type == LX_DIR && !strcmp(g_dents[i].name, name)) into = i;
+                if (g_dents[i].type == LX_DIR && gui_same(g_dents[i].name, name)) into = i;
             if (into < 0 && result == 2 && !name[0] && sel >= 0 && g_dents[sel].type == LX_DIR) into = sel;
             if (into >= 0) {
                 const char *d = g_dents[into].name;
@@ -367,7 +373,7 @@ GUI_FN int gui_file_dialog(const char *title, char *path, int save, const char *
             } else if (!pick[0]) result = -1;
             else if (!save) {
                 int found = 0;
-                for (i = 0; i < g_ndents; i++) if (!strcmp(g_dents[i].name, pick)) found = 1;
+                for (i = 0; i < g_ndents; i++) if (gui_same(g_dents[i].name, pick)) found = 1;
                 if (!found) result = -1;
             }
             if (result >= 2) {
@@ -398,7 +404,7 @@ GUI_FN int gui_file_dialog(const char *title, char *path, int save, const char *
                     gui_fill(bx + 22, y + 1, 10, 14, RGB(255, 255, 255));
                     gui_box(bx + 22, y + 1, 10, 14, RGB(140, 150, 170));
                 }
-                gui_text_n(bx + 42, y, e->name, 16, RGB(28, 30, 36));
+                gui_text_n(bx + 42, y, e->name, (bw - 150) / 8, RGB(28, 30, 36));
                 if (e->type != LX_DIR) {
                     gui_num(sz, e->size);
                     gui_text(bx + bw - 24 - gui_text_w(sz, 1), y, sz, RGB(120, 126, 138), 1);

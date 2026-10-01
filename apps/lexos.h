@@ -134,18 +134,22 @@ static inline void keymode(int raw)                       { lx_syscall(36, raw, 
 
 /* --- folders ---
  * readdir("/DEMOS", i, &e): the i-th thing in a folder ("/" the root,
- * "" the current one) -> 0, or -1 past the last one. mkdir("NAME") or
- * mkdir("/A/NAME") -> 0, or -1 (taken, no such folder, no room). */
+ * "" the current one) -> 0, or -1 past the last one. Its name is its
+ * long one ("Holiday photos.png"), if it has one - open() and paths take
+ * those as well as short ones - and sname the short one (HOLIDA~1.PNG).
+ * mkdir("NAME") or mkdir("/A/Long name") -> 0, or -1 (taken, no such
+ * folder, no room). */
 struct lx_dirent {
-    char name[16];
+    char name[64];
     int type;                           /* LX_FILE, LX_DIR, LX_PROGRAM */
     unsigned size;
     unsigned char time[8];              /* yy mm dd hh mi (0: none) */
+    char sname[16];
 };
 #define LX_FILE    1
 #define LX_DIR     2
 #define LX_PROGRAM 3
-static inline int readdir(const char *path, int i, struct lx_dirent *e) { return lx_syscall3(37, (int)path, i, (int)e); }
+static inline int readdir(const char *path, int i, struct lx_dirent *e) { return lx_syscall3(46, (int)path, i, (int)e); }
 static inline int mkdir(const char *path)                 { return lx_syscall(38, (int)path, 0); }
 /* notify("Done: X.ZIP"): a line at the top of the desktop for a few
  * seconds (Files and the desktop's icons look at the disk again). */

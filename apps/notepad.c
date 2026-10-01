@@ -92,7 +92,7 @@ struct op {                              /* one change, for undo/redo */
 
 struct doc {
     char path[PATH_MAX];                 /* "" = not saved yet */
-    char name[20];
+    char name[64];
     char *t;
     int len, cap;
     int *ls;                             /* line starts */
@@ -140,6 +140,11 @@ static int memchr_nl(struct doc *d);
  * little helpers
  * ============================================================ */
 static int upper(int c) { return c >= 'a' && c <= 'z' ? c - 32 : c; }
+static int same_ci(const char *a, const char *b)
+{
+    while (*a && upper(*a) == upper(*b)) { a++; b++; }
+    return upper(*a) == upper(*b);
+}
 static int is_alpha(int c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'; }
 static int is_digit(int c) { return c >= '0' && c <= '9'; }
 static int is_word(int c) { return is_alpha(c) || is_digit(c) || (unsigned char)c >= 0x80; }
@@ -504,10 +509,10 @@ static void open_file(const char *path)
     int fd, n, i, j;
     struct doc *d;
     char up[PATH_MAX];
-    for (i = 0; path[i] && i < PATH_MAX - 1; i++) up[i] = upper(path[i]);
+    for (i = 0; path[i] && i < PATH_MAX - 1; i++) up[i] = path[i];   /* (long names: as written) */
     up[i] = 0;
     for (i = 0; i < ndocs; i++)
-        if (!strcmp(docs[i]->path, up)) { cd = i; return; }
+        if (same_ci(docs[i]->path, up)) { cd = i; return; }
     /* an empty, untouched first tab: this goes in its place */
     if (ndocs == 1 && !D->path[0] && !D->len && !D->dirty) free_doc(0);
     d = new_doc();
@@ -1219,10 +1224,9 @@ static void dialog_ok(void)
     }
     if (!dlg_name[0]) return;
     for (i = 0; i < ndents; i++)                 /* a folder's name: into it */
-        if (dents[i].type == LX_DIR && !strcmp(dents[i].name, dlg_name)) { enter_dir(dlg_name); dlg_name[0] = 0; return; }
+        if (dents[i].type == LX_DIR && same_ci(dents[i].name, dlg_name)) { enter_dir(dents[i].name); dlg_name[0] = 0; return; }
     if (dlg_name[0] == '/') copy(p, dlg_name, PATH_MAX);
     else join(p, dlg_dir, dlg_name);
-    for (i = 0; p[i]; i++) p[i] = upper(p[i]);
     copy(last_dir, dlg_dir, PATH_MAX);
     if (dlg == DLG_OPEN) { dlg = 0; open_file(p); return; }
     /* save as */

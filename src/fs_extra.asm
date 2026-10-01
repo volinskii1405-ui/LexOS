@@ -201,6 +201,8 @@ fs_stream_prepare:
     jmp .fail
 
 .fresh_file:
+    call lng_name_fix             ; a long name: a short one for it (src/longname.asm)
+    jc .fail
     call fs_find_free
     cmp ax, -1
     jne .have_slot
@@ -251,6 +253,7 @@ fs_stream_prepare:
     mov ax, FS_CHAIN_OFFSET
     mov dx, FS_NO_CHAIN
     call fs_scratch_write_word
+    call lng_name_apply           ; (and the long one beside it)
 
     mov ax, [fs_tmp_slot]
     call fs_write_slot

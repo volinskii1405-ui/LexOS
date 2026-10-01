@@ -82,6 +82,10 @@ tab_update_suggestion:
     call fs_find_prefix_match
     cmp ax, -1
     je .done
+    push esi                      ; (it has a long name: Tab gives that -
+    call fsl_get                  ;  src/longname.asm - no ghost text)
+    pop esi
+    jnc .done
 
     mov di, tab_match_name_buf
     call fs_read_slot_name        ; the match is still loaded in scratch
@@ -215,7 +219,10 @@ tab_try_complete:
     push si
 
     cmp byte [tab_sugg_active], 0
-    je .done
+    jne .shown
+    call lng_tab_complete          ; (none: a long name, src/longname.asm)
+    jmp .done
+.shown:
 
     ; erase the ghost text before typing over it for real - otherwise
     ; tab_update_suggestion's own clear (below) would run AFTER the cursor

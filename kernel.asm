@@ -370,6 +370,7 @@ kext_start:
 %include "src/dknotify.asm"
 %include "src/dkanim.asm"
 %include "src/acpi.asm"
+%include "src/longname.asm"
 %include "src/dkres.asm"
 %include "src/dkswitch.asm"
 %include "src/dkregion.asm"
