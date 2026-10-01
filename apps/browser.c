@@ -308,8 +308,34 @@ static int to_font(unsigned u, char *out)
     if ((u >= 0x200B && u <= 0x200F) || (u >= 0x2060 && u <= 0x2064) || u == 0xFEFF || u == 0xAD ||
         (u >= 0xFE00 && u <= 0xFE0F) || (u >= 0x1F3FB && u <= 0x1F3FF) || u == 0x34F) return 0;
     if ((u >= 0x2000 && u <= 0x200A) || u == 0x202F || u == 0x205F || u == 0x3000 || u == 0x2028 || u == 0x2029) { out[0] = ' '; return 1; }
+    /* icon fonts' private letters (Font Awesome and such: a picture we
+     * haven't got), accents put on top of a letter, flags' letters,
+     * the keycap's frame: nothing */
+    if ((u >= 0xE000 && u <= 0xF8FF) || (u >= 0xF0000 && u < 0xF0080) || (u > 0xF00FF && u <= 0x10FFFF) ||
+        (u >= 0x300 && u <= 0x36F) || (u >= 0x1AB0 && u <= 0x1AFF) || (u >= 0x20D0 && u <= 0x20FF) ||
+        (u >= 0x1F1E6 && u <= 0x1F1FF) || (u >= 0xE0000 && u <= 0xE007F)) return 0;
+    if (u >= 0xFF01 && u <= 0xFF5E) { out[0] = (char)(u - 0xFF01 + '!'); return 1; }       /* fullwidth */
+    if ((u >= 0x1D400 && u <= 0x1D6A3)) {                /* math's bold/italic letters: the letter */
+        int k = (u - 0x1D400) % 52;
+        out[0] = k < 26 ? 'A' + k : 'a' + k - 26;
+        return 1;
+    }
+    if (u >= 0x1D7CE && u <= 0x1D7FF) { out[0] = '0' + (u - 0x1D7CE) % 10; return 1; }
+    if (u >= 0x391 && u <= 0x3C9) {                      /* Greek: the nearest Latin */
+        static const char gr[] = "ABGDEZHOIKLMNXOPRSSTYFXPW" "IYaehiy" "abgdezhoiklmnxoprsstyfxpw";
+        if (u == 0x3C0) { out[0] = 'p'; out[1] = 'i'; return 2; }
+        out[0] = gr[u - 0x391];
+        return 1;
+    }
+    if (u >= 0x1F600 && u <= 0x1F64F) {                   /* faces */
+        out[0] = ':';
+        out[1] = (u >= 0x1F61E && u <= 0x1F62D) || u == 0x1F641 || u == 0x1F616 || u == 0x1F614 ? '(' : ')';
+        return 2;
+    }
+    if (u == 0x1F44D) { out[0] = '+'; out[1] = '1'; return 2; }
+    if (u == 0x1F525) { out[0] = '!'; return 1; }
     {                                                    /* as themselves, or near it */
-        static const struct { unsigned short u; char t[4]; } near[] = {
+        static const struct { unsigned u; char t[4]; } near[] = {
             { 0x2116, "No" }, { 0x20AC, "EUR" }, { 0xA3, "L" }, { 0xA5, "Y" }, { 0xA2, "c" }, { 0x20BD, "RUB" },
             { 0x2122, "TM" }, { 0xAE, "(R)" }, { 0xD7, "x" }, { 0xF7, "/" }, { 0xB1, "+-" }, { 0x2248, "~" },
             { 0x2260, "!=" }, { 0x2264, "<=" }, { 0x2265, ">=" }, { 0x221E, "oo" }, { 0x2030, "%o" },
@@ -335,6 +361,25 @@ static int to_font(unsigned u, char *out)
             { 0x40E, "Y" }, { 0x45E, "y" }, { 0x406, "I" }, { 0x407, "I" }, { 0x404, "E" }, { 0x490, "G" },
             { 0x402, "D" }, { 0x452, "d" }, { 0x403, "G" }, { 0x453, "g" }, { 0x409, "Lj" }, { 0x459, "lj" },
             { 0x40A, "Nj" }, { 0x45A, "nj" }, { 0x40B, "C" }, { 0x45B, "c" }, { 0x40C, "K" }, { 0x45C, "k" },
+            { 0x2122, "TM" }, { 0x2120, "SM" }, { 0x2103, "C" }, { 0x2109, "F" }, { 0x2153, "1/3" }, { 0x2154, "2/3" },
+            { 0x215B, "1/8" }, { 0x2070, "0" }, { 0x2074, "4" }, { 0x2075, "5" }, { 0x2076, "6" }, { 0x2077, "7" },
+            { 0x2078, "8" }, { 0x2079, "9" }, { 0x207A, "+" }, { 0x207B, "-" }, { 0x2080, "0" }, { 0x2081, "1" },
+            { 0x2082, "2" }, { 0x2083, "3" }, { 0x2084, "4" }, { 0x2196, "\\" }, { 0x2197, "/" }, { 0x2198, "\\" },
+            { 0x2199, "/" }, { 0x21A9, "<-" }, { 0x21AA, "->" }, { 0x21BA, "@" }, { 0x21BB, "@" }, { 0x21C4, "<>" },
+            { 0x21E7, "\x18" }, { 0x2B06, "\x18" }, { 0x2B07, "\x19" }, { 0x2B05, "\x1b" }, { 0x27A1, "\x1a" },
+            { 0x2794, "\x1a" }, { 0x279C, "\x1a" }, { 0x27F6, "->" }, { 0x27F5, "<-" }, { 0x2303, "^" }, { 0x2318, "#" },
+            { 0x2325, "Alt" }, { 0x21B5, "<-" }, { 0x23CE, "<-" }, { 0x2302, "\x7f" }, { 0x2261, "=" },
+            { 0x2630, "=" }, { 0x22EE, ":" }, { 0x22EF, "..." }, { 0x2219, "\x07" }, { 0x22C5, "." },
+             { 0x25E6, "o" }, { 0x2043, "-" }, { 0x2981, "\x07" }, { 0x26AB, "\x07" },
+            { 0x26AA, "o" }, { 0x2B24, "\x07" }, { 0x25FC, "\xfe" }, { 0x25FE, "\xfe" }, { 0x2B1B, "\xfe" },
+            { 0x2610, "[ ]" }, { 0x2611, "[x]" }, { 0x2612, "[x]" }, { 0x2715, "x" }, { 0x2A2F, "x" }, { 0x2295, "(+)" },
+            { 0x2207, "V" }, { 0x2206, "D" }, { 0x2211, "E" }, { 0x220F, "P" }, { 0x222B, "S" }, { 0x2202, "d" },
+            { 0x2208, "E" }, { 0x2205, "0" }, { 0x2229, "n" }, { 0x222A, "U" }, { 0x2227, "^" }, { 0x2228, "v" },
+            { 0x2200, "A" }, { 0x2203, "E" }, { 0x2192, "\x1a" }, { 0x2261, "=" }, { 0x2245, "~=" }, { 0x221D, "~" },
+            { 0x2032, "'" }, { 0x2116, "No" }, { 0x20B4, "UAH" }, { 0x20B8, "KZT" }, { 0x20BA, "TL" }, { 0x20B9, "Rs" },
+            { 0x20A9, "W" }, { 0x20AA, "NIS" }, { 0x20B1, "P" }, { 0x20BF, "BTC" }, { 0x2190, "\x1b" },
+            { 0x1F4A1, "!" }, { 0x1F4CC, "*" }, { 0x1F4E7, "@" }, { 0x1F4DE, "T" }, { 0x260E, "T" },
+            { 0x1F50D, "?" }, { 0x1F512, "#" }, { 0x2709, "@" },
             { 0x40F, "Dz" }, { 0x45F, "dz" }, { 0x405, "S" }, { 0x455, "s" }, { 0x408, "J" }, { 0x458, "j" },
             { 0, "" } };
         int i;
@@ -1135,15 +1180,38 @@ static int ncss_links;
 static char base_url[URL_MAX];                           /* <base href>, or the page's address */
 static unsigned progress_at;
 
+static int strstr_ci(const char *s, const char *w)
+{
+    for (; *s; s++) if (starts_ci(s, w)) return 1;
+    return 0;
+}
+static const char *strstr_at(const char *s, const char *w)
+{
+    for (; *s; s++) if (starts_ci(s, w)) return s;
+    return 0;
+}
 /* ---- the HTML made smaller as it comes (T_PAGE, PK_HTML) ---- */
 enum { SS_TEXT, SS_TAG, SS_SKIP, SS_CSS, SS_COMMENT, SS_GT };
 static int st_state, st_pre, st_space, st_q, st_last, st_match, st_tn;
 static char st_tag[3072], st_end[12];
 static void st_out(int c) { if (srclen + 1 < src_cap || SRC_ROOM(srclen + 1)) src[srclen++] = c; else pi.trunc = 1; }
 static void st_outs(const char *t) { while (*t) st_out(*t++); }
+/* what a page that builds itself with JavaScript still says without
+ * it: its data's <script>s (JSON, window.__STATE__ = {...},
+ * self.__next_f.push(...)) kept here, its <meta> description, where
+ * <meta http-equiv=refresh> sends it; and how much text it showed */
+#define JX_MAX (768 * 1024)
+static char *jx, st_pre_js[96], meta_desc[600], refresh_to[URL_MAX];
+static int jxn, st_json, st_pjn, st_textn, refresh_wait;
 static void st_reset(void)
 {
     st_state = SS_TEXT; st_pre = st_q = st_last = st_match = st_tn = 0; st_space = 1;
+    jxn = st_json = st_textn = 0; meta_desc[0] = refresh_to[0] = 0;
+}
+static void jx_put(int c)
+{
+    if (!jx) jx = malloc(JX_MAX);
+    if (jx && jxn < JX_MAX - 1) jx[jxn++] = c;
 }
 static const char *st_keep[] = { "href", "src", "data-src", "alt", "title", "class", "id", "style", "hidden",
     "color", "bgcolor", "value", "type", "rel", "name", "content", "charset", "http-equiv", "open", "role",
@@ -1162,6 +1230,33 @@ static void st_tag_done(void)
     if (!n) return;                                      /* <!DOCTYPE>, <?xml?> */
     if (st_tn > 2 && st_tag[st_tn - 2] == '/') self = 1;
     if (!closing) {
+        if (!strcmp(name, "iframe")) {                   /* a page in the page: a link to it */
+            const char *a = strstr_at(st_tag, " src=");
+            if (a) {
+                char h[URL_MAX];
+                int k = 0;
+                a += 5;
+                if (*a == '"' || *a == '\'') a++;
+                while (*a && *a != '"' && *a != '\'' && *a != '>' && !is_space(*a) && k < URL_MAX - 1) h[k++] = *a++;
+                h[k] = 0;
+                if (k && !starts_ci(h, "about:") && !starts_ci(h, "javascript:") && !starts_ci(h, "data:")) {
+                    const char *w = h, *e;
+                    st_outs("<div class=\"lx-frame\"><a href=\""); st_outs(h); st_outs("\">[Embedded: ");
+                    if (starts_ci(w, "https://")) w += 8; else if (starts_ci(w, "http://")) w += 7; else if (starts_ci(w, "//")) w += 2;
+                    for (e = w; *e && *e != '/' && *e != '?'; e++) st_out(*e);
+                    if (e == w) st_outs("this site");
+                    st_outs(" - open]</a></div>");
+                }
+            }
+        }
+        if (!strcmp(name, "script")) {                   /* its data? */
+            const char *t = strstr_at(st_tag, "type=");
+            st_json = (t && strstr_at(t, "json") && strstr_at(t, "json") - t < 30) ||
+                      strstr_ci(st_tag, "__NEXT_DATA__") || strstr_ci(st_tag, "__NUXT") ? 1 : 2;
+            if (t && st_json == 2 && !strstr_ci(t, "javascript") && !strstr_ci(t, "module") && t[5] != '\0' &&
+                strstr_at(t, "text/") == t + 6) st_json = 0;       /* (templates and such) */
+            st_pjn = 0;
+        } else st_json = 0;
         if (!strcmp(name, "script") || !strcmp(name, "template") || !strcmp(name, "iframe") || !strcmp(name, "math") ||
             (!strcmp(name, "svg") && !self)) {
             copy(st_end, name, sizeof st_end);
@@ -1182,7 +1277,9 @@ static void st_tag_done(void)
     {                                                    /* its attributes */
         static char kept[1600];
         int nk = 0, is_meta = !strcmp(name, "meta"), is_link = !strcmp(name, "link"), is_base = !strcmp(name, "base");
-        char rel[32] = "", href[URL_MAX] = "", media[32] = "";
+        char rel[32] = "", href[URL_MAX] = "", media[32] = "", mname[32] = "";
+        static char mcont[URL_MAX];
+        mcont[0] = 0;
         kept[0] = 0;
         while (q < st_tn) {
             int k = 0, v = 0, has_v = 0;
@@ -1209,6 +1306,8 @@ static void st_tag_done(void)
                 if (!strcmp(an, "charset")) c = av;
                 else if (!strcmp(an, "content")) { const char *t = av; while (*t && !starts_ci(t, "charset=")) t++; if (*t) c = t + 8; }
                 if (c && !pi.cs_meta[0]) { int j = 0; while (c[j] && c[j] != ';' && c[j] != ' ' && c[j] != '"' && j < 23) { pi.cs_meta[j] = lower(c[j]); j++; } pi.cs_meta[j] = 0; }
+                if (!strcmp(an, "content")) copy(mcont, av, URL_MAX);
+                else if (!strcmp(an, "name") || !strcmp(an, "property") || !strcmp(an, "http-equiv")) copy(mname, av, sizeof mname);
                 continue;
             }
             if (is_link || is_base) {
@@ -1232,6 +1331,21 @@ static void st_tag_done(void)
             }
             kept[nk] = 0;
         }
+        if (is_meta && mcont[0]) {
+            if ((!strcmp(mname, "description") || !strcmp(mname, "og:description") || !strcmp(mname, "twitter:description")) && !meta_desc[0])
+                copy(meta_desc, mcont, sizeof meta_desc);
+            else if (starts_ci(mname, "refresh") && !refresh_to[0]) {      /* "5; url=/there" */
+                const char *t = mcont;
+                refresh_wait = atoi(t);
+                while (*t && !starts_ci(t, "url=")) t++;
+                if (*t) {
+                    t += 4;
+                    if (*t == '\'' || *t == '"') t++;
+                    copy(refresh_to, t, URL_MAX);
+                    { int j = strlen(refresh_to); while (j && (refresh_to[j - 1] == '\'' || refresh_to[j - 1] == '"' || is_space(refresh_to[j - 1]))) refresh_to[--j] = 0; }
+                }
+            }
+        }
         if (is_base) { if (href[0]) resolve(url, href, base_url); return; }
         if (is_link) {
             const char *r = rel;
@@ -1252,6 +1366,7 @@ static void st_feed(int c)
         if (c == '<') { st_tn = 0; st_tag[st_tn++] = '<'; st_q = 0; st_last = '<'; st_state = SS_TAG; return; }
         if (!st_pre && is_space(c)) { if (!st_space) { st_out(' '); st_space = 1; } return; }
         st_space = 0;
+        st_textn++;
         st_out(c);
         return;
     case SS_TAG:
@@ -1282,6 +1397,23 @@ static void st_feed(int c)
     case SS_CSS: {                                       /* up to </name */
         int n = strlen(st_end);
         if (st_state == SS_CSS) css_feed(c);
+        else if (st_json == 1) jx_put(c);
+        else if (st_json == 2) {                         /* a script: data, by its start? */
+            if (st_pjn < (int)sizeof st_pre_js - 1) {
+                st_pre_js[st_pjn++] = c;
+                st_pre_js[st_pjn] = 0;
+                if (st_pjn == (int)sizeof st_pre_js - 1 || c == '{' || c == '(') {
+                    const char *t = st_pre_js;
+                    while (is_space(*t)) t++;
+                    if ((starts_ci(t, "window.__") || starts_ci(t, "self.__next_f") || starts_ci(t, "window[\"__") ||
+                         starts_ci(t, "var __") || starts_ci(t, "__")) && (c == '{' || c == '(')) {
+                        st_json = 1;
+                        jx_put('\n');
+                        jx_put(c);
+                    } else if (c == '{' || c == '(' || st_pjn == (int)sizeof st_pre_js - 1) st_json = 0;
+                }
+            }
+        }
         if (st_match == 0) { if (c == '<') st_match = 1; return; }
         if (st_match == 1) { st_match = c == '/' ? 2 : c == '<' ? 1 : 0; return; }
         if (lower(c) == st_end[st_match - 2]) {
@@ -1344,6 +1476,7 @@ static int pg_put1(int c) { unsigned char b = c; return pg_emit(&b, 1); }
 static int pg_body_bytes(const unsigned char *d, int n)
 {
     pi.raw += n;
+    if (pi.gz == 3) return 1;
     if (pi.gz) {                                         /* gathered, unpacked at the end - */
         if (zn + n > zcap && !grow(&zbuf, &zcap, zn + n, 1, ZBUF_MAX)) { pi.trunc = 1; return 1; }
         memcpy(zbuf + zn, d, n);
@@ -1389,6 +1522,7 @@ static void ph_headers(void)
             pi.cenc[k] = 0;
             if (starts_ci(pi.cenc, "gzip") || starts_ci(pi.cenc, "x-gzip")) pi.gz = 1;
             else if (starts_ci(pi.cenc, "deflate")) pi.gz = 2;
+            else if (!starts_ci(pi.cenc, "identity")) pi.gz = 3;            /* br, zstd: can't - asked again */
         }
         if (starts_ci(h, "content-type:") && tg != T_BUF) {
             const char *l = h + 13, *c;
@@ -1637,6 +1771,7 @@ static int build_req(char *req, int max, const char *host, const char *path, con
 }
 
 /* one try at u: 0 had it, 1 moved (ph_moved), -1 no connection, -4 TLS */
+static int want_identity;                                /* (asked not to pack it) */
 static int net_try(const char *u)
 {
     char host[URL_MAX], path[URL_MAX];
@@ -1646,6 +1781,10 @@ static int net_try(const char *u)
                                    "Accept: text/html,application/xhtml+xml,*/*;q=0.8\r\n"
                                    "Accept-Language: ru,en;q=0.8,es;q=0.6\r\nAccept-Encoding: gzip, deflate\r\n";
     static const char *hdrs_plain = "User-Agent: Mozilla/5.0 (compatible; LexOS-Web/2.0)\r\nAccept: */*\r\nAccept-Encoding: identity\r\n";
+    static const char *hdrs_page_plain = "User-Agent: Mozilla/5.0 (compatible; LexOS-Web/2.0)\r\n"
+                                         "Accept: text/html,application/xhtml+xml,*/*;q=0.8\r\n"
+                                         "Accept-Language: ru,en;q=0.8,es;q=0.6\r\nAccept-Encoding: identity\r\n";
+    const char *hdrs = tg != T_PAGE ? hdrs_plain : want_identity ? hdrs_page_plain : hdrs_page;
     ph_n = ph_body = ph_chunked = ph_cstate = ph_cleft = ph_stop = 0;
     ph_moved[0] = 0;
     while (*p && *p != '/' && *p != ':' && *p != '?' && n < URL_MAX - 1) host[n++] = *p++;
@@ -1662,7 +1801,7 @@ static int net_try(const char *u)
     cur_https = is_https(u);
     if (is_https(u)) {
         static char none[4], req[32768];
-        tls_req_len = build_req(req, sizeof req, host, path, tg == T_PAGE ? hdrs_page : hdrs_plain);
+        tls_req_len = build_req(req, sizeof req, host, path, hdrs);
         tls_req = req;
         tls_sink = ph_sink;
         n = tls_get(host, port, path, none, 0);
@@ -1674,7 +1813,7 @@ static int net_try(const char *u)
         static unsigned char piece[4096];
         int rl;
         if (tcp_open(host, port) < 0) return -1;
-        rl = build_req(req, sizeof req, host, path, tg == T_PAGE ? hdrs_page : hdrs_plain);
+        rl = build_req(req, sizeof req, host, path, hdrs);
         tcp_send(req, rl);
         for (;;) {
             int got = tcp_recv(piece, sizeof piece, 15000);
@@ -1710,6 +1849,7 @@ static int net_get(const char *where, char *final)
         if (final) copy(final, u, URL_MAX);
         return 0;
     }
+    want_identity = 0;
     for (tries = 0; tries < 6; tries++) {
         int kind = pi.kind;
         pi.raw = pi.body = pi.gz = 0; pi.cenc[0] = 0; pi.ctype[0] = 0; pi.cs_hdr[0] = 0; pi.total = 0;
@@ -1719,6 +1859,7 @@ static int net_get(const char *where, char *final)
         post_now = tg == T_PAGE && post_body && !tries;  /* (a form's POST: the first try; moved: GET) */
         r = net_try(u);
         post_now = 0;
+        if (r >= 0 && pi.gz == 3 && !want_identity) { want_identity = 1; continue; }   /* (packed in a way we can't undo) */
         if (r != 1) break;
         {
             char moved[URL_MAX];
@@ -1728,6 +1869,7 @@ static int net_get(const char *where, char *final)
         if (!is_http(u)) { r = -2; break; }
     }
     if (r == 1) r = -2;
+    if (r >= 0 && pi.gz == 3) r = -5;
     if (r >= 0 && zn) {                                  /* gzip'd: unpacked now */
         int z = pi.gz == 1 ? gunzip(zbuf, zn, zb_put) : zinflate(zbuf, zn, zb_put);
         if (z < 0 && !pi.body) r = -2;
@@ -1961,16 +2103,6 @@ static void skip_to_end(int *p, const char *name)
     }
 }
 
-static int strstr_ci(const char *s, const char *w)
-{
-    for (; *s; s++) if (starts_ci(s, w)) return 1;
-    return 0;
-}
-static const char *strstr_at(const char *s, const char *w)
-{
-    for (; *s; s++) if (starts_ci(s, w)) return s;
-    return 0;
-}
 static int is_void(const char *n)
 {
     static const char *v[] = { "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",
@@ -3370,6 +3502,153 @@ static void layout_plain(void)
 }
 
 /* the page's title, before it's laid out (the reader may start past it) */
+/* ---- a page that builds itself with JavaScript: its text, from the
+ * data it carries (jx: JSON, the state a framework's given, Next.js's
+ * pieces) - the strings in it that read like sentences, each once -
+ * and its <meta> description; at the page's end, when what it showed
+ * without JavaScript was next to nothing ---- */
+static unsigned jx_seen[512];
+static int jx_nseen, jx_out, jx_strings;
+static void jx_scan(const char *d, int n, int depth);
+static int jx_key_skip(const char *k)
+{
+    static const char *no[] = { "className", "class", "style", "src", "srcSet", "srcset", "href", "url", "id", "type",
+        "@type", "@context", "@id", "image", "sizes", "path", "as", "rel", "d", "viewBox", "fill", "query", "hash",
+        "buildId", "key", "locale", "lang", "contentType", "mimeType", "assetPrefix", "page", "slug", "icon", "logo",
+        "sameAs", "datePublished", "dateModified", "uploadDate", "thumbnailUrl", "embedUrl", "contentUrl", "color",
+        "variant", "size", "fontFamily", "font", "width", "height", "position", "align", "target", "loading", 0 };
+    int i;
+    for (i = 0; no[i]; i++) if (!strcmp(no[i], k)) return 1;
+    return 0;
+}
+/* a string (JSON-escaped, n bytes): undone into o (\uXXXX as 1 + three
+ * bytes of 6 bits each) -> its length */
+static int jx_undo(const char *s, int n, char *o)
+{
+    int i, k = 0;
+    for (i = 0; i < n; i++) {
+        unsigned u;
+        if (s[i] != '\\' || i + 1 >= n) { o[k++] = s[i]; continue; }
+        switch (s[++i]) {
+        case 'n': case 'r': case 't': case 'f': case 'b': o[k++] = ' '; continue;
+        case 'u':
+            if (i + 4 >= n) continue;
+            u = hexval(s[i + 1]) << 12 | hexval(s[i + 2]) << 8 | hexval(s[i + 3]) << 4 | hexval(s[i + 4]);
+            i += 4;
+            if (u >= 0xD800 && u < 0xDC00 && i + 6 < n && s[i + 1] == '\\' && s[i + 2] == 'u') {
+                unsigned lo = hexval(s[i + 3]) << 12 | hexval(s[i + 4]) << 8 | hexval(s[i + 5]) << 4 | hexval(s[i + 6]);
+                u = 0x10000 + ((u - 0xD800) << 10) + (lo - 0xDC00);
+                i += 6;
+            }
+            if (u < 0x80) { o[k++] = u < 32 ? ' ' : (char)u; continue; }
+            o[k++] = 1; o[k++] = 0x80 | (u >> 12 & 63); o[k++] = 0x80 | (u >> 6 & 63); o[k++] = 0x80 | (u & 63);
+            continue;
+        default: o[k++] = s[i]; continue;
+        }
+    }
+    return k;
+}
+static void jx_string(const char *s, int n, const char *key, int depth)
+{
+    char *o, *t;
+    int k, i, m = 0, letters = 0, other = 0, spaces = 0, hy = 0, mark = 0;
+    unsigned h = 2166136261u;
+    if (n < 24 || jx_out > 96 * 1024 || jx_strings >= 600) return;
+    if (!(o = malloc(n + 1))) return;
+    k = jx_undo(s, n, o);
+    o[k] = 0;
+    if (depth < 2 && strstr_ci(o, "\"") && (strstr_ci(o, "{") || strstr_ci(o, "["))) { jx_scan(o, k, depth + 1); free(o); return; }
+    if (key[0] && jx_key_skip(key)) { free(o); return; }
+    t = malloc(k + 1);                                   /* tags out, spaces joined */
+    if (!t) { free(o); return; }
+    for (i = 0; i < k; i++) {
+        int c = (unsigned char)o[i];
+        if (c == '<' && i + 1 < k && (isalnum_c(o[i + 1]) || o[i + 1] == '/' || o[i + 1] == '!')) {
+            while (i < k && o[i] != '>') i++;
+            c = ' ';
+        }
+        if (is_space(c)) { if (m && t[m - 1] != ' ') t[m++] = ' '; continue; }
+        if (c == 1 && i + 3 < k) {
+            unsigned u = (o[i + 1] & 63) << 12 | (o[i + 2] & 63) << 6 | (o[i + 3] & 63);
+            memcpy(t + m, o + i, 4); m += 4; i += 3;
+            if (u >= 0x400 || (u >= 0xC0 && u < 0x250)) letters++, mark = 1; else other++;
+            continue;
+        }
+        t[m++] = c;
+        if ((c >= 'a' && c <= 'z') || c >= 0x80) letters++;
+        else if (c >= 'A' && c <= 'Z') letters++, mark = 1;
+        else if (c == '-' || c == '_') hy++, other++;
+        else { other++; if (c == '.' || c == ',' || c == '!' || c == '?') mark = 1; }
+    }
+    while (m && t[m - 1] == ' ') m--;
+    t[m] = 0;
+    free(o);
+    for (i = 0; i < m; i++) if (t[i] == ' ') spaces++;
+    if (m < 24 || spaces < 3 || !mark || letters * 10 < (letters + other) * 7 || hy * 3 > spaces + 1 ||
+        starts_ci(t, "http") || t[0] == '/' || strstr_at(t, "function") || strstr_at(t, "=>") || strstr_at(t, "{") ||
+        strstr_at(t, "var(--") || strstr_at(t, "px ")) { free(t); return; }
+    for (i = 0; i < m; i++) h = (h ^ (unsigned char)t[i]) * 16777619u;
+    for (i = 0; i < jx_nseen; i++) if (jx_seen[i] == h) { free(t); return; }
+    if (jx_nseen < 512) jx_seen[jx_nseen++] = h;
+    jx_strings++;
+    st_outs("<p>");
+    for (i = 0; i < m; i++) {
+        if (t[i] == 1) {
+            char num[12];
+            unsigned u = (t[i + 1] & 63) << 12 | (t[i + 2] & 63) << 6 | (t[i + 3] & 63);
+            int z = 0;
+            do { num[z++] = '0' + u % 10; u /= 10; } while (u);
+            st_outs("&#");
+            while (z) st_out(num[--z]);
+            st_out(';');
+            i += 3;
+        } else if (t[i] == '<') st_outs("&lt;");
+        else st_out(t[i]);
+    }
+    st_outs("</p>");
+    jx_out += m;
+    free(t);
+}
+static void jx_scan(const char *d, int n, int depth)
+{
+    char key[32] = "";
+    int i = 0;
+    while (i < n) {
+        int j, q;
+        if (d[i] != '"') { i++; continue; }
+        for (j = i + 1; j < n && d[j] != '"'; j++) if (d[j] == '\\') j++;
+        if (j >= n) return;
+        for (q = j + 1; q < n && is_space(d[q]); q++) ;
+        if (q < n && d[q] == ':') {                       /* a key */
+            int l = j - i - 1 < 31 ? j - i - 1 : 31;
+            memcpy(key, d + i + 1, l); key[l] = 0;
+        } else {
+            jx_string(d + i + 1, j - i - 1, key, depth);
+            key[0] = 0;
+        }
+        i = j + 1;
+    }
+}
+static void js_page_text(void)
+{
+    int had = srclen;
+    jx_nseen = jx_out = jx_strings = 0;
+    if (st_textn >= 600 && !(jxn && st_textn < 3000)) return;
+    st_outs("<div class=\"lx-js\"><hr><p><i>This page draws itself with JavaScript, which LexOS Web doesn't run. "
+            "What it says, from the data inside it:</i></p>");
+    if (meta_desc[0] && st_textn < 600) {
+        int i;
+        st_outs("<p><b>");
+        for (i = 0; meta_desc[i]; i++) if (meta_desc[i] == '<') st_outs("&lt;"); else st_out(meta_desc[i]);
+        st_outs("</b></p>");
+        jx_strings++;
+        jx_out += strlen(meta_desc);
+    }
+    if (jx && jxn) jx_scan(jx, jxn, 0);
+    if (!jx_strings || (st_textn >= 600 && jx_out < st_textn * 2)) { srclen = had; return; }   /* (nothing, or said already) */
+    st_outs("</div>");
+}
+
 static void title_scan(void)
 {
     int p;
@@ -3814,18 +4093,72 @@ static void redraw(void)
 /* ============================================================
  * going places
  * ============================================================ */
-static void error_page(const char *what, const char *where)
+/* a page about what went wrong: what it means, in words, and what to
+ * try (again; the archive's copy; a search; http:// for https://) */
+static void url_enc(char *q, int *n, int max, const char *t, int len);
+static void error_page(const char *head, const char *what, const char *hint, const char *where)
 {
     char *s = src;
-    const char *parts[] = { "<title>Can't open this page</title><body><h1>Can't open this page</h1><p>",
-                            what, "</p><p><b>", where,
-                            "</b></p><hr><p>Pages can be on this disk (<a href=\"/DEMOS/SITE/INDEX.HTM\">"
-                            "/DEMOS/SITE/INDEX.HTM</a>) or on the web, over <b>http://</b> or "
-                            "<b>https://</b>.</p>", 0 };
-    int i;
+    int web = is_http(where);
     *s = 0;
-    for (i = 0; parts[i]; i++) append(s, parts[i], src_cap);
+    append(s, "<title>", src_cap); append(s, head, src_cap);
+    append(s, "</title><body><h1>", src_cap); append(s, head, src_cap);
+    append(s, "</h1><p>", src_cap); append(s, what, src_cap);
+    append(s, "</p><p><b>", src_cap);
+    {
+        int n = strlen(s), i;
+        for (i = 0; where[i] && n < src_cap - 8; i++) {
+            if (where[i] == '<') { memcpy(s + n, "&lt;", 4); n += 4; }
+            else if (where[i] == '&') { memcpy(s + n, "&amp;", 5); n += 5; }
+            else s[n++] = where[i];
+        }
+        s[n] = 0;
+    }
+    append(s, "</b></p>", src_cap);
+    if (hint && hint[0]) { append(s, "<p>", src_cap); append(s, hint, src_cap); append(s, "</p>", src_cap); }
+    if (web) {
+        const char *h = where + (is_https(where) ? 8 : 7), *e = h;
+        while (*e && *e != '/' && *e != '?' && *e != ':') e++;
+        append(s, "<h3>What to try</h3><ul><li><a href=\"", src_cap); append(s, where, src_cap);
+        append(s, "\">Try again</a> (or press F5)</li><li><a href=\"https://web.archive.org/web/2/", src_cap); append(s, where, src_cap);
+        append(s, "\">The copy in the Internet Archive</a></li>", src_cap);
+        if (is_https(where)) {
+            append(s, "<li><a href=\"http://", src_cap); append(s, h, src_cap);
+            append(s, "\">The same over http://</a> (not encrypted - if the site still has it)</li>", src_cap);
+        }
+        append(s, "<li><a href=\"https://html.duckduckgo.com/html/?q=", src_cap);
+        { int n = strlen(s); url_enc(s, &n, src_cap, h, e - h); s[n] = 0; }
+        append(s, "\">Search for this site</a></li></ul>", src_cap);
+    }
+    append(s, "<hr><p>Pages can be on this disk (<a href=\"/DEMOS/SITE/INDEX.HTM\">/DEMOS/SITE/INDEX.HTM</a>) or on the web, "
+              "over <b>http://</b> or <b>https://</b>. Words typed in the address bar are searched for.</p>", src_cap);
     srclen = strlen(src);
+}
+/* an HTTP code: what it means */
+static void error_for_code(int v, char *head, char *what, char *hint, int cap)
+{
+    char num[8];
+    int k = 0, t = v;
+    do { num[k++] = '0' + t % 10; t /= 10; } while (t && k < 7);
+    copy(head, "The site answered with an error", cap);
+    copy(hint, "", cap);
+    if (v == 404 || v == 410) { copy(head, "There's no such page", cap); copy(what, "The site is there, but has no page at this address", cap);
+        copy(hint, "The link may be old, or the address mistyped. Its <a href=\"/\">first page</a> may lead to where it went.", cap); }
+    else if (v == 401 || v == 407) { copy(head, "This page needs a login", cap); copy(what, "The site wants a name and a password for it", cap); }
+    else if (v == 403) { copy(head, "The site didn't let us in", cap); copy(what, "The server refuses to show this page", cap);
+        copy(hint, "Some sites shut out browsers they don't know, or ones without JavaScript. The archive's copy may still open.", cap); }
+    else if (v == 429) { copy(head, "Too many requests", cap); copy(what, "The site asks to wait before asking again", cap); }
+    else if (v == 451) { copy(head, "Not available here", cap); copy(what, "The site won't show this page where we are, for legal reasons", cap); }
+    else if (v >= 500) { copy(head, "The site has trouble", cap); copy(what, "Something broke on the server's side, not here", cap);
+        copy(hint, "It's often over soon: try again in a minute.", cap); }
+    else if (v > 0) copy(what, "The server answered, but not with the page", cap);
+    else copy(what, "The server's answer wasn't one we could read", cap);
+    if (v > 0) {
+        append(what, " (", cap);
+        while (k) { char one[2] = { num[--k], 0 }; append(what, one, cap); }
+        append(what, ")", cap);
+    }
+    append(what, ".", cap);
 }
 
 static void clamp_scroll(void)
@@ -3924,6 +4257,38 @@ static void about_page(const char *where)
     pi.kind = PK_HTML;
 }
 
+/* sites that have a lighter version, one that works without
+ * JavaScript: that one (reddit -> old.reddit, a DuckDuckGo or Google
+ * search -> DuckDuckGo's HTML one, Wikipedia's articles as they are) */
+static int err_shown;                                    /* (this page: ours, about an error) */
+static int lighter(char *u)
+{
+    char host[96], rest[URL_MAX], t[URL_MAX];
+    const char *p, *q;
+    int n = 0;
+    if (!is_http(u)) return 0;
+    p = u + (is_https(u) ? 8 : 7);
+    while (*p && *p != '/' && *p != '?' && *p != ':' && n < 95) host[n++] = lower(*p++);
+    host[n] = 0;
+    copy(rest, p, URL_MAX);
+    if (!strcmp(host, "reddit.com") || !strcmp(host, "www.reddit.com") || !strcmp(host, "new.reddit.com") || !strcmp(host, "m.reddit.com")) {
+        copy(t, "https://old.reddit.com", URL_MAX); append(t, rest, URL_MAX);
+    } else if ((!strcmp(host, "duckduckgo.com") || !strcmp(host, "www.duckduckgo.com")) && (q = strstr_at(rest, "q=")) &&
+               (q[-1] == '?' || q[-1] == '&')) {
+        copy(t, "https://html.duckduckgo.com/html/?", URL_MAX); append(t, q, URL_MAX);
+    } else if ((starts_ci(host, "www.google.") || starts_ci(host, "google.")) && starts_ci(rest, "/search") &&
+               (q = strstr_at(rest, "q=")) && (q[-1] == '?' || q[-1] == '&')) {
+        int k;
+        copy(t, "https://html.duckduckgo.com/html/?", URL_MAX); append(t, q, URL_MAX);
+        for (k = 35; t[k]; k++) if (t[k] == '&') { t[k] = 0; break; }
+    } else if (!strcmp(host, "twitter.com") || !strcmp(host, "x.com") || !strcmp(host, "mobile.twitter.com")) {
+        return 0;                                        /* (nothing light left there) */
+    } else return 0;
+    if (!strcmp(t, u)) return 0;
+    copy(u, t, URL_MAX);
+    return 1;
+}
+
 static void go(const char *to, int remember)
 {
     int n, vs = 0;
@@ -3940,6 +4305,7 @@ static void go(const char *to, int remember)
         copy(where, t, URL_MAX);
     }
     if (!vs && is_download(where)) { download(where); return; }
+    if (!vs) lighter(where);
     copy(url, where, URL_MAX);
     copy(status, "Loading ", sizeof status);
     append(status, where, sizeof status);
@@ -3965,22 +4331,31 @@ static void go(const char *to, int remember)
     if (!base_url[0]) copy(base_url, where, URL_MAX);
     copy(url, where, URL_MAX);
     if (vs) { char t[URL_MAX]; copy(t, "view-source:", URL_MAX); append(t, where, URL_MAX); copy(url, t, URL_MAX); }
+    err_shown = 0;
     if (n < 0 || (pi.code >= 400 && srclen < 16 && pi.kind != PK_IMAGE && pi.kind != PK_FILE)) {
-        static char why[200];
-        if (n == -4) { copy(why, "The encrypted connection (TLS) didn't work: ", sizeof why); append(why, tls_error, sizeof why); }
-        else if (n >= 0 || n == -2) {
-            char c[8];
-            int k = 0, v = pi.code;
-            copy(why, "The server answered, but not with the page", sizeof why);
-            if (v > 0) {
-                append(why, " (", sizeof why);
-                do { c[k++] = '0' + v % 10; v /= 10; } while (v && k < 7);
-                while (k) { char one[2] = { c[--k], 0 }; append(why, one, sizeof why); }
-                append(why, ")", sizeof why);
-            }
-            append(why, ".", sizeof why);
-        } else copy(why, is_http(where) ? "No answer - is the network up? (ifconfig, dhcp)" : "There's no such file on this disk.", sizeof why);
-        error_page(why, where);
+        static char head[80], why[300], hint[400];
+        hint[0] = 0;
+        if (n == -4) {
+            copy(head, "No secure connection", sizeof head);
+            copy(why, "The encrypted connection (TLS) didn't work: ", sizeof why); append(why, tls_error, sizeof why);
+            copy(hint, "The site may want encryption LexOS doesn't have yet (RSA keys, TLS 1.0/1.1, other curves). "
+                       "Try it over http://, or the archive's copy.", sizeof hint);
+        } else if (n == -5) {
+            copy(head, "Packed in an unknown way", sizeof head);
+            copy(why, "The server sent the page packed with ", sizeof why); append(why, pi.cenc, sizeof why);
+            append(why, ", which LexOS can't unpack (gzip and deflate it can), even after asking for it unpacked.", sizeof why);
+        } else if (n >= 0 || n == -2) error_for_code(pi.code, head, why, hint, sizeof why);
+        else if (is_http(where)) {
+            copy(head, "No answer", sizeof head);
+            copy(why, "The server didn't answer, or its name wasn't found.", sizeof why);
+            copy(hint, "Is the network up? (In the terminal: <b>ifconfig</b>, <b>dhcp</b>.) Is the address spelled right?", sizeof hint);
+        } else {
+            copy(head, "No such file", sizeof head);
+            copy(why, "There's no such file on this disk.", sizeof why);
+            copy(hint, "Names are like <b>/DEMOS/SITE/INDEX.HTM</b>. Files can show you what's where.", sizeof hint);
+        }
+        error_page(head, why, hint, where);
+        err_shown = 1;
         pi.kind = PK_HTML;
         view_source = 0;
         cs_mode = CS_UTF8;
@@ -3993,6 +4368,7 @@ static void go(const char *to, int remember)
         pick_charset();
         if (pi.kind == PK_TEXT && is_markdown(where)) pi.kind = PK_MD;
         if (pi.kind == PK_MD && !vs) { markdown(); pi.kind = PK_HTML; }
+        if (pi.kind == PK_HTML && !vs) js_page_text();
         if (pi.kind == PK_HTML && !vs && ncss_links) load_styles();
     }
     pi.kept = srclen;
@@ -4007,8 +4383,22 @@ static void go(const char *to, int remember)
     layout();
     status[0] = 0;
     if (pi.trunc) copy(status, "A big page: shown up to 256KB of it.", sizeof status);
-    else if (pi.code >= 400) copy(status, "The server said this page isn't there (or isn't for us).", sizeof status);
+    else if (pi.code >= 400 && !err_shown)
+        copy(status, "The server said this page isn't there (or isn't for us).", sizeof status);
     redraw();
+    {                                                    /* <meta http-equiv=refresh>: soon - there */
+        static int hops;
+        char next[URL_MAX];
+        if (refresh_to[0] && refresh_wait <= 8 && hops < 3 && !view_source && pi.kind == PK_HTML) {
+            resolve(base_url, refresh_to, next);
+            if (strcmp(next, url) && is_http(next) == is_http(url)) {
+                hops++;
+                go(next, 0);
+                hops--;
+                if (hpos >= 0 && hpos < HIST_MAX) copy(hist[hpos], url, URL_MAX);
+            }
+        }
+    }
 }
 
 /* ---- forms: clicks, keys, sending ---- */

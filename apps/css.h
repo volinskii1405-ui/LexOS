@@ -148,7 +148,7 @@ static unsigned css_hash(const char *s, int n)
 static unsigned css_decls(const char *d, unsigned *color, unsigned *bg)
 {
     unsigned set = 0;
-    int abs = 0, tiny = 0;
+    int abs = 0, tiny = 0, zero_h = 0, clipped = 0, padded = 0;
     while (*d) {
         char name[32], val[160];
         int n = 0, v = 0;
@@ -187,12 +187,24 @@ static unsigned css_decls(const char *d, unsigned *color, unsigned *bg)
                 t++;
             }
         }
-        else if (!strcmp(name, "position")) { if (!strcmp(val, "absolute")) abs = 1; }
+        else if (!strcmp(name, "position")) { if (!strcmp(val, "absolute") || !strcmp(val, "fixed")) abs = 1; }
+        else if (!strcmp(name, "padding-bottom") || !strcmp(name, "padding-top") || !strcmp(name, "padding")) { if (val[0] > '0' && val[0] <= '9') padded = 1; }
         else if (!strcmp(name, "clip") || !strcmp(name, "clip-path")) tiny = 1;
-        else if ((!strcmp(name, "width") || !strcmp(name, "height")) && (!strcmp(val, "1px") || !strcmp(val, "0"))) tiny = 1;
+        else if ((!strcmp(name, "width") || !strcmp(name, "height")) && (!strcmp(val, "1px") || !strcmp(val, "0") || !strcmp(val, "0px"))) {
+            tiny = 1;
+            if (name[0] == 'h' && val[0] == '0') zero_h = 1;
+        }
         else if (!strcmp(name, "left") && val[0] == '-' && strlen(val) > 5) tiny = 1;      /* left:-9999px */
+        else if (!strcmp(name, "top") && val[0] == '-' && strlen(val) > 5) tiny = 1;
+        else if (!strcmp(name, "opacity") && (!strcmp(val, "0") || !strcmp(val, "0.0"))) tiny = 1;
+        else if (!strcmp(name, "transform") && (css_starts(val, "scale(0)") || css_starts(val, "translatex(-100") ||
+                                                 css_starts(val, "translatey(-100"))) tiny = 1;
+        else if ((!strcmp(name, "height") || !strcmp(name, "max-height")) && (!strcmp(val, "0") || !strcmp(val, "0px"))) zero_h = 1;
+        else if (!strcmp(name, "overflow") || !strcmp(name, "overflow-y")) { if (!strcmp(val, "hidden") || !strcmp(val, "clip")) clipped = 1; }
+        else if (!strcmp(name, "text-indent") && val[0] == '-' && strlen(val) > 5) set = (set & ~CS_SHOW) | CS_HIDE;   /* text for a picture */
     }
     if (abs && tiny) set = (set & ~CS_SHOW) | CS_HIDE;    /* "for screen readers only" */
+    if (zero_h && clipped && !padded) set = (set & ~CS_SHOW) | CS_HIDE;          /* folded away */
     return set;
 }
 
