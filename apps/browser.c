@@ -149,6 +149,7 @@ static unsigned page_bg;
 static int doc_h, scroll;
 static char title[80];
 static int view_source, reader;                          /* (the page's source; the reader) */
+static int layout_gen;                                   /* (laid out anew: one more) */
 
 /* --- where we are --- */
 static char url[URL_MAX], edit_url[URL_MAX];
@@ -661,7 +662,7 @@ static void emit_text(const char *t, int n)
         else end_line(0);
     }
     pending_space = 0;
-    if (x + w > RIGHT && x > line_left) end_line(0);
+    if (x + w > RIGHT && x > line_left && (w <= RIGHT - line_left || RIGHT - x < 12 * cw)) end_line(0);   /* (longer than a line: begun here) */
     if (nitems > line_start && x + w <= RIGHT) {         /* the same as the last, just after it: one piece */
         struct item *l = &items[nitems - 1];
         int gap = x - (l->x + l->w);
@@ -681,6 +682,11 @@ static void emit_text(const char *t, int n)
         int fit = (RIGHT - x) / cw, k;
         if (fit < 1) fit = 1;
         k = n < fit ? n : fit;
+        if (k < n && !pre && k > 8) {                    /* too long: cut after / - . ? & _ if there's one */
+            int j;
+            for (j = k - 1; j > k / 2; j--)
+                if (t[j] == '/' || t[j] == '-' || t[j] == '.' || t[j] == '?' || t[j] == '&' || t[j] == '_' || t[j] == '=' || t[j] == ',') { k = j + 1; break; }
+        }
         if (!POOL_ROOM(k) || !(it = new_item(IT_TEXT))) return;
         memcpy(pool + npool, t, k);
         it->text = npool;
@@ -776,7 +782,7 @@ static void resolve(const char *base, const char *href, char *out)
     int i;
     copy(h, href, URL_MAX);
     for (i = 0; h[i]; i++) if (h[i] == '#') { h[i] = 0; break; }
-    if (is_http(h)) { copy(out, h, URL_MAX); return; }
+    if (is_http(h) || starts_ci(h, "about:")) { copy(out, h, URL_MAX); return; }
     if (starts_ci(h, "file:")) { copy(out, h + 5, URL_MAX); return; }
     if (h[0] == '/' && h[1] == '/') {
         copy(out, is_https(base) ? "https:" : "http:", URL_MAX);
@@ -3674,6 +3680,7 @@ static void title_scan(void)
 static void layout(void)
 {
     int p = 0, end = srclen;
+    layout_gen++;
     char keep_title[sizeof title];
     free_page();
     left_x = reader ? 96 : MARGIN;
@@ -3724,7 +3731,422 @@ static const int btn_x[] = { 8, 38, 68, 98, 128 };
 #define ADDR_X 162
 #define GO_X (W - 78)
 #define DL_X (W - 36)
-#define ADDR_W (GO_X - 8 - ADDR_X)
+#define STAR_X (GO_X - 32)
+#define ADDR_W (STAR_X - 6 - ADDR_X)
+static void clamp_scroll(void);
+/* ============================================================
+ * bookmarks (Ctrl+D, the star; Ctrl+B: their page) and the pages
+ * been to (Ctrl+H) - in /TMP/WEB/BOOKMARK and /TMP/WEB/HISTORY,
+ * "address<TAB>title" lines, the newest first; the address bar's
+ * suggestions come from them
+ * ============================================================ */
+#define BM_MAX 200
+#define VH_MAX 300
+struct mark { char *u, *t; };
+static struct mark bms[BM_MAX], vhs[VH_MAX];
+static int nbm, nvh, marks_read;
+static char *dup_str(const char *s)
+{
+    int n = strlen(s);
+    char *d = malloc(n + 1);
+    if (d) memcpy(d, s, n + 1);
+    return d;
+}
+static void mk_free1(struct mark *m) { free(m->u); free(m->t); m->u = m->t = 0; }
+static int mk_find(struct mark *a, int n, const char *u)
+{
+    int i;
+    for (i = 0; i < n; i++) if (!strcmp(a[i].u, u)) return i;
+    return -1;
+}
+static void mk_del(struct mark *a, int *n, int i)
+{
+    if (i < 0 || i >= *n) return;
+    mk_free1(&a[i]);
+    memmove(a + i, a + i + 1, (*n - i - 1) * sizeof *a);
+    (*n)--;
+}
+/* u (title t): at the top - out of where it was */
+static void mk_put(struct mark *a, int *n, int max, const char *u, const char *t)
+{
+    struct mark m;
+    mk_del(a, n, mk_find(a, *n, u));
+    if (*n >= max) mk_del(a, n, *n - 1);
+    m.u = dup_str(u);
+    m.t = dup_str(t ? t : "");
+    if (!m.u || !m.t) { mk_free1(&m); return; }
+    memmove(a + 1, a, *n * sizeof *a);
+    a[0] = m;
+    (*n)++;
+}
+static void mk_load(const char *path, struct mark *a, int *n, int max)
+{
+    int fd = open(path, O_READ), sz, i, st = 0;
+    char *b;
+    if (fd < 0) return;
+    sz = fsize(fd);
+    if (sz <= 0 || !(b = malloc(sz + 1))) { close(fd); return; }
+    sz = read(fd, b, sz);
+    close(fd);
+    if (sz < 0) sz = 0;
+    b[sz] = 0;
+    for (i = 0; i <= sz; i++)
+        if (i == sz || b[i] == '\n') {
+            char *l = b + st, *tab;
+            b[i] = 0;
+            st = i + 1;
+            if (!*l || *n >= max) continue;
+            for (tab = l; *tab && *tab != '\t'; tab++) ;
+            if (*tab) *tab++ = 0;
+            if (mk_find(a, *n, l) >= 0) continue;
+            a[*n].u = dup_str(l);
+            a[*n].t = dup_str(tab);
+            if (!a[*n].u || !a[*n].t) { mk_free1(&a[*n]); continue; }
+            (*n)++;
+        }
+    free(b);
+}
+static void mk_save(const char *path, struct mark *a, int n)
+{
+    int fd, i;
+    mkdir("/TMP/WEB");
+    if ((fd = open(path, O_WRITE)) < 0) return;
+    for (i = 0; i < n; i++) {
+        fwrite(fd, a[i].u, strlen(a[i].u));
+        fwrite(fd, "\t", 1);
+        fwrite(fd, a[i].t, strlen(a[i].t));
+        fwrite(fd, "\n", 1);
+    }
+    close(fd);
+}
+static void marks_read_once(void)
+{
+    if (marks_read) return;
+    marks_read = 1;
+    mk_load("/TMP/WEB/BOOKMARK", bms, &nbm, BM_MAX);
+    mk_load("/TMP/WEB/HISTORY", vhs, &nvh, VH_MAX);
+}
+static int bookmarked(void) { marks_read_once(); return url[0] && mk_find(bms, nbm, url) >= 0; }
+/* Ctrl+D, the star: this page kept, or not any more */
+static void bookmark_toggle(void)
+{
+    int i;
+    marks_read_once();
+    if (!url[0] || starts_ci(url, "about:") || starts_ci(url, "view-source:")) return;
+    if ((i = mk_find(bms, nbm, url)) >= 0) { mk_del(bms, &nbm, i); copy(status, "Bookmark removed.", sizeof status); }
+    else { mk_put(bms, &nbm, BM_MAX, url, title); copy(status, "Bookmarked (Ctrl+B: the bookmarks).", sizeof status); }
+    mk_save("/TMP/WEB/BOOKMARK", bms, nbm);
+}
+/* a page opened: on top of the ones been to */
+static void visited(void)
+{
+    marks_read_once();
+    if (!url[0] || starts_ci(url, "about:") || starts_ci(url, "view-source:")) return;
+    mk_put(vhs, &nvh, VH_MAX, url, title);
+    mk_save("/TMP/WEB/HISTORY", vhs, nvh);
+    if (title[0] && mk_find(bms, nbm, url) >= 0) {   /* (a bookmark's title: kept new) */
+        int i = mk_find(bms, nbm, url);
+        if (strcmp(bms[i].t, title)) { char *t = dup_str(title); if (t) { free(bms[i].t); bms[i].t = t; mk_save("/TMP/WEB/BOOKMARK", bms, nbm); } }
+    }
+}
+/* font bytes as HTML (non-ASCII as &#N;) */
+static void html_put(char *s, const char *t)
+{
+    int n = strlen(s);
+    for (; *t && n < src_cap - 12; t++) {
+        unsigned char c = *t;
+        if (c == '<') { memcpy(s + n, "&lt;", 4); n += 4; }
+        else if (c == '&') { memcpy(s + n, "&amp;", 5); n += 5; }
+        else if (c == '"') { memcpy(s + n, "&quot;", 6); n += 6; }
+        else if (c < 0x80) s[n++] = c;
+        else {
+            unsigned u = font_uni(c);
+            char num[12];
+            int z = 0;
+            do { num[z++] = '0' + u % 10; u /= 10; } while (u);
+            s[n++] = '&'; s[n++] = '#';
+            while (z) s[n++] = num[--z];
+            s[n++] = ';';
+        }
+    }
+    s[n] = 0;
+}
+/* about:bookmarks, about:history (?del=N, ?clear) -> src */
+static void about_page_gen(const char *where)
+{
+    int bm = starts_ci(where, "about:bookmarks"), i, n;
+    struct mark *a = bm ? bms : vhs;
+    int *cnt = bm ? &nbm : &nvh;
+    const char *q, *path = bm ? "/TMP/WEB/BOOKMARK" : "/TMP/WEB/HISTORY";
+    char *s = src;
+    marks_read_once();
+    if ((q = strstr_at(where, "?del=")) != 0) { mk_del(a, cnt, atoi(q + 5)); mk_save(path, a, *cnt); }
+    else if (strstr_ci(where, "?clear")) { while (*cnt) mk_del(a, cnt, 0); mk_save(path, a, *cnt); }
+    n = *cnt;
+    *s = 0;
+    if (!bm && !starts_ci(where, "about:history")) {
+        append(s, "<title>Unknown page</title><h1>No such page</h1><p>There are <a href=\"about:bookmarks\">about:bookmarks</a> "
+                  "and <a href=\"about:history\">about:history</a>.</p>", src_cap);
+        srclen = strlen(s);
+        return;
+    }
+    append(s, bm ? "<title>Bookmarks</title><h1>Bookmarks</h1><p>Ctrl+D or the star keeps a page here (and takes it away). "
+                   "<a href=\"about:history\">Pages been to</a></p><hr>"
+                 : "<title>History</title><h1>Pages been to</h1><p>The newest first. <a href=\"about:bookmarks\">Bookmarks</a> "
+                   "- <a href=\"about:history?clear\">forget them all</a></p><hr>", src_cap);
+    if (!n) append(s, bm ? "<p><i>None yet.</i></p>" : "<p><i>None yet.</i></p>", src_cap);
+    append(s, "<ul>", src_cap);
+    for (i = 0; i < n && (int)strlen(s) < src_cap - 4096; i++) {
+        char num[12];
+        int z = 0, v = i;
+        append(s, "<li><a href=\"", src_cap); html_put(s, a[i].u); append(s, "\">", src_cap);
+        html_put(s, a[i].t[0] ? a[i].t : a[i].u);
+        append(s, "</a> <small>", src_cap);
+        if (a[i].t[0]) html_put(s, a[i].u);
+        append(s, "</small> <a href=\"", src_cap);
+        append(s, bm ? "about:bookmarks?del=" : "about:history?del=", src_cap);
+        do { num[z++] = '0' + v % 10; v /= 10; } while (v);
+        { char one[2] = { 0, 0 }; while (z) { one[0] = num[--z]; append(s, one, src_cap); } }
+        append(s, "\">[x]</a></li>", src_cap);
+    }
+    append(s, "</ul>", src_cap);
+    srclen = strlen(s);
+}
+
+/* ---- the address bar's suggestions: as it's typed, bookmarks and
+ * pages been to whose address begins so (past http://, www.) - then
+ * ones with it anywhere in their address or title ---- */
+#define SUG_MAX 8
+static const struct mark *sug[SUG_MAX];
+static int nsug, sug_sel = -1;
+static const char *bare(const char *u)
+{
+    if (starts_ci(u, "https://")) u += 8; else if (starts_ci(u, "http://")) u += 7;
+    if (starts_ci(u, "www.")) u += 4;
+    return u;
+}
+static void sug_update(void)
+{
+    int pass, i, k;
+    const char *t = edit_url;
+    nsug = 0; sug_sel = -1;
+    if (!editing || edit_fresh || !t[0]) return;
+    marks_read_once();
+    if (starts_ci(t, "http") || starts_ci(t, "www.")) t = bare(t);
+    if (!t[0]) return;
+    for (pass = 0; pass < 4 && nsug < SUG_MAX; pass++) {
+        struct mark *a = pass & 1 ? vhs : bms;
+        int n = pass & 1 ? nvh : nbm;
+        for (i = 0; i < n && nsug < SUG_MAX; i++) {
+            int ok = pass < 2 ? starts_ci(bare(a[i].u), t) : strstr_ci(a[i].u, t) || strstr_ci(a[i].t, t);
+            if (!ok) continue;
+            for (k = 0; k < nsug; k++) if (!strcmp(sug[k]->u, a[i].u)) break;
+            if (k == nsug) sug[nsug++] = &a[i];
+        }
+    }
+}
+
+/* ============================================================
+ * Ctrl+F: finding words on the page; and choosing its text with
+ * the mouse (or Ctrl+A) for Ctrl+C
+ * ============================================================ */
+#define FM_MAX 2000
+static int finding, fq_len, fm_gen = -1, nfm, fcur;
+static char fq[64];
+static struct { int item, off; } fm[FM_MAX];
+struct tpos { int item, off; };
+static struct tpos sel_a, sel_b;
+static int sel_has, sel_drag, sel_gen;
+static int fold(int c)
+{
+    c &= 255;
+    if (c >= 'A' && c <= 'Z') return c + 32;
+    if (c >= 0x80 && c <= 0x8F) return c + 0x20;         /* (code page 866's capitals) */
+    if (c >= 0x90 && c <= 0x9F) return c + 0x50;
+    if (c == 0xF0) return 0xF1;
+    return c;
+}
+/* the matches, again (a new query, or the page laid out anew) */
+static void find_run(void)
+{
+    int i;
+    nfm = 0;
+    fm_gen = layout_gen;
+    if (!fq_len) return;
+    for (i = 0; i < nitems && nfm < FM_MAX; i++) {
+        struct item *it = &items[i];
+        int o;
+        if (it->kind != IT_TEXT || it->len < fq_len) continue;
+        for (o = 0; o + fq_len <= it->len && nfm < FM_MAX; o++) {
+            int k;
+            for (k = 0; k < fq_len; k++) if (fold(pool[it->text + o + k]) != fold(fq[k])) break;
+            if (k == fq_len) { fm[nfm].item = i; fm[nfm].off = o; nfm++; o += fq_len - 1; }
+        }
+    }
+    if (fcur >= nfm) fcur = 0;
+}
+/* the match fcur: in view */
+static void find_show(void)
+{
+    struct item *it;
+    if (fcur < 0 || fcur >= nfm) return;
+    it = &items[fm[fcur].item];
+    if (it->y < scroll + 20 || it->y + it->h > scroll + VIEW_H - 20) {
+        scroll = it->y - VIEW_H / 3;
+        clamp_scroll();
+    }
+}
+/* the first match at or below what's in view */
+static void find_from_view(void)
+{
+    int i;
+    fcur = 0;
+    for (i = 0; i < nfm; i++) if (items[fm[i].item].y >= scroll) { fcur = i; break; }
+    find_show();
+}
+static void find_step(int back)
+{
+    if (fm_gen != layout_gen) find_run();
+    if (!nfm) return;
+    fcur = back ? (fcur + nfm - 1) % nfm : (fcur + 1) % nfm;
+    find_show();
+}
+static int tpos_cmp(struct tpos a, struct tpos b) { return a.item != b.item ? a.item - b.item : a.off - b.off; }
+/* where on the page's text mx,my is */
+static struct tpos tpos_at(int mx, int my)
+{
+    struct tpos p = { 0, 0 };
+    int i, dy = my - VIEW_Y + scroll, best = -1, bestd = 1 << 30, last = -1;
+    for (i = 0; i < nitems; i++) {
+        struct item *it = &items[i];
+        if (it->kind != IT_TEXT) continue;
+        if (dy >= it->y && dy < it->y + it->h) {         /* on its line: the nearest */
+            int d = mx < it->x ? it->x - mx : mx >= it->x + it->w ? mx - it->x - it->w + 1 : 0;
+            if (d < bestd) { bestd = d; best = i; }
+        } else if (it->y + it->h <= dy) last = i;
+    }
+    if (best >= 0) {
+        struct item *it = &items[best];
+        int cw = 8 * (it->scale ? it->scale : 1), o = (mx - it->x + cw / 2) / cw;
+        p.item = best;
+        p.off = o < 0 ? 0 : o > it->len ? it->len : o;
+    } else if (last >= 0) { p.item = last; p.off = items[last].len; }
+    return p;
+}
+/* the text chosen -> the clipboard */
+static void sel_copy(void)
+{
+    static char out[2048];
+    struct tpos a = sel_a, b = sel_b;
+    int n = 0, i, prev = -1;
+    if (!sel_has || sel_gen != layout_gen) return;
+    if (tpos_cmp(a, b) > 0) { struct tpos t = a; a = b; b = t; }
+    for (i = a.item; i <= b.item && i < nitems && n < (int)sizeof out - 2; i++) {
+        struct item *it = &items[i];
+        int s = i == a.item ? a.off : 0, e = i == b.item ? b.off : it->len;
+        if (it->kind != IT_TEXT) continue;
+        if (prev >= 0 && n) {
+            struct item *p = &items[prev];
+            if (it->y > p->y + p->h + (reader ? 10 : 6)) out[n++] = 13;                                  /* (a new block) */
+            else if (it->y != p->y || it->x > p->x + p->w) out[n++] = ' ';        /* (the same one, wrapped) */
+        }
+        while (s < e && n < (int)sizeof out - 2) out[n++] = pool[it->text + s++];
+        prev = i;
+    }
+    while (n && (out[n - 1] == ' ' || out[n - 1] == 13)) n--;
+    if (!n) return;
+    clip_text_set(out, n);
+    copy(status, "Copied (Ctrl+V pastes it - here, in a Terminal, in Notepad).", sizeof status);
+}
+static void sel_all(void)
+{
+    int i, first = -1, lastt = -1;
+    for (i = 0; i < nitems; i++) if (items[i].kind == IT_TEXT) { if (first < 0) first = i; lastt = i; }
+    if (first < 0) return;
+    sel_a.item = first; sel_a.off = 0;
+    sel_b.item = lastt; sel_b.off = items[lastt].len;
+    sel_has = 1; sel_gen = layout_gen;
+}
+/* the marks behind the text: what's chosen, what's found */
+static void draw_marks(int top, int bot)
+{
+    int i;
+    if (finding && fm_gen != layout_gen) find_run();
+    if (finding)
+        for (i = 0; i < nfm; i++) {
+            struct item *it = &items[fm[i].item];
+            int s = it->scale ? it->scale : 1, sy = it->y - scroll + top;
+            if (sy + it->h < top || sy >= bot) continue;
+            fill(it->x + fm[i].off * 8 * s, sy, fq_len * 8 * s, it->h, i == fcur ? RGB(255, 150, 40) : RGB(255, 236, 110), top, bot);
+        }
+    if (sel_has && sel_gen == layout_gen) {
+        struct tpos a = sel_a, b = sel_b;
+        if (tpos_cmp(a, b) > 0) { struct tpos t = a; a = b; b = t; }
+        for (i = a.item; i <= b.item && i < nitems; i++) {
+            struct item *it = &items[i];
+            int s, e, sc, sy;
+            if (it->kind != IT_TEXT) continue;
+            sy = it->y - scroll + top;
+            if (sy + it->h < top || sy >= bot) continue;
+            sc = it->scale ? it->scale : 1;
+            s = i == a.item ? a.off : 0;
+            e = i == b.item ? b.off : it->len;
+            if (e > s) fill(it->x + s * 8 * sc, sy, (e - s) * 8 * sc, it->h, RGB(176, 204, 252), top, bot);
+        }
+    }
+}
+static void num_add(char *t, int v, int cap)
+{
+    char d[12];
+    int k = 0;
+    do { d[k++] = '0' + v % 10; v /= 10; } while (v && k < 11);
+    while (k) { char one[2] = { d[--k], 0 }; append(t, one, cap); }
+}
+/* the find bar, where the status line is */
+static void draw_find(void)
+{
+    char t[120];
+    fill(0, H - STATUS, W, STATUS, RGB(255, 248, 214), 0, H);
+    fill(0, H - STATUS, W, 1, C_RULE, 0, H);
+    text_at(8, H - STATUS + 2, "Find:", C_HEAD, ST_BOLD, 48);
+    fill(56, H - STATUS + 2, 260, 16, C_PAGE, 0, H);
+    text_at(60, H - STATUS + 2, fq, C_TEXT, 0, 250);
+    fill(60 + fq_len * 8, H - STATUS + 2, 2, 16, C_LINK, 0, H);
+    if (fm_gen != layout_gen) find_run();
+    if (!fq_len) copy(t, "Type what to find", sizeof t);
+    else if (!nfm) copy(t, "Not on this page", sizeof t);
+    else {
+        t[0] = 0;
+        num_add(t, fcur + 1, sizeof t);
+        append(t, " of ", sizeof t);
+        num_add(t, nfm, sizeof t);
+        if (nfm == FM_MAX) append(t, "+", sizeof t);
+    }
+    text_at(328, H - STATUS + 2, t, nfm || !fq_len ? C_GRAY : RGB(200, 40, 60), ST_BOLD, 150);
+    text_at(490, H - STATUS + 2, "Enter: next  Shift: back  Esc", C_GRAY, 0, W - 496);
+}
+/* the suggestions, under the address bar */
+static void draw_sug(void)
+{
+    int i, bx = ADDR_X, bw = ADDR_W, by = VIEW_Y - 4;
+    if (!editing || !nsug) return;
+    fill(bx + 3, by + 3, bw, nsug * 36 + 2, RGB(150, 156, 170), 0, H);
+    fill(bx, by, bw, nsug * 36 + 2, C_BAR_LO, 0, H);
+    for (i = 0; i < nsug; i++) {
+        int ry = by + 1 + i * 36, bmk = sug[i] >= bms && sug[i] < bms + BM_MAX;
+        fill(bx + 1, ry, bw - 2, 36, i == sug_sel ? C_HOVER : C_PAGE, 0, H);
+        text_at(bx + 8, ry + 2, bmk ? "*" : "\x10", bmk ? RGB(220, 150, 0) : C_RULE, ST_BOLD, 8);
+        text_at(bx + 22, ry + 2, sug[i]->t[0] ? sug[i]->t : bare(sug[i]->u), C_TEXT, ST_BOLD, bw - 30);
+        text_at(bx + 22, ry + 18, sug[i]->u, C_LINK, 0, bw - 30);
+    }
+}
+static int sug_at(int mx, int my)
+{
+    int by = VIEW_Y - 4;
+    if (!editing || !nsug || mx < ADDR_X || mx >= ADDR_X + ADDR_W || my < by + 1 || my >= by + 1 + nsug * 36) return -1;
+    return (my - by - 1) / 36;
+}
+
 
 static void bevel(int bx, int by, int bw, int bh, unsigned face)
 {
@@ -3759,6 +4181,12 @@ static void draw_bar(void)
     if (!editing && is_https(url)) {                     /* encrypted: said */
         fill(ADDR_X + ADDR_W - 44, BTN_Y + 4, 38, 16, RGB(40, 150, 70), 0, H);
         text_at(ADDR_X + ADDR_W - 41, BTN_Y + 4, "TLS", RGB(255, 255, 255), ST_BOLD, 32);
+    }
+    {                                                    /* the star: a bookmark */
+        int on = bookmarked();
+        bevel(STAR_X, BTN_Y, 26, BTN_H, hover_btn == 8 ? C_HOVER : C_BTN);
+        text_at(STAR_X + 9, BTN_Y + 4, "*", on ? RGB(230, 150, 0) : C_GRAY, ST_BOLD, 16);
+        if (on) text_at(STAR_X + 10, BTN_Y + 4, "*", RGB(230, 150, 0), ST_BOLD, 16);
     }
     bevel(GO_X, BTN_Y, 36, BTN_H, hover_btn == 4 ? C_HOVER : C_BTN);
     text_at(GO_X + 10, BTN_Y + 4, "Go", C_TEXT, ST_BOLD, 24);
@@ -3885,7 +4313,8 @@ static void draw_page(void)
 {
     int i, top = VIEW_Y, bot = VIEW_Y + VIEW_H;
     fill(0, top, W - SBW, VIEW_H, page_bg, 0, H);
-    for (int pass = 0; pass < 2; pass++)
+    for (int pass = 0; pass < 2; pass++) {
+        if (pass == 1) draw_marks(top, bot);
         for (i = 0; i < nitems; i++) {
             struct item *it = &items[i];
             int sy = it->y - scroll + top;
@@ -3918,6 +4347,7 @@ static void draw_page(void)
                 if (it->style & ST_UNDER) fill(it->x, sy + 15 * s - 1, it->w, s, c, top, bot);
             }
         }
+    }
     draw_sel_list(top, bot);
     /* the scrollbar */
     fill(W - SBW, top, SBW, VIEW_H, RGB(236, 238, 242), 0, H);
@@ -4086,7 +4516,8 @@ static void redraw(void)
     draw_page();
     if (show_dls) draw_downloads();
     if (show_info) draw_info();
-    draw_status();
+    draw_sug();
+    if (finding) draw_find(); else draw_status();
     gfx_blit(frame);
 }
 
@@ -4296,7 +4727,7 @@ static void go(const char *to, int remember)
     copy(where, to, URL_MAX);
     if (!where[0]) return;
     if (starts_ci(where, "view-source:")) { vs = 1; memmove(where, where + 12, strlen(where + 12) + 1); }
-    if (!is_http(where) && where[0] != '/' &&
+    if (!is_http(where) && where[0] != '/' && !starts_ci(where, "about:") &&
         (starts_ci(where, "www.") || (strlen(where) > 4 && !starts_ci(where + strlen(where) - 4, ".htm") &&
                                      !starts_ci(where + strlen(where) - 5, ".html")))) {
         char t[URL_MAX];                  /* "example.com" -> https:// */
@@ -4325,7 +4756,14 @@ static void go(const char *to, int remember)
     base_url[0] = 0;
     cs_mode = CS_UTF8;
     title[0] = 0;
-    n = net_get(where, final);
+    if (starts_ci(where, "about:")) {                   /* bookmarks, history: made here */
+        int i;
+        about_page_gen(where);
+        copy(final, where, URL_MAX);
+        for (i = 0; final[i]; i++) if (final[i] == '?') { final[i] = 0; break; }   /* (?del= done: not again on F5) */
+        pi.code = 200; pi.kind = PK_HTML; n = 0;
+    }
+    else n = net_get(where, final);
     free(post_body); post_body = 0;                      /* (a form's, sent) */
     if (n >= 0 && strcmp(final, where)) copy(where, final, URL_MAX);       /* (moved: there) */
     if (!base_url[0]) copy(base_url, where, URL_MAX);
@@ -4381,6 +4819,7 @@ static void go(const char *to, int remember)
     }
     if (pi.kind == PK_HTML && !view_source) title_scan();
     layout();
+    if (!err_shown && !vs) visited();
     status[0] = 0;
     if (pi.trunc) copy(status, "A big page: shown up to 256KB of it.", sizeof status);
     else if (pi.code >= 400 && !err_shown)
@@ -4590,6 +5029,7 @@ static int button_at(int mx, int my)
     if (mx >= btn_x[4] && mx < btn_x[4] + 26) return 7;
     if (mx >= GO_X && mx < GO_X + 36) return 4;
     if (mx >= DL_X && mx < DL_X + 28) return 6;
+    if (mx >= STAR_X && mx < STAR_X + 26) return 8;
     if (mx >= ADDR_X && mx < ADDR_X + ADDR_W) return 5;
     return -1;
 }
@@ -4742,6 +5182,7 @@ static void press(int b)
     else if (b == 5 && !editing) { editing = 1; edit_fresh = 1; copy(edit_url, url, URL_MAX); redraw(); }
     else if (b == 6) { show_dls = !show_dls; redraw(); }
     else if (b == 7) toggle_reader();
+    else if (b == 8) { bookmark_toggle(); redraw(); }
 }
 
 int main(int argc, char **argv)
@@ -4760,20 +5201,62 @@ int main(int argc, char **argv)
         }
         if (k) {
             int ch = k & 0xFF, sc = (k >> 8) & 0xFF;
+            int shift = keydown(KEY_LSHIFT) || keydown(KEY_RSHIFT);
             if (editing) {
-                int l = strlen(edit_url);
-                if (ch == 13) { editing = 0; addr_typed(edit_url); go(edit_url, 1); }
-                else if (ch == 27) editing = 0;
+                int l = strlen(edit_url), typed = 1;
+                if (ch == 13) {
+                    editing = 0;
+                    if (sug_sel >= 0 && sug_sel < nsug) copy(edit_url, sug[sug_sel]->u, URL_MAX);
+                    nsug = 0;
+                    addr_typed(edit_url);
+                    go(edit_url, 1);
+                    typed = 0;
+                }
+                else if (ch == 27) { editing = 0; nsug = 0; typed = 0; }
+                else if (sc == KEY_DOWN && !ch) { if (nsug) sug_sel = (sug_sel + 1) % nsug; typed = 0; }
+                else if (sc == KEY_UP && !ch) { if (nsug) sug_sel = sug_sel <= 0 ? nsug - 1 : sug_sel - 1; typed = 0; }
+                else if (ch == 3) { clip_text_set(edit_url, l); copy(status, "Copied.", sizeof status); typed = 0; }
+                else if (ch == 22) {                                         /* Ctrl+V */
+                    static char in[URL_MAX];
+                    int n = clip_text_get(in, URL_MAX - 1), i;
+                    if (edit_fresh) { l = 0; edit_fresh = 0; }
+                    for (i = 0; i < n && l < URL_MAX - 1; i++) edit_url[l++] = in[i] == 13 || in[i] == 10 || in[i] == 9 ? ' ' : in[i];
+                    edit_url[l] = 0;
+                }
                 else if (ch == 8) { if (edit_fresh) edit_url[0] = 0; else if (l) edit_url[l - 1] = 0; edit_fresh = 0; }
                 else if (ch >= 32 && ch != 127 && l < URL_MAX - 1) {
                     if (edit_fresh) { l = 0; edit_fresh = 0; }   /* (all chosen: replaced) */
                     edit_url[l] = ch;
                     edit_url[l + 1] = 0;
+                } else typed = 0;
+                if (typed) sug_update();
+                changed = 1;
+            } else if (focus >= 0 && ch == 22) {                            /* Ctrl+V into a field */
+                static char in[2048];
+                int n = clip_text_get(in, sizeof in), i;
+                for (i = 0; i < n; i++) {
+                    int c = (unsigned char)in[i];
+                    if (c == 13 || c == 10) c = focus < nctrls && ctrls[focus].kind == CT_AREA ? 13 : ' ';
+                    if (c >= 32 || c == 13) ctrl_key(c, 0);
                 }
                 changed = 1;
             } else if (focus >= 0 && ctrl_key(ch, sc)) { changed = 1;
+            } else if (finding && (ch == 27 || ch == 13 || ch == 8 || (ch >= 32 && ch != 127))) {     /* Ctrl+F's bar */
+                if (ch == 27) finding = 0;
+                else if (ch == 13) find_step(shift);
+                else if (ch == 8) { if (fq_len) fq[--fq_len] = 0; find_run(); find_from_view(); }
+                else if (fq_len < (int)sizeof fq - 1) { fq[fq_len++] = ch; fq[fq_len] = 0; find_run(); find_from_view(); }
+                changed = 1;
             } else if (ch == 27 && show_info) { show_info = 0; changed = 1; }
+            else if (ch == 27 && sel_has) { sel_has = 0; changed = 1; }
             else if (ch == 27) break;
+            else if (ch == 6) { finding = 1; if (fq_len) { find_run(); find_from_view(); } changed = 1; }      /* Ctrl+F */
+            else if (sc == 0x3D) { if (fq_len) { finding = 1; find_step(shift); } changed = 1; }              /* F3 */
+            else if (ch == 4) { bookmark_toggle(); changed = 1; }                    /* Ctrl+D */
+            else if (ch == 2) { go("about:bookmarks", 1); continue; }               /* Ctrl+B */
+            else if (ch == 8 && sc == 0x23) { go("about:history", 1); continue; }   /* Ctrl+H */
+            else if (ch == 3) { sel_copy(); changed = 1; }                           /* Ctrl+C */
+            else if (ch == 1) { sel_all(); changed = 1; }                            /* Ctrl+A */
             else if (ch == 21) {                                            /* Ctrl+U: its source */
                 char t[URL_MAX];
                 if (!starts_ci(url, "view-source:") && url[0]) { copy(t, "view-source:", URL_MAX); append(t, url, URL_MAX); tab_new(t); }
@@ -4826,6 +5309,13 @@ int main(int argc, char **argv)
                 if (ht == 100) { tab_new(home); was_down = down; continue; }
                 if (on_x) tab_close(ht); else tab_go(ht);
                 changed = 1;
+            } else if (down && !was_down && sug_at(mx, my) >= 0) {      /* a suggestion */
+                char to[URL_MAX];
+                copy(to, sug[sug_at(mx, my)]->u, URL_MAX);
+                editing = 0; nsug = 0;
+                go(to, 1);
+                was_down = down;
+                continue;
             } else if (down && !was_down) {
                 if (mx >= W - SBW && my >= VIEW_Y && my < VIEW_Y + VIEW_H) {
                     drag = my;                             /* the scrollbar */
@@ -4869,8 +5359,27 @@ int main(int argc, char **argv)
                     was_down = down;
                     continue;
                 } else {
-                    if (editing) { editing = 0; changed = 1; }
+                    if (editing) { editing = 0; nsug = 0; changed = 1; }
                     if (focus >= 0) { focus = -1; changed = 1; }
+                    if (my >= VIEW_Y && my < VIEW_Y + VIEW_H && mx < W - SBW) {     /* choosing text begins */
+                        sel_a = sel_b = tpos_at(mx, my);
+                        sel_drag = 1;
+                        if (sel_has) changed = 1;
+                        sel_has = 0;
+                        sel_gen = layout_gen;
+                    }
+                }
+            } else if (down && sel_drag) {                              /* ... and goes on */
+                struct tpos p;
+                int s = scroll;
+                if (my < VIEW_Y + 8) scroll -= 16;
+                else if (my > VIEW_Y + VIEW_H - 8) scroll += 16;
+                clamp_scroll();
+                p = tpos_at(mx, my);
+                if (tpos_cmp(p, sel_b) || s != scroll) {
+                    sel_b = p;
+                    sel_has = tpos_cmp(sel_a, sel_b) != 0;
+                    changed = 1;
                 }
             } else if (down && drag >= 0 && doc_h > VIEW_H) {
                 int th = VIEW_H * VIEW_H / doc_h, s = scroll;
@@ -4879,7 +5388,11 @@ int main(int argc, char **argv)
                 clamp_scroll();
                 changed |= s != scroll;
             }
-            if (!down) drag = -1;
+            if (!down) { drag = -1; sel_drag = 0; }
+            {
+                int sg = sug_at(mx, my);
+                if (sg >= 0 && sg != sug_sel) { sug_sel = sg; changed = 1; }
+            }
             was_down = down;
         } else {
             if (hover_link >= 0 || hover_btn >= 0) { hover_link = hover_btn = -1; changed = 1; }

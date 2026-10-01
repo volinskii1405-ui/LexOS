@@ -28,10 +28,14 @@
 ;                             file's it now (Paint's Ctrl+C) -> 0; set 0,
 ;                             its path into buf -> its length, 0 if none.
 ;                             A screenshot, a picture copied in Files: it.
+;   47 clip_text(buf, n, set) the clipboard's text (a Terminal's, Ctrl+V's,
+;                             Win+V's): set 1, buf's n bytes are it now (up
+;                             to 2KB; lines end in 13) -> 0; set 0, it into
+;                             buf (n bytes at most) -> its length
 ;
 ; Arguments as every call's: ebx [ebp+16], ecx [ebp+24], edx [ebp+20].
 ; Exports: sys_keymode, sys_readdir, sys_mkdir, sys_notify, sys_inbox,
-;          sys_opl, sys_audio_queued, sys_clip_pic, aext_clip_pic,
+;          sys_opl, sys_audio_queued, sys_clip_pic, sys_clip_text, aext_clip_pic,
 ;          sys_music_state, aext_music, aext_music_send,
 ;          aext_hand_over
 
@@ -644,6 +648,41 @@ sys_clip_pic:
     mov eax, [ebp + 24]
     dec eax
 .done:
+    ret
+
+; SYS 47: ebx = a buffer, ecx = its size, edx = 1: its bytes are the
+; clipboard's text now -> 0; edx = 0: the clipboard's text into it ->
+; how many bytes
+sys_clip_text:
+    mov ecx, [ebp + 24]
+    cmp ecx, DKC_MAX - 1
+    jbe .n_ok
+    mov ecx, DKC_MAX - 1
+.n_ok:
+    cmp dword [ebp + 20], 0
+    je .get
+    mov [ebp + 24], ecx
+    call app_check_range
+    mov esi, [ebp + 16]
+    mov edi, dkc_text
+    mov [dkc_len], ecx
+    cld
+    rep movsb
+    mov byte [edi], 0
+    xor eax, eax
+    ret
+.get:
+    cmp ecx, [dkc_len]
+    jbe .n_get
+    mov ecx, [dkc_len]
+.n_get:
+    mov [ebp + 24], ecx
+    call app_check_range
+    mov esi, dkc_text
+    mov edi, [ebp + 16]
+    mov eax, ecx
+    cld
+    rep movsb
     ret
 
 ; SYS 44: ebx = what the calling program plays: 0 nothing, 1 playing,

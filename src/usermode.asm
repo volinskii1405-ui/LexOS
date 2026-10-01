@@ -83,7 +83,7 @@ SYS_SLEEP_UNTIL equ 27                ; ebx = a SYS_MILLIS value to wait for
 SYS_AUDIO_VOLUME equ 28               ; ebx = 0-100
 SYS_MORE        equ 45                ; ebx = bytes more -> eax = the top of its
                                       ; extra memory (0: no more to be had)
-SYS_COUNT       equ 47                ; (files/graphics: src/appsys.asm)
+SYS_COUNT       equ 48                ; (files/graphics: src/appsys.asm)
 
 ; A program's extra memory (SYS_MORE): 4MB pages from a pool of them
 ; above the kernel's own memory, mapped from APP_HIGH_BASE up - so a
@@ -583,7 +583,7 @@ syscall_table:
     dd sys_tcp_open, sys_tcp_send, sys_tcp_recv, sys_tcp_close
     dd sys_keymode, sys_readdir, sys_mkdir, sys_notify  ; (src/appext.asm)
     dd sys_inbox, sys_opl, sys_audio_queued, sys_clip_pic
-    dd sys_music_state, sys_more, sys_readdir_long
+    dd sys_music_state, sys_more, sys_readdir_long, sys_clip_text
 
 sys_exit:
     mov eax, [ebp + 16]
