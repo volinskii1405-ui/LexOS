@@ -173,8 +173,17 @@ app_split_path:
 .resolve:
     push ebx
     push edx
+    movzx ebx, byte [console_self]        ; (a program's: no "Path not found."
+    mov dl, [pipe_on + ebx]               ;  on its console - it's told -1)
+    push edx
+    mov byte [pipe_on + ebx], 2
     mov si, app_path_buf
     call fs_resolve_path                  ; -> ax, or carry=1
+    pop edx
+    pushfd
+    movzx ebx, byte [console_self]
+    mov [pipe_on + ebx], dl
+    popfd
     pop edx
     pop ebx
     jc .bad_pop

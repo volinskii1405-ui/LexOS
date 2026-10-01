@@ -214,6 +214,22 @@ All taken in QEMU (1024x768) - more in [docs/screenshots](docs/screenshots).
 <td align="center" valign="top"><img src="docs/screenshots/103-long-names-dialog.png" alt="Long names in Notepad" width="400"><br><sub>Long names in programs' Open/Save dialogs</sub></td>
 <td align="center" valign="top"><img src="docs/screenshots/104-long-names-shell.png" alt="Long names in the Terminal" width="400"><br><sub>Long names in the Terminal: quotes, Tab</sub></td>
 </tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/107-browser-forms.png" alt="Forms" width="400"><br><sub>LexOS Web: forms - fields, lists, checkboxes, GET and POST</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/108-browser-js-text.png" alt="A JavaScript page's text" width="400"><br><sub>A page made by JavaScript: its text, from its data</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/109-browser-find.png" alt="Find on the page" width="400"><br><sub>Ctrl+F: find on the page</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/110-browser-copy.png" alt="Copying text" width="400"><br><sub>Text chosen with the mouse, Ctrl+C, pasted with Ctrl+V</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/111-browser-suggest.png" alt="Address suggestions" width="400"><br><sub>The address bar suggests bookmarks and pages been to</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/112-browser-error.png" alt="An error page" width="400"><br><sub>Errors in words, and what to try</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/113-browser-bookmarks.png" alt="Bookmarks" width="400"><br><sub>Bookmarks (Ctrl+D, Ctrl+B)</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/114-browser-tls12.png" alt="TLS 1.2" width="400"><br><sub>https:// over TLS 1.2 with P-256 and ChaCha20</sub></td>
+</tr>
 </table>
 
 Every screenshot, described in Russian: [docs/screenshots/README.md](docs/screenshots/README.md).
@@ -664,7 +680,9 @@ tester@/DESKTOP$ run snake.app
   waiting, or none of it any more; `clip_pic_get(buf, n)` /
   `clip_pic_set(path)` - the clipboard's picture, a path to a .BMP or
   .PNG (the last screenshot, a picture copied in Files, what Paint
-  copied); `music_state(n)` - a player saying it plays (1) or is paused
+  copied); `clip_text_get(buf, n)` / `clip_text_set(t, n)` - the
+  clipboard's text (what a Terminal or the browser copied, what Ctrl+V
+  types and Win+V keeps); `music_state(n)` - a player saying it plays (1) or is paused
   (2): the tray's note, whose click and wheel come to its inbox as
   `|PAUSE`, `|NEXT`, `|PREV`. A file dragged onto a program's window comes to its inbox
   too.
@@ -710,9 +728,10 @@ tester@/DESKTOP$ run snake.app
   one - each keeps its address, history and scroll). It opens pages from the disk - a
   demo site, `/DEMOS/SITE/INDEX.HTM`, with Lex's picture and pages in
   Russian and Spanish - or from the web over `http://` and **`https://`**
-  (TLS 1.3 of its own, `apps/tls.h`: X25519, SHA-256/HKDF, AES-128-GCM
-  and ChaCha20-Poly1305, checked against the standards' test vectors,
-  OpenSSL and real sites; the server's Finished is checked, its
+  (TLS 1.3 and 1.2 of its own, `apps/tls.h`: X25519 and P-256
+  (`apps/p256.h`) key exchange, SHA-256/HKDF (and TLS 1.2's PRF),
+  AES-128-GCM and ChaCha20-Poly1305, checked against the standards' test
+  vectors, OpenSSL and real sites; the server's Finished is checked, its
   certificate isn't - there's no list of authorities to check it
   against - so it's encrypted, but not proof of who's on the other end;
   a green TLS in the address bar says so) (under QEMU
@@ -727,21 +746,59 @@ tester@/DESKTOP$ run snake.app
   lazy ones' `data-src` too, up to 64 a page. Back / forward / reload /
   home, an address bar (Tab, or click it), a scrollbar, the wheel, links
   lighting up under the pointer with their address in the status line.
+  Words typed in the address bar instead of an address are **searched
+  for** (DuckDuckGo's HTML version, its result links followed straight
+  to the site); as you type, it **suggests** bookmarks and pages you've
+  been to (Up/Down, Enter or a click). **Bookmarks**: Ctrl+D or the star
+  by the address (lit when the page is one), Ctrl+B shows them
+  (`about:bookmarks`), Ctrl+H the pages been to (`about:history`) - kept
+  in `/TMP/WEB/BOOKMARK` and `HISTORY`, each with an [x]. **Ctrl+F**
+  finds words on the page (every match lit, the current one orange, "2
+  of 7"; Enter or F3 the next, Shift back). **Choosing text**: drag the
+  mouse over it (Ctrl+A: all of it), **Ctrl+C** copies it to the
+  desktop's clipboard - Ctrl+V pastes it into a Terminal, Notepad, the
+  address bar or a form's field (and Win+V keeps it).
+  **Forms**: text fields, passwords, text areas, checkboxes, radio
+  buttons, drop-down lists, hidden fields, submit buttons and images,
+  `<button>`, sent by GET or POST (urlencoded, in the page's own
+  charset - a windows-1251 site gets windows-1251), Enter in a field
+  sends it, Tab goes to the next one. **Cookies** are kept (and sent
+  back) in `/TMP/WEB/COOKIES`: logins and settings stay. **Pages that
+  draw themselves with JavaScript** (which isn't run) aren't left blank:
+  the sentences in the data they carry - JSON `<script>`s,
+  `__NEXT_DATA__`, `window.__STATE__ = {...}`, Next.js's streamed pieces
+  - and their `<meta>` description are shown at the end, under a line
+  saying where they came from. `<iframe>`s become links to the page
+  inside ("[Embedded: www.youtube.com - open]"); `<meta http-equiv=
+  refresh>` is followed (the trick "no JavaScript? go here" sites use);
+  reddit opens as old.reddit.com, a Google or DuckDuckGo search as
+  DuckDuckGo's HTML one. A page sent packed with brotli or zstd (which
+  LexOS can't unpack) is asked for again, unpacked. When something goes
+  wrong the page says **what, in words** (no such page, the site didn't
+  let us in, the site has trouble, no answer, no secure connection) and
+  what to try: again, the Internet Archive's copy, http:// instead of
+  https://, a search for the site.
   **No gibberish**: pages sent gzip'd or deflated are unpacked
   (`apps/inflate.h`); the charset comes from the server's header, the
   page's `<meta>`, a BOM, or is guessed from the text - UTF-8,
   windows-1251, KOI8-R, CP866, ISO-8859-5, windows-1252/Latin-1; what
   the font hasn't got is shown as near as it can be (`№` as No, `€` as
-  EUR, box drawing, arrows; emoji as `*`; zero-width spaces, soft hyphens
-  and BOMs not at all). Pages are read as they come - scripts, SVG,
+  EUR, Greek as Latin, fullwidth and math letters as plain ones, box
+  drawing, arrows, super- and subscripts; faces as `:)` / `:(`, other
+  emoji as `*`; icon fonts' private letters, accents on top, flags,
+  zero-width spaces, soft hyphens and BOMs not at all). Long words and
+  addresses are cut at the line's end - after a `/`, `-`, `.` or `?` if
+  there is one. Pages are read as they come - scripts, SVG,
   comments and most attributes are left out on the way - and kept
   whole, however big (up to 48MB of what's left, in memory the kernel
   hands the browser past its own 4MB: a page of 40000 paragraphs, 6MB of
   text, is no trouble). A **little CSS** (`apps/css.h`, the
   page's `<style>`, up to 3 stylesheets and `style=""`; tag, `.class`
   and `#id` selectors, `@media` as for an 800x600 screen): `display:none`,
-  `visibility:hidden`, `hidden`, `aria-hidden` and screen-reader-only
-  classes aren't shown; bold, italic, underline, colors (only if they can
+  `visibility:hidden`, `hidden`, `aria-hidden`, screen-reader-only
+  classes, folded-away blocks (`height:0; overflow:hidden`), invisible
+  ones (`opacity:0` placed aside) and text pushed off for a logo
+  (`text-indent:-9999px`) aren't shown; bold, italic, underline, colors (only if they can
   be read), centering, the page's background. JSON and text are shown as
   text, a picture on its own as a picture, anything else is offered as a
   download. **Reader mode** (the **Aa** button or F9): only the article
@@ -1642,7 +1699,7 @@ src/
   dkdrop.asm           dragging files between Files and the desktop,
                        and onto programs' windows.
   appext.asm           system calls: keymode, readdir, mkdir, notify,
-                       inbox, clip_pic.
+                       inbox, clip_pic, clip_text.
   dkfview.asm          Files: the places, Details, thumbnails, Recent.
   dkwall.asm           the wallpaper, and reading .BMPs for it and
                        the thumbnails.
@@ -1748,14 +1805,21 @@ src/
 - Pipes pass files, not streams: a command's whole output is caught
   first (up to 20KB per console), then handed on - and a command that
   waits for keys (`uranium`, a game) can't be piped.
-- LexOS Web knows only a little CSS, no JavaScript, forms or frames;
-  only the outermost table is a grid (a table inside a cell has its
+- LexOS Web knows only a little CSS and runs no JavaScript (a page made
+  by it shows only the text in its data, not its buttons or menus;
+  sites that need a script to log in, or that check for a real browser
+  - Cloudflare's checks, Google's sites - don't work); no `display:flex`
+  or grid (blocks one under another), no web fonts; an `<iframe>` is a
+  link, not shown in place; only the outermost table is a grid (a table inside a cell has its
   cells one after another in it), no rowspan. Its cache is 64 files in
   `/TMP/WEB` (512KB each at most), kept until the same slot's needed
   again - F5 reads past it, but nothing checks whether a picture
-  changed on the server otherwise. Its https
-  offers only TLS 1.3 with X25519 (servers asking for another key
-  exchange are refused) and doesn't check certificates (see above).
+  changed on the server otherwise. Its https offers TLS 1.3 and 1.2
+  with X25519 or P-256 and AES-GCM or ChaCha20 - not RSA key exchange,
+  CBC ciphers or TLS 1.0/1.1 (a very old server is refused, the page
+  says so) - and doesn't check certificates (see above). Selecting text
+  copies at most 2KB (the clipboard's size); Find matches within a line,
+  not across two.
 - `cc.app` has no structs, unions, floats, multi-dimensional arrays or
   function pointers, `unsigned`/`short`/`long` are plain `int`, and
   `#define` is for constants (no macros with arguments, no `#if`).

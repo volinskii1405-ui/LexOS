@@ -1,22 +1,24 @@
-/* tls.h - TLS 1.3 for LexOS programs (LexOS Web's https://).
+/* tls.h - TLS 1.3 and 1.2 for LexOS programs (LexOS Web's https://).
  *
  *   int n = tls_get("example.com", 443, "/", buf, size);
  *
  * opens a TCP connection (the kernel's: tcp_open & co., lexos.h), does
- * a TLS 1.3 handshake, sends an HTTP/1.1 GET (Connection: close) and reads the whole answer
+ * a TLS 1.3 handshake (or 1.2, if that's all the server speaks), sends an HTTP/1.1 GET (Connection: close) and reads the whole answer
  * - headers and body - into buf: its length, or <0 (tls_error says why).
  * tls_sink, if set, takes the answer a piece at a time instead.
  *
  * All of it is here, in C, from the standards: X25519 key exchange
- * (RFC 7748, after TweetNaCl), SHA-256, HMAC and HKDF (the TLS 1.3 key
- * schedule, RFC 8446), and two ciphers: AES-128-GCM and
- * ChaCha20-Poly1305 (RFC 8439). The connection is encrypted and its
+ * (RFC 7748, after TweetNaCl) and P-256's (p256.h), SHA-256, HMAC and
+ * HKDF (the TLS 1.3 key schedule, RFC 8446) or TLS 1.2's PRF (RFC
+ * 5246: ECDHE only, RFC 8422), and two ciphers: AES-128-GCM and
+ * ChaCha20-Poly1305 (RFC 8439, RFC 7905). The connection is encrypted and its
  * handshake checked (the server's Finished) - but the server's
  * certificate isn't: LexOS has no list of certificate authorities to
  * check it against, so anyone in the middle could pretend to be the
  * server. Good for reading the web; don't type secrets into it. */
 #ifndef LEXOS_TLS_H
 #define LEXOS_TLS_H
+#include "p256.h"
 
 typedef unsigned char u8;
 typedef unsigned int u32;
@@ -30,6 +32,9 @@ static int (*tls_sink)(const unsigned char *d, int n);
 /* the request's headers (each ending "\r\n"), between Host and
  * Connection: close */
 static const char *tls_headers = "User-Agent: LexOS-Web/1.0\r\nAccept: text/html, */*\r\n";
+/* or, if set: the whole request, as it's to be sent */
+static const char *tls_req;
+static int tls_req_len;
 
 /* ============================================================
  * SHA-256
@@ -498,6 +503,7 @@ static int chachapoly(const u8 key[32], const u8 nonce[12], const u8 *aad, int a
 
 static struct {
     int suite, keylen;
+    int v12, wenc, renc;                  /* TLS 1.2: its records encrypted, each way */
     u8 ckey[32], civ[12], skey[32], siv[12];
     u64 cseq, sseq;
     u8 in[REC_MAX + 16];                  /* a record, as it came */
@@ -534,9 +540,20 @@ static void nonce_of(const u8 iv[12], u64 seq, u8 out[12])
     for (i = 0; i < 8; i++) out[11 - i] ^= (u8)(seq >> (8 * i));
 }
 
+static int seal_n(int suite, const u8 *key, const u8 nonce[12], const u8 *aad, int alen, u8 *p, int n, u8 *tag, int dec)
+{
+    return suite == TLS_AES128 ? gcm(key, nonce, aad, alen, p, n, tag, dec) : chachapoly(key, nonce, aad, alen, p, n, tag, dec);
+}
 static int seal(int suite, const u8 *key, const u8 nonce[12], const u8 *aad, u8 *p, int n, u8 *tag, int dec)
 {
-    return suite == TLS_AES128 ? gcm(key, nonce, aad, 5, p, n, tag, dec) : chachapoly(key, nonce, aad, 5, p, n, tag, dec);
+    return seal_n(suite, key, nonce, aad, 5, p, n, tag, dec);
+}
+/* TLS 1.2's additional data: the sequence number, type, version, length */
+static void aad12(u8 a[13], u64 seq, int type, int len)
+{
+    int i;
+    for (i = 0; i < 8; i++) a[i] = (u8)(seq >> (56 - 8 * i));
+    a[8] = type; a[9] = 3; a[10] = 3; a[11] = len >> 8; a[12] = len;
 }
 
 /* one record -> *type, its plaintext at *data (in T.in), its length;
@@ -550,6 +567,28 @@ static int read_record(int *type, u8 **data)
     if (!tcp_read_exact(T.in + 5, len)) { tls_error = "The connection was closed."; return -1; }
     *type = T.in[0];
     *data = T.in + 5;
+    if (T.v12) {                                        /* TLS 1.2: each record, once it's on */
+        u8 nonce[12], a[13];
+        int i, pl, off = 0;
+        if (!T.renc || *type == 20) return len;
+        if (T.suite == TLS_AES128) {                    /* (its nonce: 4 of ours, 8 sent) */
+            if (len < 24) { tls_error = "A record too short."; return -1; }
+            memcpy(nonce, T.siv, 4); memcpy(nonce + 4, T.in + 5, 8);
+            off = 8;
+        } else {
+            if (len < 16) { tls_error = "A record too short."; return -1; }
+            memcpy(nonce, T.siv, 12);
+            for (i = 0; i < 8; i++) nonce[11 - i] ^= (u8)(T.sseq >> (8 * i));
+        }
+        pl = len - off - 16;
+        aad12(a, T.sseq++, *type, pl);
+        if (!seal_n(T.suite, T.skey, nonce, a, 13, T.in + 5 + off, pl, T.in + 5 + off + pl, 1)) {
+            tls_error = "A record didn't decrypt (bad tag).";
+            return -1;
+        }
+        *data = T.in + 5 + off;
+        return pl;
+    }
     if (*type == 23 && T.keylen) {
         u8 nonce[12];
         if (len < 17) { tls_error = "A record too short."; return -1; }
@@ -571,6 +610,29 @@ static u8 outrec[REC_MAX + 64];
 static int send_record(int type, const u8 *p, int n)
 {
     int len = n;
+    if (T.v12) {                                        /* TLS 1.2 */
+        outrec[0] = type; outrec[1] = 3; outrec[2] = 3;
+        if (!T.wenc) {
+            memcpy(outrec + 5, p, n);
+        } else {
+            u8 nonce[12], a[13];
+            int i, off = 0;
+            if (T.suite == TLS_AES128) {
+                memcpy(nonce, T.civ, 4);
+                for (i = 0; i < 8; i++) nonce[4 + i] = outrec[5 + i] = (u8)(T.cseq >> (56 - 8 * i));
+                off = 8;
+            } else {
+                memcpy(nonce, T.civ, 12);
+                for (i = 0; i < 8; i++) nonce[11 - i] ^= (u8)(T.cseq >> (8 * i));
+            }
+            memcpy(outrec + 5 + off, p, n);
+            aad12(a, T.cseq++, type, n);
+            seal_n(T.suite, T.ckey, nonce, a, 13, outrec + 5 + off, n, outrec + 5 + off + n, 0);
+            len = off + n + 16;
+        }
+        outrec[3] = len >> 8; outrec[4] = len;
+        return tcp_send(outrec, 5 + len) == 5 + len;
+    }
     outrec[0] = T.keylen ? 23 : type;
     outrec[1] = 3; outrec[2] = T.keylen ? 3 : 1;
     memcpy(outrec + 5, p, n);
@@ -626,28 +688,163 @@ static void random_bytes(u8 *p, int n)
 
 static u8 hsbuf[65536];                   /* handshake messages, gathered */
 
+/* TLS 1.2's PRF (P_SHA256): out = n bytes */
+static void prf12(const u8 *secret, int slen, const char *label, const u8 *seed, int seedlen, u8 *out, int n)
+{
+    u8 ls[96], a[32], buf[32 + 96], h[32];
+    int ll = strlen(label), lsn = ll + seedlen, k;
+    memcpy(ls, label, ll);
+    memcpy(ls + ll, seed, seedlen);
+    hmac(secret, slen, ls, lsn, a);
+    while (n > 0) {
+        memcpy(buf, a, 32);
+        memcpy(buf + 32, ls, lsn);
+        hmac(secret, slen, buf, 32 + lsn, h);
+        k = n < 32 ? n : 32;
+        memcpy(out, h, k);
+        out += k; n -= k;
+        hmac(secret, slen, a, 32, a);
+    }
+}
+
+/* the next whole handshake message (gathered in hsbuf, more records
+ * read as needed) -> its start and length (4 + its body); -1 on an error */
+static int hs_next(int *hsn, int *pos, u8 **msg)
+{
+    for (;;) {
+        if (*hsn - *pos >= 4) {
+            int ml = hsbuf[*pos + 1] << 16 | hsbuf[*pos + 2] << 8 | hsbuf[*pos + 3];
+            if (*hsn - *pos >= 4 + ml) { *msg = hsbuf + *pos; *pos += 4 + ml; return 4 + ml; }
+        }
+        {
+            int type, len;
+            u8 *d;
+            if (*pos) { memmove(hsbuf, hsbuf + *pos, *hsn - *pos); *hsn -= *pos; *pos = 0; }
+            len = read_record(&type, &d);
+            if (len < 0) return -1;
+            if (type == 21) { tls_error = "The server sent an alert."; return -1; }
+            if (type != 22) continue;
+            if (*hsn + len > (int)sizeof hsbuf) { tls_error = "The handshake's too big."; return -1; }
+            memcpy(hsbuf + *hsn, d, len);
+            *hsn += len;
+        }
+    }
+}
+
+/* TLS 1.2, after its ServerHello: the server's key, ours, the keys, the
+ * Finished's both ways. 0, or -1 (tls_error) */
+static int tls12_handshake(const u8 cr[32], const u8 sr[32], const u8 xpriv[32], const u8 xpub[32],
+                           const u8 ppriv[32], const u8 ppub[65], int hsn)
+{
+    u8 shared[32], master[48], kb[88], h[32], seed[64], ours[65];
+    int pos = 0, done = 0, need_cert = 0, olen = 0, have_key = 0;
+    while (!done) {
+        u8 *m;
+        int ml = hs_next(&hsn, &pos, &m);
+        if (ml < 0) return -1;
+        sha_update(&T.transcript, m, ml);
+        switch (m[0]) {
+        case 12:                                        /* ServerKeyExchange: its key */
+            if (ml < 8 || m[4] != 3) { tls_error = "A key exchange LexOS doesn't have."; return -1; }
+            if ((m[5] << 8 | m[6]) == 0x1d && m[7] == 32) {
+                x25519(shared, xpriv, m + 8);
+                memcpy(ours, xpub, 32); olen = 32;
+            } else if ((m[5] << 8 | m[6]) == 0x17 && m[7] == 65) {
+                u8 s65[65];
+                if (!p256_mul(s65, ppriv, m + 8)) { tls_error = "A bad key from the server."; return -1; }
+                memcpy(shared, s65 + 1, 32);
+                memcpy(ours, ppub, 65); olen = 65;
+            } else { tls_error = "A key exchange LexOS doesn't have (a curve)."; return -1; }
+            have_key = 1;
+            break;
+        case 13: need_cert = 1; break;                  /* CertificateRequest: none sent */
+        case 14: done = 1; break;                       /* ServerHelloDone */
+        }
+    }
+    if (!have_key) { tls_error = "No key from the server (RSA key exchange isn't here)."; return -1; }
+    if (need_cert) {
+        static const u8 empty[7] = { 11, 0, 0, 3, 0, 0, 0 };
+        sha_update(&T.transcript, empty, 7);
+        if (!send_record(22, empty, 7)) { tls_error = "Can't send."; return -1; }
+    }
+    {                                                   /* ClientKeyExchange */
+        u8 cke[80];
+        cke[0] = 16; cke[1] = 0; cke[2] = 0; cke[3] = olen + 1; cke[4] = olen;
+        memcpy(cke + 5, ours, olen);
+        sha_update(&T.transcript, cke, olen + 5);
+        if (!send_record(22, cke, olen + 5)) { tls_error = "Can't send."; return -1; }
+    }
+    memcpy(seed, cr, 32); memcpy(seed + 32, sr, 32);
+    prf12(shared, 32, "master secret", seed, 64, master, 48);
+    memcpy(seed, sr, 32); memcpy(seed + 32, cr, 32);
+    if (T.suite == TLS_AES128) {
+        prf12(master, 48, "key expansion", seed, 64, kb, 40);
+        memcpy(T.ckey, kb, 16); memcpy(T.skey, kb + 16, 16);
+        memcpy(T.civ, kb + 32, 4); memcpy(T.siv, kb + 36, 4);
+        T.keylen = 16;
+    } else {
+        prf12(master, 48, "key expansion", seed, 64, kb, 88);
+        memcpy(T.ckey, kb, 32); memcpy(T.skey, kb + 32, 32);
+        memcpy(T.civ, kb + 64, 12); memcpy(T.siv, kb + 76, 12);
+        T.keylen = 32;
+    }
+    {                                                   /* ChangeCipherSpec, our Finished */
+        static const u8 ccs = 1;
+        u8 fin[16];
+        if (!send_record(20, &ccs, 1)) { tls_error = "Can't send."; return -1; }
+        T.wenc = 1; T.cseq = 0;
+        transcript_hash(h);
+        fin[0] = 20; fin[1] = 0; fin[2] = 0; fin[3] = 12;
+        prf12(master, 48, "client finished", h, 32, fin + 4, 12);
+        sha_update(&T.transcript, fin, 16);
+        if (!send_record(22, fin, 16)) { tls_error = "Can't send."; return -1; }
+    }
+    for (;;) {                                          /* theirs: ChangeCipherSpec, Finished */
+        int type, len;
+        u8 *d;
+        len = read_record(&type, &d);
+        if (len < 0) return -1;
+        if (type == 21) { tls_error = "The server refused our keys (an alert)."; return -1; }
+        if (type == 20) { T.renc = 1; T.sseq = 0; continue; }
+        if (type == 22 && !T.renc) { sha_update(&T.transcript, d, len); continue; }   /* (a ticket) */
+        if (type == 22 && T.renc) {
+            u8 want[12];
+            transcript_hash(h);
+            prf12(master, 48, "server finished", h, 32, want, 12);
+            if (len < 16 || d[0] != 20 || memcmp(d + 4, want, 12)) { tls_error = "The server's Finished is wrong."; return -1; }
+            return 0;
+        }
+    }
+}
+
 /* The handshake, then the request and the answer. */
 static int tls_get(const char *host, int port, const char *path, char *out, int max)
 {
     u8 priv[32], pub[32], shared[32], zero[32], early[32], derived[32], hs[32], master[32];
-    u8 chs[32], shs[32], cap[32], sap[32], h[32];
-    u8 ch[512];
+    u8 chs[32], shs[32], cap[32], sap[32], h[32], ppriv[32], ppub[65], cr[32], sr[32];
+    u8 ch[700];
     int n = 0, hl = strlen(host), hsn = 0, got_finished = 0, total = 0, i;
     static const u8 base9[32] = { 9 };
 
     T.keylen = 0;
+    T.v12 = T.wenc = T.renc = 0;
     T.rawpos = T.rawlen = 0;
     sha_init(&T.transcript);
     random_bytes(priv, 32);
     x25519(pub, priv, base9);
+    random_bytes(ppriv, 32);                            /* (and a P-256 key: some servers want that) */
+    if (!p256_mul(ppub, ppriv, 0)) { tls_error = "No P-256 key."; return -1; }
+    if (hl > 250) { tls_error = "The server's name is too long."; return -1; }
 
     /* ClientHello */
     ch[n++] = 1; n += 3;                            /* type, length (later) */
     ch[n++] = 3; ch[n++] = 3;                       /* legacy version 1.2 */
-    random_bytes(ch + n, 32); n += 32;
+    random_bytes(ch + n, 32); memcpy(cr, ch + n, 32); n += 32;
     ch[n++] = 32; random_bytes(ch + n, 32); n += 32; /* a session id (middleboxes) */
-    ch[n++] = 0; ch[n++] = 4;                       /* the ciphers */
+    ch[n++] = 0; ch[n++] = 12;                      /* the ciphers: 1.3's, then 1.2's (ECDHE) */
     ch[n++] = 0x13; ch[n++] = 0x01; ch[n++] = 0x13; ch[n++] = 0x03;
+    ch[n++] = 0xC0; ch[n++] = 0x2B; ch[n++] = 0xC0; ch[n++] = 0x2F;
+    ch[n++] = 0xCC; ch[n++] = 0xA9; ch[n++] = 0xCC; ch[n++] = 0xA8;
     ch[n++] = 1; ch[n++] = 0;                       /* no compression */
     {
         int ext = n, e;
@@ -656,10 +853,14 @@ static int tls_get(const char *host, int port, const char *path, char *out, int 
         ch[n++] = 0; ch[n++] = 0; ch[n++] = 0; ch[n++] = hl + 5;
         ch[n++] = 0; ch[n++] = hl + 3; ch[n++] = 0; ch[n++] = 0; ch[n++] = hl;
         memcpy(ch + n, host, hl); n += hl;
-        /* supported_versions: TLS 1.3 */
-        ch[n++] = 0; ch[n++] = 0x2b; ch[n++] = 0; ch[n++] = 3; ch[n++] = 2; ch[n++] = 3; ch[n++] = 4;
-        /* supported_groups: x25519 */
-        ch[n++] = 0; ch[n++] = 0x0a; ch[n++] = 0; ch[n++] = 4; ch[n++] = 0; ch[n++] = 2; ch[n++] = 0; ch[n++] = 0x1d;
+        /* supported_versions: TLS 1.3, 1.2 */
+        ch[n++] = 0; ch[n++] = 0x2b; ch[n++] = 0; ch[n++] = 5; ch[n++] = 4; ch[n++] = 3; ch[n++] = 4; ch[n++] = 3; ch[n++] = 3;
+        /* supported_groups: x25519, secp256r1 */
+        ch[n++] = 0; ch[n++] = 0x0a; ch[n++] = 0; ch[n++] = 6; ch[n++] = 0; ch[n++] = 4;
+        ch[n++] = 0; ch[n++] = 0x1d; ch[n++] = 0; ch[n++] = 0x17;
+        /* ec_point_formats: uncompressed (1.2); renegotiation_info: none (1.2) */
+        ch[n++] = 0; ch[n++] = 0x0b; ch[n++] = 0; ch[n++] = 2; ch[n++] = 1; ch[n++] = 0;
+        ch[n++] = 0xff; ch[n++] = 0x01; ch[n++] = 0; ch[n++] = 1; ch[n++] = 0;
         /* signature_algorithms */
         {
             static const u8 sigs[] = { 0x04, 0x03, 0x08, 0x04, 0x04, 0x01, 0x05, 0x03, 0x08, 0x05,
@@ -668,10 +869,12 @@ static int tls_get(const char *host, int port, const char *path, char *out, int 
             ch[n++] = 0; ch[n++] = sizeof sigs;
             memcpy(ch + n, sigs, sizeof sigs); n += sizeof sigs;
         }
-        /* key_share: our x25519 key */
-        ch[n++] = 0; ch[n++] = 0x33; ch[n++] = 0; ch[n++] = 38; ch[n++] = 0; ch[n++] = 36;
+        /* key_share: our x25519 key, our P-256 one */
+        ch[n++] = 0; ch[n++] = 0x33; ch[n++] = 0; ch[n++] = 107; ch[n++] = 0; ch[n++] = 105;
         ch[n++] = 0; ch[n++] = 0x1d; ch[n++] = 0; ch[n++] = 32;
         memcpy(ch + n, pub, 32); n += 32;
+        ch[n++] = 0; ch[n++] = 0x17; ch[n++] = 0; ch[n++] = 65;
+        memcpy(ch + n, ppub, 65); n += 65;
         e = n - ext - 2;
         ch[ext] = e >> 8; ch[ext + 1] = e;
     }
@@ -683,35 +886,51 @@ static int tls_get(const char *host, int port, const char *path, char *out, int 
 
     /* ServerHello */
     for (;;) {
-        int type, len, p, end, server_ok = 0, have_key = 0;
-        u8 *d, spub[32];
+        int type, len, p, end, server_ok = 0, have_key = 0, shl;
+        u8 *d;
         len = read_record(&type, &d);
         if (len < 0) goto fail;
-        if (type == 21) { tls_error = "The server refused the connection (an alert) - it may not speak TLS 1.3."; goto fail; }
+        if (type == 21) { tls_error = "The server refused the connection (an alert): no cipher or version in common."; goto fail; }
         if (type != 22) continue;
         if (len < 4 || d[0] != 2) { tls_error = "Not a ServerHello."; goto fail; }
-        sha_update(&T.transcript, d, len);
+        shl = 4 + (d[1] << 16 | d[2] << 8 | d[3]);
+        if (shl > len) { tls_error = "A ServerHello in pieces."; goto fail; }
+        sha_update(&T.transcript, d, shl);
         {
             static const u8 hrr[8] = { 0xCF, 0x21, 0xAD, 0x74, 0xE5, 0x9A, 0x61, 0x11 };
             if (!memcmp(d + 6, hrr, 8)) { tls_error = "The server wants a key exchange LexOS doesn't have."; goto fail; }
         }
+        memcpy(sr, d + 6, 32);
         p = 4 + 2 + 32;
         p += 1 + d[p];                                  /* session id */
         T.suite = d[p] << 8 | d[p + 1];
         p += 3;
         end = p + 2 + (d[p] << 8 | d[p + 1]);
         p += 2;
-        while (p + 4 <= end && p + 4 <= len) {
+        while (p + 4 <= end && p + 4 <= shl) {
             int et = d[p] << 8 | d[p + 1], el = d[p + 2] << 8 | d[p + 3];
             p += 4;
             if (et == 0x2b && el == 2 && d[p] == 3 && d[p + 1] == 4) server_ok = 1;
-            if (et == 0x33 && el >= 36 && (d[p] << 8 | d[p + 1]) == 0x1d) { memcpy(spub, d + p + 4, 32); have_key = 1; }
+            if (et == 0x33 && el >= 36 && (d[p] << 8 | d[p + 1]) == 0x1d) { x25519(shared, priv, d + p + 4); have_key = 1; }
+            if (et == 0x33 && el >= 69 && (d[p] << 8 | d[p + 1]) == 0x17) {
+                u8 s65[65];
+                if (p256_mul(s65, ppriv, d + p + 4)) { memcpy(shared, s65 + 1, 32); have_key = 1; }
+            }
             p += el;
         }
-        if (!server_ok) { tls_error = "The server doesn't speak TLS 1.3."; goto fail; }
+        if (!server_ok) {                               /* TLS 1.2, then */
+            int s12 = T.suite;
+            if (d[4] != 3 || d[5] != 3) { tls_error = "The server speaks only an old TLS (1.0, 1.1)."; goto fail; }
+            if (s12 == 0xC02B || s12 == 0xC02F) T.suite = TLS_AES128;
+            else if (s12 == 0xCCA8 || s12 == 0xCCA9) T.suite = TLS_CHACHA;
+            else { tls_error = "A TLS 1.2 cipher LexOS doesn't have."; goto fail; }
+            T.v12 = 1;
+            memcpy(hsbuf, d + shl, len - shl);
+            if (tls12_handshake(cr, sr, priv, pub, ppriv, ppub, len - shl) < 0) goto fail;
+            goto request;
+        }
         if (!have_key) { tls_error = "No key from the server."; goto fail; }
         if (T.suite != TLS_AES128 && T.suite != TLS_CHACHA) { tls_error = "A cipher LexOS doesn't have."; goto fail; }
-        x25519(shared, priv, spub);
         break;
     }
 
@@ -780,8 +999,13 @@ static int tls_get(const char *host, int port, const char *path, char *out, int 
     }
     keys_from(cap, sap);
 
+request:
     /* the request, and the answer */
-    {
+    if (tls_req) {                                      /* the caller's own request (a POST...) */
+        int k;
+        for (k = 0; k < tls_req_len; k += 16000)
+            if (!send_record(23, (const u8 *)tls_req + k, tls_req_len - k < 16000 ? tls_req_len - k : 16000)) { tls_error = "Can't send."; goto fail; }
+    } else {
         char req[1100];
         req[0] = 0;
         strcpy(req, "GET ");

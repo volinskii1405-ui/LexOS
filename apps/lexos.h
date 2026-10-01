@@ -171,6 +171,11 @@ static inline int audio_queued(int flush)                 { return lx_syscall(42
  * clip_pic_set("/SYSTEM/CLIP.BMP") - that file's it now. */
 static inline int clip_pic_get(char *buf, int n)          { return lx_syscall3(43, (int)buf, n, 0); }
 static inline int clip_pic_set(const char *path)          { return lx_syscall3(43, (int)path, 0, 1); }
+/* The clipboard's text (what a Terminal copied, Ctrl+V types, Win+V
+ * keeps): clip_text_set(t, n) - it's n bytes of t now (2KB at most,
+ * lines ending in 13); clip_text_get(buf, n) -> how many bytes came. */
+static inline int clip_text_set(const char *t, int n)      { return lx_syscall3(47, (int)t, n, 1); }
+static inline int clip_text_get(char *buf, int n)         { return lx_syscall3(47, (int)buf, n, 0); }
 
 /* music_state(n): what a player's doing - 0 nothing, 1 playing, 2
  * paused. While it's 1 or 2 the tray shows a note; a click on it puts
