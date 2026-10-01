@@ -1580,21 +1580,12 @@ static int load_auto(const char *where, unsigned char **out)
 static void to16(unsigned *pix, int n)
 {
     unsigned short *o = (unsigned short *)pix;
-    struct lx_block *b = (struct lx_block *)pix - 1;
-    int i, need;
+    int i;
     for (i = 0; i < n; i++) {
         unsigned c = pix[i];
         o[i] = (c >> 8 & 0xF800) | (c >> 5 & 0x07E0) | (c >> 3 & 0x001F);
     }
-    need = (n * 2 + 15) & ~15;
-    if (b->size >= (size_t)need + sizeof *b + 64) {       /* (split: the rest free) */
-        struct lx_block *r = (struct lx_block *)((char *)(b + 1) + need);
-        r->size = b->size - need - sizeof *b;
-        r->free = 1;
-        r->next = b->next;
-        b->next = r;
-        b->size = need;
-    }
+    realloc(pix, n * 2);                          /* (smaller: in place) */
 }
 static int img_count;
 static int is_svg(const char *u)
