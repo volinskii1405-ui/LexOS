@@ -3967,7 +3967,7 @@ static void go(const char *to, int remember)
     if (vs) { char t[URL_MAX]; copy(t, "view-source:", URL_MAX); append(t, where, URL_MAX); copy(url, t, URL_MAX); }
     if (n < 0 || (pi.code >= 400 && srclen < 16 && pi.kind != PK_IMAGE && pi.kind != PK_FILE)) {
         static char why[200];
-        if (n == -4) { copy(why, "The encrypted connection (TLS 1.3) didn't work: ", sizeof why); append(why, tls_error, sizeof why); }
+        if (n == -4) { copy(why, "The encrypted connection (TLS) didn't work: ", sizeof why); append(why, tls_error, sizeof why); }
         else if (n >= 0 || n == -2) {
             char c[8];
             int k = 0, v = pi.code;
