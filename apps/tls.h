@@ -30,6 +30,9 @@ static int (*tls_sink)(const unsigned char *d, int n);
 /* the request's headers (each ending "\r\n"), between Host and
  * Connection: close */
 static const char *tls_headers = "User-Agent: LexOS-Web/1.0\r\nAccept: text/html, */*\r\n";
+/* or, if set: the whole request, as it's to be sent */
+static const char *tls_req;
+static int tls_req_len;
 
 /* ============================================================
  * SHA-256
@@ -781,7 +784,11 @@ static int tls_get(const char *host, int port, const char *path, char *out, int 
     keys_from(cap, sap);
 
     /* the request, and the answer */
-    {
+    if (tls_req) {                                      /* the caller's own request (a POST...) */
+        int k;
+        for (k = 0; k < tls_req_len; k += 16000)
+            if (!send_record(23, (const u8 *)tls_req + k, tls_req_len - k < 16000 ? tls_req_len - k : 16000)) { tls_error = "Can't send."; goto fail; }
+    } else {
         char req[1100];
         req[0] = 0;
         strcpy(req, "GET ");

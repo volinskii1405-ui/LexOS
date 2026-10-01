@@ -79,7 +79,7 @@ static int left_x = MARGIN, right_x = W - SBW - MARGIN;
 #define LINKS_MAX (256 * 1024)
 #define LPOOL_MAX (16 * 1024 * 1024)
 #define ZBUF_MAX (32 * 1024 * 1024)
-#define URL_MAX 240
+#define URL_MAX 1024
 #define HIST_MAX 24
 
 /* colors */
@@ -124,7 +124,7 @@ static int grow(void *buf, int *cap, int need, int size, int max)
 #define SRC_ROOM(n) grow(&src, &src_cap, (n) + 1, 1, SRC_MAX)
 
 /* --- what's on the page: a list of items, laid out --- */
-enum { IT_TEXT, IT_RULE, IT_IMAGE, IT_BOX };
+enum { IT_TEXT, IT_RULE, IT_IMAGE, IT_BOX, IT_CTRL };
 #define ST_BOLD  1
 #define ST_ITAL  2
 #define ST_UNDER 4
@@ -154,7 +154,11 @@ static int view_source, reader;                          /* (the page's source; 
 static char url[URL_MAX], edit_url[URL_MAX];
 static char hist[HIST_MAX][URL_MAX];
 static int nhist, hpos = -1;
-static int editing, edit_fresh, hover_link = -1, hover_btn = -1;
+static int editing, edit_fresh, hover_link = -1, hover_btn = -1, hover_ctrl = -1;
+static char *post_body;                   /* a form POSTed: the next page's request */
+static int post_len, post_now;
+static void ck_set(const char *h);
+static void ck_save(void);
 static char status[URL_MAX + 40];
 static const char *home = "/DEMOS/SITE/INDEX.HTM";
 
@@ -1143,7 +1147,8 @@ static void st_reset(void)
 }
 static const char *st_keep[] = { "href", "src", "data-src", "alt", "title", "class", "id", "style", "hidden",
     "color", "bgcolor", "value", "type", "rel", "name", "content", "charset", "http-equiv", "open", "role",
-    "aria-hidden", "start", "media", "colspan", "border", "width", "align", 0 };
+    "aria-hidden", "start", "media", "colspan", "border", "width", "align", "action", "method", "checked",
+    "selected", "placeholder", "rows", "cols", "maxlength", "size", "enctype", "disabled", "multiple", 0 };
 /* a whole tag in st_tag: kept (its attributes that matter), or not */
 static void st_tag_done(void)
 {
@@ -1367,6 +1372,7 @@ static void ph_headers(void)
         const char *h = ph + j + 1;
         if (ph[j] != '\n') continue;
         if (starts_ci(h, "transfer-encoding:") && starts_ci(h + 18 + (h[18] == ' '), "chunked")) ph_chunked = 1;
+        if (starts_ci(h, "set-cookie:")) ck_set(h + 11);
         if (starts_ci(h, "content-length:")) pi.total = atoi(h + 15);
         if (starts_ci(h, "location:")) {
             const char *l = h + 9;
@@ -1401,6 +1407,7 @@ static void ph_headers(void)
                 }
         }
     }
+    ck_save();
     if (tg == T_BUF && tbuf_auto && pi.total > 0 && pi.total <= TBUF_MAX && !pi.gz && pi.total > tcap) {
         unsigned char *b = malloc(pi.total);             /* (its size said: that much) */
         if (b) { if (tbuf) { memcpy(b, tbuf, tlen); free(tbuf); } tbuf = b; tcap = pi.total; }
@@ -1460,6 +1467,175 @@ static int ph_feed(const unsigned char *d, int n)
 }
 static int ph_sink(const unsigned char *d, int n) { return ph_feed(d, n); }
 
+/* ---- cookies: what servers ask to be told again (Set-Cookie), kept
+ * in /TMP/WEB/COOKIES (a line each: domain, path, name, value, flags)
+ * and sent back to the same sites (Cookie:) - logins, settings, a
+ * form's session ---- */
+#define CK_MAX 300
+struct cookie { char dom[64], path[64], name[64], val[384]; char host_only, secure; };
+static struct cookie *ck;
+static int nck, ck_loaded, ck_dirty;
+static char cur_host[URL_MAX];
+static int cur_https;
+static int ck_room(void) { if (!ck) ck = malloc(CK_MAX * sizeof *ck); return ck != 0; }
+static void ck_load(void)
+{
+    int fd, n, i, f, st;
+    char *b;
+    if (ck_loaded || !ck_room()) return;
+    ck_loaded = 1;
+    if ((fd = open("/TMP/WEB/COOKIES", O_READ)) < 0) return;
+    n = fsize(fd);
+    if (n <= 0 || n > 512 * 1024 || !(b = malloc(n + 1))) { close(fd); return; }
+    n = read(fd, b, n);
+    close(fd);
+    b[n > 0 ? n : 0] = 0;
+    for (i = 0, st = 0; i <= n && nck < CK_MAX; i++)
+        if (i == n || b[i] == '\n') {
+            char *fld[5], *l = b + st;
+            int k = 0;
+            b[i] = 0;
+            fld[k++] = l;
+            for (f = st; f < i && k < 5; f++) if (b[f] == '\t') { b[f] = 0; fld[k++] = b + f + 1; }
+            if (k == 5) {
+                struct cookie *c = &ck[nck++];
+                copy(c->dom, fld[0], sizeof c->dom); copy(c->path, fld[1], sizeof c->path);
+                copy(c->name, fld[2], sizeof c->name); copy(c->val, fld[3], sizeof c->val);
+                c->host_only = fld[4][0] == 'h' || fld[4][1] == 'h'; c->secure = fld[4][0] == 's';
+            }
+            st = i + 1;
+        }
+    free(b);
+}
+static void ck_save(void)
+{
+    int fd, i;
+    if (!ck_dirty || !ck) return;
+    ck_dirty = 0;
+    mkdir("/TMP/WEB");
+    if ((fd = open("/TMP/WEB/COOKIES", O_WRITE)) < 0) return;
+    for (i = 0; i < nck; i++) {
+        char l[600];
+        copy(l, ck[i].dom, sizeof l); append(l, "\t", sizeof l); append(l, ck[i].path, sizeof l); append(l, "\t", sizeof l);
+        append(l, ck[i].name, sizeof l); append(l, "\t", sizeof l); append(l, ck[i].val, sizeof l); append(l, "\t", sizeof l);
+        append(l, ck[i].secure ? "s" : "-", sizeof l); append(l, ck[i].host_only ? "h\n" : "-\n", sizeof l);
+        fwrite(fd, l, strlen(l));
+    }
+    close(fd);
+}
+/* host's a dom's, or one of its sub-domains? */
+static int ck_dom_ok(const char *host, const char *dom, int host_only)
+{
+    int hl = strlen(host), dl = strlen(dom), i;
+    if (hl < dl) return 0;
+    for (i = 0; i < dl; i++) if (lower(host[hl - dl + i]) != lower(dom[i])) return 0;
+    if (hl == dl) return 1;
+    return !host_only && host[hl - dl - 1] == '.';
+}
+/* a Set-Cookie: header's text, from cur_host */
+static void ck_set(const char *h)
+{
+    char name[64], val[384], dom[64], path[64];
+    int k = 0, i, del = 0, host_only = 1, secure = 0;
+    if (!ck_room()) return;
+    ck_load();
+    while (*h == ' ') h++;
+    while (*h && *h != '=' && *h != ';' && *h != '\r' && *h != '\n' && k < 63) name[k++] = *h++;
+    name[k] = 0;
+    while (k && name[k - 1] == ' ') name[--k] = 0;
+    if (!k || *h != '=') return;
+    h++;
+    k = 0;
+    while (*h && *h != ';' && *h != '\r' && *h != '\n' && k < 383) val[k++] = *h++;
+    val[k] = 0;
+    copy(dom, cur_host, sizeof dom);
+    copy(path, "/", sizeof path);
+    while (*h == ';') {                                  /* its attributes */
+        char an[16], av[64];
+        int a = 0, v = 0;
+        h++;
+        while (*h == ' ') h++;
+        while (*h && *h != '=' && *h != ';' && *h != '\r' && *h != '\n' && a < 15) an[a++] = lower(*h++);
+        an[a] = 0;
+        if (*h == '=') { h++; while (*h && *h != ';' && *h != '\r' && *h != '\n' && v < 63) av[v++] = *h++; }
+        av[v] = 0;
+        while (*h && *h != ';' && *h != '\r' && *h != '\n') h++;
+        if (!strcmp(an, "domain") && av[0]) {
+            const char *d = av[0] == '.' ? av + 1 : av;
+            if (ck_dom_ok(cur_host, d, 0)) { copy(dom, d, sizeof dom); host_only = 0; }
+        } else if (!strcmp(an, "path") && av[0] == '/') copy(path, av, sizeof path);
+        else if (!strcmp(an, "max-age") && atoi(av) <= 0 && (av[0] == '0' || av[0] == '-')) del = 1;
+        else if (!strcmp(an, "expires")) {               /* (a year gone by: gone) */
+            int j;
+            for (j = 0; av[j]; j++)
+                if (av[j] >= '1' && av[j] <= '2' && av[j + 1] >= '0' && av[j + 3] >= '0' && av[j + 3] <= '9' && av[j + 4] < '0') {
+                    int y = atoi(av + j);
+                    if (y > 1900 && y < 2026) del = 1;
+                    break;
+                }
+        } else if (!strcmp(an, "secure")) secure = 1;
+    }
+    for (i = 0; i < nck; i++)
+        if (!strcmp(ck[i].name, name) && !strcmp(ck[i].dom, dom) && !strcmp(ck[i].path, path)) break;
+    if (del) {
+        if (i < nck) { ck[i] = ck[--nck]; ck_dirty = 1; }
+        return;
+    }
+    if (i == nck) {
+        if (nck >= CK_MAX) { memmove(ck, ck + 1, (CK_MAX - 1) * sizeof *ck); i = CK_MAX - 1; }
+        else nck++;
+    }
+    copy(ck[i].name, name, sizeof ck[i].name); copy(ck[i].val, val, sizeof ck[i].val);
+    copy(ck[i].dom, dom, sizeof ck[i].dom); copy(ck[i].path, path, sizeof ck[i].path);
+    ck[i].host_only = host_only; ck[i].secure = secure;
+    ck_dirty = 1;
+}
+/* "Cookie: a=b; c=d\r\n" for host and path (none: nothing) */
+static void ck_header(const char *host, const char *path, int https, char *out, int max)
+{
+    int i, any = 0;
+    out[0] = 0;
+    ck_load();
+    if (!ck) return;
+    for (i = 0; i < nck; i++) {
+        struct cookie *c = &ck[i];
+        if (c->secure && !https) continue;
+        if (!ck_dom_ok(host, c->dom, c->host_only)) continue;
+        if (!starts_ci(path, c->path)) continue;
+        if ((int)(strlen(out) + strlen(c->name) + strlen(c->val) + 8) >= max) break;
+        append(out, any ? "; " : "Cookie: ", max);
+        append(out, c->name, max); append(out, "=", max); append(out, c->val, max);
+        any = 1;
+    }
+    if (any) append(out, "\r\n", max);
+}
+/* the request: GET (or a form's POST), the headers, the cookies */
+static int build_req(char *req, int max, const char *host, const char *path, const char *hdrs)
+{
+    static char cks[8192];
+    int n;
+    copy(req, post_now ? "POST " : "GET ", max);
+    append(req, path, max);
+    append(req, " HTTP/1.1\r\nHost: ", max);
+    append(req, host, max);
+    append(req, "\r\n", max);
+    append(req, hdrs, max);
+    ck_header(host, path, cur_https, cks, sizeof cks);
+    append(req, cks, max);
+    if (post_now) {
+        char t[16];
+        int k = 0, v = post_len;
+        append(req, "Content-Type: application/x-www-form-urlencoded\r\nContent-Length: ", max);
+        do { t[k++] = '0' + v % 10; v /= 10; } while (v);
+        while (k) { char o[2] = { t[--k], 0 }; append(req, o, max); }
+        append(req, "\r\n", max);
+    }
+    append(req, "Connection: close\r\n\r\n", max);
+    n = strlen(req);
+    if (post_now && n + post_len < max) { memcpy(req + n, post_body, post_len); n += post_len; }
+    return n;
+}
+
 /* one try at u: 0 had it, 1 moved (ph_moved), -1 no connection, -4 TLS */
 static int net_try(const char *u)
 {
@@ -1482,25 +1658,24 @@ static int net_try(const char *u)
         for (i = 0; path[i]; i++) if (path[i] == '#') { path[i] = 0; break; }
         for (i = 0; path[i]; i++) if (path[i] == ' ') path[i] = '+';
     }
+    copy(cur_host, host, URL_MAX);
+    cur_https = is_https(u);
     if (is_https(u)) {
-        static char none[4];
-        tls_headers = tg == T_PAGE ? hdrs_page : hdrs_plain;
+        static char none[4], req[32768];
+        tls_req_len = build_req(req, sizeof req, host, path, tg == T_PAGE ? hdrs_page : hdrs_plain);
+        tls_req = req;
         tls_sink = ph_sink;
         n = tls_get(host, port, path, none, 0);
         tls_sink = 0;
+        tls_req = 0;
         if (n < 0 && !ph_body && strcmp(tls_error, "Stopped.")) return -4;
     } else {
-        static char req[URL_MAX * 2 + 600];
+        static char req[32768];
         static unsigned char piece[4096];
+        int rl;
         if (tcp_open(host, port) < 0) return -1;
-        copy(req, "GET ", sizeof req);
-        append(req, path, sizeof req);
-        append(req, " HTTP/1.1\r\nHost: ", sizeof req);
-        append(req, host, sizeof req);
-        append(req, "\r\n", sizeof req);
-        append(req, tg == T_PAGE ? hdrs_page : hdrs_plain, sizeof req);
-        append(req, "Connection: close\r\n\r\n", sizeof req);
-        tcp_send(req, strlen(req));
+        rl = build_req(req, sizeof req, host, path, tg == T_PAGE ? hdrs_page : hdrs_plain);
+        tcp_send(req, rl);
         for (;;) {
             int got = tcp_recv(piece, sizeof piece, 15000);
             if (got <= 0) break;
@@ -1541,7 +1716,9 @@ static int net_get(const char *where, char *final)
         if (tg == T_PAGE) { srclen = 0; pi.trunc = 0; st_reset(); pi.kind = kind; }
         if (tg == T_BUF) tlen = 0;
         zn = 0;
+        post_now = tg == T_PAGE && post_body && !tries;  /* (a form's POST: the first try; moved: GET) */
         r = net_try(u);
+        post_now = 0;
         if (r != 1) break;
         {
             char moved[URL_MAX];
@@ -1789,6 +1966,11 @@ static int strstr_ci(const char *s, const char *w)
     for (; *s; s++) if (starts_ci(s, w)) return 1;
     return 0;
 }
+static const char *strstr_at(const char *s, const char *w)
+{
+    for (; *s; s++) if (starts_ci(s, w)) return s;
+    return 0;
+}
 static int is_void(const char *n)
 {
     static const char *v[] = { "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",
@@ -1956,6 +2138,329 @@ static void heading(int level, int open)
         head = 0;
         scale = 1;
     }
+}
+
+/* ---- forms ----
+ * <form>'s fields are things on the page of their own (IT_CTRL): a
+ * click on a text field and the keys type into it (Russian too), a
+ * check box or a radio button is clicked, a list (<select>) opens
+ * under itself, a button - or Enter in a field - sends the form: GET
+ * (its fields after the address's "?") or POST (in the request's body),
+ * url-encoded, in the page's own charset. What a field held when the
+ * page came (hidden ones, tokens) goes back byte for byte. */
+#define CTRL_MAX 400
+#define FORMS_MAX 64
+#define VAL_MAX 2048
+enum { CT_TEXT, CT_PASS, CT_AREA, CT_CHECK, CT_RADIO, CT_SELECT, CT_SUBMIT, CT_HIDDEN, CT_BUTTON, CT_IMAGE };
+struct ctrl {
+    unsigned char kind, checked, edited, rows;
+    short form, item, sel, nopt;
+    char name[64];
+    char *val, *raw;                      /* shown (the font's bytes), the page's own */
+    char *opts;                           /* <select>: "text\0value\0" for each */
+    char ph[40];                          /* placeholder */
+};
+struct form { char action[URL_MAX]; char post; };
+static struct ctrl ctrls[CTRL_MAX];
+static struct form forms[FORMS_MAX];
+static int nctrls, nforms, cur_form = -1, focus = -1, sel_open = -1;
+static int isalnum_c(int c);
+
+/* a character of the font -> Unicode (to_font's other way) */
+static unsigned font_uni(unsigned char c)
+{
+    if (c < 128) return c;
+    if (c >= 0x80 && c <= 0xAF) return 0x410 + c - 0x80;
+    if (c >= 0xE0 && c <= 0xEF) return 0x440 + c - 0xE0;
+    switch (c) {
+    case 0xF0: return 0x401; case 0xF1: return 0x451; case 0xF2: return 0xE1; case 0xF3: return 0xE9;
+    case 0xF4: return 0xED; case 0xF5: return 0xF3; case 0xF6: return 0xFA; case 0xF7: return 0xF1;
+    case 0xFC: return 0xD1; case 0xFD: return 0xFC; case 0xB5: return 0xBF; case 0xB6: return 0xA1;
+    case 0xF8: return 0xB0; case 0xB7: return 0xE7; case 0xB8: return 0xC7;
+    }
+    return '?';
+}
+/* Unicode -> bytes in charset cs (out: 4 at most) -> how many */
+static int uni_cs(unsigned u, int cs, char *o)
+{
+    int i;
+    if (u < 128) { o[0] = u; return 1; }
+    switch (cs) {
+    case CS_UTF8:
+        if (u < 0x800) { o[0] = 0xC0 | u >> 6; o[1] = 0x80 | (u & 63); return 2; }
+        if (u < 0x10000) { o[0] = 0xE0 | u >> 12; o[1] = 0x80 | (u >> 6 & 63); o[2] = 0x80 | (u & 63); return 3; }
+        o[0] = 0xF0 | u >> 18; o[1] = 0x80 | (u >> 12 & 63); o[2] = 0x80 | (u >> 6 & 63); o[3] = 0x80 | (u & 63); return 4;
+    case CS_1251:
+        if (u >= 0x410 && u <= 0x44F) { o[0] = 0xC0 + u - 0x410; return 1; }
+        for (i = 0; i < 64; i++) if (cs_1251[i] == u) { o[0] = 0x80 + i; return 1; }
+        break;
+    case CS_KOI8:
+        for (i = 0; i < 128; i++) if (cs_koi8[i] == u) { o[0] = 0x80 + i; return 1; }
+        break;
+    case CS_1252:
+        if (u >= 0xA0 && u < 0x100) { o[0] = u; return 1; }
+        for (i = 0; i < 32; i++) if (cs_1252[i] == u) { o[0] = 0x80 + i; return 1; }
+        break;
+    case CS_8859_5:
+        if (u >= 0x401 && u <= 0x45F) { o[0] = u - 0x360; return 1; }
+        if (u < 0x100) { o[0] = u; return 1; }
+        break;
+    case CS_866:
+        if (u >= 0xF0000) { o[0] = u - 0xF0000; return 1; }
+        { char f[3]; if (to_font(u, f) == 1) { o[0] = f[0]; return 1; } }
+        break;
+    }
+    o[0] = '?';
+    return 1;
+}
+/* an attribute's text, the next character: its entities (&amp; &#39;)
+ * undone, the page's charset read */
+static unsigned attr_next(const char *t, int n, int *p)
+{
+    if (t[*p] == '&') {
+        int q = *p + 1, k = 0, i;
+        char nm[12];
+        unsigned u = 0;
+        if (t[q] == '#') {
+            q++;
+            if (lower(t[q]) == 'x') { q++; while (q < n && hexval(t[q]) >= 0) u = u * 16 + hexval(t[q++]); }
+            else while (q < n && t[q] >= '0' && t[q] <= '9') u = u * 10 + t[q++] - '0';
+            if (t[q] == ';') q++;
+            *p = q;
+            return u;
+        }
+        while (q < n && k < 10 && ((t[q] >= 'a' && t[q] <= 'z') || (t[q] >= 'A' && t[q] <= 'Z'))) nm[k++] = t[q++];
+        nm[k] = 0;
+        if (t[q] == ';')
+            for (i = 0; entities[i].name; i++)
+                if (!strcmp(entities[i].name, nm)) { *p = q + 1; return entities[i].u; }
+        (*p)++;
+        return '&';
+    }
+    return dec(t, n, p);
+}
+/* text (the page's bytes, entities and all) -> raw (the page's charset,
+ * entities undone) and shown (the font's) */
+static void ctrl_text(struct ctrl *c, const char *t, int n)
+{
+    int p = 0, r = 0, v = 0;
+    free(c->raw); free(c->val);
+    c->raw = malloc(VAL_MAX); c->val = malloc(VAL_MAX);
+    if (!c->raw || !c->val) { free(c->raw); free(c->val); c->raw = c->val = 0; return; }
+    while (p < n) {
+        unsigned u = attr_next(t, n, &p);
+        char o[4], f[3];
+        int k = uni_cs(u, cs_mode, o), m = to_font(u, f), i;
+        if (u == '\r') continue;
+        if (r + k < VAL_MAX - 1) for (i = 0; i < k; i++) c->raw[r++] = o[i];
+        if (u == '\n' || u == '\t') { f[0] = u == '\n' ? '\n' : ' '; m = 1; }
+        if (v + m < VAL_MAX - 1) for (i = 0; i < m; i++) c->val[v++] = f[i];
+    }
+    c->raw[r] = 0; c->val[v] = 0;
+}
+static void ctrls_free(void)
+{
+    int i;
+    for (i = 0; i < nctrls; i++) { free(ctrls[i].val); free(ctrls[i].raw); free(ctrls[i].opts); }
+    nctrls = nforms = 0;
+    cur_form = -1; focus = -1; sel_open = -1;
+}
+/* a new field, on the line where the words are (as a picture is) */
+static struct ctrl *ctrl_add(int kind, int w, int h)
+{
+    struct ctrl *c;
+    struct item *it;
+    if (nctrls >= CTRL_MAX) return 0;
+    c = &ctrls[nctrls];
+    memset(c, 0, sizeof *c);
+    c->kind = kind; c->form = cur_form; c->item = -1;
+    if (kind != CT_HIDDEN) {
+        flush_word();
+        if (pending_space && x > line_left) x += 8;
+        pending_space = 0;
+        if (w > RIGHT - line_left) w = RIGHT - line_left;
+        if (x + w > RIGHT && x > line_left) end_line(0);
+        if (!(it = new_item(IT_CTRL))) return 0;
+        it->x = x; it->w = w; it->h = h; it->text = nctrls;
+        c->item = nitems - 1;
+        x += w + 4;
+        pending_space = 1;
+    }
+    nctrls++;
+    { const char *nm = attr("name"); if (nm) copy(c->name, nm, sizeof c->name); }
+    return c;
+}
+/* the text up to </name> at src+*p (tags left out) -> *p past it */
+static int ctrl_inner(int *p, const char *name, int *start, int keep_tags)
+{
+    int q = *p, l = strlen(name), end;
+    *start = q;
+    while (q < srclen && !(src[q] == '<' && src[q + 1] == '/' && starts_ci(src + q + 2, name) && !isalnum_c(src[q + 2 + l]))) q++;
+    end = q;
+    while (q < srclen && src[q] != '>') q++;
+    *p = q < srclen ? q + 1 : q;
+    (void)keep_tags;
+    return end;
+}
+static int isalnum_c(int c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'); }
+/* <input>, <textarea>, <select>, <button>, <form> -> 1 if handled */
+static int form_tag(const char *name, int closing, int *p)
+{
+    struct ctrl *c;
+    const char *a;
+    if (!strcmp(name, "form")) {
+        if (closing) { cur_form = -1; return 0; }
+        if (nforms < FORMS_MAX) {
+            a = attr("action");
+            copy(forms[nforms].action, a ? a : "", URL_MAX);
+            a = attr("method");
+            forms[nforms].post = a && starts_ci(a, "post");
+            cur_form = nforms++;
+        }
+        return 0;                                        /* (and a block, as before) */
+    }
+    if (closing) return 0;
+    if (!strcmp(name, "input")) {
+        const char *t = attr("type");
+        int kind = CT_TEXT, w = 0, h = 22, size;
+        if (!t || !*t || starts_ci(t, "text") || starts_ci(t, "search") || starts_ci(t, "email") || starts_ci(t, "url") ||
+            starts_ci(t, "tel") || starts_ci(t, "number")) kind = CT_TEXT;
+        else if (starts_ci(t, "password")) kind = CT_PASS;
+        else if (starts_ci(t, "hidden")) kind = CT_HIDDEN;
+        else if (starts_ci(t, "checkbox")) kind = CT_CHECK;
+        else if (starts_ci(t, "radio")) kind = CT_RADIO;
+        else if (starts_ci(t, "submit")) kind = CT_SUBMIT;
+        else if (starts_ci(t, "image")) kind = CT_IMAGE;
+        else if (starts_ci(t, "button") || starts_ci(t, "reset")) kind = CT_BUTTON;
+        else if (starts_ci(t, "file")) { put_attr_text("[file]"); return 1; }
+        else kind = CT_TEXT;
+        a = attr("value");
+        if (kind == CT_CHECK || kind == CT_RADIO) w = h = 16;
+        else if (kind == CT_SUBMIT || kind == CT_BUTTON || kind == CT_IMAGE) {
+            const char *l = a && *a ? a : attr("alt") ? attr("alt") : kind == CT_BUTTON ? "..." : "Submit";
+            w = strlen(l) * 8 + 20; if (w > 300) w = 300; h = 24;
+        } else {
+            size = (a = attr("size")) ? atoi(a) : 22;
+            if (size < 6) size = 6;
+            if (size > 60) size = 60;
+            w = size * 8 + 12;
+            a = attr("value");
+        }
+        if (!(c = ctrl_add(kind, w, h))) return 1;
+        if (kind == CT_SUBMIT || kind == CT_BUTTON || kind == CT_IMAGE) {
+            a = attr("value");
+            if (!a || !*a) a = attr("alt");
+            if (!a || !*a) a = kind == CT_BUTTON ? "..." : "Submit";
+        }
+        ctrl_text(c, a ? a : "", a ? strlen(a) : 0);
+        if (attr("checked")) c->checked = 1;
+        if ((a = attr("placeholder"))) {
+            int q = 0, k = 0, n = strlen(a);
+            while (q < n && k < (int)sizeof c->ph - 2) { char f[3]; int m = to_font(attr_next(a, n, &q), f), i; for (i = 0; i < m && k < (int)sizeof c->ph - 1; i++) c->ph[k++] = f[i]; }
+            c->ph[k] = 0;
+        }
+        return 1;
+    }
+    if (!strcmp(name, "textarea")) {
+        int rows = (a = attr("rows")) ? atoi(a) : 3, cols = (a = attr("cols")) ? atoi(a) : 40, st, en;
+        if (rows < 1) rows = 1;
+        if (rows > 12) rows = 12;
+        if (cols < 10) cols = 10;
+        if (cols > 90) cols = 90;
+        c = ctrl_add(CT_AREA, cols * 8 + 12, rows * 16 + 8);
+        en = ctrl_inner(p, "textarea", &st, 0);
+        if (c) {
+            c->rows = rows;
+            if (en > st && src[st] == '\n') st++;
+            ctrl_text(c, src + st, en - st);
+            if ((a = attr("placeholder"))) { int q = 0, k = 0, n = strlen(a); while (q < n && k < 38) { char f[3]; if (to_font(attr_next(a, n, &q), f) == 1) c->ph[k++] = f[0]; } c->ph[k] = 0; }
+        }
+        css_pop("textarea");
+        return 1;
+    }
+    if (!strcmp(name, "select")) {
+        int st, en, q, ol = 0, cap = 4096, wmax = 4, nopt = 0, sel = 0;
+        char *opts = malloc(cap);
+        char nm[64] = "";
+        if ((a = attr("name"))) copy(nm, a, sizeof nm);
+        en = ctrl_inner(p, "select", &st, 0);
+        if (!opts) return 1;
+        for (q = st; q < en; q++) {
+            if (src[q] == '<' && starts_ci(src + q + 1, "option") && !isalnum_c(src[q + 7])) {
+                char val[URL_MAX];
+                int has_val = 0, is_sel = 0, t0 = q, ts, k, tl;
+                while (q < en && src[q] != '>') q++;
+                {                                        /* its value=, selected */
+                    int r;
+                    for (r = t0; r < q; r++) {
+                        if (starts_ci(src + r, "value=")) {
+                            int v = 0; char qc = 0;
+                            r += 6;
+                            if (src[r] == '"' || src[r] == '\'') qc = src[r++];
+                            while (r < q && (qc ? src[r] != qc : !is_space(src[r])) && v < URL_MAX - 1) val[v++] = src[r++];
+                            val[v] = 0; has_val = 1;
+                        }
+                        if (starts_ci(src + r, "selected")) is_sel = 1;
+                    }
+                }
+                ts = ++q;
+                while (q < en && src[q] != '<') q++;
+                tl = q - ts;
+                if (ol + 2 * tl + 2 * URL_MAX + 8 > cap) break;
+                {                                        /* its words, as the font has them */
+                    int r = 0, m0 = ol;
+                    while (r < tl) {
+                        char f[3];
+                        int m = to_font(attr_next(src + ts, tl, &r), f);
+                        for (k = 0; k < m; k++) if (f[k] != '\n' && f[k] != '\r') opts[ol++] = f[k] == '\t' ? ' ' : f[k];
+                    }
+                    while (ol > m0 && opts[ol - 1] == ' ') ol--;
+                    { int s0 = m0; while (s0 < ol && opts[s0] == ' ') s0++; if (s0 > m0) { memmove(opts + m0, opts + s0, ol - s0); ol -= s0 - m0; } }
+                    if (ol - m0 > wmax) wmax = ol - m0;
+                    opts[ol++] = 0;
+                }
+                if (has_val) { k = strlen(val); memcpy(opts + ol, val, k + 1); ol += k + 1; }
+                else { memcpy(opts + ol, src + ts, tl); ol += tl; opts[ol++] = 0; }
+                if (is_sel) sel = nopt;
+                nopt++;
+                q--;
+            }
+        }
+        if (wmax > 40) wmax = 40;
+        c = ctrl_add(CT_SELECT, wmax * 8 + 30, 22);
+        if (!c) { free(opts); return 1; }
+        copy(c->name, nm, sizeof c->name);
+        c->opts = opts; c->nopt = nopt; c->sel = sel;
+        css_pop("select");
+        return 1;
+    }
+    if (!strcmp(name, "button")) {
+        const char *t = attr("type"), *v = attr("value");
+        char nm[64] = "", lab[64];
+        int st, en, k = 0, q, n;
+        if ((a = attr("name"))) copy(nm, a, sizeof nm);
+        en = ctrl_inner(p, "button", &st, 0);
+        for (q = st; q < en && k < 60; ) {               /* its words, tags left out */
+            if (src[q] == '<') { while (q < en && src[q] != '>') q++; q++; continue; }
+            { char f[3]; int m = to_font(src[q] == '&' ? attr_next(src, en, &q) : dec(src, en, &q), f), i;
+              for (i = 0; i < m && k < 60; i++) { if (is_space(f[i])) { if (k && lab[k - 1] != ' ') lab[k++] = ' '; } else lab[k++] = f[i]; } }
+        }
+        while (k && lab[k - 1] == ' ') k--;
+        lab[k] = 0;
+        if (!k) copy(lab, "Submit", sizeof lab);
+        n = strlen(lab);
+        c = ctrl_add(t && (starts_ci(t, "button") || starts_ci(t, "reset")) ? CT_BUTTON : CT_SUBMIT, n * 8 + 20 > 300 ? 300 : n * 8 + 20, 24);
+        if (c) {
+            copy(c->name, nm, sizeof c->name);
+            ctrl_text(c, v ? v : "", v ? strlen(v) : 0);
+            free(c->val);
+            c->val = malloc(n + 1);                      /* (shown: its words; sent: value=) */
+            if (c->val) memcpy(c->val, lab, n + 1);
+        }
+        css_pop("button");
+        return 1;
+    }
+    return 0;
 }
 
 /* ---- tables, as grids ----
@@ -2303,6 +2808,7 @@ static void tag(int *p)
 static void tag_rest(char *name, int closing, int *p)
 {
     if (tb_tag(name, closing, p)) return;
+    if (form_tag(name, closing, p)) return;
     if (name[0] == 'h' && name[1] >= '1' && name[1] <= '6' && !name[2]) { heading(name[1] - '0', !closing); return; }
     if (!strcmp(name, "br")) { end_line(1); return; }
     if (!strcmp(name, "p") || !strcmp(name, "div") || !strcmp(name, "section") || !strcmp(name, "article") ||
@@ -2405,13 +2911,6 @@ static void tag_rest(char *name, int closing, int *p)
         if (ds && *ds && (!s || !*s || starts_ci(s, "data:") || strstr_ci(s, "blank") || strstr_ci(s, "placeholder") ||
                           strstr_ci(s, "lazy") || strstr_ci(s, "spacer") || strstr_ci(s, "pixel"))) s = ds;
         if (s && *s) emit_image(s, attr("alt"));
-        return;
-    }
-    if (!strcmp(name, "input") || !strcmp(name, "button") || !strcmp(name, "select") || !strcmp(name, "textarea")) {
-        const char *v = attr("value");
-        if (!closing && v && *v && strcmp(attr("type") ? attr("type") : "", "hidden")) {
-            pending_space = 1; put_char('['); put_attr_text(v); put_char(']'); flush_word();
-        }
         return;
     }
 }
@@ -2911,6 +3410,7 @@ static void layout(void)
     indent = list_depth = ncolor = 0;
     base_left = left_x;
     tb_reset();
+    ctrls_free();
     wlen = 0;
     ncssf = 0;
     img_count = 0;
@@ -3005,6 +3505,103 @@ static void draw_downloads(void)
     }
 }
 
+/* a field, drawn */
+static void draw_ctrl(struct item *it, int sy, int top, int bot)
+{
+    struct ctrl *c = &ctrls[it->text];
+    int foc = it->text == focus, i;
+    unsigned bd = foc ? C_LINK : RGB(140, 148, 164);
+    const char *v = c->val ? c->val : "";
+    switch (c->kind) {
+    case CT_CHECK: case CT_RADIO:
+        fill(it->x, sy, 16, 16, bd, top, bot);
+        fill(it->x + 1, sy + 1, 14, 14, RGB(255, 255, 255), top, bot);
+        if (c->checked) {
+            if (c->kind == CT_RADIO) fill(it->x + 4, sy + 4, 8, 8, C_LINK, top, bot);
+            else for (i = 0; i < 8; i++) { fill(it->x + 4 + i, sy + 4 + i, 2, 2, C_TEXT, top, bot); fill(it->x + 11 - i, sy + 4 + i, 2, 2, C_TEXT, top, bot); }
+        }
+        return;
+    case CT_SUBMIT: case CT_BUTTON: case CT_IMAGE: {
+        int n = strlen(v), tw;
+        fill(it->x, sy, it->w, it->h, RGB(150, 160, 180), top, bot);
+        fill(it->x + 1, sy + 1, it->w - 2, it->h - 2, it->text == hover_ctrl ? C_HOVER : RGB(236, 240, 247), top, bot);
+        if (n > (it->w - 8) / 8) n = (it->w - 8) / 8;
+        tw = n * 8;
+        for (i = 0; i < n; i++) glyph(it->x + (it->w - tw) / 2 + i * 8, sy + 4, (unsigned char)v[i], C_TEXT, 1, 0, top, bot);
+        return;
+    }
+    case CT_SELECT: {
+        const char *o = c->opts;
+        int k;
+        fill(it->x, sy, it->w, it->h, bd, top, bot);
+        fill(it->x + 1, sy + 1, it->w - 2, it->h - 2, RGB(250, 251, 253), top, bot);
+        for (k = 0; o && k < c->sel; k++) { o += strlen(o) + 1; o += strlen(o) + 1; }
+        if (o && c->nopt) for (i = 0; o[i] && i < (it->w - 26) / 8; i++) glyph(it->x + 6 + i * 8, sy + 3, (unsigned char)o[i], C_TEXT, 1, 0, top, bot);
+        glyph(it->x + it->w - 16, sy + 3, 0x1F, C_GRAY, 1, 0, top, bot);
+        return;
+    }
+    default: {                                           /* text: a line, or lines */
+        int cols = (it->w - 10) / 8, n = strlen(v), rows = c->kind == CT_AREA ? (it->h - 8) / 16 : 1;
+        int line = 0, col = 0, first = 0, cx = 0, cy = 0;
+        fill(it->x, sy, it->w, it->h, bd, top, bot);
+        fill(it->x + 1, sy + 1, it->w - 2, it->h - 2, RGB(255, 255, 255), top, bot);
+        if (!n && !foc && c->ph[0]) {
+            for (i = 0; c->ph[i] && i < cols; i++) glyph(it->x + 5 + i * 8, sy + 3, (unsigned char)c->ph[i], RGB(150, 156, 168), 1, 0, top, bot);
+            return;
+        }
+        if (c->kind != CT_AREA) {                        /* one line: its end, if it's long */
+            int st = n > cols - 1 && foc ? n - (cols - 1) : 0;
+            for (i = st; i < n && i - st < cols; i++)
+                glyph(it->x + 5 + (i - st) * 8, sy + 3, c->kind == CT_PASS ? '*' : (unsigned char)v[i], C_TEXT, 1, 0, top, bot);
+            if (foc) fill(it->x + 5 + (n - st) * 8, sy + 3, 2, 16, C_LINK, top, bot);
+            return;
+        }
+        for (i = 0; i <= n; i++) {                       /* (how many lines: the last ones shown) */
+            if (i == n) break;
+            if (v[i] == '\n' || ++col >= cols) { line++; col = 0; }
+        }
+        if (line >= rows) first = line - rows + 1;
+        line = col = 0;
+        for (i = 0; i < n; i++) {
+            if (v[i] == '\n') { line++; col = 0; continue; }
+            if (line >= first && line < first + rows)
+                glyph(it->x + 5 + col * 8, sy + 4 + (line - first) * 16, (unsigned char)v[i], C_TEXT, 1, 0, top, bot);
+            if (++col >= cols) { line++; col = 0; }
+        }
+        cx = col; cy = line - first;
+        if (foc && cy >= 0 && cy < rows) fill(it->x + 5 + cx * 8, sy + 4 + cy * 16, 2, 16, C_LINK, top, bot);
+    }
+    }
+}
+/* an open <select>'s list, under it */
+static void draw_sel_list(int top, int bot)
+{
+    struct ctrl *c;
+    struct item *it;
+    const char *o;
+    int i, sy, rows;
+    if (sel_open < 0 || sel_open >= nctrls) return;
+    c = &ctrls[sel_open];
+    if (c->item < 0) return;
+    it = &items[c->item];
+    sy = it->y - scroll + top + it->h;
+    rows = c->nopt < 14 ? c->nopt : 14;
+    if (sy + rows * 18 > bot) sy = it->y - scroll + top - rows * 18;
+    fill(it->x + 3, sy + 3, it->w, rows * 18 + 2, RGB(150, 156, 170), top, bot);
+    fill(it->x, sy, it->w, rows * 18 + 2, C_LINK, top, bot);
+    fill(it->x + 1, sy + 1, it->w - 2, rows * 18, RGB(255, 255, 255), top, bot);
+    o = c->opts;
+    for (i = 0; i < c->nopt; i++) {
+        int k, first = c->sel >= rows ? c->sel - rows + 1 : 0;
+        if (i >= first && i < first + rows) {
+            int yy = sy + 1 + (i - first) * 18;
+            if (i == c->sel) fill(it->x + 1, yy, it->w - 2, 18, C_HOVER, top, bot);
+            for (k = 0; o[k] && k < (it->w - 12) / 8; k++) glyph(it->x + 6 + k * 8, yy + 1, (unsigned char)o[k], C_TEXT, 1, 0, top, bot);
+        }
+        o += strlen(o) + 1; o += strlen(o) + 1;
+    }
+}
+
 static void draw_page(void)
 {
     int i, top = VIEW_Y, bot = VIEW_Y + VIEW_H;
@@ -3016,6 +3613,7 @@ static void draw_page(void)
             if ((it->kind == IT_BOX) != (pass == 0)) continue;
             if (sy + it->h < top || sy >= bot) continue;
             if (it->kind == IT_BOX || it->kind == IT_RULE) fill(it->x, sy, it->w, it->h, it->color, top, bot);
+            else if (it->kind == IT_CTRL) draw_ctrl(it, sy, top, bot);
             else if (it->kind == IT_IMAGE) {
                 int r, c;
                 for (r = 0; r < it->h; r++) {
@@ -3041,6 +3639,7 @@ static void draw_page(void)
                 if (it->style & ST_UNDER) fill(it->x, sy + 15 * s - 1, it->w, s, c, top, bot);
             }
         }
+    draw_sel_list(top, bot);
     /* the scrollbar */
     fill(W - SBW, top, SBW, VIEW_H, RGB(236, 238, 242), 0, H);
     fill(W - SBW, top, 1, VIEW_H, C_RULE, 0, H);
@@ -3361,6 +3960,7 @@ static void go(const char *to, int remember)
     cs_mode = CS_UTF8;
     title[0] = 0;
     n = net_get(where, final);
+    free(post_body); post_body = 0;                      /* (a form's, sent) */
     if (n >= 0 && strcmp(final, where)) copy(where, final, URL_MAX);       /* (moved: there) */
     if (!base_url[0]) copy(base_url, where, URL_MAX);
     copy(url, where, URL_MAX);
@@ -3409,6 +4009,176 @@ static void go(const char *to, int remember)
     if (pi.trunc) copy(status, "A big page: shown up to 256KB of it.", sizeof status);
     else if (pi.code >= 400) copy(status, "The server said this page isn't there (or isn't for us).", sizeof status);
     redraw();
+}
+
+/* ---- forms: clicks, keys, sending ---- */
+static int ctrl_at(int mx, int my)
+{
+    int i, dy = my - VIEW_Y + scroll;
+    for (i = 0; i < nitems; i++) {
+        struct item *it = &items[i];
+        if (it->kind != IT_CTRL) continue;
+        if (mx >= it->x && mx < it->x + it->w && dy >= it->y && dy < it->y + it->h) return it->text;
+    }
+    return -1;
+}
+/* the open list: which of its lines is at mx,my (-1 none) */
+static int sel_list_at(int mx, int my)
+{
+    struct ctrl *c;
+    struct item *it;
+    int sy, rows, first, r;
+    if (sel_open < 0 || ctrls[sel_open].item < 0) return -1;
+    c = &ctrls[sel_open];
+    it = &items[c->item];
+    rows = c->nopt < 14 ? c->nopt : 14;
+    sy = it->y - scroll + VIEW_Y + it->h;
+    if (sy + rows * 18 > VIEW_Y + VIEW_H) sy = it->y - scroll + VIEW_Y - rows * 18;
+    if (mx < it->x || mx >= it->x + it->w || my < sy + 1 || my >= sy + 1 + rows * 18) return -1;
+    first = c->sel >= rows ? c->sel - rows + 1 : 0;
+    r = first + (my - sy - 1) / 18;
+    return r < c->nopt ? r : -1;
+}
+/* s (n bytes) -> q, url-encoded */
+static void url_enc(char *q, int *n, int max, const char *t, int len)
+{
+    int i;
+    for (i = 0; i < len && *n < max - 4; i++) {
+        unsigned char c = t[i];
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '*')
+            q[(*n)++] = c;
+        else if (c == ' ') q[(*n)++] = '+';
+        else { q[(*n)++] = '%'; q[(*n)++] = "0123456789ABCDEF"[c >> 4]; q[(*n)++] = "0123456789ABCDEF"[c & 15]; }
+    }
+    q[*n] = 0;
+}
+/* the font's text -> the page's charset (in out, max) -> its length */
+static int font_to_cs(const char *v, char *out, int max)
+{
+    int i, n = 0;
+    for (i = 0; v[i] && n < max - 6; i++) {
+        char o[4];
+        int k, j;
+        if (v[i] == '\n') { out[n++] = '\r'; out[n++] = '\n'; continue; }
+        k = uni_cs(font_uni((unsigned char)v[i]), cs_mode, o);
+        for (j = 0; j < k; j++) out[n++] = o[j];
+    }
+    out[n] = 0;
+    return n;
+}
+static void go(const char *to, int remember);
+/* form f sent (btn: the button pressed, -1 Enter) */
+static void form_submit(int f, int btn)
+{
+    static char q[16384], enc[VAL_MAX * 4];
+    char act[URL_MAX], to[URL_MAX];
+    int n = 0, i;
+    q[0] = 0;
+    for (i = 0; i < nctrls; i++) {
+        struct ctrl *c = &ctrls[i];
+        const char *v = "";
+        int vl;
+        if (c->form != f || !c->name[0]) continue;
+        switch (c->kind) {
+        case CT_CHECK: case CT_RADIO:
+            if (!c->checked) continue;
+            v = c->raw && *c->raw ? c->raw : "on";
+            break;
+        case CT_SUBMIT: case CT_IMAGE:
+            if (i != btn) continue;
+            v = c->raw ? c->raw : "";
+            break;
+        case CT_BUTTON:
+            continue;
+        case CT_SELECT: {
+            const char *o = c->opts;
+            int k;
+            if (!o || !c->nopt) continue;
+            for (k = 0; k < c->sel; k++) { o += strlen(o) + 1; o += strlen(o) + 1; }
+            v = o + strlen(o) + 1;
+            break;
+        }
+        default:
+            if (c->edited && c->val) { font_to_cs(c->val, enc, sizeof enc); v = enc; }
+            else v = c->raw ? c->raw : "";
+        }
+        vl = strlen(v);
+        if (n) { q[n++] = '&'; q[n] = 0; }
+        url_enc(q, &n, sizeof q, c->name, strlen(c->name));
+        if (c->kind == CT_IMAGE) { append(q, ".x=1&", sizeof q); n = strlen(q); url_enc(q, &n, sizeof q, c->name, strlen(c->name)); append(q, ".y=1", sizeof q); n = strlen(q); continue; }
+        q[n++] = '='; q[n] = 0;
+        url_enc(q, &n, sizeof q, v, vl);
+    }
+    resolve(base_url[0] ? base_url : url, f >= 0 && forms[f].action[0] ? forms[f].action : url, act);
+    focus = sel_open = -1;
+    if (f >= 0 && forms[f].post) {
+        free(post_body);
+        post_body = malloc(n + 1);
+        if (!post_body) return;
+        memcpy(post_body, q, n + 1);
+        post_len = n;
+        go(act, 1);
+        return;
+    }
+    for (i = 0; act[i]; i++) if (act[i] == '?' || act[i] == '#') { act[i] = 0; break; }
+    copy(to, act, URL_MAX);
+    append(to, "?", URL_MAX);
+    append(to, q, URL_MAX);
+    go(to, 1);
+}
+static void ctrl_click(int ci)
+{
+    struct ctrl *c = &ctrls[ci];
+    int i;
+    focus = ci;
+    switch (c->kind) {
+    case CT_CHECK: c->checked = !c->checked; break;
+    case CT_RADIO:
+        for (i = 0; i < nctrls; i++)
+            if (ctrls[i].kind == CT_RADIO && ctrls[i].form == c->form && !strcmp(ctrls[i].name, c->name)) ctrls[i].checked = 0;
+        c->checked = 1;
+        break;
+    case CT_SELECT: sel_open = sel_open == ci ? -1 : ci; break;
+    case CT_SUBMIT: case CT_IMAGE: form_submit(c->form, ci); break;
+    }
+}
+/* a key, with a field chosen -> 1 if it was the field's */
+static int ctrl_key(int ch, int sc)
+{
+    struct ctrl *c;
+    int n;
+    if (focus < 0 || focus >= nctrls) return 0;
+    c = &ctrls[focus];
+    if (ch == 27) { focus = sel_open = -1; return 1; }
+    if (ch == 9) {                                       /* Tab: the next field */
+        int i;
+        for (i = 1; i <= nctrls; i++) {
+            int k = (focus + i) % nctrls;
+            if (ctrls[k].kind != CT_HIDDEN && ctrls[k].item >= 0) { focus = k; break; }
+        }
+        sel_open = -1;
+        return 1;
+    }
+    if (c->kind == CT_SELECT) {
+        if (sc == 0x48 && !ch) { if (c->sel > 0) c->sel--; return 1; }
+        if (sc == 0x50 && !ch) { if (c->sel < c->nopt - 1) c->sel++; return 1; }
+        if (ch == 13 || ch == ' ') { sel_open = sel_open == focus ? -1 : focus; return 1; }
+        return 0;
+    }
+    if (c->kind == CT_CHECK || c->kind == CT_RADIO || c->kind == CT_SUBMIT || c->kind == CT_IMAGE) {
+        if (ch == 13 || ch == ' ') { ctrl_click(focus); return 1; }
+        return 0;
+    }
+    if (c->kind == CT_BUTTON || !c->val) return 0;
+    n = strlen(c->val);
+    if (ch == 13) {
+        if (c->kind == CT_AREA) { if (n < VAL_MAX - 1) { c->val[n] = '\n'; c->val[n + 1] = 0; c->edited = 1; } }
+        else form_submit(c->form, -1);
+        return 1;
+    }
+    if (ch == 8) { if (n) c->val[n - 1] = 0; c->edited = 1; return 1; }
+    if (ch >= 32 && ch != 127) { if (n < VAL_MAX - 1) { c->val[n] = ch; c->val[n + 1] = 0; c->edited = 1; } return 1; }
+    return 0;
 }
 
 static int item_at(int mx, int my)
@@ -3523,13 +4293,62 @@ static void draw_info(void)
     info_line(bx, &ly, "Laid out", t, 0);
 }
 
+/* what was typed in the address bar -> an address: words (a space in
+ * them, or no dot) are a search (DuckDuckGo's page without scripts);
+ * letters past ASCII in an address: as UTF-8, %-encoded */
+static void addr_typed(char *u)
+{
+    int i, dot = 0, sp = 0, n = 0;
+    char t[URL_MAX];
+    for (i = 0; u[i]; i++) { if (u[i] == '.' || u[i] == ':' || u[i] == '/') dot = 1; if (u[i] == ' ') sp = 1; }
+    while (*u == ' ') memmove(u, u + 1, strlen(u));
+    if (!u[0]) return;
+    if (!is_http(u) && !starts_ci(u, "view-source:") && u[0] != '/' && (sp || !dot)) {
+        static char utf[URL_MAX];
+        int k = 0;
+        for (i = 0; u[i] && k < URL_MAX - 5; i++) { char o[4]; int m = uni_cs(font_uni((unsigned char)u[i]), CS_UTF8, o), j; for (j = 0; j < m; j++) utf[k++] = o[j]; }
+        utf[k] = 0;
+        copy(t, "https://html.duckduckgo.com/html/?q=", URL_MAX);
+        n = strlen(t);
+        url_enc(t, &n, URL_MAX, utf, k);
+        copy(u, t, URL_MAX);
+        return;
+    }
+    for (i = 0; u[i] && n < URL_MAX - 10; i++) {
+        unsigned char c = u[i];
+        if (c < 0x80) { t[n++] = c; continue; }
+        {
+            char o[4];
+            int m = uni_cs(font_uni(c), CS_UTF8, o), j;
+            for (j = 0; j < m; j++) { t[n++] = '%'; t[n++] = "0123456789ABCDEF"[(unsigned char)o[j] >> 4]; t[n++] = "0123456789ABCDEF"[o[j] & 15]; }
+        }
+    }
+    t[n] = 0;
+    copy(u, t, URL_MAX);
+}
+/* a search's results lead through the search's own address
+ * (duckduckgo.com/l/?uddg=...): straight there instead */
+static void unwrap_link(char *to)
+{
+    const char *u;
+    char t[URL_MAX];
+    int n = 0;
+    if (!strstr_ci(to, "duckduckgo.com/l/?") || !(u = strstr_at(to, "uddg="))) return;
+    for (u += 5; *u && *u != '&' && n < URL_MAX - 1; u++) {
+        if (*u == '%' && hexval(u[1]) >= 0 && hexval(u[2]) >= 0) { t[n++] = hexval(u[1]) * 16 + hexval(u[2]); u += 2; }
+        else t[n++] = *u == '+' ? ' ' : *u;
+    }
+    t[n] = 0;
+    if (is_http(t)) copy(to, t, URL_MAX);
+}
+
 static void press(int b)
 {
     if (b == 0 && hpos > 0) { hpos--; go(hist[hpos], 0); }
     else if (b == 1 && hpos < nhist - 1) { hpos++; go(hist[hpos], 0); }
     else if (b == 2) { int s = scroll; cache_reload = 1; go(url, 0); cache_reload = 0; scroll = s; clamp_scroll(); redraw(); }
     else if (b == 3) go(home, 1);
-    else if (b == 4) { editing = 0; go(edit_url, 1); }
+    else if (b == 4) { editing = 0; addr_typed(edit_url); go(edit_url, 1); }
     else if (b == 5 && !editing) { editing = 1; edit_fresh = 1; copy(edit_url, url, URL_MAX); redraw(); }
     else if (b == 6) { show_dls = !show_dls; redraw(); }
     else if (b == 7) toggle_reader();
@@ -3553,15 +4372,16 @@ int main(int argc, char **argv)
             int ch = k & 0xFF, sc = (k >> 8) & 0xFF;
             if (editing) {
                 int l = strlen(edit_url);
-                if (ch == 13) { editing = 0; go(edit_url, 1); }
+                if (ch == 13) { editing = 0; addr_typed(edit_url); go(edit_url, 1); }
                 else if (ch == 27) editing = 0;
                 else if (ch == 8) { if (edit_fresh) edit_url[0] = 0; else if (l) edit_url[l - 1] = 0; edit_fresh = 0; }
-                else if (ch >= 32 && ch < 127 && l < URL_MAX - 1) {
+                else if (ch >= 32 && ch != 127 && l < URL_MAX - 1) {
                     if (edit_fresh) { l = 0; edit_fresh = 0; }   /* (all chosen: replaced) */
                     edit_url[l] = ch;
                     edit_url[l + 1] = 0;
                 }
                 changed = 1;
+            } else if (focus >= 0 && ctrl_key(ch, sc)) { changed = 1;
             } else if (ch == 27 && show_info) { show_info = 0; changed = 1; }
             else if (ch == 27) break;
             else if (ch == 21) {                                            /* Ctrl+U: its source */
@@ -3607,6 +4427,10 @@ int main(int argc, char **argv)
             int hb = button_at(mx, my);
             int on_x, ht = tab_at(mx, my, &on_x), hx = on_x ? ht : -1;
             if (hl != hover_link || hb != hover_btn) { hover_link = hl; hover_btn = hb; changed = 1; }
+            {
+                int hc = my >= VIEW_Y && my < VIEW_Y + VIEW_H && mx < W - SBW ? ctrl_at(mx, my) : -1;
+                if (hc != hover_ctrl) { hover_ctrl = hc; changed = 1; }
+            }
             if (ht != hover_tab || hx != hover_close) { hover_tab = ht; hover_close = hx; changed = 1; }
             if (down && !was_down && ht >= 0) {                     /* the tabs */
                 if (ht == 100) { tab_new(home); was_down = down; continue; }
@@ -3632,6 +4456,15 @@ int main(int argc, char **argv)
                     press(hb);
                     changed = 1;
                 } else if (show_info) { show_info = 0; changed = 1;
+                } else if (sel_open >= 0) {                         /* an open list: a line of it */
+                    int o = sel_list_at(mx, my);
+                    if (o >= 0) ctrls[sel_open].sel = o;
+                    sel_open = -1;
+                    changed = 1;
+                } else if (my >= VIEW_Y && my < VIEW_Y + VIEW_H && ctrl_at(mx, my) >= 0) {
+                    editing = 0;
+                    ctrl_click(ctrl_at(mx, my));
+                    changed = 1;
                 } else if (hl >= 0 && starts_ci(lpool + link_off[hl], "download:")) {
                     download(lpool + link_off[hl] + 9);
                     was_down = down;
@@ -3640,11 +4473,15 @@ int main(int argc, char **argv)
                     char to[URL_MAX];
                     editing = 0;
                     resolve(base_url[0] ? base_url : url, lpool + link_off[hl], to);
+                    unwrap_link(to);
                     if (keydown(KEY_CTRL)) tab_new(to);             /* Ctrl: a new tab */
                     else go(to, 1);
                     was_down = down;
                     continue;
-                } else if (editing) { editing = 0; changed = 1; }
+                } else {
+                    if (editing) { editing = 0; changed = 1; }
+                    if (focus >= 0) { focus = -1; changed = 1; }
+                }
             } else if (down && drag >= 0 && doc_h > VIEW_H) {
                 int th = VIEW_H * VIEW_H / doc_h, s = scroll;
                 if (th < 24) th = 24;
