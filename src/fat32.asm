@@ -40,13 +40,13 @@ FAT_TABLE       equ 0xA000000            ; the whole FAT (up to 4MB: 1M clusters
 FAT_TABLE_MAX   equ 0x400000
 FAT_DIRTY       equ 0xA400000            ; a byte per FAT sector: changed
 FAT_PENDING     equ 0xA402000            ; a bit per cluster: freed, not yet free
-FAT_SLOTX       equ 0xA422000            ; 16 bytes a slot (below)
+FAT_SLOTX       equ 0xA910000            ; 16 bytes a slot (below)
 FAT_NEW         equ 0xA428000            ; fs_write_slot's record
 FAT_SEC         equ 0xA428200            ; a folder's sector
 FAT_NAME        equ 0xA428400            ; a name (CP866)
 FAT_NAME2       equ 0xA428500
 FAT_LFN         equ 0xA428600            ; a long name as it's read (UTF-16)
-FAT_QUEUE       equ 0xA428900            ; mount: folders still to read
+FAT_QUEUE       equ 0xA428900            ; mount: folders still to read (words)
 FAT_BUF         equ 0xA430000            ; a cluster (32KB at most)
 FAT_ZERO        equ 0xA438000            ; a cluster of zeros
 FAT_IO          equ 0xA440000            ; 64KB: copies
@@ -1141,11 +1141,11 @@ fat_update_entry:
 ; A record written (fs_write_slot): what it means on the disk
 ; ============================================================
 
-; al = a parent byte -> eax = that folder's cluster (the root's, for
-; one that isn't a folder)
+; ax = a parent (a slot, or FS_ROOT) -> eax = that folder's cluster
+; (the root's, for one that isn't a folder)
 fat_dir_of:
-    movzx eax, al
-    cmp eax, FS_DIR_SLOT_LIMIT
+    movzx eax, ax
+    cmp eax, FS_FILE_COUNT
     jae .root
     push edx
     mov edx, eax
@@ -1197,8 +1197,11 @@ fat_sync_slot:
     call fat_delete
     jmp .create
 .same_kind:
-    mov al, [edi + FS_PARENT_OFFSET]      ; moved, or renamed?
-    cmp al, [FAT_NEW + FS_PARENT_OFFSET]
+    mov al, [edi + FS_PARENT_LO_OFFSET]   ; moved, or renamed?
+    mov ah, [edi + FS_PARENT_HI_OFFSET]
+    cmp al, [FAT_NEW + FS_PARENT_LO_OFFSET]
+    jne .relink
+    cmp ah, [FAT_NEW + FS_PARENT_HI_OFFSET]
     jne .relink
     mov esi, edi
     call fat_full_name
@@ -1280,7 +1283,8 @@ fat_create:
     jne .kind
     mov byte [fat_c_nt], FAT_PROGRAM
 .kind:
-    mov al, [FAT_NEW + FS_PARENT_OFFSET]
+    mov al, [FAT_NEW + FS_PARENT_LO_OFFSET]
+    mov ah, [FAT_NEW + FS_PARENT_HI_OFFSET]
     call fat_dir_of
     mov [fat_c_parent], eax
     cmp byte [FAT_NEW + FS_TYPE_OFFSET], FS_TYPE_DIR
@@ -1363,17 +1367,17 @@ fat_delete:
     call fat_cache_of
     cmp byte [eax + FS_TYPE_OFFSET], FS_TYPE_DIR
     jne .this
-    cmp ebx, FS_DIR_SLOT_LIMIT
-    jae .this
     xor ecx, ecx                          ; what's in it
 .child:
-    cmp ecx, FS_FILE_COUNT
+    cmp ecx, [fs_slot_top]
     jae .this
     mov edx, ecx
     shl edx, 9
     cmp byte [FS_SLOT_CACHE + edx + FS_TYPE_OFFSET], FS_TYPE_FREE
     je .child_next
-    cmp [FS_SLOT_CACHE + edx + FS_PARENT_OFFSET], bl
+    cmp [FS_SLOT_CACHE + edx + FS_PARENT_LO_OFFSET], bl
+    jne .child_next
+    cmp [FS_SLOT_CACHE + edx + FS_PARENT_HI_OFFSET], bh
     jne .child_next
     cmp ecx, ebx
     je .child_next
@@ -1426,7 +1430,8 @@ fat_relink:
     xor ecx, ecx
 .have_size:
     mov [fat_c_size], ecx
-    mov al, [FAT_NEW + FS_PARENT_OFFSET]
+    mov al, [FAT_NEW + FS_PARENT_LO_OFFSET]
+    mov ah, [FAT_NEW + FS_PARENT_HI_OFFSET]
     call fat_dir_of
     mov [fat_c_parent], eax
     mov dword [fat_rec], FAT_NEW
@@ -1599,6 +1604,7 @@ fat_size_of:
 
 ; eax = a slot, ecx = its new size: the cache's record says so
 fat_set_size:
+    inc dword [fs_gen]
     push esi
     mov esi, eax
     shl esi, 9
@@ -1620,7 +1626,7 @@ fat_read:
     push edi
     push ebp
     cmp eax, FS_FILE_COUNT
-    jae .ram
+    jae .none
     push ecx
     call fat_size_of                      ; ecx = its size
     mov edx, ecx
@@ -1777,34 +1783,6 @@ fat_read:
 .none:
     xor ecx, ecx
     jmp .out
-.ram:                                     ; (a RAM slot: its 127 bytes)
-    push esi
-    mov esi, eax
-    call fs_ram_record                    ; -> esi
-    call fat_rec_size
-    mov edx, esi
-    pop esi
-    cmp edx, FS_CONTENT_LEN - 1
-    jbe .ram_sz
-    mov edx, FS_CONTENT_LEN - 1
-.ram_sz:
-    cmp ebx, edx
-    jae .none
-    sub edx, ebx
-    cmp ecx, edx
-    jbe .ram_n
-    mov ecx, edx
-.ram_n:
-    push ecx
-    push esi
-    mov esi, eax
-    call fs_ram_record
-    lea esi, [esi + FS_CONTENT_OFFSET + ebx]
-    cld
-    rep movsb
-    pop esi
-    pop ecx
-    jmp .out
 
 ; eax = a slot, ebx = where in it, esi = from where, ecx = how many:
 ; written (the file made longer if it has to be; the gap before, if
@@ -1819,7 +1797,7 @@ fat_write:
     push ebp
     mov [fat_w_total], ecx
     cmp eax, FS_FILE_COUNT
-    jae .ram
+    jae .bad_slot
     mov ebp, eax                          ; ebp = the slot
     push ecx
     call fat_size_of
@@ -1880,49 +1858,14 @@ fat_write:
     pop eax
     stc
     ret
-.ram:                                     ; a RAM slot: its 127 bytes, no more
-    push esi
-    mov esi, eax
-    call fs_ram_record
-    mov edi, esi
-    pop esi
-    xor edx, edx
-.ram_each:
-    cmp edx, ecx
-    jae .ram_done
-    lea eax, [ebx + edx]
-    cmp eax, FS_CONTENT_LEN - 1
-    jae .ram_done
-    push ecx
-    mov cl, [esi + edx]
-    mov [edi + FS_CONTENT_OFFSET + eax], cl
-    pop ecx
-    inc edx
-    jmp .ram_each
-.ram_done:
-    lea eax, [ebx + edx]
-    push esi
-    mov esi, edi
-    call fat_rec_size
-    cmp eax, esi
-    pop esi
-    jbe .ram_sized
-    mov [edi + FS_TOTAL_LEN_OFFSET], ax
-    shr eax, 16
-    mov [edi + FS_TOTAL_LEN_HI_OFFSET], ax
-.ram_sized:
-    mov ecx, edx
-    cmp edx, [fat_w_total]
+.bad_slot:
+    xor ecx, ecx
     pop ebp
     pop edi
     pop esi
     pop edx
     pop ebx
     pop eax
-    jb .ram_full
-    clc
-    ret
-.ram_full:
     stc
     ret
 
@@ -2166,7 +2109,7 @@ fat_extend:
 fat_truncate:
     pushad
     cmp eax, FS_FILE_COUNT
-    jae .ram
+    jae .fail
     mov ebp, eax
     call fat_size_of
     cmp ebx, ecx
@@ -2249,18 +2192,6 @@ fat_truncate:
 .fail:
     popad
     stc
-    ret
-.ram:
-    mov esi, eax
-    call fs_ram_record
-    cmp ebx, FS_CONTENT_LEN - 1
-    jbe .ram_ok
-    mov ebx, FS_CONTENT_LEN - 1
-.ram_ok:
-    mov [esi + FS_TOTAL_LEN_OFFSET], bx
-    mov word [esi + FS_TOTAL_LEN_HI_OFFSET], 0
-    popad
-    clc
     ret
 
 ; eax = a file's slot, ebx = another's: that one made a copy of this
@@ -2440,19 +2371,18 @@ fat_mount:
     mov dword [fat_hint], 2
 .hinted:
     mov byte [fat_ok], 1
-    mov dword [fat_next_dir], 0           ; the tree: folders get slots from 0,
-    mov dword [fat_next_file], FS_DIR_SLOT_LIMIT  ; files from 255
+    mov dword [fat_next_slot], 0          ; the tree, a slot each in turn
     mov dword [fat_skipped], 0
     mov dword [fat_qhead], 0
     mov dword [fat_qtail], 0
     mov eax, [fat_root]
-    mov bl, FS_ROOT_BYTE
+    mov ebx, FS_ROOT
     call fat_read_dir
 .queue:
     mov ecx, [fat_qhead]
     cmp ecx, [fat_qtail]
     jae .tree_done
-    movzx ebx, byte [FAT_QUEUE + ecx]
+    movzx ebx, word [FAT_QUEUE + ecx*2]
     inc dword [fat_qhead]
     mov eax, ebx
     shl eax, 4
@@ -2460,6 +2390,8 @@ fat_mount:
     call fat_read_dir
     jmp .queue
 .tree_done:
+    mov eax, [fat_next_slot]
+    mov [fs_slot_top], eax
     mov eax, 1                            ; in use: not "shut down properly"
     call fat_get
     and eax, ~0x08000000
@@ -2485,12 +2417,12 @@ fat_mount:
     stc
     ret
 
-; eax = a folder's cluster, bl = the parent byte its entries get: each
+; eax = a folder's cluster, bx = the parent its entries get: each
 ; of them into a slot of its own (its folders queued, to be read next)
 fat_read_dir:
     pushad
     mov [fat_rd_dir], eax
-    mov [fat_rd_parent], bl
+    mov [fat_rd_parent], bx
     mov byte [fat_lfn_ok], 0
     xor ecx, ecx
 .each:
@@ -2608,30 +2540,21 @@ fat_mount_entry:
     mov eax, [fat_me_first]
     call fat_valid
     jc .skip
-    mov ebx, [fat_next_dir]
-.dir_slot:
-    cmp ebx, FS_DIR_SLOT_LIMIT
+    mov ebx, [fat_next_slot]
+    cmp ebx, FS_FILE_COUNT
     jae .skip
-    mov eax, ebx
-    shl eax, 9
-    cmp byte [FS_SLOT_CACHE + eax + FS_TYPE_OFFSET], FS_TYPE_FREE
-    je .dir_have
-    inc ebx
-    jmp .dir_slot
-.dir_have:
-    lea eax, [ebx + 1]
-    mov [fat_next_dir], eax
+    inc dword [fat_next_slot]
     mov ecx, [fat_qtail]
-    mov [FAT_QUEUE + ecx], bl
+    mov [FAT_QUEUE + ecx*2], bx
     inc dword [fat_qtail]
     mov byte [fat_me_type], FS_TYPE_DIR
     mov dword [fat_me_size], 0
     jmp .slot
 .a_file:
-    mov ebx, [fat_next_file]
+    mov ebx, [fat_next_slot]
     cmp ebx, FS_FILE_COUNT
     jae .skip
-    inc dword [fat_next_file]
+    inc dword [fat_next_slot]
     mov byte [fat_me_type], FS_TYPE_FILE
     test byte [fat_me_nt], FAT_PROGRAM
     jz .slot
@@ -2642,8 +2565,9 @@ fat_mount_entry:
     add edi, FS_SLOT_CACHE                ; edi = its record
     mov al, [fat_me_type]
     mov [edi + FS_TYPE_OFFSET], al
-    mov al, [fat_rd_parent]
-    mov [edi + FS_PARENT_OFFSET], al
+    mov ax, [fat_rd_parent]
+    mov [edi + FS_PARENT_LO_OFFSET], al
+    mov [edi + FS_PARENT_HI_OFFSET], ah
     mov eax, [fat_me_size]
     mov [edi + FS_TOTAL_LEN_OFFSET], ax
     shr eax, 16
@@ -3088,7 +3012,7 @@ fat_fsck_fix    db 0
 fat_lfn_ok      db 0
 fat_lfn_sum     db 0
 fat_lfn_n       db 0
-fat_rd_parent   db 0
+fat_rd_parent   dw 0
 fat_me_attr     db 0
 fat_me_nt       db 0
 fat_me_nlfn     db 0
@@ -3136,8 +3060,7 @@ fat_cp_src      dd 0
 fat_cp_dst      dd 0
 fat_tilde_n     dd 0
 fat_basis_len   dd 0
-fat_next_dir    dd 0
-fat_next_file   dd 0
+fat_next_slot   dd 0
 fat_skipped     dd 0
 fat_qhead       dd 0
 fat_qtail       dd 0

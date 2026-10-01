@@ -527,13 +527,16 @@ dkm_trash_do:
     call jnl_attr_of
     test al, FS_ATTR_RO
     jnz .next
-    call dkn_trash_dir                    ; -> al (carry: no room)
+    call dkn_trash_dir                    ; -> ax (carry: no room)
     jc .said
-    mov dl, al
+    mov dx, ax
     mov eax, [dkm_slot]
     call fs_read_slot
     call dkt_note_origin                  ; (Restore's, Undo's)
-    mov [SCRATCH_ADDR + FS_PARENT_OFFSET], dl
+    push eax
+    mov ax, dx
+    call fs_scratch_set_parent
+    pop eax
     call fs_write_slot
     inc dword [dkm_gone]
 .next:

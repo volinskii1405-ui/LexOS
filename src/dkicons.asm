@@ -190,10 +190,10 @@ dki_scan:
     xor ebp, ebp                          ; (how many)
     cmp eax, -1
     je .listed
-    mov [dki_dir], al
+    mov [dki_dir], ax
     xor ebx, ebx
 .slot:
-    cmp ebx, FS_TOTAL_SLOTS
+    cmp ebx, [fs_slot_top]
     jae .listed
     cmp ebp, DKI_MAX
     jae .listed
@@ -202,8 +202,8 @@ dki_scan:
     mov al, [SCRATCH_ADDR + FS_TYPE_OFFSET]
     cmp al, FS_TYPE_FREE
     je .next
-    mov al, [SCRATCH_ADDR + FS_PARENT_OFFSET]
-    cmp al, [dki_dir]
+    call fs_scratch_parent
+    cmp ax, [dki_dir]
     jne .next
     mov edi, ebp                          ; its file name
     shl edi, 4
@@ -958,7 +958,7 @@ dki_open:
     je .done
     cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
     jne .done
-    mov [dk_fm_dir], al
+    mov [dk_fm_dir], ax
     mov byte [dk_fm_inited], 1
     mov esi, ebx
     shl esi, 6
@@ -982,7 +982,7 @@ dki_open:
     je .done
     dec eax
     mov [dk_pic_slot], eax
-    mov [dk_pic_dir], dl
+    mov [dk_pic_dir], dx
     mov byte [dk_pic_state], 1
     mov eax, K_PICS
     call dk_win_single
@@ -991,13 +991,14 @@ dki_open:
     ret
 
 ; esi = a path ("/A/B") -> eax = the slot of what it names (-1: nothing
-; there), edx = the folder that's in (its slot byte); the slot in scratch
+; there), edx = the folder that's in (its slot, or FS_ROOT); the slot
+; in scratch
 dki_resolve:
     push ebx
     push ecx
     push esi
     push edi
-    mov edx, FS_ROOT_BYTE
+    mov edx, FS_ROOT
 .part:
     cmp byte [esi], '/'
     jne .have_part
@@ -1031,16 +1032,19 @@ dki_resolve:
     dec esi                               ; (at the "/" or the 0)
     xor ebx, ebx                          ; which slot, in folder edx?
 .slot:
-    cmp ebx, FS_TOTAL_SLOTS
+    cmp ebx, [fs_slot_top]
     jae .none
-    mov ax, bx
-    call fs_read_slot
-    cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_FREE
+    mov eax, ebx                          ; (the cache, as is: quick)
+    shl eax, 9
+    add eax, FS_SLOT_CACHE
+    cmp byte [eax + FS_TYPE_OFFSET], FS_TYPE_FREE
     je .next
-    cmp [SCRATCH_ADDR + FS_PARENT_OFFSET], dl
+    cmp [eax + FS_PARENT_LO_OFFSET], dl
+    jne .next
+    cmp [eax + FS_PARENT_HI_OFFSET], dh
     jne .next
     push esi
-    mov esi, SCRATCH_ADDR
+    mov esi, eax
     mov edi, dki_comp
     mov ecx, FS_NAME_LEN
     repe cmpsb
@@ -1050,6 +1054,8 @@ dki_resolve:
     inc ebx
     jmp .slot
 .found:
+    mov eax, ebx
+    call fs_read_slot
     cmp byte [esi], 0                     ; the last part: this is it
     je .it
     cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
@@ -1117,7 +1123,7 @@ dki_moved        db 0
 dki_rescan       db 1
 dki_scanned      dd 0
 dki_click_ms     dd 0
-dki_dir          db 0
+dki_dir          dw 0
 dki_file         times (DKI_MAX + 1) * FS_NAME_LEN db 0   ; (+1: `open`'s, src/shellx.asm)
 DKI_LABEL        equ 32                     ; (a long name's start)
 dki_label        times (DKI_MAX + 1) * DKI_LABEL db 0

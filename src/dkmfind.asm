@@ -34,7 +34,7 @@ dmf_filter:
     jc .done
     xor ebx, ebx
 .slot:
-    cmp ebx, FS_TOTAL_SLOTS
+    cmp ebx, [fs_slot_top]
     jae .done
     mov eax, [dmf_n]
     cmp eax, [dmf_room]
@@ -84,7 +84,7 @@ dmf_filter:
     loop .name
 .name_end:
     mov byte [edi], 0
-    mov al, [SCRATCH_ADDR + FS_PARENT_OFFSET]   ; and where it is
+    call fs_scratch_parent                ; and where it is
     imul edi, edx, DMF_DIR
     add edi, dmf_dir
     call dk_dir_path

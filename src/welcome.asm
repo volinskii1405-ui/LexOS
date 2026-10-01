@@ -1378,7 +1378,8 @@ user_save_cfg:
     mov edi, SCRATCH_ADDR
     call wget_append
     mov byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_FILE
-    mov byte [SCRATCH_ADDR + FS_PARENT_OFFSET], FS_ROOT_BYTE
+    mov ax, FS_ROOT
+    call fs_scratch_set_parent
     mov esi, wl_buf
     mov edi, SCRATCH_ADDR + FS_CONTENT_OFFSET
     mov ecx, [wl_cfg_len]

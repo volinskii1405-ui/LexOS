@@ -29,7 +29,9 @@ SECTOR_COUNT equ 8
 ; (fs_write_slot). A slot's layout:
 ;   bytes 0..15  - name (ASCII, zero-padded)
 ;   byte 16      - type (0=free, 1=file, 2=folder)
-;   byte 17      - parent (slot index of the parent folder, 0xFF = root)
+;   bytes 17,158 - parent (the parent folder's slot: low byte at 17, high
+;                  byte at 158 - FS_ROOT, 0xFFFF, the root; read and set
+;                  through fs_scratch_parent / fs_scratch_set_parent)
 ;   bytes 18..145 - inline content (the first 127 bytes)
 ;   bytes 146-147 - total length, high word (see FS_TOTAL_LEN_HI_OFFSET)
 ;   bytes 148-153 - when it changed, its attributes (src/fsjournal.asm)
@@ -37,30 +39,17 @@ SECTOR_COUNT equ 8
 ;   bytes 240-243 - "FX" + the slot the record's from (src/fat32.asm)
 ;   bytes 508-511 - total length low word, FS_NO_CHAIN
 ;
-; 1024 slots. A parent is still one byte, because folders only ever live
-; in slots 0..FS_DIR_SLOT_LIMIT-1 (fs_find_free_dir) - files take the
-; rest first (fs_find_free), so up to 255 folders, nested as deep as you
-; like, and the other ~770 slots for files.
+; FS_FILE_COUNT slots, files and folders alike, in any of them.
 FS_START_SECTOR   equ 578     ; sector 1=bootloader, 2..577=kernel (576 sectors);
                               ; the journal from 1024, FAT32 from 2048
-FS_FILE_COUNT     equ 1024
-FS_DIR_SLOT_LIMIT equ 255
+FS_FILE_COUNT     equ 8192
 FS_NAME_LEN       equ 16
 FS_CONTENT_LEN    equ 128
 FS_SCRATCH_ADDR   equ SCRATCH_ADDR
 
-; Slot indices FS_FILE_COUNT..FS_TOTAL_SLOTS-1 are RAM-backed (see
-; fs_ram_slots at the tail of kernel.asm): fs_read_slot/fs_write_slot
-; copy them to/from RAM instead of a real disk sector, so files created
-; directly inside the TMP folder never touch the disk at all - handy
-; scratch space that doesn't eat into the 24 real directory slots.
-; Every other filesystem function (ls, cat, rm, find-by-name, wildcard
-; cp/mv, ...) just iterates 0..FS_TOTAL_SLOTS-1 instead of
-; 0..FS_FILE_COUNT-1, so a RAM slot is indistinguishable from a disk one
-; except in that one guaranteed-not-persisted-across-reboots way - and
-; that a RAM file holds 127 bytes at most (its record's own).
-FS_RAM_FILE_COUNT equ 8
-FS_TOTAL_SLOTS    equ FS_FILE_COUNT + FS_RAM_FILE_COUNT
+; (Once there were 8 RAM-only slots past these, for TMP: TMP's an
+; ordinary folder on the disk now - LexOS Web keeps its cache there.)
+FS_TOTAL_SLOTS    equ FS_FILE_COUNT
 
 ; Sector read/write - always through our own ATA driver (direct port
 ; access, bypassing the BIOS). In protected mode we have no access to
@@ -71,7 +60,8 @@ FS_TOTAL_SLOTS    equ FS_FILE_COUNT + FS_RAM_FILE_COUNT
 FS_USE_ATA equ 1
 
 FS_TYPE_OFFSET    equ FS_NAME_LEN
-FS_PARENT_OFFSET  equ FS_NAME_LEN + 1
+FS_PARENT_LO_OFFSET equ FS_NAME_LEN + 1   ; (see fs_scratch_parent)
+FS_PARENT_HI_OFFSET equ 158               ; (154-157: src/dktrash.asm, src/dkart.asm)
 FS_CONTENT_OFFSET equ FS_NAME_LEN + 2
 
 FS_TYPE_FREE equ 0
@@ -91,7 +81,7 @@ FS_NO_CHAIN         equ 0xFFFF
 ; --- High memory (above the kernel image), shared by all consoles ---
 ; The slots of every file and folder on the disk (src/fat32.asm keeps
 ; them, and the FAT, in RAM)
-FS_SLOT_CACHE     equ 0x3E00000             ; 1024 x 512 bytes
+FS_SLOT_CACHE     equ 0xA500000             ; 8192 x 512 bytes (4MB)
 FS_SLOT_VALID     equ FS_SLOT_CACHE + FS_FILE_COUNT * 512   ; 1 bit per slot
 ; A big buffer for whole-file work (hostput, wget, a program's files)
 BIG_FILE_BUF      equ 0x6400000             ; 100MB, up to 9MB (then a PNG's
@@ -104,7 +94,6 @@ BIG_FILE_MAX      equ 0x900000              ;  BMP, the wallpaper, thumbnails)
 PROGRAM_MAX_LEN equ FS_CONTENT_LEN - 1   ; 127 bytes max per program
 
 FS_ROOT equ 0xFFFF          ; value of fs_current_dir when we're at the root
-FS_ROOT_BYTE equ 0xFF       ; value of the parent byte for records at the root
 
 ; --- Command history ---
 HISTORY_SIZE equ 8
@@ -261,7 +250,6 @@ msg_df_slots_label db "Directory slots: ", 0
 msg_df_extra_label db "Disk (FAT32):    ", 0
 msg_df_kb_used     db " KB used, ", 0
 msg_df_kb_free     db " KB free", 13, 10, 0
-msg_df_ram_label   db "RAM slots (TMP): ", 0
 msg_df_slash       db "/", 0
 msg_df_used        db " used, ", 0
 msg_df_free        db " free", 13, 10, 0
@@ -687,11 +675,11 @@ uranium_search_text times 33 db 0
 fs_tmp_path times (BUFFER_MAX + 1) db 0
 fs_tmp_slot dw 0
 fs_tmp_slot2 dw 0
-fs_cp_dest_byte db 0
+fs_cp_dest_dir dw 0
 fs_cp_new_chain dw 0
-fs_mv_dest_byte db 0
+fs_mv_dest_dir dw 0
 fs_tmp_text_ptr dw 0
-fs_tmp_dest_byte db 0
+fs_tmp_dest_dir dw 0
 fs_resolve_found dw 0
 fs_resolve_saved_si dw 0
 fs_list_found dw 0

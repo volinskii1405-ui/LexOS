@@ -21,7 +21,7 @@ DK_SB_LINES       equ 200                 ; off the top (32KB each)
 DK_VGA_LAST       equ 0x5710000           ; mode 13h windows: the picture
                                           ; as last shown (64KB per slot)
 DK_APP_MAX_PIX    equ 0x200000 / 4
-FM_MAX            equ 250                 ; Files: entries in a folder
+FM_MAX            equ 4096                ; Files: entries in a folder
 FM_ENTRY          equ 32                  ; name 0-16, kind 17, slot 20, size 24
 FM_FIND_X         equ 224                 ; the toolbar's search box
 FM_FIND_W         equ 168
@@ -695,16 +695,20 @@ dk_pictures_next:
     cmp byte [dkw_busy], 0                ;  being made from its file)
     jne .done
     mov byte [dk_pic_state], 0
-    mov ecx, FS_TOTAL_SLOTS
+    mov ecx, [fs_slot_top]
+    inc ecx
     mov ebx, [dk_pic_slot]
 .slot:
     add ebx, [dk_pic_step]                ; (on, or back: src/dkpics.asm)
-    cmp ebx, FS_TOTAL_SLOTS
+    cmp ebx, [fs_slot_top]
     jb .check
     xor ebx, ebx
     cmp dword [dk_pic_step], 0
     jg .check
-    mov ebx, FS_TOTAL_SLOTS - 1
+    mov ebx, [fs_slot_top]
+    dec ebx
+    jns .check
+    xor ebx, ebx
 .check:
     push ecx
     mov ax, bx
@@ -712,8 +716,8 @@ dk_pictures_next:
     pop ecx
     cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_FILE
     jne .next
-    mov al, [SCRATCH_ADDR + FS_PARENT_OFFSET]
-    cmp al, [dk_pic_dir]
+    call fs_scratch_parent
+    cmp ax, [dk_pic_dir]
     jne .next
     mov esi, SCRATCH_ADDR
     call dk_name_kind
@@ -2224,7 +2228,7 @@ dk_files_open:
     cmp ecx, IC_FOLDER
     jne .file
     movzx eax, word [esi + 20]            ; in: the folder's slot, its name
-    mov [dk_fm_dir], al                   ; on the path
+    mov [dk_fm_dir], ax                   ; on the path
     mov edi, dk_fm_path
 .end:
     cmp byte [edi], 0
@@ -2262,8 +2266,8 @@ dk_files_open:
     movzx eax, word [esi + 20]
     dec eax
     mov [dk_pic_slot], eax
-    mov al, [dk_fm_dir]
-    mov [dk_pic_dir], al
+    mov ax, [dk_fm_dir]
+    mov [dk_pic_dir], ax
     mov byte [dk_pic_state], 1
     mov eax, K_PICS
     call dk_win_single
@@ -2321,7 +2325,7 @@ dk_prog_scan:
     jc .done
     xor ebx, ebx
 .slot:
-    cmp ebx, FS_TOTAL_SLOTS
+    cmp ebx, [fs_slot_top]
     jae .done
     cmp dword [dk_prog_count], DK_PROG_MAX
     jae .done
@@ -2344,7 +2348,7 @@ dk_prog_scan:
     call dk_name_kind
     call dk_kind_app
     jne .next
-    mov al, [SCRATCH_ADDR + FS_PARENT_OFFSET]   ; and where it is
+    call fs_scratch_parent                ; and where it is
     mov edi, [dk_prog_count]
     shl edi, 5
     add edi, dk_prog_paths
@@ -2603,7 +2607,7 @@ dk_draw_search:
     popad
     ret
 
-; al = a folder's slot byte (FS_ROOT_BYTE: the root), edi = 32 bytes ->
+; ax = a folder's slot (FS_ROOT: the root), edi = 32 bytes ->
 ; its path there, "/" or "/A/B"
 dk_dir_path:
     pushad
@@ -2611,15 +2615,14 @@ dk_dir_path:
     mov byte [edi + 1], 0
     xor ecx, ecx                          ; folders on the way up
 .up:
-    cmp al, FS_ROOT_BYTE
+    cmp ax, FS_ROOT
     je .climbed
     cmp ecx, 4
     jae .climbed
-    movzx eax, al
+    movzx eax, ax
     mov [dk_path_up + ecx*4], eax
     inc ecx
-    call fs_read_slot
-    mov al, [SCRATCH_ADDR + FS_PARENT_OFFSET]
+    call fs_parent_of
     jmp .up
 .climbed:
     jecxz .done
@@ -3452,7 +3455,7 @@ dk_sel_clear:
     push ecx
     push eax
     mov edi, dk_fm_selmap
-    mov ecx, 32 / 4
+    mov ecx, FM_MAX / 32
     xor eax, eax
     cld
     rep stosd
@@ -3463,14 +3466,14 @@ dk_sel_clear:
 
 ; ebx = an entry: selected
 dk_sel_set:
-    cmp ebx, 256
+    cmp ebx, FM_MAX
     jae .done
     bts [dk_fm_selmap], ebx
 .done:
     ret
 
 dk_sel_toggle:
-    cmp ebx, 256
+    cmp ebx, FM_MAX
     jae .done
     btc [dk_fm_selmap], ebx
 .done:
@@ -3478,7 +3481,7 @@ dk_sel_toggle:
 
 ; ebx = an entry -> carry=0 if selected
 dk_sel_test:
-    cmp ebx, 256
+    cmp ebx, FM_MAX
     jae .no
     bt [dk_fm_selmap], ebx
     cmc
@@ -3679,7 +3682,7 @@ dk_right_click:
     call dk_trash_find                    ; (in the trash: other items)
     mov byte [dk_ctx_in_trash], 0
     jc .not_trash
-    cmp al, [dk_fm_dir]
+    cmp ax, [dk_fm_dir]
     jne .not_trash
     mov byte [dk_ctx_in_trash], 1
 .not_trash:
@@ -4006,7 +4009,7 @@ dk_ctx_do:
     cmp byte [edx + 17], IC_UP
     je .done
     movzx ecx, word [edx + 20]            ; its slot
-    mov bl, [dk_fm_dir]
+    mov bx, [dk_fm_dir]
     mov esi, edx                          ; (Rename: its name to start from)
     mov byte [dk_fm_name_tmp + FS_NAME_LEN], 0
     push eax
@@ -4139,19 +4142,20 @@ dk_trash_find:
     jc .none
     xor ebx, ebx
 .slot:
-    cmp ebx, FS_TOTAL_SLOTS
+    cmp ebx, [fs_slot_top]
     jae .none
     mov ax, bx
     call fs_read_slot
     cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
     jne .next
-    cmp byte [SCRATCH_ADDR + FS_PARENT_OFFSET], FS_ROOT_BYTE
+    call fs_scratch_parent
+    cmp ax, FS_ROOT
     jne .next
     cmp dword [SCRATCH_ADDR], 'TRAS'
     jne .next
     cmp word [SCRATCH_ADDR + 4], 'H'
     jne .next
-    mov al, bl
+    mov eax, ebx
     pop edx
     pop ebx
     clc
@@ -4185,15 +4189,16 @@ dk_files_trash:
     mov dword [SCRATCH_ADDR], 'TRAS'
     mov byte [SCRATCH_ADDR + 4], 'H'
     mov byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
-    mov byte [SCRATCH_ADDR + FS_PARENT_OFFSET], FS_ROOT_BYTE
+    mov ax, FS_ROOT
+    call fs_scratch_set_parent
     pop eax
     push eax
     call fs_write_slot
     pop eax
 .have:
-    cmp al, [dk_fm_dir]                   ; (in the trash itself: nothing)
+    cmp ax, [dk_fm_dir]                   ; (in the trash itself: nothing)
     je .done
-    mov [dk_fm_dest], al
+    mov [dk_fm_dest], ax
     mov dword [dk_fm_moved_msg], dk_fm_trashed
     xor ebx, ebx
 .each:
@@ -4402,8 +4407,8 @@ dk_toast_click:
     mov eax, [dk_toast_slot]              ; a picture: Pictures, on it
     dec eax
     mov [dk_pic_slot], eax
-    mov al, [dk_toast_dir]
-    mov [dk_pic_dir], al
+    mov ax, [dk_toast_dir]
+    mov [dk_pic_dir], ax
     mov byte [dk_pic_state], 1
     mov eax, K_PICS
     call dk_win_single
@@ -4524,14 +4529,13 @@ dk_files_up:
     jnc .done
     mov dword [dk_fm_find_len], 0         ; (another folder: no search)
     mov byte [dk_fm_find], 0
-    cmp byte [dk_fm_dir], FS_ROOT_BYTE
+    cmp word [dk_fm_dir], FS_ROOT
     je .done
     call dk_shell_idle
     jc .busy
-    movzx eax, byte [dk_fm_dir]
-    call fs_read_slot
-    mov al, [SCRATCH_ADDR + FS_PARENT_OFFSET]
-    mov [dk_fm_dir], al
+    mov ax, [dk_fm_dir]
+    call fs_parent_of
+    mov [dk_fm_dir], ax
     mov edi, dk_fm_path                   ; the path: without its last part
     xor ecx, ecx
 .end:
@@ -4571,22 +4575,22 @@ dk_files_move:
     mov edi, edx
     shl edi, 5
     add edi, DESK_FILES                   ; edi = where to
-    ; the destination folder's parent byte
-    movzx ebx, byte [dk_fm_dir]
+    ; the destination folder
+    movzx ebx, word [dk_fm_dir]
     cmp byte [edi + 17], IC_UP
     jne .into_folder
-    cmp bl, FS_ROOT_BYTE
+    cmp bx, FS_ROOT
     je .done
     push eax
     mov eax, ebx
-    call fs_read_slot
+    call fs_parent_of
+    movzx ebx, ax
     pop eax
-    movzx ebx, byte [SCRATCH_ADDR + FS_PARENT_OFFSET]
     jmp .have_dest
 .into_folder:
     movzx ebx, word [edi + 20]
 .have_dest:
-    mov [dk_fm_dest], bl
+    mov [dk_fm_dest], bx
     ; the one pressed - or, if it's one of those selected, all of them
     mov ebx, eax
     call dk_sel_test
@@ -4614,8 +4618,8 @@ dk_files_move:
     popad
     ret
 
-; eax = an entry of the list: into the folder dk_fm_dest (its slot
-; byte) - not a folder into itself or below, not onto a name taken
+; eax = an entry of the list: into the folder dk_fm_dest (its slot, or
+; FS_ROOT) - not a folder into itself or below, not onto a name taken
 dk_move_entry:
     pushad
     mov esi, eax
@@ -4623,31 +4627,27 @@ dk_move_entry:
     add esi, DESK_FILES                   ; esi = what
     cmp byte [esi + 17], IC_UP
     je .done
-    movzx ebx, byte [dk_fm_dest]
+    movzx ebx, word [dk_fm_dest]
     ; a folder: not into itself or anything inside it
     cmp byte [esi + 17], IC_FOLDER
     jne .no_loop
     movzx eax, word [esi + 20]
     mov ecx, ebx
 .walk:
-    cmp cl, FS_ROOT_BYTE
+    cmp cx, FS_ROOT
     je .no_loop
-    cmp cl, al
+    cmp cx, ax
     je .refuse
     push eax
-    movzx eax, cl
-    call fs_read_slot
+    mov eax, ecx
+    call fs_parent_of
+    mov cx, ax
     pop eax
-    mov cl, [SCRATCH_ADDR + FS_PARENT_OFFSET]
     jmp .walk
 .no_loop:
     ; the name mustn't be taken there
     push word [fs_current_dir]
-    movzx eax, byte [dk_fm_dest]
-    cmp al, FS_ROOT_BYTE
-    jne .dir_set
-    mov ax, FS_ROOT
-.dir_set:
+    mov ax, [dk_fm_dest]
     mov [fs_current_dir], ax
     push esi                              ; (fs_find_by_name wants a low si)
     mov edi, fs_tmp_name
@@ -4666,8 +4666,10 @@ dk_move_entry:
     movzx eax, word [esi + 20]
     call fs_read_slot
     call dkt_note_origin                  ; (where it was: src/dktrash.asm)
-    mov bl, [dk_fm_dest]
-    mov [SCRATCH_ADDR + FS_PARENT_OFFSET], bl
+    push eax
+    mov ax, [dk_fm_dest]
+    call fs_scratch_set_parent
+    pop eax
     call fs_write_slot
     mov byte [dk_fm_refresh], 1
     mov eax, [dk_fm_moved_msg]
@@ -4697,7 +4699,7 @@ dk_files_refresh:
     jnc .counted
     mov edi, DESK_FILES
     xor edx, edx                          ; entries
-    cmp byte [dk_fm_dir], FS_ROOT_BYTE
+    cmp word [dk_fm_dir], FS_ROOT
     je .pass
     mov dword [edi], '..'                 ; ".."
     mov byte [edi + 17], IC_UP
@@ -4709,7 +4711,7 @@ dk_files_refresh:
 .scan_pass:
     xor ebx, ebx
 .slot:
-    cmp ebx, FS_TOTAL_SLOTS
+    cmp ebx, [fs_slot_top]
     jae .pass_done
     cmp edx, FM_MAX
     jae .listed
@@ -4718,8 +4720,10 @@ dk_files_refresh:
     mov al, [SCRATCH_ADDR + FS_TYPE_OFFSET]
     cmp al, FS_TYPE_FREE
     je .next
-    mov ah, [SCRATCH_ADDR + FS_PARENT_OFFSET]
-    cmp ah, [dk_fm_dir]
+    push eax
+    call fs_scratch_parent
+    cmp ax, [dk_fm_dir]
+    pop eax
     jne .next
     cmp al, FS_TYPE_DIR
     sete ah
@@ -4775,6 +4779,8 @@ dk_files_refresh:
 .page_ok:
     mov eax, [timer_ms]
     mov [dk_fm_listed], eax
+    mov eax, [fs_gen]
+    mov [dk_fm_gen], eax
     mov eax, K_FILES
     call dk_mark_kind
 .done:
@@ -5361,12 +5367,18 @@ dk_windows_work:
     sub eax, [dk_fm_listed]
     cmp eax, 2000
     jb .done
+    mov eax, [fs_gen]                     ; (nothing changed on the disk:
+    cmp eax, [dk_fm_gen]                  ;  the list's still right)
+    jne .refresh
+    mov eax, [timer_ms]
+    mov [dk_fm_listed], eax
+    jmp .done
 .refresh:
     call dk_files_refresh
     jmp .done
 .first:
     mov byte [dk_fm_inited], 1
-    mov byte [dk_fm_dir], FS_ROOT_BYTE
+    mov word [dk_fm_dir], FS_ROOT
     mov word [dk_fm_path], '/'
     mov dword [dk_fm_page], 0
     mov dword [dk_fm_sel], -1
@@ -5794,7 +5806,7 @@ dk_toast_buf      times 64 db 0
 dk_shot_saved     db "Screenshot saved: ", 0
 dk_shot_pics      db "PICS/", 0
 dk_shot_failed    db "The screenshot couldn't be saved (disk full?).", 0
-dk_fm_selmap      times 32 db 0           ; Files: the selection, a bit each
+dk_fm_selmap      times FM_MAX / 8 db 0           ; Files: the selection, a bit each
 dk_fm_band_x0     dd 0                    ; the rubber band (screen)
 dk_fm_band_y0     dd 0
 dk_fm_band_x1     dd 0
@@ -5900,13 +5912,13 @@ dk_fm_page_n      dd 24
 dk_pic_state      db 0                    ; 0 -, 1 to load, 2 shown, 3 none
 dk_msg_note       db 0x0E, 0            ; (the tray's note: the font's own)
 dk_toast_act      db 0                  ; a click on the toast: 1 open a
-dk_toast_dir      db 0                  ; picture (its slot, its folder),
+dk_toast_dir      dw 0                  ; picture (its slot, its folder),
 dk_toast_slot     dd 0                  ; 2 stop the Clock's ringing
 dk_toast_act_l    dd dk_l_toast_open, dk_l_toast_stop
 dk_l_toast_open   db "Open", 0
 dk_l_toast_stop   db "Stop", 0
 dk_pic_slot       dd -1
-dk_pic_dir        db FS_ROOT_BYTE
+dk_pic_dir        dw FS_ROOT
 dk_pic_win        dd 0
 dk_pic_w          dd 0
 dk_pic_h          dd 0
@@ -5929,8 +5941,8 @@ dk_fm_inited      db 0
 dk_ext_tmp        dd 0
 dk_fm_refresh     db 0
 dk_fm_pass        db 0
-dk_fm_dir         db FS_ROOT_BYTE
-dk_fm_dest        db 0
+dk_fm_dir         dw FS_ROOT
+dk_fm_dest        dw 0
 dk_fm_path        times 128 db 0
 dk_fm_count       dd 0
 dk_fm_page        dd 0
@@ -5941,6 +5953,7 @@ dk_fm_press_y     dd 0
 dk_fm_last_idx    dd -1
 dk_fm_last_ms     dd 0
 dk_fm_listed      dd 0
+dk_fm_gen         dd -1
 dk_fm_msg         dd 0
 dk_fm_msg_clear   db 0
 dk_fm_cell_x      dd 0

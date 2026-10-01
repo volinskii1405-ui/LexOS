@@ -189,8 +189,8 @@ dkp_load:
 .short:
     mov al, [SCRATCH_ADDR + FS_TYPE_OFFSET]
     mov [dkp_type], al
-    mov al, [SCRATCH_ADDR + FS_PARENT_OFFSET]
-    mov [dkp_parent], al
+    call fs_scratch_parent
+    mov [dkp_parent], ax
     mov al, [SCRATCH_ADDR + FS_ATTR_OFFSET]   ; read-only?
     mov ah, al
     and ah, 0xF0
@@ -297,7 +297,7 @@ dkp_load:
     mov [dkp_kind], eax
 .kinded:
     ; the folder it's in
-    mov al, [dkp_parent]
+    mov ax, [dkp_parent]
     mov edi, dkp_where
     call dkp_path
     call dkp_look_ok                      ; (an icon to choose: programs, shortcuts)
@@ -311,9 +311,9 @@ dkp_load:
     ret
 
 ; dkn_slot, a folder -> dkp_sum_bytes, dkp_sum_files, dkp_sum_dirs: all
-; that's in it, in its folders too, however deep. Every slot is read
-; once (its parent, its kind, its size), then each one's folders are
-; followed up towards the root: does the way pass through this one?
+; that's in it, in its folders too, however deep. Each slot's folders
+; are followed up towards the root, in the slots' cache: does the way
+; pass through this one?
 dkp_folder_sum:
     pushad
     xor eax, eax
@@ -321,54 +321,44 @@ dkp_folder_sum:
     mov [dkp_sum_files], eax
     mov [dkp_sum_dirs], eax
     xor ebx, ebx
-.read:
-    cmp ebx, FS_TOTAL_SLOTS
-    jae .walk
-    mov eax, ebx
-    call fs_read_slot
-    mov al, [SCRATCH_ADDR + FS_TYPE_OFFSET]
-    mov [dkp_s_type + ebx], al
-    mov al, [SCRATCH_ADDR + FS_PARENT_OFFSET]
-    mov [dkp_s_parent + ebx], al
-    xor eax, eax
-    cmp byte [dkp_s_type + ebx], FS_TYPE_FILE
-    jne .not_file
-    call fs_get_size
-.not_file:
-    cmp byte [dkp_s_type + ebx], FS_TYPE_PROGRAM
-    jne .sized
-    movzx eax, byte [SCRATCH_ADDR + FS_CONTENT_OFFSET]
-.sized:
-    mov [dkp_s_size + ebx*4], eax
-    inc ebx
-    jmp .read
-.walk:
-    xor ebx, ebx
 .each:
-    cmp ebx, FS_TOTAL_SLOTS
+    cmp ebx, [fs_slot_top]
     jae .done
-    cmp byte [dkp_s_type + ebx], FS_TYPE_FREE
+    mov esi, ebx                          ; (the cache, as it is)
+    shl esi, 9
+    add esi, FS_SLOT_CACHE
+    cmp byte [esi + FS_TYPE_OFFSET], FS_TYPE_FREE
     je .next
-    movzx eax, byte [dkp_s_parent + ebx]
+    xor eax, eax
+    call fs_rec_parent                    ; -> ax
     mov ecx, 64                           ; (a loop in a broken disk: given up)
 .up:
-    cmp eax, FS_ROOT_BYTE
-    je .next
+    cmp eax, FS_FILE_COUNT                ; (the root)
+    jae .next
     cmp eax, [dkn_slot]
     je .inside
-    cmp byte [dkp_s_type + eax], FS_TYPE_DIR
+    mov edx, eax
+    shl edx, 9
+    cmp byte [FS_SLOT_CACHE + edx + FS_TYPE_OFFSET], FS_TYPE_DIR
     jne .next
-    movzx eax, byte [dkp_s_parent + eax]
+    call fs_parent_of
     loop .up
     jmp .next
 .inside:
-    cmp byte [dkp_s_type + ebx], FS_TYPE_DIR
+    cmp byte [esi + FS_TYPE_OFFSET], FS_TYPE_DIR
     jne .a_file
     inc dword [dkp_sum_dirs]
     jmp .next
 .a_file:
     inc dword [dkp_sum_files]
-    mov eax, [dkp_s_size + ebx*4]
+    cmp byte [esi + FS_TYPE_OFFSET], FS_TYPE_PROGRAM
+    je .program
+    mov eax, ebx
+    call fat_size_of                      ; -> ecx
+    add [dkp_sum_bytes], ecx
+    jmp .next
+.program:
+    movzx eax, byte [esi + FS_CONTENT_OFFSET]
     add [dkp_sum_bytes], eax
 .next:
     inc ebx
@@ -377,24 +367,24 @@ dkp_folder_sum:
     popad
     ret
 
-; al = a folder's slot byte, edi = 128 bytes -> "/A/B/C" ("/": the root)
+; ax = a folder's slot (FS_ROOT: the root), edi = 128 bytes -> "/A/B/C"
 dkp_path:
     pushad
     mov byte [edi], '/'
     mov byte [edi + 1], 0
     xor ecx, ecx                          ; the folders on the way up
 .up:
-    cmp al, FS_ROOT_BYTE
+    cmp ax, FS_ROOT
     je .climbed
     cmp ecx, 7
     jae .climbed
-    movzx eax, al
+    movzx eax, ax
     mov [dkp_up + ecx*4], eax
     inc ecx
     call fs_read_slot
     cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
     jne .climbed
-    mov al, [SCRATCH_ADDR + FS_PARENT_OFFSET]
+    call fs_scratch_parent
     jmp .up
 .climbed:
     mov ebx, edi                          ; (where the text is)
@@ -1015,7 +1005,7 @@ dkp_l_change     db "Change icon...", 0
 dkp_m_choose     db "Choose its icon (the first: its own):", 0
 dkp_loaded       db 0
 dkp_type         db 0
-dkp_parent       db 0
+dkp_parent       dw 0
 dkp_ro           db 0
 dkp_ro_was       db 0
 dkp_look         db 0                     ; its icon: 0 its own, or a kind + 1
@@ -1034,9 +1024,6 @@ dkp_inside_text  times 64 db 0
 dkp_sum_bytes    dd 0
 dkp_sum_files    dd 0
 dkp_sum_dirs     dd 0
-dkp_s_type       times FS_TOTAL_SLOTS db 0
-dkp_s_parent     times FS_TOTAL_SLOTS db 0
-dkp_s_size       times FS_TOTAL_SLOTS dd 0
 dkp_time_text    times 24 db 0
 dkp_labels       dd dkp_l_where, dkp_l_kind, dkp_l_size, dkp_l_time
 dkp_values       dd dkp_where, 0, dkp_size_text, dkp_time_text

@@ -837,10 +837,10 @@ dkx_ctx_do:
 ; eax = Create's items, or a desktop icon's (Open, Rename, Delete)
 dkx_ctx_create:
     pushad
-    mov bl, [dk_fm_dir]                   ; where: Files' folder, or /DESKTOP
+    mov bx, [dk_fm_dir]                   ; where: Files' folder, or /DESKTOP
     cmp byte [dk_ctx_where], 1
     je .where
-    mov bl, [dki_dir]
+    mov bx, [dki_dir]
 .where:
     cmp eax, DKC_NEW_LNK
     ja .icon
@@ -891,7 +891,7 @@ dkx_ctx_create:
     mov esi, ebx
     shl esi, 4
     add esi, dki_file
-    mov bl, [dki_dir]
+    mov bx, [dki_dir]
     cmp eax, DKC_IPROPS                   ; (src/dkprops.asm)
     jne .not_props
     call dkp_ask
@@ -904,7 +904,7 @@ dkx_ctx_create:
     jmp .done
 .delete:
     mov byte [dkn_op], DKN_TRASH          ; (no dialog: straight away)
-    mov [dkn_dir], bl
+    mov [dkn_dir], bx
     mov [dkn_slot], ecx
     mov dword [dkn_len], 0
     mov byte [dkn_req], 1
@@ -1462,10 +1462,10 @@ dkx_startup_scan:
     je .done
     cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
     jne .done
-    mov [dkx_st_dir], al
+    mov [dkx_st_dir], ax
     xor ebx, ebx
 .slot:
-    cmp ebx, FS_TOTAL_SLOTS
+    cmp ebx, [fs_slot_top]
     jae .done
     cmp dword [dkx_st_n], DKX_ST_MAX
     jae .done
@@ -1476,8 +1476,8 @@ dkx_startup_scan:
     je .next
     cmp al, FS_TYPE_DIR
     je .next
-    mov al, [SCRATCH_ADDR + FS_PARENT_OFFSET]
-    cmp al, [dkx_st_dir]
+    call fs_scratch_parent
+    cmp ax, [dkx_st_dir]
     jne .next
     mov esi, SCRATCH_ADDR                 ; its name
     mov edi, dkx_st_name
@@ -1775,7 +1775,7 @@ dkx_fc_pic:
     cmp eax, '.PNG'
     jne .done
 .pic:
-    mov al, [dk_fm_dir]
+    mov ax, [dk_fm_dir]
     mov edi, aext_clip_pic
     call dk_dir_path
     xor al, al
@@ -1830,11 +1830,7 @@ dkx_fc_paste:
     pushad
     push word [fs_current_dir]
     push dword [fs_tmp_slot]
-    movzx eax, byte [dk_fm_dir]           ; the folder: fs_current_dir
-    cmp al, FS_ROOT_BYTE
-    jne .dir
-    mov eax, FS_ROOT
-.dir:
+    mov ax, [dk_fm_dir]                   ; the folder: fs_current_dir
     mov [fs_current_dir], ax
     mov dword [dkx_fc_done], 0
     xor ebx, ebx
@@ -1923,23 +1919,23 @@ dkx_fc_copy_one:
 ; carry=1 if not (there already, a folder into itself, a name taken)
 dkx_fc_move_one:
     pushad
-    mov dl, [dk_fm_dir]                   ; the destination's slot byte
-    cmp [SCRATCH_ADDR + FS_PARENT_OFFSET], dl
+    mov dx, [dk_fm_dir]                   ; the destination's slot
+    call fs_scratch_parent_is_dx
     je .fail
     movzx eax, word [dkx_fc_slot + ebx*2]
     cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
     jne .not_dir
-    movzx ecx, dl                         ; a folder: not into itself or below
+    movzx ecx, dx                         ; a folder: not into itself or below
 .walk:
-    cmp cl, FS_ROOT_BYTE
+    cmp cx, FS_ROOT
     je .not_dir
-    cmp cl, al
+    cmp cx, ax
     je .fail
     push eax
-    movzx eax, cl
-    call fs_read_slot
+    mov eax, ecx
+    call fs_parent_of
+    mov cx, ax
     pop eax
-    mov cl, [SCRATCH_ADDR + FS_PARENT_OFFSET]
     jmp .walk
 .not_dir:
     push eax                              ; (dki_copy: al)
@@ -1957,8 +1953,10 @@ dkx_fc_move_one:
     jne .fail
     call fs_read_slot                     ; moved: its parent
     call dkt_note_origin                  ; (Restore's: src/dktrash.asm)
-    mov dl, [dk_fm_dir]
-    mov [SCRATCH_ADDR + FS_PARENT_OFFSET], dl
+    push eax
+    mov ax, [dk_fm_dir]
+    call fs_scratch_set_parent
+    pop eax
     call fs_write_slot
     popad
     clc
@@ -2087,7 +2085,7 @@ dkx_msg_bye_cat  db "  /\_/\  ", 0
                  db "  > ^ <  ", 0, 0
 dkx_st_scan      db 0
 dkx_st_launching db 0
-dkx_st_dir       db 0
+dkx_st_dir       dw 0
 dkx_st_n         dd 0
 dkx_st_i         dd 0
 dkx_st_next      dd 0

@@ -44,7 +44,7 @@ dkd_files_drop:
     je .theirs
     call dk_shell_idle                    ; (the disk: to read)
     jc .theirs
-    mov al, [dk_fm_dir]                   ; its path: the folder's, its name
+    mov ax, [dk_fm_dir]                   ; its path: the folder's, its name
     mov edi, dkd_path
     call dk_dir_path
     call dkd_path_end
@@ -68,9 +68,9 @@ dkd_files_drop:
     je .theirs
     cmp edx, [dk_fm_press]
     je .theirs
-    call dkd_entry_folder                 ; -> al, carry=1: not a folder
+    call dkd_entry_folder                 ; -> ax, carry=1: not a folder
     jc .theirs
-    mov dl, al
+    mov dx, ax
     mov al, DKD_COPY
     call dkd_from_files
     jmp .mine
@@ -79,7 +79,7 @@ dkd_files_drop:
     jge .theirs
     call dk_shell_idle                    ; (the disk: to read)
     jc .theirs
-    mov dl, [dki_dir]                     ; /DESKTOP - or a folder's icon
+    mov dx, [dki_dir]                     ; /DESKTOP - or a folder's icon
     call dki_at                           ; -> ecx
     cmp ecx, -1
     je .have_dest
@@ -94,11 +94,11 @@ dkd_files_drop:
     call dk_files_trash
     jmp .mine
 .not_trash:
-    call dkd_icon_folder                  ; -> al, carry=1: not a folder
+    call dkd_icon_folder                  ; -> ax, carry=1: not a folder
     jc .have_dest
-    mov dl, al
+    mov dx, ax
 .have_dest:
-    cmp dl, [dk_fm_dir]                   ; (from there already: nothing)
+    cmp dx, [dk_fm_dir]                   ; (from there already: nothing)
     je .theirs
     mov al, DKD_MOVE
     cmp byte [lang_ctrl_held], 0
@@ -106,7 +106,7 @@ dkd_files_drop:
     mov al, DKD_COPY
 .mode:
     call dkd_from_files
-    cmp dl, [dki_dir]                     ; onto the desktop: an icon where
+    cmp dx, [dki_dir]                     ; onto the desktop: an icon where
     jne .mine                             ; it was dropped
     mov eax, [dk_fm_press]
     shl eax, 5
@@ -131,7 +131,7 @@ dkd_files_drop:
     stc
     ret
 
-; al = DKD_*, dl = where to: Files' pressed entry - or, if it's one of
+; al = DKD_*, dx = where to: Files' pressed entry - or, if it's one of
 ; those selected, all of them - asked for
 dkd_from_files:
     pushad
@@ -170,10 +170,10 @@ dkd_add_entry:
     popad
     ret
 
-; al = DKD_*, dl = the folder: a new list
+; al = DKD_*, dx = the folder: a new list
 dkd_begin:
     mov [dkd_mode], al
-    mov [dkd_dest], dl
+    mov [dkd_dest], dx
     mov dword [dkd_n], 0
     mov byte [dkd_place_name], 0
     ret
@@ -199,7 +199,7 @@ dkd_add:
     popad
     ret
 
-; edx = a Files entry -> al = the folder it stands for (".." too: the
+; edx = a Files entry -> ax = the folder it stands for (".." too: the
 ; folder above); carry=1 if it isn't one
 dkd_entry_folder:
     push esi
@@ -210,19 +210,15 @@ dkd_entry_folder:
     je .folder
     cmp byte [esi + 17], IC_UP
     jne .no
-    mov al, [dk_fm_dir]
-    cmp al, FS_ROOT_BYTE
+    mov ax, [dk_fm_dir]
+    cmp ax, FS_ROOT
     je .no
-    push eax
-    movzx eax, al
-    call fs_read_slot
-    pop eax
-    mov al, [SCRATCH_ADDR + FS_PARENT_OFFSET]
+    call fs_parent_of
     pop esi
     clc
     ret
 .folder:
-    mov al, [esi + 20]
+    mov ax, [esi + 20]
     pop esi
     clc
     ret
@@ -231,7 +227,7 @@ dkd_entry_folder:
     stc
     ret
 
-; ecx = a desktop icon -> al = the folder it is (or opens); carry=1 if
+; ecx = a desktop icon -> ax = the folder it is (or opens); carry=1 if
 ; it isn't one (reads the disk: dk_shell_idle first)
 dkd_icon_folder:
     push esi
@@ -303,18 +299,18 @@ dkd_icon_drop:
     clc
     ret
 .into_files:
-    mov dl, [dk_fm_dir]                   ; Files: its folder, or one in it
+    mov dx, [dk_fm_dir]                   ; Files: its folder, or one in it
     call dk_files_entry_at                ; -> edx (its own register)
     cmp edx, -1
     je .files_dir
     push edx
-    call dkd_entry_folder                 ; -> al
+    call dkd_entry_folder                 ; -> ax
     pop edx
     jc .files_dir
-    mov dl, al
+    mov dx, ax
     jmp .have_dest
 .files_dir:
-    mov dl, [dk_fm_dir]
+    mov dx, [dk_fm_dir]
     jmp .have_dest
 .on_desktop:
     mov ecx, [dki_n]                      ; another icon there, a folder?
@@ -333,11 +329,11 @@ dkd_icon_drop:
     jae .other
     call dkd_is_trash                     ; onto the trash: its Delete
     jnc .to_trash
-    call dkd_icon_folder                  ; -> al
+    call dkd_icon_folder                  ; -> ax
     jc .theirs
-    mov dl, al
+    mov dx, ax
 .have_dest:
-    cmp dl, [dki_dir]                     ; (the desktop itself: just moved)
+    cmp dx, [dki_dir]                     ; (the desktop itself: just moved)
     je .theirs
     mov esi, dki_folder_path              ; the icon's file: its slot
     mov edi, dki_tmp_path
@@ -355,7 +351,7 @@ dkd_icon_drop:
     pop ebx
     cmp eax, -1
     je .theirs
-    cmp dl, al                            ; (a folder into itself: no)
+    cmp dx, ax                            ; (a folder into itself: no)
     je .theirs
     mov ecx, eax
     mov al, DKD_MOVE
@@ -398,8 +394,8 @@ dkd_icon_drop:
     cmp eax, -1
     je .theirs
     mov byte [dkn_op], DKN_TRASH
-    mov cl, [dki_dir]
-    mov [dkn_dir], cl
+    mov cx, [dki_dir]
+    mov [dkn_dir], cx
     mov [dkn_slot], eax
     mov dword [dkn_len], 0
     mov byte [dkn_req], 1
@@ -550,11 +546,11 @@ dkd_run:
     mov [dkx_fc_n], eax
     mov al, [dkd_mode]
     mov [dkx_fc_mode], al
-    mov al, [dkd_dest]
-    mov [dk_fm_dir], al
+    mov ax, [dkd_dest]
+    mov [dk_fm_dir], ax
     call dkx_fc_paste
     pop eax
-    mov [dk_fm_dir], al
+    mov [dk_fm_dir], ax
     pop eax
     mov [dkx_fc_mode], al
     pop eax
@@ -668,7 +664,7 @@ dkd_place:
 dkd_req          db 0
 dkd_path         times 96 db 0
 dkd_mode         db 0
-dkd_dest         db 0
+dkd_dest         dw 0
 dkd_n            dd 0
 dkd_slot         times DKX_FC_MAX dw 0    ; (as dkx_fc_slot, dkx_fc_name:
 dkd_name         times DKX_FC_MAX * 16 db 0  ;  one after the other)

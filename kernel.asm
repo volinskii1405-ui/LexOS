@@ -233,51 +233,9 @@ ata_dma_available   db 0     ; 1 once ata_dma_probe finds a controller
 align 16
 ata_prdt2           times 4 dd 0  ; ata_read_lba/ata_write_lba's: two entries
 
-; --- fs_read_slot/fs_write_slot's (src/filesystem.asm) RAM-backed
-; slots, see the note above FS_RAM_FILE_COUNT in data.asm. Living here
-; for the same reason as everything else on this page: reached only
-; through 32-bit registers, so the 4 KB buffer doesn't need to sit
-; below 0x10000 and appending it can't push anything else past that
-; mark. fs_tmp_dir_slot caches the TMP folder's own (ordinary,
-; disk-backed) slot index once fs_ensure_tmp_dir finds or creates it -
-; FS_TMP_DIR_UNSET is a value fs_current_dir can never actually hold
-; (unlike FS_ROOT, which it can), so fs_find_free's "is the CURRENT
-; directory the TMP folder" check can't misfire while TMP hasn't been
-; set up yet (fs_ensure_tmp_dir itself calls fs_find_free, to allocate
-; TMP's own slot, before this is ever assigned).
-FS_TMP_DIR_UNSET equ 0xFFFE
-fs_tmp_dir_slot dw FS_TMP_DIR_UNSET
-fs_ram_slots    times 512 * FS_RAM_FILE_COUNT db 0
-
-; fs_ram_slot_read / fs_ram_slot_write: ax = full slot index
-; (FS_FILE_COUNT..FS_TOTAL_SLOTS-1) - copies the corresponding 512-byte
-; record between fs_ram_slots and SCRATCH_ADDR. No disk I/O at all, so
-; unlike ata_read_sector/ata_write_sector this can't fail.
-fs_ram_slot_read:
-    pushad
-    movzx eax, ax
-    sub eax, FS_FILE_COUNT
-    imul eax, eax, 512
-    mov esi, fs_ram_slots
-    add esi, eax
-    mov edi, SCRATCH_ADDR
-    mov ecx, 512
-    rep movsb
-    popad
-    ret
-
-fs_ram_slot_write:
-    pushad
-    movzx eax, ax
-    sub eax, FS_FILE_COUNT
-    imul eax, eax, 512
-    mov edi, fs_ram_slots
-    add edi, eax
-    mov esi, SCRATCH_ADDR
-    mov ecx, 512
-    rep movsb
-    popad
-    ret
+; --- the TMP folder's slot, once fs_ensure_tmp_dir (src/programs.asm)
+; has found or made it (an ordinary folder on the disk) ---
+fs_tmp_dir_slot dw 0xFFFE
 
 ; --- src/dosrun.asm's (.com program support) extended GDT and saved
 ; state ---

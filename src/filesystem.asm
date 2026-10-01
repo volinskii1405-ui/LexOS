@@ -2,7 +2,7 @@
 ; One file/folder = one sector. Sector layout (see the FS_* constants in data.asm):
 ;   bytes 0..7  - name (ASCII, zero-padded)
 ;   byte 8      - type (0=free, 1=file, 2=folder)
-;   byte 9      - parent folder's slot index (0xFF = root)
+;   bytes 17,158 - parent folder's slot index (FS_ROOT = root)
 ;   bytes 10..  - content (null-terminated, files only)
 ;
 ; DISK ACCESS: only through our own ATA driver (direct controller port access).
@@ -16,16 +16,15 @@
 ;          fs_find_prefix_match, fs_name_has_prefix, fs_read_slot_name,
 ;          fs_name_matches_wildcard
 
-; --- Reads a slot (index in ax) into SCRATCH_ADDR: from the slots'
+; --- Reads a slot (index in ax) into SCRATCH_ADDR, from the slots'
 ;     cache (every file and folder on the disk is there: src/fat32.asm's
-;     fat_mount read them all at boot), or a copy from fs_ram_slots
-;     (kernel.asm) for a RAM slot (FS_FILE_COUNT..FS_TOTAL_SLOTS-1) - see
-;     the note above FS_RAM_FILE_COUNT in data.asm. carry=0. ---
+;     fat_mount read them all at boot). An index past the table reads
+;     as a free slot. carry=0. ---
 fs_read_slot:
     push ax
 
     cmp ax, FS_FILE_COUNT
-    jae .ram_slot
+    jae .none
 
     push ecx
     push esi
@@ -44,22 +43,30 @@ fs_read_slot:
     clc
     ret
 
-.ram_slot:
-    call fs_ram_slot_read
+.none:
+    push ecx
+    push edi
+    mov edi, SCRATCH_ADDR
+    xor eax, eax
+    mov ecx, 128
+    cld
+    rep stosd
+    pop edi
+    pop ecx
     pop ax
+    clc
     ret
 
 ; --- Writes SCRATCH_ADDR into a slot (index in ax) - on the disk that's
 ;     what the change means there (src/fat32.asm's fat_sync_slot: an
 ;     entry made, removed, renamed, moved, the content written), then the
-;     cache; a RAM slot's just memory.
+;     cache.
 ;     Returns: carry=0 on success, carry=1 on error (the disk full...). ---
 fs_write_slot:
+    cmp ax, FS_FILE_COUNT
+    jae .bad
     call jnl_stamp                ; when it changed (src/fsjournal.asm)
     push ax
-
-    cmp ax, FS_FILE_COUNT
-    jae .ram_slot
 
     pushad
     movzx ebx, ax
@@ -95,6 +102,14 @@ fs_write_slot:
     mov ecx, 128
     rep movsd
     bts [FS_SLOT_VALID], ebx
+    inc dword [fs_gen]
+    cmp byte [FAT_NEW + FS_TYPE_OFFSET], FS_TYPE_FREE
+    je .top_ok
+    cmp ebx, [fs_slot_top]
+    jb .top_ok
+    inc ebx
+    mov [fs_slot_top], ebx
+.top_ok:
     popad
 
     pop ax
@@ -105,29 +120,23 @@ fs_write_slot:
 .ok:
     clc
     ret
-
-.ram_slot:
-    call fs_ram_slot_write        ; always succeeds - it's just memory
-    pop ax
-    clc
+.bad:
+    stc
     ret
 
 fs_last_carry  db 0
 
-; --- esi = a slot's index -> esi = its record: in the cache, or a RAM
-;     slot's in fs_ram_slots ---
-fs_ram_record_or_cache:
-    cmp esi, FS_FILE_COUNT
-    jae fs_ram_record
+; One past the highest slot ever used (since boot) - every slot from
+; here up is free, so a scan of "all the files" stops here.
+fs_slot_top    dd 0
+; Counts every change to a slot (and a file's size): a list of a folder
+; made when it was the same is still right (Files' every-2-seconds look)
+fs_gen         dd 0
+
+; --- esi = a slot's index -> esi = its record in the cache ---
+fs_slot_record:
     shl esi, 9
     add esi, FS_SLOT_CACHE
-    ret
-
-; --- esi = a RAM slot's index -> esi = its record (fs_ram_slots) ---
-fs_ram_record:
-    sub esi, FS_FILE_COUNT
-    shl esi, 9
-    add esi, fs_ram_slots
     ret
 
 ; --- Reads a byte from the scratch buffer at offset (in ax) -> al ---
@@ -150,14 +159,56 @@ fs_scratch_write_byte:
     pop esi
     ret
 
-; --- Returns al = the "parent" byte corresponding to the current directory
-;     (0xFF if we're in the root, otherwise the low byte of fs_current_dir). ---
-fs_get_current_parent_byte:
-    mov ax, [fs_current_dir]
-    cmp ax, FS_ROOT
-    jne .done
-    mov al, FS_ROOT_BYTE
-.done:
+; --- A record's parent is a word (a folder's slot, or FS_ROOT - the same
+;     as fs_current_dir's values) split in two: its low byte at
+;     FS_PARENT_LO_OFFSET, the high one at FS_PARENT_HI_OFFSET. ---
+
+; ax = the parent of the record in SCRATCH_ADDR
+fs_scratch_parent:
+    mov al, [SCRATCH_ADDR + FS_PARENT_LO_OFFSET]
+    mov ah, [SCRATCH_ADDR + FS_PARENT_HI_OFFSET]
+    ret
+
+; the parent of the record in SCRATCH_ADDR := ax
+fs_scratch_set_parent:
+    mov [SCRATCH_ADDR + FS_PARENT_LO_OFFSET], al
+    mov [SCRATCH_ADDR + FS_PARENT_HI_OFFSET], ah
+    ret
+
+; ZF=1 if the record in SCRATCH_ADDR's parent is dx
+fs_scratch_parent_is_dx:
+    cmp dl, [SCRATCH_ADDR + FS_PARENT_LO_OFFSET]
+    jne .r
+    cmp dh, [SCRATCH_ADDR + FS_PARENT_HI_OFFSET]
+.r:
+    ret
+
+; ax = the parent of the record at [esi] (its parent word)
+fs_rec_parent:
+    mov al, [esi + FS_PARENT_LO_OFFSET]
+    mov ah, [esi + FS_PARENT_HI_OFFSET]
+    ret
+
+; the parent of the record at [esi] := ax
+fs_rec_set_parent:
+    mov [esi + FS_PARENT_LO_OFFSET], al
+    mov [esi + FS_PARENT_HI_OFFSET], ah
+    ret
+
+; ax = slot ax's parent (from the cache; FS_ROOT for the root itself or
+; a slot past the table). Only ax changes.
+fs_parent_of:
+    cmp ax, FS_FILE_COUNT
+    jae .root
+    push esi
+    movzx esi, ax
+    shl esi, 9
+    add esi, FS_SLOT_CACHE
+    call fs_rec_parent
+    pop esi
+    ret
+.root:
+    mov ax, FS_ROOT
     ret
 
 ; --- Converts the character in al to uppercase (a-z -> A-Z), otherwise leaves it alone ---
@@ -237,12 +288,11 @@ fs_find_by_name:
     push dx
 
     mov cx, si
-    call fs_get_current_parent_byte
-    mov dl, al
+    mov dx, [fs_current_dir]
 
     xor bx, bx
 .scan:
-    cmp bx, FS_TOTAL_SLOTS
+    cmp bx, [fs_slot_top]
     jae .not_found
 
     push ax
@@ -257,11 +307,7 @@ fs_find_by_name:
     pop ax
     je .next
 
-    push ax
-    mov ax, FS_PARENT_OFFSET
-    call fs_scratch_read_byte
-    cmp al, dl
-    pop ax
+    call fs_scratch_parent_is_dx
     jne .next
 
     mov si, cx
@@ -351,12 +397,11 @@ fs_find_prefix_match:
     push si
 
     mov cx, si
-    call fs_get_current_parent_byte
-    mov dl, al
+    mov dx, [fs_current_dir]
 
     xor bx, bx
 .scan:
-    cmp bx, FS_TOTAL_SLOTS
+    cmp bx, [fs_slot_top]
     jae .not_found
 
     push ax
@@ -371,11 +416,7 @@ fs_find_prefix_match:
     pop ax
     je .next
 
-    push ax
-    mov ax, FS_PARENT_OFFSET
-    call fs_scratch_read_byte
-    cmp al, dl
-    pop ax
+    call fs_scratch_parent_is_dx
     jne .next
 
     mov si, cx
@@ -508,93 +549,31 @@ fs_name_matches_wildcard:
 
 wc_star_p dw 0
 
-; --- Finds the first free slot. ax=index or -1.
-;     Ordinarily scans the real disk slots (0..FS_FILE_COUNT-1); while
-;     the current directory IS the TMP folder itself (fs_tmp_dir_slot,
-;     src/programs.asm's fs_ensure_tmp_dir), scans the RAM-backed range
-;     instead (FS_FILE_COUNT..FS_TOTAL_SLOTS-1, see data.asm), so a file
-;     created directly inside TMP never touches the real disk pool at
-;     all. A file placed into TMP some other way (cp/mv by path from a
-;     different directory) still lands on disk, same as any other file -
-;     only creating it while `cd`'d into TMP gets the RAM slot. ---
+; --- Finds the first free slot, for a file or a folder alike (any slot
+;     will do: a parent's a word, see data.asm), and reads it into
+;     SCRATCH_ADDR. ax = the index, or -1 if the table's full. ---
 fs_find_free:
-    push bx
-
-    mov ax, [fs_current_dir]
-    cmp ax, [fs_tmp_dir_slot]
-    je .scan_ram
-
-    ; files: the slots folders can't use first, then the rest
-    mov bx, FS_DIR_SLOT_LIMIT
-.scan_high:
-    cmp bx, FS_FILE_COUNT
-    jae .scan_low_start
-    call fs_slot_free_bx
-    je .found
-    inc bx
-    jmp .scan_high
-.scan_low_start:
-    xor bx, bx
-.scan_low:
-    cmp bx, FS_DIR_SLOT_LIMIT
-    jae .not_found
-    call fs_slot_free_bx
-    je .found
-    inc bx
-    jmp .scan_low
-
-.scan_ram:
-    mov bx, FS_FILE_COUNT
-.scan_ram_loop:
-    cmp bx, FS_TOTAL_SLOTS
-    jae .not_found
-    call fs_slot_free_bx
-    je .found
-    inc bx
-    jmp .scan_ram_loop
-
-.found:
-    mov ax, bx
-    jmp .end
-
-.not_found:
-    mov ax, -1
-
-.end:
-    pop bx
-    ret
-
-; --- A free slot for a FOLDER: only 0..FS_DIR_SLOT_LIMIT-1, so that
-;     every parent pointer fits the one-byte parent field (see data.asm).
-;     ax = the slot, or -1. ---
 fs_find_free_dir:
-    push bx
-    xor bx, bx
+    push ecx
+    push esi
+    xor ecx, ecx
+    mov esi, FS_SLOT_CACHE + FS_TYPE_OFFSET
 .scan:
-    cmp bx, FS_DIR_SLOT_LIMIT
-    jae .none
-    call fs_slot_free_bx
+    cmp byte [esi], FS_TYPE_FREE
     je .found
-    inc bx
-    jmp .scan
-.found:
-    mov ax, bx
-    pop bx
-    ret
-.none:
+    add esi, 512
+    inc ecx
+    cmp ecx, FS_FILE_COUNT
+    jb .scan
     mov ax, -1
-    pop bx
+    pop esi
+    pop ecx
     ret
-
-; --- ZF=1 if slot bx is free. Preserves everything but flags. ---
-fs_slot_free_bx:
-    push ax
-    mov ax, bx
+.found:
+    mov eax, ecx
     call fs_read_slot
-    mov ax, FS_TYPE_OFFSET
-    call fs_scratch_read_byte
-    cmp al, FS_TYPE_FREE
-    pop ax
+    pop esi
+    pop ecx
     ret
 
 ; --- Copies SCRATCH_ADDR into the slot cache as slot ecx and marks it
@@ -792,13 +771,12 @@ fs_rm:
 ; USER.CFG if it's among them, and report how many were removed.
 ; ============================================================
 .batch_delete:
-    call fs_get_current_parent_byte
-    mov dl, al                         ; dl = this directory's parent byte
+    mov dx, [fs_current_dir]
 
     xor bx, bx
     xor cx, cx                          ; cx = how many were removed
 .batch_scan:
-    cmp bx, FS_TOTAL_SLOTS
+    cmp bx, [fs_slot_top]
     jae .batch_done
 
     mov ax, bx
@@ -809,9 +787,7 @@ fs_rm:
     cmp al, FS_TYPE_FREE
     je .batch_next
 
-    mov ax, FS_PARENT_OFFSET
-    call fs_scratch_read_byte
-    cmp al, dl
+    call fs_scratch_parent_is_dx
     jne .batch_next
 
     mov di, fs_rm_batch_name_buf
@@ -880,14 +856,13 @@ fs_list:
     mov al, [current_color]
     mov [fs_list_saved_color], al
 
-    call fs_get_current_parent_byte
-    mov dl, al
+    mov dx, [fs_current_dir]
 
     mov word [fs_list_found], 0
 
     xor bx, bx
 .scan:
-    cmp bx, FS_TOTAL_SLOTS
+    cmp bx, [fs_slot_top]
     jae .scan_done
 
     push bx
@@ -903,11 +878,7 @@ fs_list:
     pop ax
     je .next
 
-    push ax
-    mov ax, FS_PARENT_OFFSET
-    call fs_scratch_read_byte
-    cmp al, dl
-    pop ax
+    call fs_scratch_parent_is_dx
     jne .next
 
     inc word [fs_list_found]
@@ -1034,41 +1005,6 @@ fs_df:
     call print_string
     popad
 
-    mov si, msg_df_ram_label
-    call print_string
-
-    xor bx, bx
-    xor cx, cx                    ; cx = number of used RAM slots
-.scan_ram:
-    cmp bx, FS_RAM_FILE_COUNT
-    jae .ram_done
-    push bx
-    mov ax, bx
-    add ax, FS_FILE_COUNT
-    call fs_read_slot
-    pop bx
-    mov ax, FS_TYPE_OFFSET
-    call fs_scratch_read_byte
-    cmp al, FS_TYPE_FREE
-    je .ram_free
-    inc cx
-.ram_free:
-    inc bx
-    jmp .scan_ram
-.ram_done:
-    mov ax, cx
-    call print_dec_word
-    mov si, msg_df_slash
-    call print_string
-    mov ax, FS_RAM_FILE_COUNT
-    call print_dec_word
-    mov si, msg_df_used
-    call print_string
-    mov ax, FS_RAM_FILE_COUNT
-    sub ax, cx
-    call print_dec_word
-    mov si, msg_df_free
-    call print_string
     jmp .end
 
 .extra_error:
@@ -1357,10 +1293,8 @@ fs_mkdir:
     mov dl, FS_TYPE_DIR
     call fs_scratch_write_byte
 
-    call fs_get_current_parent_byte
-    mov dl, al
-    mov ax, FS_PARENT_OFFSET
-    call fs_scratch_write_byte
+    mov ax, [fs_current_dir]
+    call fs_scratch_set_parent
 
     mov ax, [fs_tmp_slot]
     call fs_write_slot
@@ -1432,9 +1366,8 @@ fs_bld:
 ; relative "a/b"), walking through it directory by directory.
 ; Empty segments (consecutive "/") are skipped, so
 ; "//" or "/" resolve to the root.
-; Returns: ax = the "byte" representation of the final directory
-; (0xFF = root, otherwise slot index 0..254), or ax = -1 on
-; error (the message has already been printed inside).
+; Returns: carry=0, ax = the final directory (FS_ROOT, or its slot),
+; or carry=1 on an error (the message has already been printed inside).
 ; ============================================================
 fs_resolve_path:
     push bx
@@ -1446,11 +1379,10 @@ fs_resolve_path:
     cmp al, '/'
     jne .start_relative
     inc si
-    mov bl, FS_ROOT_BYTE
+    mov bx, FS_ROOT
     jmp .next_segment
 .start_relative:
-    call fs_get_current_parent_byte
-    mov bl, al
+    mov bx, [fs_current_dir]
 
 .next_segment:
     cmp byte [si], '/'
@@ -1489,18 +1421,9 @@ fs_resolve_path:
     jmp .next_segment
 .not_empty_segment:
 
-    ; look up the segment among the children of node bl: temporarily swap fs_current_dir
+    ; look up the segment among the children of node bx: temporarily swap fs_current_dir
     push word [fs_current_dir]
-
-    mov al, bl
-    cmp al, FS_ROOT_BYTE
-    jne .set_search_normal
-    mov word [fs_current_dir], FS_ROOT
-    jmp .search_set
-.set_search_normal:
-    xor ah, ah
-    mov [fs_current_dir], ax
-.search_set:
+    mov [fs_current_dir], bx
 
     mov si, fs_tmp_name2
     call fs_find_by_name
@@ -1514,7 +1437,6 @@ fs_resolve_path:
 
     mov si, msg_fs_path_notfound
     call print_string
-    mov ax, -1
     jmp .error_exit
 
 .check_type:
@@ -1525,28 +1447,29 @@ fs_resolve_path:
 
     mov si, msg_fs_not_a_dir
     call print_string
-    mov ax, -1
     jmp .error_exit
 
 .is_dir:
-    mov ax, [fs_tmp_slot2]
-    mov bl, al
+    mov bx, [fs_tmp_slot2]
     mov si, [fs_resolve_saved_si]   ; restore the position in the path before continuing
     jmp .next_segment
 
 .success:
-    xor ah, ah
-    mov al, bl
-    jmp .end
-
-.error_exit:
-    ; ax is already = -1
-
-.end:
+    mov ax, bx
     pop di
     pop dx
     pop cx
     pop bx
+    clc
+    ret
+
+.error_exit:
+    mov ax, -1
+    pop di
+    pop dx
+    pop cx
+    pop bx
+    stc
     ret
 
 ; --- mv <name> <path> : moves a file (files only, not folders) from
@@ -1658,23 +1581,13 @@ fs_mv:
 .src_is_file:
     mov si, fs_tmp_path
     call fs_resolve_path
-    cmp ax, -1
-    je .end
+    jc .end
 
-    mov [fs_tmp_dest_byte], al
+    mov [fs_tmp_dest_dir], ax
 
     ; check whether a file with that name already exists in the target directory
     push word [fs_current_dir]
-
-    mov al, [fs_tmp_dest_byte]
-    cmp al, FS_ROOT_BYTE
-    jne .set_dest_normal
-    mov word [fs_current_dir], FS_ROOT
-    jmp .dest_set
-.set_dest_normal:
-    xor ah, ah
     mov [fs_current_dir], ax
-.dest_set:
 
     mov si, fs_tmp_name
     call fs_find_by_name
@@ -1693,9 +1606,8 @@ fs_mv:
     mov ax, [fs_tmp_slot]
     call fs_read_slot
 
-    mov ax, FS_PARENT_OFFSET
-    mov dl, [fs_tmp_dest_byte]
-    call fs_scratch_write_byte
+    mov ax, [fs_tmp_dest_dir]
+    call fs_scratch_set_parent
 
     mov ax, [fs_tmp_slot]
     call fs_write_slot
@@ -1720,14 +1632,13 @@ fs_mv:
 .batch_move:
     mov si, fs_tmp_path
     call fs_resolve_path
-    cmp ax, -1
-    je .end                            ; error message already printed
-    mov [fs_mv_dest_byte], al
+    jc .end                            ; error message already printed
+    mov [fs_mv_dest_dir], ax
 
     xor bx, bx
     xor cx, cx                          ; cx = how many were moved
 .mvbatch_scan:
-    cmp bx, FS_TOTAL_SLOTS
+    cmp bx, [fs_slot_top]
     jae .mvbatch_done
 
     mov ax, bx
@@ -1738,11 +1649,8 @@ fs_mv:
     cmp al, FS_TYPE_FILE
     jne .mvbatch_next
 
-    mov ax, FS_PARENT_OFFSET
-    call fs_scratch_read_byte
-    mov dl, al                          ; dl = this slot's own parent byte
-    call fs_get_current_parent_byte     ; al = the current directory's parent byte
-    cmp al, dl
+    call fs_scratch_parent
+    cmp ax, [fs_current_dir]
     jne .mvbatch_next
 
     mov di, fs_rm_batch_name_buf
@@ -1760,15 +1668,8 @@ fs_mv:
 
     ; does a file with this name already exist in the destination dir?
     push word [fs_current_dir]
-    mov al, [fs_mv_dest_byte]
-    cmp al, FS_ROOT_BYTE
-    jne .mvbatch_dest_normal
-    mov word [fs_current_dir], FS_ROOT
-    jmp .mvbatch_dest_set
-.mvbatch_dest_normal:
-    xor ah, ah
+    mov ax, [fs_mv_dest_dir]
     mov [fs_current_dir], ax
-.mvbatch_dest_set:
     mov si, fs_rm_batch_name_buf
     call fs_find_by_name
     pop word [fs_current_dir]
@@ -1777,9 +1678,8 @@ fs_mv:
 
     mov ax, bx
     call fs_read_slot
-    mov ax, FS_PARENT_OFFSET
-    mov dl, [fs_mv_dest_byte]
-    call fs_scratch_write_byte
+    mov ax, [fs_mv_dest_dir]
+    call fs_scratch_set_parent
     mov ax, bx
     call fs_write_slot
     jc .mvbatch_next                      ; write failed - skip
@@ -1851,16 +1751,8 @@ fs_cd:
 
 .use_resolver:
     mov si, fs_tmp_path
-    call fs_resolve_path      ; ax = target directory byte (0..254 or 0xFF), or -1 on error
-    cmp ax, -1
-    je .end                    ; error already printed inside the resolver
-
-    cmp al, FS_ROOT_BYTE
-    jne .set_normal
-    mov word [fs_current_dir], FS_ROOT
-    jmp .end
-.set_normal:
-    xor ah, ah
+    call fs_resolve_path      ; ax = the target directory, or carry=1 on an error
+    jc .end                    ; error already printed inside the resolver
     mov [fs_current_dir], ax
     jmp .end
 
@@ -1873,15 +1765,7 @@ fs_cd:
     cmp ax, FS_ROOT
     je .end
 
-    call fs_read_slot
-    mov ax, FS_PARENT_OFFSET
-    call fs_scratch_read_byte
-    cmp al, FS_ROOT_BYTE
-    jne .go_up_set
-    mov word [fs_current_dir], FS_ROOT
-    jmp .end
-.go_up_set:
-    mov ah, 0
+    call fs_parent_of
     mov [fs_current_dir], ax
 
 .end:
@@ -1942,10 +1826,8 @@ fs_ensure_readme:
     mov dl, FS_TYPE_FILE
     call fs_scratch_write_byte
 
-    call fs_get_current_parent_byte
-    mov dl, al
-    mov ax, FS_PARENT_OFFSET
-    call fs_scratch_write_byte
+    mov ax, [fs_current_dir]
+    call fs_scratch_set_parent
 
     mov si, readme_content
     mov bx, FS_CONTENT_OFFSET
@@ -2218,14 +2100,13 @@ fs_cp:
 .batch_copy:
     mov si, fs_tmp_name2
     call fs_resolve_path
-    cmp ax, -1
-    je .end                            ; error message already printed
-    mov [fs_cp_dest_byte], al
+    jc .end                            ; error message already printed
+    mov [fs_cp_dest_dir], ax
 
     xor bx, bx
     xor cx, cx                          ; cx = how many were copied
 .cpbatch_scan:
-    cmp bx, FS_TOTAL_SLOTS
+    cmp bx, [fs_slot_top]
     jae .cpbatch_done
 
     mov ax, bx
@@ -2236,11 +2117,8 @@ fs_cp:
     cmp al, FS_TYPE_FILE
     jne .cpbatch_next
 
-    mov ax, FS_PARENT_OFFSET
-    call fs_scratch_read_byte
-    mov dl, al                          ; dl = this slot's own parent byte
-    call fs_get_current_parent_byte     ; al = the current directory's parent byte
-    cmp al, dl
+    call fs_scratch_parent
+    cmp ax, [fs_current_dir]
     jne .cpbatch_next
 
     mov di, fs_rm_batch_name_buf
@@ -2258,15 +2136,8 @@ fs_cp:
 
     ; does a file with this name already exist in the destination dir?
     push word [fs_current_dir]
-    mov al, [fs_cp_dest_byte]
-    cmp al, FS_ROOT_BYTE
-    jne .cpbatch_dest_normal
-    mov word [fs_current_dir], FS_ROOT
-    jmp .cpbatch_dest_set
-.cpbatch_dest_normal:
-    xor ah, ah
+    mov ax, [fs_cp_dest_dir]
     mov [fs_current_dir], ax
-.cpbatch_dest_set:
     mov si, fs_rm_batch_name_buf
     call fs_find_by_name
     pop word [fs_current_dir]
@@ -2280,9 +2151,8 @@ fs_cp:
 
     mov ax, bx
     call fs_read_slot                     ; scratch = full record of the source file
-    mov ax, FS_PARENT_OFFSET
-    mov dl, [fs_cp_dest_byte]
-    call fs_scratch_write_byte
+    mov ax, [fs_cp_dest_dir]
+    call fs_scratch_set_parent
     mov ax, [fs_tmp_slot2]
     call fs_write_slot
     jc .cpbatch_next                      ; write failed - skip
@@ -2331,16 +2201,14 @@ fs_cp:
     ret
 
 ; --- Recursively prints "/name/name/..." for the chain of parents of a given slot.
-;     Input: ax = the slot in "byte" form (0..254, or 0xFF = root, prints nothing). ---
+;     Input: ax = the slot (FS_ROOT = root, prints nothing). ---
 fs_print_path:
-    cmp ax, 0xFF
+    cmp ax, FS_ROOT
     je .done
 
     push ax                    ; save our own slot for the duration of the recursion
 
-    call fs_read_slot            ; read our own record to find out the parent
-    mov ax, FS_PARENT_OFFSET
-    call fs_scratch_read_byte    ; ax = parent byte (0..254 or 0xFF)
+    call fs_parent_of            ; ax = our parent (FS_ROOT, or a slot)
     call fs_print_path            ; first print the parent's path (recursion)
 
     pop ax                        ; restore our own slot
@@ -2413,7 +2281,7 @@ print_indent:
     pop ax
     ret
 
-; --- Recursively prints the children of a given directory (parent byte in bl) ---
+; --- Recursively prints the children of a given directory (bx: its slot, or FS_ROOT) ---
 fs_tree_print_children:
     push ax
     push bx
@@ -2421,11 +2289,11 @@ fs_tree_print_children:
     push dx
     push si
 
-    mov dl, bl
+    mov dx, bx
 
     xor bx, bx
 .scan:
-    cmp bx, FS_TOTAL_SLOTS
+    cmp bx, [fs_slot_top]
     jae .scan_done
 
     push bx
@@ -2441,11 +2309,7 @@ fs_tree_print_children:
     pop ax
     je .next
 
-    push ax
-    mov ax, FS_PARENT_OFFSET
-    call fs_scratch_read_byte
-    cmp al, dl
-    pop ax
+    call fs_scratch_parent_is_dx
     jne .next
 
     call print_indent
@@ -2482,8 +2346,8 @@ fs_tree_print_children:
     jne .next
 
     push bx                     ; save this level's scan counter
-    ; bl is already = the found folder's index (< FS_FILE_COUNT, fits in a byte) - this
-    ; is exactly the value to pass as the parent filter for the recursive call
+    ; bx is already = the found folder's index - exactly the value to
+    ; pass as the parent filter for the recursive call
     inc byte [fs_tree_depth]
     call fs_tree_print_children  ; recursively print this folder's children
     dec byte [fs_tree_depth]
@@ -2511,8 +2375,10 @@ fs_tree:
     call print_string
 
     mov byte [fs_tree_depth], 1
-    mov bl, FS_ROOT_BYTE
+    push bx
+    mov bx, FS_ROOT
     call fs_tree_print_children
+    pop bx
     mov byte [fs_tree_depth], 0
 
     pop si

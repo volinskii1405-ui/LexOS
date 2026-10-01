@@ -47,8 +47,8 @@ dks_work:
     mov byte [dk_toast_act], 1            ; (a click on it: it, in Pictures)
     mov eax, [dks_slot]
     mov [dk_toast_slot], eax
-    mov al, [dks_dir]
-    mov [dk_toast_dir], al
+    mov ax, [dks_dir]
+    mov [dk_toast_dir], ax
     jmp .let_go
 .failed:
     mov byte [dks_state], 0
@@ -85,13 +85,14 @@ dks_start:
     call wget_append
     xor ebx, ebx
 .pics:
-    cmp ebx, FS_TOTAL_SLOTS
+    cmp ebx, [fs_slot_top]
     jae .named_dir
     mov eax, ebx
     call fs_read_slot
     cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_DIR
     jne .pics_next
-    cmp byte [SCRATCH_ADDR + FS_PARENT_OFFSET], FS_ROOT_BYTE
+    call fs_scratch_parent
+    cmp ax, FS_ROOT
     jne .pics_next
     cmp dword [SCRATCH_ADDR], 'PICS'
     jne .pics_next
@@ -129,12 +130,8 @@ dks_start:
     mov esi, fs_tmp_name
     call wget_append
     mov byte [edi], 0
-    mov al, [fs_current_dir]              ; (its folder, for the toast's click)
-    cmp word [fs_current_dir], FS_ROOT
-    jne .dir_byte
-    mov al, FS_ROOT_BYTE
-.dir_byte:
-    mov [dks_dir], al
+    mov ax, [fs_current_dir]              ; (its folder, for the toast's click)
+    mov [dks_dir], ax
     push edi                              ; its path, for the clipboard
     mov edi, dks_path
     mov byte [edi], '/'
@@ -222,4 +219,4 @@ dks_pos          dd 0
 dks_last         dd -1
 dks_said         times 64 db 0
 dks_path         times 24 db 0
-dks_dir          db 0
+dks_dir          dw 0

@@ -102,7 +102,7 @@ fh_lookup:
     jne .bad
     movzx esi, word [fh_slot + edi*2]
     push esi
-    call fs_ram_record_or_cache           ; -> esi = its record
+    call fs_slot_record                   ; -> esi = its record
     cmp byte [esi + FS_TYPE_OFFSET], FS_TYPE_FILE
     pop esi
     jne .bad
@@ -174,16 +174,10 @@ app_split_path:
     push ebx
     push edx
     mov si, buffer
-    call fs_resolve_path                  ; -> ax, or -1
+    call fs_resolve_path                  ; -> ax, or carry=1
     pop edx
     pop ebx
-    cmp ax, -1
-    je .bad_pop
-    movzx eax, al
-    cmp al, FS_ROOT_BYTE
-    jne .dir
-    mov eax, FS_ROOT
-.dir:
+    jc .bad_pop
     mov [fs_current_dir], ax
     pop eax
     push eax                              ; the name: past the last '/'
