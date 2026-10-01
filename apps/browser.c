@@ -9,14 +9,15 @@
  * text, links, lists (bullets and numbers), <pre>, <hr>, <blockquote>, <center>,
  * tables as rows of cells, <font color>, <body bgcolor>, and pictures -
  * <img> of .BMP (8, 24 or 32 bits), .PNG (png.h), .JPG (jpeg.h) and
- * .GIF (gif.h), up to 16 a page. Text is shown in LexOS's font (Russian
+ * .GIF (gif.h), up to 64 a page. Text is shown in LexOS's font (Russian
  * and Spanish letters too, the rest as near as it can be).
  *
  * So that no page comes out as gibberish: gzip'd or deflated pages are
  * unpacked (inflate.h); the charset is the server's, the <meta>'s, a
  * BOM's, or guessed from the bytes (UTF-8, windows-1251, KOI8-R, CP866,
  * ISO-8859-5, windows-1252). A page is stripped as it comes (scripts,
- * SVG, comments, most attributes left out), so a big one still fits.
+ * SVG, comments, most attributes left out) and kept whole, however big:
+ * past the program's own 4MB, malloc gets the kernel's extra memory.
  * A little CSS (css.h): what's hidden stays hidden; bold, italic,
  * colors, centering, the background. JSON and text are shown as text,
  * a picture as a picture, the rest is offered as a download.
@@ -35,7 +36,8 @@
  * reload; Esc - quit.
  *
  * Downloads: a link to a file (not a page - a .ZIP, a .BMP, a .WAV...)
- * saves it in /DOWNLOADS as it comes, the status line counting (Esc
+ * saves it in /DOWNLOADS as it comes, any size (the disk's FAT32
+ * writes it in place), the status line counting (Esc
  * stops it); Ctrl+S saves the page itself; the arrow button by Go
  * lists what's been downloaded.
  *
@@ -66,11 +68,15 @@
 #define RIGHT right_x                     /* the text's right edge (the reader: narrower) */
 static int left_x = MARGIN, right_x = W - SBW - MARGIN;
 
-#define SRC_MAX (256 * 1024)
-#define ITEMS_MAX 4500                    /* (words run together: a line's worth each) */
-#define POOL_MAX (160 * 1024)
-#define LINKS_MAX 600
-#define LPOOL_MAX (40 * 1024)
+/* the page and what's laid out of it: as big as they need to be (the
+ * memory's lexos.h's malloc - past the program's own 4MB, the kernel's
+ * extra memory), up to these */
+#define SRC_MAX (48 * 1024 * 1024)
+#define ITEMS_MAX (1024 * 1024)           /* (words run together: a line's worth each) */
+#define POOL_MAX (32 * 1024 * 1024)
+#define LINKS_MAX (256 * 1024)
+#define LPOOL_MAX (16 * 1024 * 1024)
+#define ZBUF_MAX (32 * 1024 * 1024)
 #define URL_MAX 240
 #define HIST_MAX 24
 
@@ -90,8 +96,30 @@ static int left_x = MARGIN, right_x = W - SBW - MARGIN;
 
 static unsigned frame[W * H];
 static unsigned char glyphs[4096];
-static char src[SRC_MAX + 1];
-static int srclen;
+static char *src;
+static int srclen, src_cap;
+
+/* *buf (cap elements of size each) made room for need of them (doubled,
+ * up to max): 1, or 0 if there's no memory for it */
+static int grow(void *buf, int *cap, int need, int size, int max)
+{
+    void **b = (void **)buf;
+    int want = *cap ? *cap : 1024;
+    void *nb;
+    if (need <= *cap) return 1;
+    if (need > max) return 0;
+    while (want < need) want = want > max / 2 ? max : want * 2;
+    nb = realloc(*b, (size_t)want * size + 1);
+    if (!nb) {
+        want = need;                                     /* (just enough, then) */
+        nb = realloc(*b, (size_t)want * size + 1);
+        if (!nb) return 0;
+    }
+    *b = nb;
+    *cap = want;
+    return 1;
+}
+#define SRC_ROOM(n) grow(&src, &src_cap, (n) + 1, 1, SRC_MAX)
 
 /* --- what's on the page: a list of items, laid out --- */
 enum { IT_TEXT, IT_RULE, IT_IMAGE, IT_BOX };
@@ -106,14 +134,15 @@ struct item {
     unsigned color;
     unsigned *pix;                        /* IT_IMAGE */
 };
-static struct item items[ITEMS_MAX];
-static int nitems;
-static char pool[POOL_MAX];
-static int npool;
-static int link_off[LINKS_MAX];
-static int nlinks;
-static char lpool[LPOOL_MAX];
-static int nlpool;
+static struct item *items;
+static int nitems, items_cap;
+static char *pool;
+static int npool, pool_cap;
+static int *link_off;
+static int nlinks, links_cap;
+static char *lpool;
+static int nlpool, lpool_cap;
+#define POOL_ROOM(n) grow(&pool, &pool_cap, npool + (n), 1, POOL_MAX)
 static unsigned page_bg;
 static int doc_h, scroll;
 static char title[80];
@@ -525,7 +554,7 @@ static int cur_style(void)
 static struct item *new_item(int kind)
 {
     struct item *it;
-    if (nitems >= ITEMS_MAX) return 0;
+    if (!grow(&items, &items_cap, nitems + 1, sizeof *items, ITEMS_MAX)) return 0;
     it = &items[nitems++];
     memset(it, 0, sizeof *it);
     it->kind = kind;
@@ -586,7 +615,7 @@ static void emit_text(const char *t, int n)
         int gap = x - (l->x + l->w);
         if (l->kind == IT_TEXT && l->text + l->len == npool && l->scale == scale && l->style == cur_style() &&
             l->color == cur_color() && l->link == cur_link && (gap == 0 || (gap == cw && spaced)) &&
-            npool + n + 1 <= POOL_MAX) {
+            POOL_ROOM(n + 1)) {
             if (gap) { pool[npool++] = ' '; l->len++; l->w += cw; }
             memcpy(pool + npool, t, n);
             npool += n;
@@ -600,7 +629,7 @@ static void emit_text(const char *t, int n)
         int fit = (RIGHT - x) / cw, k;
         if (fit < 1) fit = 1;
         k = n < fit ? n : fit;
-        if (npool + k > POOL_MAX || !(it = new_item(IT_TEXT))) return;
+        if (!POOL_ROOM(k) || !(it = new_item(IT_TEXT))) return;
         memcpy(pool + npool, t, k);
         it->text = npool;
         it->len = k;
@@ -655,7 +684,8 @@ static void put_char(unsigned u)
 static int add_link(const char *href)
 {
     int n = strlen(href) + 1;
-    if (nlinks >= LINKS_MAX || nlpool + n > LPOOL_MAX) return -1;
+    if (!grow(&link_off, &links_cap, nlinks + 1, sizeof *link_off, LINKS_MAX) ||
+        !grow(&lpool, &lpool_cap, nlpool + n, 1, LPOOL_MAX)) return -1;
     link_off[nlinks] = nlpool;
     memcpy(lpool + nlpool, href, n);
     nlpool += n;
@@ -900,8 +930,7 @@ static void dl_write(const char *d, int n)
         dl_fd = open(dl_path, O_WRITE);
         if (dl_fd < 0) { dl_stop = 2; return; }
     }
-    if (dl_written + n > 4 * 1024 * 1024) { dl_stop = 3; return; }
-    fwrite(dl_fd, d, n);
+    if (fwrite(dl_fd, d, n) != n) { dl_stop = 3; return; }   /* (the disk's full) */
     dl_written += n;
 }
 /* a chunked body, a piece at a time */
@@ -1036,9 +1065,16 @@ static void download(const char *u)
     }
     if (dl_fd >= 0) close(dl_fd);
     dl_fd = -1;
+    if (r == 0 && !dl_stop && !dl_chunked && dl_total > 0 && dl_written < dl_total) dl_stop = 4;
     if (r != 0 || dl_stop) {
-        copy(status, dl_stop == 1 ? "Download stopped." : dl_stop == 3 ? "Too big: 4MB at most." :
+        copy(status, dl_stop == 1 ? "Download stopped." : dl_stop == 3 ? "The disk is full." :
+                     dl_stop == 4 ? "The download was cut off: " :
                      dl_stop == 2 ? "Can't write it to /DOWNLOADS." : "The download didn't work.", sizeof status);
+        if (dl_stop == 4) {                                       /* (how much of it came) */
+            num_kb(status, dl_written, sizeof status);
+            append(status, " of ", sizeof status);
+            num_kb(status, dl_total, sizeof status);
+        }
         if (dl_written) { fd = open(dl_path, O_WRITE); if (fd >= 0) close(fd); }   /* (a part: emptied) */
         redraw();
         return;
@@ -1081,7 +1117,7 @@ static struct {                                          /* what came (Ctrl+I) *
 static int tg;                                           /* where the body goes */
 static unsigned char *tbuf;
 static int tcap, tlen, tbuf_auto;
-#define TBUF_MAX (1024 * 1024)                           /* a picture: this big at most */
+#define TBUF_MAX (16 * 1024 * 1024)                      /* a picture: this big at most */
 static char ph[HDR_MAX + 1];                             /* the headers */
 static int ph_n, ph_body, ph_chunked, ph_cstate, ph_cleft, ph_stop;
 static char ph_moved[URL_MAX];
@@ -1096,7 +1132,7 @@ static unsigned progress_at;
 enum { SS_TEXT, SS_TAG, SS_SKIP, SS_CSS, SS_COMMENT, SS_GT };
 static int st_state, st_pre, st_space, st_q, st_last, st_match, st_tn;
 static char st_tag[3072], st_end[12];
-static void st_out(int c) { if (srclen < SRC_MAX) src[srclen++] = c; else pi.trunc = 1; }
+static void st_out(int c) { if (srclen + 1 < src_cap || SRC_ROOM(srclen + 1)) src[srclen++] = c; else pi.trunc = 1; }
 static void st_outs(const char *t) { while (*t) st_out(*t++); }
 static void st_reset(void)
 {
@@ -1301,11 +1337,7 @@ static int pg_body_bytes(const unsigned char *d, int n)
 {
     pi.raw += n;
     if (pi.gz) {                                         /* gathered, unpacked at the end - */
-        if (!zbuf) {                                     /* in the frame's page part, drawn */
-            zbuf = (unsigned char *)(frame + VIEW_Y * W);  /* anew once it's in (1.6MB) */
-            zcap = VIEW_H * W * 4;
-        }
-        if (zn + n > zcap) { pi.trunc = 1; return 1; }
+        if (zn + n > zcap && !grow(&zbuf, &zcap, zn + n, 1, ZBUF_MAX)) { pi.trunc = 1; return 1; }
         memcpy(zbuf + zn, d, n);
         zn += n;
         return 0;
@@ -1520,7 +1552,7 @@ static int net_get(const char *where, char *final)
         int z = pi.gz == 1 ? gunzip(zbuf, zn, zb_put) : zinflate(zbuf, zn, zb_put);
         if (z < 0 && !pi.body) r = -2;
     }
-    zbuf = 0; zn = zcap = 0;
+    free(zbuf); zbuf = 0; zn = zcap = 0;
     if (final) copy(final, u, URL_MAX);
     return r;
 }
@@ -1542,7 +1574,7 @@ static int load_auto(const char *where, unsigned char **out)
     return tlen;
 }
 
-#define IMG_MAX_PAGE 16                   /* pictures read for a page, at most */
+#define IMG_MAX_PAGE 64                   /* pictures read for a page, at most */
 /* a picture's 0xRRGGBB pixels -> 16-bit ones (5-6-5) in the same block,
  * the block's other half given back to malloc */
 static void to16(unsigned *pix, int n)
@@ -1845,7 +1877,7 @@ static void list_item(void)
         mark[0] = d % 2 ? (char)0xF9 : 7;
         mark[1] = 0;
     }
-    if (npool + 8 <= POOL_MAX && (it = new_item(IT_TEXT))) {
+    if (POOL_ROOM(8) && (it = new_item(IT_TEXT))) {
         int n = strlen(mark);
         memcpy(pool + npool, mark, n);
         it->text = npool;
@@ -2467,7 +2499,7 @@ static void markdown(void)
     mputs("<html><body>");
     md_blocks(src, srclen);
     mputs("</body></html>");
-    if (mn > SRC_MAX) mn = SRC_MAX;
+    if (!SRC_ROOM(mn)) mn = src_cap - 1;
     memcpy(src, mo, mn);
     srclen = mn;
     free(mo);
@@ -2800,7 +2832,7 @@ static void tab_show(int i)
     memcpy(hist, t->hist, sizeof hist);
     nhist = t->nhist; hpos = t->hpos;
     editing = 0; hover_link = -1;
-    if (t->src) {
+    if (t->src && SRC_ROOM(t->srclen)) {
         memcpy(src, t->src, t->srclen);
         srclen = t->srclen;
         src[srclen] = 0;
@@ -2882,7 +2914,7 @@ static void error_page(const char *what, const char *where)
                             "<b>https://</b>.</p>", 0 };
     int i;
     *s = 0;
-    for (i = 0; parts[i]; i++) append(s, parts[i], SRC_MAX);
+    for (i = 0; parts[i]; i++) append(s, parts[i], src_cap);
     srclen = strlen(src);
 }
 
@@ -2961,18 +2993,18 @@ static void about_page(const char *where)
     char *s = src;
     *s = 0;
     if (pi.kind == PK_IMAGE) {
-        append(s, "<html><body bgcolor=\"#2a2d34\"><center><img src=\"", SRC_MAX);
-        append(s, where, SRC_MAX);
-        append(s, "\" alt=\"(this picture couldn't be shown)\"></center></body></html>", SRC_MAX);
+        append(s, "<html><body bgcolor=\"#2a2d34\"><center><img src=\"", src_cap);
+        append(s, where, src_cap);
+        append(s, "\" alt=\"(this picture couldn't be shown)\"></center></body></html>", src_cap);
     } else {
         char t[32];
         t[0] = 0;
-        append(s, "<title>A file, not a page</title><body><h1>A file, not a page</h1><p>This address is ", SRC_MAX);
-        append(s, pi.ctype[0] ? pi.ctype : "a file", SRC_MAX);
-        if (pi.total > 0) { num_kb(t, pi.total, sizeof t); append(s, " (", SRC_MAX); append(s, t, SRC_MAX); append(s, ")", SRC_MAX); }
-        append(s, ".</p><p><b><a href=\"download:", SRC_MAX);
-        append(s, where, SRC_MAX);
-        append(s, "\">Download it into /DOWNLOADS</a></b></p>", SRC_MAX);
+        append(s, "<title>A file, not a page</title><body><h1>A file, not a page</h1><p>This address is ", src_cap);
+        append(s, pi.ctype[0] ? pi.ctype : "a file", src_cap);
+        if (pi.total > 0) { num_kb(t, pi.total, sizeof t); append(s, " (", src_cap); append(s, t, src_cap); append(s, ")", src_cap); }
+        append(s, ".</p><p><b><a href=\"download:", src_cap);
+        append(s, where, src_cap);
+        append(s, "\">Download it into /DOWNLOADS</a></b></p>", src_cap);
     }
     srclen = strlen(src);
     pi.kind = PK_HTML;
@@ -3161,7 +3193,7 @@ static void draw_info(void)
     num_str(t, pi.imgs, sizeof t);
     append(t, " shown, ", sizeof t);
     num_str(t, pi.imgs_bad, sizeof t);
-    append(t, " not (at most 16 read)", sizeof t);
+    append(t, " not (at most 64 read)", sizeof t);
     info_line(bx, &ly, "Pictures", t, 0);
     t[0] = 0;
     num_str(t, nlinks, sizeof t);
@@ -3187,6 +3219,7 @@ int main(int argc, char **argv)
 {
     int m[4], was_down = 0, drag = -1, drag_scroll = 0;
     if (gfx_mode_ex(W, H, 32) < 0) { puts("browser: needs 800x600 in 32 bits\n"); return 1; }
+    if (!SRC_ROOM(64 * 1024)) { puts("browser: no memory\n"); return 1; }
     font(glyphs);
     keymode(1);                                          /* (Ctrl+T, W, Tab: ours) */
     go(argc > 1 ? argv[1] : home, 1);

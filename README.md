@@ -202,6 +202,10 @@ All taken in QEMU (1024x768) - more in [docs/screenshots](docs/screenshots).
 <td align="center" valign="top"><img src="docs/screenshots/97-browser-news.png" alt="A gzip'd windows-1251 page" width="400"><br><sub>LexOS Web: a gzip'd windows-1251 page, its CSS, a JPEG</sub></td>
 <td align="center" valign="top"><img src="docs/screenshots/99-browser-reader.png" alt="Reader mode" width="400"><br><sub>Reader mode (Aa or F9): the article alone</sub></td>
 </tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/100-fat32.png" alt="FAT32" width="400"><br><sub>LexOS's disk is FAT32: <code>df</code>, <code>ls -l</code>, <code>fsck</code></sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/101-browser-huge.png" alt="A huge page" width="400"><br><sub>A 6MB page, all of it (the kernel's extra memory)</sub></td>
+</tr>
 </table>
 
 Every screenshot, described in Russian: [docs/screenshots/README.md](docs/screenshots/README.md).
@@ -244,23 +248,47 @@ tester@/DESKTOP$ run snake.app
   the machine.
 
 ### Filesystem
-- A simple folder-aware filesystem on top of the ATA driver — files and
-  folders live in fixed-size sectors, with parent pointers for
-  subdirectories (`mkdir`, `cd`, `pwd`, `tree`, `mv`, `cp`, `ren`).
+- **FAT32** (src/fat32.asm). LexOS's disk is an ordinary 256MB hard
+  disk: the boot sector with a partition table, the kernel after it,
+  the journal (sectors 1024-1144), and from 1MB on one FAT32 partition
+  with all of LexOS's files - so the same image opens anywhere else
+  (`mdir -i build/os-image.bin@@1M ::/APPS`, `mcopy`, or
+  `mount -o loop,offset=1048576` on Linux; `fsck.fat` finds nothing
+  wrong with it). Long names (VFAT/LFN, up to 63 characters in LexOS,
+  spaces, mixed case and Cyrillic too - in UTF-16 on the disk, CP866 in
+  LexOS), file times, the read-only attribute, folders as deep as you
+  like (`mkdir`, `cd`, `pwd`, `tree`, `mv`, `cp`, `ren`); files of any
+  size up to FAT32's own 4GB, as big as the disk lets them be, read and
+  written in place. 2KB clusters; the whole FAT is kept in RAM. Files
+  and folders made on Linux or Windows show up in LexOS with their long
+  names. Shutting down sets FAT32's "unmounted properly" bit and the
+  free-space count in FSInfo, as other systems expect.
+- Inside the kernel every file and folder still has its 512-byte record
+  (a slot: name, type, folder, first 127 bytes, size, time, attributes,
+  long name), read from the FAT32 tree at boot and kept in RAM; writing
+  one (`fs_write_slot`) is turned into what it means on the disk - an
+  entry made, removed, renamed or moved, the content written. A record
+  copied into another slot (`cp`, copy and paste in Files, Ctrl+drag) is
+  a copy, its data and all.
+- An older disk in LexOS's own previous format (a sector per file from
+  sector 578) is brought over by `tools/mkdisk.py` on the next build:
+  every file and folder, their times, long names and the read-only mark.
 - **A journal** (src/fsjournal.asm): a write cut short - the power, QEMU
   closed, a crash - can't leave the filesystem half changed. Its own
-  records (the directory slots and the free-space map) don't go straight
-  to the disk: they're kept in RAM, each sector once, and then written
-  out together - first into a journal area past the filesystem, then a
+  records (the FAT's sectors and the folders') don't go straight to the
+  disk: they're kept in RAM, each sector once, and then written out
+  together - first into the journal area before the partition, then a
   header with where each belongs and a checksum (from that moment the
   change counts), then each to its own place, then the header cleared.
   At boot an unfinished commit is finished ("Journal: a write cut short
   was finished"); before the header, nothing had changed. A commit
   happens whenever the kernel lock is let go - a command done, a program
-  back in ring 3 - when the desktop's idle, and before switching off. A
-  file's data is written before the records pointing to it, and a sector
-  a file lets go of isn't given to another until the change counts, so a
-  file being replaced keeps its old content until the new one is safe.
+  back in ring 3 (at most twice a second: a program writing a big file a
+  piece at a time doesn't wait for a commit per piece) - when the
+  desktop's idle, and before switching off. A file's data is written
+  before the records pointing to it, and a cluster a file lets go of
+  isn't given to another until the change counts, so a file being
+  replaced keeps its old content until the new one is safe.
   The disk's cache is flushed (FLUSH CACHE) at the commit's barriers -
   before the header, after it, before it's cleared - and when switching
   off, not after every sector (under QEMU each flush is the host syncing
@@ -272,16 +300,12 @@ tester@/DESKTOP$ run snake.app
   `attrib <name> +r` makes a file or folder read-only - `rm`, `ren`,
   `mv`, `uranium` and programs' `open` for writing refuse it - and
   `attrib <name> -r` undoes it.
-- **`fsck`** checks the whole filesystem: each slot's kind and folder,
-  each file's chain of sectors (in range, marked used, nobody else's, no
-  loop, as long as its size says) and sectors in use by nothing.
-  `fsck fix` puts right what it finds: bad slots freed, lost files moved
-  to `/`, broken or shared chains cut short, sizes set to what the chain
-  holds, the free-space map made to match.
-- Files aren't stuck at one sector: content grows past its initial 127
-  inline bytes into a chain of extra disk sectors, tracked by a small
-  on-disk bitmap. `cat`, `size`, `head`, `tail`, `grep`, `cp`, and `rm` all
-  understand the chain.
+- **`fsck`** checks the whole filesystem: each file's and folder's chain
+  of clusters (in range, nobody else's, no loop, as long as its size
+  says) and clusters in use by nothing. `fsck fix` puts right what it
+  finds: broken or shared chains cut short, sizes set to what the chain
+  holds, what's too long or lost freed. After a power cut it runs by
+  itself at boot.
 - **Scripts.** Typing a `*.hg` file's name (with arguments if you like:
   `quiz.hg 10`) runs it: each line goes to the shell as a command, with
   a small language on top (src/script.asm):
@@ -325,8 +349,7 @@ tester@/DESKTOP$ run snake.app
 - `head`/`tail` print the first/last lines of a file (10 by default, or a
   given count).
 - On first boot the root folder is seeded with `README`, a `LICENSE` file
-  holding the project's own license text (long enough to spill from the
-  inline area into chained extra sectors), and a `TMP` folder for
+  holding the project's own license text, and a `TMP` folder for
   scratch files (see below). (Older disks had a `PROGRAMS` folder of
   `.BIN` demos; the games are programs in `APPS` now, and at boot the
   old folder's `.BIN` files are removed - and the folder, once it's
@@ -336,21 +359,22 @@ tester@/DESKTOP$ run snake.app
   `DESKTOP` (the desktop's icons) and `SYSTEM` (the translations).
 - `ls` prints folders in bright yellow so they stand out from regular
   files, which stay whatever color you've set with `color`.
-- `df` (or `free`) shows how many of the 1024 directory slots, 30000
-  extra disk sectors, and 8 `TMP` RAM slots (see below) are in use.
+- `df` (or `free`) shows how many of the 1024 slots (the files and
+  folders LexOS keeps track of), how much of the disk (in KB) and how
+  many of the 8 `TMP` RAM slots (see below) are in use.
 - `bld <n>` creates a new, empty file `n` in the current folder.
-- The filesystem holds up to 1024 files and folders (up to 255 of them
-  folders), nested as deep as you like, and a single file can be up to
-  16MB (the extra-sector pool is ~15MB in total). Directory slots and
-  the free-space map are cached in RAM, so `ls`/`cd`/`tree` don't hit
-  the disk, and big files are written one disk write per sector.
+- LexOS keeps track of up to 1024 files and folders on the disk (up to
+  255 of them folders - more than that, and the rest aren't shown),
+  nested as deep as you like; a single file can be as big as the free
+  space. The records and the FAT are in RAM, so `ls`/`cd`/`tree` don't
+  hit the disk; files are read and written a cluster or more at a time
+  (DMA, up to 64KB a command).
 - `TMP` is a RAM disk: create a file while `cd`'d directly into it (not
   a subfolder within it) and its up-to-127-byte primary record lives
   entirely in memory instead of costing one of the real directory
   slots - `ls`, `cat`, `rm`, wildcards and everything else treat it like
   any other file, but it vanishes on reboot along with everything else
-  that was only ever in RAM. Content past 127 bytes still chains into
-  the ordinary disk-backed extra-sector pool, same as any file. Placing
+  that was only ever in RAM - and it holds 127 bytes at most. Placing
   a file into `TMP` by path from a different directory (`cp x.txt tmp`
   while elsewhere) still creates a normal disk-backed file - only
   creating it while actually `cd`'d into `TMP` gets the RAM slot.
@@ -549,9 +573,11 @@ tester@/DESKTOP$ run snake.app
   line to the program - `main(argc, argv)` in C, `ebx` points to it
   in assembly. Programs open files in the current folder with
   `open`/`read`/`fwrite`/`seek`/`fsize`/`close` (read, write, append
-  or update; up to 4MB each, 4 open at once - whatever was written is
-  saved on close, or when the program ends, even by a crash); C
-  programs get `malloc`/`free`/`realloc` over their 4MB. `gfx_mode(1)`
+  or update; 4 open at once; straight on the disk, so as big as there's
+  room for); C programs get `malloc`/`free`/`realloc` over their 4MB -
+  and, when that runs out, over extra memory the kernel maps them on
+  request (`SYS_MORE`: 4MB pages from 0x40000000, up to 64MB more per
+  program while the pool of 80MB has any; given back when it ends). `gfx_mode(1)`
   switches to 320x200 in 256 colors: a program draws into a buffer of
   its own and `gfx_blit`s it to the screen, can set any palette color,
   and `keydown(scancode)` tells whether a key is held - what games
@@ -684,7 +710,7 @@ tester@/DESKTOP$ run snake.app
   `<center>`, tables as rows of cells, `<body bgcolor>` and pictures -
   `<img>` of `.BMP` (8, 24 or 32 bits), `.PNG`, `.JPG` (baseline and
   progressive, `apps/jpeg.h`) and `.GIF` (the first frame, `apps/gif.h`),
-  lazy ones' `data-src` too, up to 16 a page. Back / forward / reload /
+  lazy ones' `data-src` too, up to 64 a page. Back / forward / reload /
   home, an address bar (Tab, or click it), a scrollbar, the wheel, links
   lighting up under the pointer with their address in the status line.
   **No gibberish**: pages sent gzip'd or deflated are unpacked
@@ -694,8 +720,10 @@ tester@/DESKTOP$ run snake.app
   the font hasn't got is shown as near as it can be (`№` as No, `€` as
   EUR, box drawing, arrows; emoji as `*`; zero-width spaces, soft hyphens
   and BOMs not at all). Pages are read as they come - scripts, SVG,
-  comments and most attributes are left out on the way - so a page of
-  a few MB fits in the 256KB kept. A **little CSS** (`apps/css.h`, the
+  comments and most attributes are left out on the way - and kept
+  whole, however big (up to 48MB of what's left, in memory the kernel
+  hands the browser past its own 4MB: a page of 40000 paragraphs, 6MB of
+  text, is no trouble). A **little CSS** (`apps/css.h`, the
   page's `<style>`, up to 3 stylesheets and `style=""`; tag, `.class`
   and `#id` selectors, `@media` as for an 800x600 screen): `display:none`,
   `visibility:hidden`, `hidden`, `aria-hidden` and screen-reader-only
@@ -710,8 +738,9 @@ tester@/DESKTOP$ run snake.app
   hidden, pictures); **Ctrl+U** - its source, in a new tab.
   **Downloads**: a link to something that isn't a page (a `.ZIP`, a
   picture, a program...) is saved straight to `/DOWNLOADS` - streamed
-  to the disk as it comes, over `http` or `https`, chunked or not, a
-  name of its own if that one's taken - with its progress in the
+  to the disk as it comes, any size the disk has room for, over `http`
+  or `https`, chunked or not, a name of its own if that one's taken
+  (and said so if the connection ends before all of it came) - with its progress in the
   Downloads panel (the button by the address bar), and Ctrl+S saves the
   page being shown.
   **Markdown** (a `.MD` page, from the disk or the web - Files opens
@@ -1360,7 +1389,7 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `reboot` / `shutdown` | restart / power off |
 | `history` | list previously run commands, numbered oldest first |
 | `!!` | run the last command again (it's shown first) |
-| `df` / `free` | show directory slot / extra sector usage |
+| `df` / `free` | show how many files LexOS tracks and how full the disk is |
 | **Filesystem** | |
 | `ls` | list files and folders in the current directory (folders in yellow) |
 | `pwd` | show the current folder path |
@@ -1449,7 +1478,9 @@ outside the kernel image need a full 32-bit linear address:
 | Consoles' page tables (directory, first 4MB, program: 12KB each) | `0x510000` – `0x52AFFF` |
 | A ring-3 program's own 4MB | `0x800000` – `0xBFFFFF` |
 | Consoles' own memory (5MB each: program, kernel pages, text screen) | `0x1000000` – `0x3CFFFFF` |
-| Programs' open-file buffers (4 x 4MB) | `0x4000000` – `0x4FFFFFF` |
+| (free: once the programs' open-file buffers) | `0x4000000` – `0x4FFFFFF` |
+| FAT32: the FAT, its changed sectors, cluster buffers, fsck's map | `0xA000000` – `0xA47FFFF` |
+| Programs' extra memory (SYS_MORE: 20 x 4MB pages) | `0xB000000` – `0xFFFFFFF` |
 | Program windows' pixels (3 x 2MB) | `0x5000000` – `0x55FFFFF` |
 | Mixer voice queues (4 x 64KB) + scratch | `0x5600000` – `0x5647FFF` |
 | Consoles' mode 13h in a window (9 x 64KB) | `0x5680000` – `0x570FFFF` |
@@ -1471,17 +1502,17 @@ outside the kernel image need a full 32-bit linear address:
 | Kernel code/data | `0x8000` – `0x4FFFF` (576 sectors) |
 | Boot sector | `0x7C00` |
 
-On disk, sectors are laid out as: boot sector, then the kernel (576
-sectors, one spare after it), then 1024 directory slots (one file/folder
-per 512-byte sector —
-name, type, parent pointer, a 32-bit size, up to 127 bytes of inline
-content; folders only ever take slots 0-254, so a parent pointer still
-fits in one byte), a 59-sector free-space map (one byte per extra
-sector), then 30000 extra 512-byte sectors that files chain into once
-they outgrow the inline area (508 data bytes each), then the journal: a
-header sector and room for 120 sectors. A slot also keeps its last
-change's time (bytes 148-152: year, month, day, hour, minute) and its
-attributes (153).
+On disk (256MB), sectors are laid out as: the boot sector (with the
+partition table), then the kernel (576 sectors), then the journal from
+sector 1024 (a header sector and room for 120 sectors), the "shut down
+properly?" sector at 1152, and from sector 2048 (1MB) to the end one
+FAT32 partition (type 0x0C): 32 reserved sectors (boot sector, FSInfo,
+their backups), two FATs, then 2KB clusters - the root folder in cluster
+2. In RAM the kernel keeps a 512-byte record per file and folder (a
+slot: name, type, parent, a 32-bit size, its first 127 bytes, its last
+change's time at bytes 148-152, attributes at 153, long name at
+160-223) - folders only ever take slots 0-254, so a parent pointer
+fits in one byte - plus the whole FAT.
 
 ## Project layout
 
@@ -1533,9 +1564,12 @@ src/
                        including the RAM-backed TMP folder (fs_find_free/
                        fs_read_slot/fs_write_slot - see data.asm's note
                        above FS_RAM_FILE_COUNT).
-  fs_extra.asm         chained extra sectors for files > 127 bytes, and
-                       fs_load_content - the shared file-content reader
-                       used by grep/head/tail/uranium.
+  fs_extra.asm         whole files: fs_load_to / fs_load_content (read
+                       into memory), fs_stream_write (written from a
+                       stream of bytes), append.
+  fat32.asm            the disk's FAT32: mount, the FAT in RAM, long
+                       names, the slots turned into entries, files read
+                       and written in place, fsck's checks.
   programs.asm         `run`, the TMP folder, and an old disk's PROGRAMS
                        folder retired at boot.
   parse.asm            numbers typed at the prompt (decimal, 0x hex).
@@ -1687,20 +1721,25 @@ src/
   Labels/relocations aren't a concern (a `.com` is already position-
   independent machine code by convention), but there's no `.exe` (MZ)
   support - no header parsing, no segment relocation.
-- One file's inline metadata + content lives in a single 512-byte sector;
-  content past that grows through a chain of extra sectors, but the pool
-  is fixed at 30000 sectors (~15MB). A name the shell and the commands
+- LexOS keeps track of up to 1024 files and folders on the disk (255 of
+  them folders); a disk with more (made elsewhere) shows the first ones
+  found. Long names past 63 characters are cut short in LexOS (and
+  written back cut if the file's renamed or moved there). A file in the
+  `TMP` RAM folder holds 127 bytes at most. A name the shell and the commands
   take is at most 15 characters, the extension included (`hostput`
   wants a DOS 8.3 name for the host's side); a long name (up to 63) is
   the desktop's - Files, the icons, Properties, `ls` show it, but in the
   Terminal a file is reached by its short one (`cat TRIPTO~1.TXT`), a
   `mv`/`ren` there drops it, and programs' file dialogs show short
   names.
-- The journal covers the filesystem's own records; a file's data goes
-  straight to its sectors (before the records that point to it). One
-  command that changes more than 120 different record sectors at once
-  (`rm -a` in a big folder) is committed in parts. `fsck` looks at the
-  disk's slots, not the 8 `TMP` RAM slots' names.
+- The journal covers the filesystem's own records (the FAT's sectors and
+  the folders'); a file's data goes straight to its clusters (before the
+  records that point to it). One change bigger than 120 record sectors
+  (writing a very big file - each FAT sector covers 256KB of it - or
+  `rm -a` in a big folder) is committed in parts. The journal is LexOS's
+  own: another system writing to the disk doesn't know about it (it only
+  matters if LexOS was cut off with a commit unfinished). `fsck` looks
+  at the disk's files, not the 8 `TMP` RAM slots.
 - Pipes pass files, not streams: a command's whole output is caught
   first (up to 20KB per console), then handed on - and a command that
   waits for keys (`uranium`, a game) can't be piped.

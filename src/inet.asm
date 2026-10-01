@@ -380,14 +380,22 @@ tcp_input:
     cmp eax, [tcp_rcv_nxt]
     jne .out_of_order
     jecxz .fin
-    ; in order: keep what fits, count it all as received
-    add [tcp_rcv_nxt], ecx
+    ; in order: keep what fits, count it all as received - or, for a
+    ; program's own connection (tcp_rx_strict), a piece there's no room
+    ; for yet isn't taken at all: not acknowledged, the other end sends
+    ; it again (by then the program's read what was before it)
     mov eax, [tcp_rx_max]
     sub eax, [tcp_rx_len]
     cmp ecx, eax
-    jbe .fits
+    jbe .fits_all
+    cmp byte [tcp_rx_strict], 0
+    jne .send_ack
+    add [tcp_rcv_nxt], ecx
     mov ecx, eax
     mov byte [tcp_rx_overflow], 1
+    jmp .fits
+.fits_all:
+    add [tcp_rcv_nxt], ecx
 .fits:
     mov edi, [tcp_rx_buf]
     add edi, [tcp_rx_len]
@@ -832,6 +840,7 @@ net_wget_go:
     mov dword [tcp_rx_len], 0
     mov dword [tcp_rx_max], WGET_MAX
     mov byte [tcp_rx_overflow], 0
+    mov byte [tcp_rx_strict], 0
     call tcp_connect
     jnc .connected
     mov esi, wget_msg_refused
@@ -1365,6 +1374,7 @@ tcp_rx_buf         dd 0
 tcp_rx_len         dd 0
 tcp_rx_max         dd 0
 tcp_rx_overflow    db 0
+tcp_rx_strict      db 0                   ; (a program's: nothing dropped)
 tcp_in_flags       db 0
 tcp_in_seq         dd 0
 tcp_out_flags      db 0

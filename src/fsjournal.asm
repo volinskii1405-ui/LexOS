@@ -560,7 +560,11 @@ fs_list_long:
     je .have_size
     call fs_get_size
 .have_size:
-    mov ecx, 8
+    push eax
+    mov al, ' '
+    call print_char
+    pop eax
+    mov ecx, 10                           ; (up to FAT32's 4GB)
     call jnl_num
 .name:
     mov al, ' '
@@ -976,7 +980,7 @@ jnl_used         dd 0
 jnl_slot         dd 0
 jnl_size         dd 0
 jnl_prev         dd 0
-jnl_m_dir        db "   <DIR>", 0
+jnl_m_dir        db "      <DIR>", 0
 jnl_m_notime     db "                ", 0
 jnl_m_ro         db "It's read-only (attrib -r <name> allows changes).", 13, 10, 0
 jnl_m_attr_ro    db ": read-only", 13, 10, 0

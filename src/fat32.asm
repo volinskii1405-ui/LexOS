@@ -2466,6 +2466,16 @@ fat_mount:
     mov edx, eax
     mov eax, 1
     call fat_put
+    mov eax, [fat_part]                   ; FSInfo's free count: "not known"
+    inc eax                               ; while it's in use (fat_shutdown
+    call fat_sec_read                     ; puts the real one back)
+    jc .mounted
+    cmp dword [FAT_SEC], 0x41615252
+    jne .mounted
+    mov dword [FAT_SEC + 488], -1
+    mov dword [FAT_SEC + 492], -1
+    call fat_sec_write
+.mounted:
     popad
     clc
     ret

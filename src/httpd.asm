@@ -55,6 +55,7 @@ net_httpd:
     mov dword [tcp_rx_buf], HTTPD_REQ
     mov dword [tcp_rx_len], 0
     mov dword [tcp_rx_max], HTTPD_REQ_MAX - 1
+    mov byte [tcp_rx_strict], 0
     mov byte [tcp_state], TCP_LISTEN
 .wait_client:
     call net_poll

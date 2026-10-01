@@ -283,15 +283,22 @@ static inline void print_float(double v, int decimals)
 }
 
 /* --- malloc/free: first fit over the memory from the program's end
- * (app.ld's _end) up to 256KB below the top, where the stack lives. --- */
+ * (app.ld's _end) up to 256KB below the top, where the stack lives -
+ * and past that, over extra memory the kernel hands out (SYS_MORE, 4MB
+ * at a time from 0x40000000, up to 64MB more while there's any). --- */
 #define LX_HEAP_END 0xBC0000
+#define LX_HIGH_BASE 0x40000000u
 extern char _end[];
 struct lx_block { size_t size; int free; struct lx_block *next; int pad; };
 struct lx_block *__lx_heap __attribute__((weak));
+unsigned __lx_high_top __attribute__((weak));
+/* more memory: n bytes more past what there is -> its new top, 0 if none */
+static inline unsigned lx_more(unsigned n) { return (unsigned)lx_syscall(45, (int)n, 0); }
 
 LX_LIB void *malloc(size_t n)
 {
     struct lx_block *b, *last = NULL;
+    if (n > 0x7FFFFFF0u) return NULL;
     n = (n + 15) & ~15u;
     for (b = __lx_heap; b; last = b, b = b->next)
         if (b->free && b->size >= n) {
@@ -305,7 +312,18 @@ LX_LIB void *malloc(size_t n)
         }
     b = last ? (struct lx_block *)((char *)(last + 1) + last->size)
              : (struct lx_block *)(((unsigned)_end + 15) & ~15u);
-    if ((unsigned)(b + 1) + n > LX_HEAP_END) return NULL;
+    if ((unsigned)b < LX_HIGH_BASE && (unsigned)(b + 1) + n > LX_HEAP_END)
+        b = (struct lx_block *)LX_HIGH_BASE;          /* on into the extra memory */
+    if ((unsigned)b >= LX_HIGH_BASE) {
+        unsigned end = (unsigned)(b + 1) + n, top = __lx_high_top ? __lx_high_top : LX_HIGH_BASE;
+        if (end < (unsigned)b) return NULL;
+        if (end > top) {
+            top = lx_more(end - top);
+            if (!top) return NULL;
+            __lx_high_top = top;
+            if (end > top) return NULL;
+        }
+    }
     b->size = n; b->free = 0; b->next = NULL;
     if (last) last->next = b; else __lx_heap = b;
     return b + 1;
@@ -316,7 +334,8 @@ LX_LIB void free(void *p)
     if (!p) return;
     ((struct lx_block *)p - 1)->free = 1;
     for (b = __lx_heap; b; b = b->next)             /* merge free neighbors */
-        while (b->free && b->next && b->next->free) {
+        while (b->free && b->next && b->next->free &&
+               (char *)(b + 1) + b->size == (char *)b->next) {
             b->size += sizeof *b + b->next->size;
             b->next = b->next->next;
         }

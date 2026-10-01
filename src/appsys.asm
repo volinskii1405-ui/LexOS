@@ -79,12 +79,8 @@ app_copy_name:
 ; wholly its own (like app_check_range, for any register).
 app_check_buf:
     push eax
-    cmp eax, APP_BASE
-    jb .bad
-    add eax, ecx
+    call app_mem_ok
     jc .bad
-    cmp eax, APP_STACK_TOP
-    ja .bad
     pop eax
     ret
 .bad:
@@ -1182,6 +1178,7 @@ sys_tcp_open:
     mov dword [tcp_rx_len], 0
     mov dword [tcp_rx_max], WGET_MAX
     mov byte [tcp_rx_overflow], 0
+    mov byte [tcp_rx_strict], 1
     mov dword [app_tcp_pos], 0
     call tcp_connect
     jc .no
@@ -1236,6 +1233,15 @@ sys_tcp_recv:
     mov ecx, [tcp_rx_len]
     sub ecx, [app_tcp_pos]
     jnz .have
+    pushfd                                ; all of it read: the buffer from
+    cli                                   ; its start again (so a stream can
+    mov ecx, [tcp_rx_len]                 ; be as long as it likes)
+    cmp ecx, [app_tcp_pos]
+    jne .not_empty
+    mov dword [tcp_rx_len], 0
+    mov dword [app_tcp_pos], 0
+.not_empty:
+    popfd
     cmp byte [tcp_state], TCP_ESTABLISHED
     jne .closed
     call net_poll
@@ -1256,6 +1262,23 @@ sys_tcp_recv:
     mov eax, ecx
     cld
     rep movsb
+    cmp dword [app_tcp_pos], WGET_MAX / 4  ; read far into it: what's left
+    jb .done                              ; moved to its start (room again)
+    push eax
+    pushfd
+    cli
+    mov esi, [app_tcp_pos]
+    mov ecx, [tcp_rx_len]
+    sub ecx, esi
+    add esi, WGET_BUF
+    mov edi, WGET_BUF
+    rep movsb
+    mov ecx, [app_tcp_pos]
+    sub [tcp_rx_len], ecx
+    mov dword [app_tcp_pos], 0
+    popfd
+    pop eax
+.done:
     ret
 .closed:
     xor eax, eax
