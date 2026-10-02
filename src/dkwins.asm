@@ -2273,6 +2273,9 @@ dk_files_open:
     call dk_win_single
     jmp .done
 .command:
+    mov ax, [dk_fm_dir]                   ; (an ELF file in it: run - a
+    mov [lx_open_dir], ax                 ;  Linux program, src/linux.asm)
+    mov byte [lx_open_ok], 1
     mov al, cl                            ; a program: started by itself
     call dk_kind_app
     je .launch
@@ -2311,6 +2314,7 @@ dk_files_open:
     mov dword [dk_fm_msg], dk_fm_full
     mov byte [dk_redraw_all], 1
 .done:
+    mov byte [lx_open_ok], 0
     popad
     ret
 
@@ -4487,7 +4491,10 @@ dk_open_command:
     pop esi
     mov edx, eax
     jnc .done
-    mov edx, dk_verb_edit                 ; the rest: into the editor
+    mov edx, dk_verb_edit                 ; the rest: into the editor -
+    call lx_open_is_elf                   ; a Linux program's run (src/linux.asm)
+    jc .done
+    mov edx, dk_verb_run
 .done:
     pop eax
     ret

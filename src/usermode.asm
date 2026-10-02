@@ -83,7 +83,7 @@ SYS_SLEEP_UNTIL equ 27                ; ebx = a SYS_MILLIS value to wait for
 SYS_AUDIO_VOLUME equ 28               ; ebx = 0-100
 SYS_MORE        equ 45                ; ebx = bytes more -> eax = the top of its
                                       ; extra memory (0: no more to be had)
-SYS_COUNT       equ 48                ; (files/graphics: src/appsys.asm)
+SYS_COUNT       equ 49                ; (files/graphics: src/appsys.asm)
 
 ; A program's extra memory (SYS_MORE): 4MB pages from a pool of them
 ; above the kernel's own memory, mapped from APP_HIGH_BASE up - so a
@@ -373,6 +373,7 @@ app_abort:
     call app_audio_off                    ; silence, if it was playing
     call fpu_forget_current
     call fh_close_all                     ; saves what it wrote
+    call lx_end                           ; (a Linux program's: src/linux.asm)
     call app_more_free                    ; its extra memory: back
     call speaker_off
     ; a fresh line, unless the program left the cursor at the start of one
@@ -410,6 +411,8 @@ app_mem_ok:
     jb .bad
     cmp edx, APP_STACK_TOP
     jbe .ok
+    call lx_win_ok                        ; (a Linux program's window)
+    jnc .ok
     cmp eax, APP_HIGH_BASE
     jb .bad
     push ecx
@@ -552,11 +555,14 @@ syscall_isr:
     sti
     call bkl_take                         ; (src/sched.asm)
     mov ebp, esp                          ; the caller's registers:
+    call lx_reflect_if                    ; (a Linux program's: LINUX.APP's -
+    jnc .done                             ;  src/linux.asm)
     mov eax, [ebp + 28]                   ; eax +28, ecx +24, ebx +16
     cmp eax, SYS_COUNT
     jae .bad
     call [syscall_table + eax*4]
     mov [ebp + 28], eax
+.done:
     cli
     mov eax, [sched_current]
     dec byte [task_insys + eax]
@@ -584,6 +590,7 @@ syscall_table:
     dd sys_keymode, sys_readdir, sys_mkdir, sys_notify  ; (src/appext.asm)
     dd sys_inbox, sys_opl, sys_audio_queued, sys_clip_pic
     dd sys_music_state, sys_more, sys_readdir_long, sys_clip_text
+    dd sys_lx_op                          ; (src/linux.asm)
 
 sys_exit:
     mov eax, [ebp + 16]

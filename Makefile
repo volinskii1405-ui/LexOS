@@ -1,6 +1,6 @@
 ASM = nasm
 BUILD_DIR = build
-SRC_FILES = src/fat32.asm src/atadma.asm kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/serial.asm src/mouse.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/parse.asm src/vga.asm src/view.asm src/rtc.asm src/speaker.asm src/sound.asm src/mixer.asm src/ac97.asm src/chip8.asm src/turtle.asm src/hostfs.asm src/basic.asm src/net.asm src/inet.asm src/httpd.asm src/chat.asm src/sched.asm src/usermode.asm src/appsys.asm src/console.asm src/desktop.asm src/dkwins.asm src/dkstyle.asm src/dksound.asm src/dkicons.asm src/lang.asm src/font866.inc src/dkclip.asm src/dkfind.asm src/dkextra.asm src/neofetch.asm src/langui.asm src/dkcat.asm src/grep.asm src/headtail.asm src/uranium.asm src/user.asm src/welcome.asm src/tabcomplete.asm src/script.asm src/pipe.asm src/shellx.asm src/dkmag.asm src/fsjournal.asm src/fslong.asm src/dkname.asm src/dkgrid.asm src/dkprops.asm src/dktrash.asm src/dkdrop.asm src/appext.asm src/dkart.asm src/dkshot.asm src/dkfview.asm src/dkwall.asm src/dkmsel.asm src/dkundo.asm src/dklock.asm src/dkusers.asm src/dkcpanel.asm src/dksaver.asm src/dkfscheck.asm src/dkpng.asm src/dkpics.asm src/dknotify.asm src/dkanim.asm src/dkres.asm src/dkswitch.asm src/dkregion.asm src/dkclock.asm src/dknight.asm src/dkchist.asm src/dkmfind.asm src/acpi.asm src/longname.asm src/dkart.inc
+SRC_FILES = src/fat32.asm src/atadma.asm kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/serial.asm src/mouse.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/parse.asm src/vga.asm src/view.asm src/rtc.asm src/speaker.asm src/sound.asm src/mixer.asm src/ac97.asm src/chip8.asm src/turtle.asm src/hostfs.asm src/basic.asm src/net.asm src/inet.asm src/httpd.asm src/chat.asm src/sched.asm src/usermode.asm src/appsys.asm src/console.asm src/desktop.asm src/dkwins.asm src/dkstyle.asm src/dksound.asm src/dkicons.asm src/lang.asm src/font866.inc src/dkclip.asm src/dkfind.asm src/dkextra.asm src/neofetch.asm src/langui.asm src/dkcat.asm src/grep.asm src/headtail.asm src/uranium.asm src/user.asm src/welcome.asm src/tabcomplete.asm src/script.asm src/pipe.asm src/shellx.asm src/dkmag.asm src/fsjournal.asm src/fslong.asm src/dkname.asm src/dkgrid.asm src/dkprops.asm src/dktrash.asm src/dkdrop.asm src/appext.asm src/dkart.asm src/dkshot.asm src/dkfview.asm src/dkwall.asm src/dkmsel.asm src/dkundo.asm src/dklock.asm src/dkusers.asm src/dkcpanel.asm src/dksaver.asm src/dkfscheck.asm src/dkpng.asm src/dkpics.asm src/dknotify.asm src/dkanim.asm src/dkres.asm src/dkswitch.asm src/dkregion.asm src/dkclock.asm src/dknight.asm src/dkchist.asm src/dkmfind.asm src/acpi.asm src/longname.asm src/linux.asm src/dkart.inc
 
 .PHONY: all run run-serial lan1 lan2 clean apps fresh-disk
 
@@ -174,7 +174,7 @@ APP_CFLAGS = -m32 -ffreestanding -fno-pic -fno-pie -fno-stack-protector \
 	-fno-asynchronous-unwind-tables -nostdlib -O2 -Wall
 C_APPS = guess wc note fire pong mandel modplay ftest cube maze browser cc notepad zip paint calc snake tetris sweeper 2048 hexedit sheet music solitaire
 upper = $(shell echo $(1) | tr a-z A-Z)
-apps: disk/APPS/HELLO.APP disk/APPS/CRASH.APP $(foreach a,$(C_APPS),disk/APPS/$(call upper,$(a)).APP)
+apps: disk/APPS/HELLO.APP disk/APPS/CRASH.APP $(foreach a,$(C_APPS),disk/APPS/$(call upper,$(a)).APP) disk/SYSTEM/LINUX.APP
 
 disk/APPS/HELLO.APP: apps/hello.asm apps/lexos.inc
 	$(ASM) -f bin -i apps/ $< -o $@
@@ -192,6 +192,12 @@ disk/APPS/$(call upper,$(1)).APP: apps/$(1).c apps/lexos.h apps/gui.h apps/mod.h
 	ld -m elf_i386 -T apps/app.ld --oformat binary -o $$@ $(BUILD_DIR)/crt0.o $(BUILD_DIR)/$(1).o
 endef
 $(foreach a,$(C_APPS),$(eval $(call C_APP_RULE,$(a))))
+
+# Linux programs' runner (src/linux.asm starts it): in /SYSTEM, not a
+# program of its own for the menus
+disk/SYSTEM/LINUX.APP: apps/linux.c apps/lexos.h apps/app.ld $(BUILD_DIR)/crt0.o
+	gcc $(APP_CFLAGS) -c apps/linux.c -o $(BUILD_DIR)/linux.o
+	ld -m elf_i386 -T apps/app.ld --oformat binary -o $@ $(BUILD_DIR)/crt0.o $(BUILD_DIR)/linux.o
 
 clean:
 	rm -rf $(BUILD_DIR)

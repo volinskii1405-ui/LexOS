@@ -278,6 +278,8 @@ com_gdt_start:
 gdt_tss:
     dw 103, 0x0000
     db 0x00, 10001001b, 0x00, 0x00
+gdt_lx_tls:                                             ; a Linux program's thread
+    dd 0, 0                                             ; area (0x43: src/linux.asm)
 com_gdt_end:
 
 com_gdt_descriptor:
@@ -354,6 +356,7 @@ kext_start:
 %include "src/dktrash.asm"
 %include "src/dkdrop.asm"
 %include "src/appext.asm"
+%include "src/linux.asm"
 %include "src/dkart.asm"
 %include "src/dkshot.asm"
 %include "src/dkfview.asm"
