@@ -132,8 +132,28 @@ lx_try_command:
 .worded:
     jecxz .no
     mov byte [edi + ecx], 0
-    mov dx, FS_ROOT
     mov esi, lx_name_linux
+    call lx_find_elf_in                   ; in /LINUX,
+    jnc .found
+    mov esi, lx_name_downloads            ; or /DOWNLOADS
+    call lx_find_elf_in
+    jc .no
+.found:
+    mov si, buffer                        ; as `run <the line>`
+    call fs_run
+    popad
+    clc
+    ret
+.no:
+    popad
+    stc
+    ret
+
+; esi = a folder in the root, lx_part = a name: carry=0 if it's an ELF
+; file in that folder
+lx_find_elf_in:
+    pushad
+    mov dx, FS_ROOT
     call aext_find_in
     cmp eax, -1
     je .no
@@ -146,8 +166,13 @@ lx_try_command:
     je .no
     cmp byte [SCRATCH_ADDR + FS_TYPE_OFFSET], FS_TYPE_FILE
     jne .no
-    mov si, buffer                        ; as `run <the line>`
-    call fs_run
+    xor ebx, ebx
+    mov edi, lx_magic
+    mov ecx, 4
+    call fat_read
+    jc .no
+    cmp dword [lx_magic], 0x464C457F
+    jne .no
     popad
     clc
     ret
@@ -932,6 +957,7 @@ lx_chain        times 32 dw 0
 lx_name_system  db "SYSTEM", 0
 lx_name_shim    db "LINUX.APP", 0
 lx_name_linux   db "LINUX", 0
+lx_name_downloads db "DOWNLOADS", 0
 lx_open_dir     dw 0
 lx_open_ok      db 0
 lx_msg_no_shim  db "This is a Linux program, but /SYSTEM/LINUX.APP (which runs them) isn't on this disk.", 10, 0

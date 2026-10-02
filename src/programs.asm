@@ -23,6 +23,11 @@ fs_find_in_apps:
 fs_find_in_linux:
     push si
     mov si, fs_linux_dir_name
+    jmp fs_find_in_dir
+; ...and DOWNLOADS (what the browser saved)
+fs_find_in_downloads:
+    push si
+    mov si, fs_downloads_dir_name
 fs_find_in_dir:
     push word [fs_current_dir]
     mov word [fs_current_dir], FS_ROOT
@@ -93,6 +98,9 @@ fs_run:
     cmp ax, -1
     jne .found
     call fs_find_in_linux          ; or LINUX (BusyBox and such)
+    cmp ax, -1
+    jne .found
+    call fs_find_in_downloads      ; or DOWNLOADS
     cmp ax, -1
     jne .found
 .not_found:

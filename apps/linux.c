@@ -1922,7 +1922,7 @@ void lx_handle(void)
         unsigned *off = (unsigned *)c;
         struct ofd *in = fd_get(b);
         unsigned keep = in ? in->pos : 0;
-        if (!in) { r = -EBADF; break; }
+        if (!in || !fd_get(a)) { r = -EBADF; break; }               /* (nothing read before that's known) */
         if (off) in->pos = *off;
         while (tot < (int)d) {
             int want = (int)d - tot > (int)sizeof buf ? (int)sizeof buf : (int)d - tot, k = fd_read(b, buf, want), w;
@@ -2363,7 +2363,7 @@ int main(int argc, char **argv)
     {
         struct lxstat st;
         if (!busybox_known) {                             /* BusyBox in /LINUX or /BIN? */
-            static const char *where[] = { "/LINUX/BUSYBOX", "/BIN/BUSYBOX", 0 };
+            static const char *where[] = { "/LINUX/BUSYBOX", "/DOWNLOADS/BUSYBOX", "/BIN/BUSYBOX", 0 };
             for (i = 0; where[i]; i++)
                 if (!vstat(where[i], &st)) { int h2 = open(where[i], O_READ); if (h2 >= 0) { note_busybox(where[i], h2); close(h2); } break; }
         }
