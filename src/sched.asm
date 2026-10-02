@@ -200,6 +200,7 @@ sched_switch_to:
     mov byte [sched_idle], 0              ; (the next one isn't halting)
     mov eax, [sched_current]
     mov [task_esp + eax*4], esp
+    call lx_switch_out                    ; (its GS: src/linux.asm)
     push edx
     mov dl, [task_prio + ecx]             ; a higher priority taking over:
     cmp dl, [task_prio + eax]             ; remember who was running
@@ -209,6 +210,7 @@ sched_switch_to:
     pop edx
     mov [sched_current], ecx
     call sched_load_cr3
+    call lx_switch_in
     mov eax, [task_kstack + ecx*4]        ; a task that's running a ring-3
     or eax, eax                           ; program (src/usermode.asm):
     jz .no_ring3                          ; interrupts from it land on
@@ -225,12 +227,16 @@ sched_switch_to:
 sched_load_cr3:
     push eax
     push edx
+    call lx_cr3_of                        ; (a Linux program's own: src/linux.asm)
+    or eax, eax
+    jnz .load
     movzx eax, byte [task_console + ecx]
     cmp al, 0xFF
     jne .console
     mov al, [console_fg]
 .console:
     mov eax, [console_cr3 + eax*4]
+.load:
     mov edx, cr3
     cmp eax, edx
     je .same
@@ -478,6 +484,7 @@ task_exit:
 .go:
     mov [sched_current], ecx
     call sched_load_cr3
+    call lx_switch_in
     mov eax, [task_kstack + ecx*4]
     or eax, eax
     jz .no_ring3

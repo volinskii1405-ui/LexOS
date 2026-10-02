@@ -590,6 +590,8 @@ handle_command:
     jmp .done
 
 .truly_unknown:
+    call lx_try_command            ; a program in /LINUX? (src/linux.asm)
+    jnc .done
     cmp byte [dk_active], 0    ; (on the desktop: its error sound)
     je .no_sound
     push eax

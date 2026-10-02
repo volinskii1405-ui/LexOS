@@ -230,6 +230,14 @@ All taken in QEMU (1024x768) - more in [docs/screenshots](docs/screenshots).
 <td align="center" valign="top"><img src="docs/screenshots/113-browser-bookmarks.png" alt="Bookmarks" width="400"><br><sub>Bookmarks (Ctrl+D, Ctrl+B)</sub></td>
 <td align="center" valign="top"><img src="docs/screenshots/114-browser-tls12.png" alt="TLS 1.2" width="400"><br><sub>https:// over TLS 1.2 with P-256 and ChaCha20</sub></td>
 </tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/115-linux-busybox-sh.png" alt="BusyBox sh" width="400"><br><sub>A Linux program: BusyBox's shell, with pipes, on LexOS's files</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/116-linux-busybox-vi.png" alt="BusyBox vi" width="400"><br><sub>BusyBox vi in a LexOS Terminal</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/117-linux-lua.png" alt="Lua" width="400"><br><sub>The Lua 5.4 interpreter (a static Linux build) running DEMO.LUA</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/118-linux-syscall-tests.png" alt="Linux syscall tests" width="400"><br><sub>tools/linux/lxtest.c: 36 Linux system-call checks pass</sub></td>
+</tr>
 </table>
 
 Every screenshot, described in Russian: [docs/screenshots/README.md](docs/screenshots/README.md).
@@ -685,7 +693,8 @@ tester@/DESKTOP$ run snake.app
   types and Win+V keeps); `music_state(n)` - a player saying it plays (1) or is paused
   (2): the tray's note, whose click and wheel come to its inbox as
   `|PAUSE`, `|NEXT`, `|PREV`. A file dragged onto a program's window comes to its inbox
-  too.
+  too. `lx_op(op, a, b)` (48) is `LINUX.APP`'s alone: what Linux
+  programs need from the kernel (see **Linux programs** below).
 - **Paint** (`apps/paint.c`, `/APPS/PAINT.APP`; Files' **Edit in Paint**
   on a `.BMP`): pencil, brush, eraser, line, rectangle, filled box,
   oval, disc, fill and color picker (P B E L R X O D F K); the left
@@ -1277,6 +1286,37 @@ tester@/DESKTOP$ run snake.app
   Python and pasted in as data rather than derived at runtime; the
   turtle's own position is kept in that same fixed point across moves,
   rounded to a whole pixel only when a line segment is actually drawn.
+- **Linux programs** (`src/linux.asm`, `apps/linux.c` ->
+  `/SYSTEM/LINUX.APP`): static 32-bit x86 Linux ELF files run as they
+  are - `run NAME`, just the name for one in `/LINUX` or `/DOWNLOADS`
+  (`lua`, `busybox sh`), or a double click in Files. The kernel spots the
+  ELF header and starts `LINUX.APP` with it; that loads the segments into
+  a window of its own address space (`0x08000000`-`0x09FFFFFF`, given
+  its own page directory per task), builds the stack (argv, envp, auxv),
+  and from then on every `int 0x80` the Linux code makes is handed back
+  to it (system call 48, `lx_op`: register, resume, map, TLS through a
+  GDT entry for `%gs`, stat, time, the screen...). Some 200 Linux
+  system calls are answered (a few as harmless stubs), with LexOS's own: files and folders (open,
+  read/write, lseek, stat64/statx, getdents64, rename, unlink, mkdir,
+  ftruncate), memory (brk, mmap/munmap/mremap), time (clock_gettime,
+  nanosleep, gettimeofday; `TZ` from LexOS's time zone), the terminal (a
+  VT100 emulator: colors, cursor moves, clearing, scroll regions, the
+  alternate screen; termios cooked and raw modes; keys sent as escape
+  sequences; UTF-8 <-> CP866 for Russian), processes (fork, vfork,
+  execve, wait4, pipes, dup2, kill, process groups - up to 16 processes
+  taking turns, each swapped into the window when it runs), signals
+  (sigaction with handlers, sigreturn, Ctrl+C as SIGINT), and made-up
+  `/dev/null`, `/dev/zero`, `/dev/urandom`, `/etc/passwd`, `/proc/self`
+  bits. **BusyBox** works: `busybox sh` (ash with pipes, history,
+  scripts, job control's `&`/`wait`), `vi`, `ls -l --color`, `grep`,
+  `sed`, `awk`, `find`, `xargs`, `tar czf`/`tzf`, `gzip`, `md5sum`,
+  `du`, `df`, `date`... - in its shell every applet is also `/bin/NAME`.
+  BusyBox itself isn't on the disk (it's GPL): `/LINUX/README.TXT` has
+  the link to busybox.net's i686 build, which LexOS Web saves to
+  `/DOWNLOADS/BUSYBOX`. On the disk: `/LINUX/LUA` (Lua 5.4.8, MIT, built
+  static with musl) and `/LINUX/DEMO.LUA`. `tools/linux/build.sh` builds
+  your own (zig cc or any i386 musl gcc, `-static`), and
+  `tools/linux/lxtest.c` is a test of the system calls.
 - `run <n>.com` runs a small MS-DOS `.com` program - real 16-bit x86
   machine code, not LexOS's own format, executed directly (no BIOS, no
   real-mode switch, no v86 mode: it runs through a 16-bit code segment
@@ -1602,7 +1642,8 @@ apps/                  example ring-3 programs (`make apps`): lexos.inc for
                        spreadsheet), music.c (the player), hexedit.c;
                        gui.h (buttons, text boxes, the file dialog,
                        APPS.CFG), deflate.h, png.h, mod.h (the MOD
-                       engine), pngmod.c (/SYSTEM/PNG.BIN).
+                       engine), pngmod.c (/SYSTEM/PNG.BIN),
+                       linux.c (/SYSTEM/LINUX.APP: Linux system calls).
 disk/                  what LexOS's disk starts with: APPS/ (the built
                        programs), DEMOS/ (scripts, music, a CHIP-8 ROM,
                        SITE/ - the browser's demo site, C/ - C examples),
@@ -1611,7 +1652,8 @@ docs/screenshots/      the screenshots, described in Russian in its README.
 tools/                 mkdisk.py (disk/ -> the image's filesystem),
                        mklang.py (the translations -> disk/SYSTEM/LANG.DAT),
                        mkicons.py (the picture icons -> src/dkart.inc),
-                       makemod.py (DEMO.MOD).
+                       makemod.py (DEMO.MOD), linux/ (build.sh and
+                       lxtest.c: Linux programs for LexOS).
 src/
   data.asm             constants, messages, working variables.
   screen.asm           VGA text output, hardware cursor.
@@ -1700,6 +1742,9 @@ src/
                        and onto programs' windows.
   appext.asm           system calls: keymode, readdir, mkdir, notify,
                        inbox, clip_pic, clip_text.
+  linux.asm            Linux programs: an ELF file run, its page
+                       directory and window, int 0x80 handed to
+                       LINUX.APP, %gs TLS, the lx_op system call.
   dkfview.asm          Files: the places, Details, thumbnails, Recent.
   dkwall.asm           the wallpaper, and reading .BMPs for it and
                        the thumbnails.
@@ -1772,6 +1817,18 @@ src/
 
 ## Known limitations
 
+- Linux programs: only static 32-bit x86 ones (no shared libraries,
+  no x86-64), linked at `0x08000000` or above, or static-pie (LLVM's
+  `lld` puts them at `0x10000` by default: `-Wl,--image-base=0x8048000`),
+  up to 32 MB of code, data and memory together. No sockets, no threads
+  (`clone` with `CLONE_VM` fails), no graphics, no `/proc` beyond a few
+  files (`ps` shows nothing). Processes take turns only at system calls:
+  a background job moves on while the shell waits for something, and
+  Ctrl+C can't stop a loop that makes no system calls (close the
+  Terminal instead). Pipes hold up to about 8 MB. LexOS's short
+  uppercase names stay uppercase; `busybox ls` shows `?` for Russian
+  letters in names (its static C library knows only ASCII), and Russian
+  text shows when Russian is on in LexOS.
 - ATA DMA only looks at PCI bus 0, function 0 (see `ata_dma_probe` in
   `src/atadma.asm`) and only understands an I/O-space BAR4 - enough for
   QEMU's own IDE controller (what this project is tested against), but

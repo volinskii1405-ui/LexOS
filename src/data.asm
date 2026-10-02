@@ -690,3 +690,5 @@ fs_tree_depth db 0
 fs_current_dir dw FS_ROOT
 fs_prev_dir    dw 0xFFFE        ; before the last cd (`cd -`); 0xFFFE: none yet
 fs_apps_dir_name db "APPS", 0
+fs_linux_dir_name db "LINUX", 0
+fs_downloads_dir_name db "DOWNLOADS", 0      ; (Linux programs: src/linux.asm)

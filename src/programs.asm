@@ -17,9 +17,20 @@
 ; files where you are (run wc.app readme).
 fs_find_in_apps:
     push si
+    mov si, fs_apps_dir_name
+    jmp fs_find_in_dir
+; ...and the same in the LINUX folder (Linux programs: src/linux.asm)
+fs_find_in_linux:
+    push si
+    mov si, fs_linux_dir_name
+    jmp fs_find_in_dir
+; ...and DOWNLOADS (what the browser saved)
+fs_find_in_downloads:
+    push si
+    mov si, fs_downloads_dir_name
+fs_find_in_dir:
     push word [fs_current_dir]
     mov word [fs_current_dir], FS_ROOT
-    mov si, fs_apps_dir_name
     call fs_find_by_name
     cmp ax, -1
     je .done
@@ -86,6 +97,12 @@ fs_run:
     call fs_find_in_apps           ; not here: the APPS folder, then?
     cmp ax, -1
     jne .found
+    call fs_find_in_linux          ; or LINUX (BusyBox and such)
+    cmp ax, -1
+    jne .found
+    call fs_find_in_downloads      ; or DOWNLOADS
+    cmp ax, -1
+    jne .found
 .not_found:
     mov si, msg_fs_notfound
     call print_string
@@ -106,6 +123,9 @@ fs_run:
     call app_run                   ; src/usermode.asm - ring 3
     jmp .end
 .not_app:
+    mov ax, [fs_tmp_slot]          ; a Linux program? (src/linux.asm)
+    call lx_try_run
+    jnc .end
     call fs_name_ends_with_com
     cmp ax, 1
     jne .not_program

@@ -26,7 +26,7 @@
 ;          app_gfx_off, fh_close_all, app_build_cmdline
 ; ============================================================
 
-FH_COUNT        equ 4
+FH_COUNT        equ 16
 
 FH_MODE_READ    equ 0                    ; an existing file, from the start
 FH_MODE_WRITE   equ 1                    ; created, or emptied
