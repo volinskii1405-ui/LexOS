@@ -102,3 +102,6 @@ int host_web_file(const char *url, unsigned char **out, int *n)
     fprintf(stderr, "web: unmapped %s\n", url);
     return -1;
 }
+void lxh_log(int lvl, const char *s, int n) { fprintf(stderr, "[js %c] %.*s\n", lvl, n, s); }
+void (*lx_out)(const char *, int);
+void lxh_trace(const char *f, int v) { if (getenv("LXTRACE")) fprintf(stderr, f, v); }

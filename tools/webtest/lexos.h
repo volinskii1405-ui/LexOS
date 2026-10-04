@@ -46,7 +46,7 @@ int lxh_gfx_mode_ex(int, int, int); void lxh_gfx_blit(const void *); void lxh_gf
 void lxh_font(void *); void lxh_keymode(int); int lxh_pollkey(void); int lxh_mouse(int *); int lxh_inbox(char *, int);
 int lxh_keydown(int); int lxh_clip_text_get(char *, int); int lxh_clip_text_set(const char *, int);
 int lxh_tcp_open(const char *, int); int lxh_tcp_send(const void *, int); int lxh_tcp_recv(void *, int, int); void lxh_tcp_close(void);
-unsigned lxh_millis(void); void lxh_sleep_ms(int); void lxh_notify(const char *);
+unsigned lxh_millis(void); void lxh_sleep_ms(int); void lxh_notify(const char *); void lxh_log(int, const char *, int); void lxh_trace(const char *, int);
 #define open lxh_open
 #define read lxh_read
 #define fwrite lxh_fwrite

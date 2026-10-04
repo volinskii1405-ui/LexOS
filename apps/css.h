@@ -1421,6 +1421,16 @@ static void css_apply(struct cstyle *st, struct cstyle *par, int prop, const cha
         case CP_FWEIGHT: st->bold = par->bold; return;
         case CP_POSITION: st->position = par->position; return;
         case CP_VISIBILITY: st->hidden = par->hidden; return;
+        case CP_FWRAP: st->fwrap = par->fwrap; return;
+        case CP_FDIR: st->fdir = par->fdir; return;
+        case CP_FFLOW: st->fwrap = par->fwrap; st->fdir = par->fdir; return;
+        case CP_JUSTIFY: st->justify = par->justify; return;
+        case CP_AITEMS: st->aitems = par->aitems; return;
+        case CP_OVERFLOW: st->overflow = par->overflow; return;
+        case CP_OPACITY: st->opacity = par->opacity; return;
+        case CP_BOXSZ: st->boxsz = par->boxsz; return;
+        case CP_MAXW: st->maxw = par->maxw; return;
+        case CP_MINW: st->minw = par->minw; return;
         }
         return;
     }

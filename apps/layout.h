@@ -368,6 +368,29 @@ static void ctrl_options(struct ctrl *c, int e)
     c->opts = opts;
     c->rows = wmax > 40 ? 40 : wmax;                     /* (its width, in letters) */
 }
+/* a <button>'s words: what's in it (and its value, the page's) */
+static void ctrl_btn_label(struct ctrl *c, int e)
+{
+    char *t = dom_text_of(e, 0), lab[64];
+    const char *v = dom_attr(e, "value");
+    ctrl_text_u8(c, v ? v : "");
+    font_text(t ? t : "", lab, sizeof lab);
+    free(t);
+    {                                                    /* (its words, spaces joined) */
+        int i, k2 = 0;
+        for (i = 0; lab[i]; i++) if (lab[i] != ' ' || (k2 && lab[k2 - 1] != ' ')) lab[k2++] = lab[i];
+        while (k2 && lab[k2 - 1] == ' ') k2--;
+        lab[k2] = 0;
+    }
+    if (!lab[0]) {
+        const char *al = dom_attr(e, "aria-label");
+        if (!al) al = dom_attr(e, "title");
+        font_text(al ? al : "", lab, sizeof lab);
+    }
+    free(c->val);
+    c->val = malloc(strlen(lab) + 2);
+    if (c->val) copy(c->val, lab, strlen(lab) + 1);
+}
 static int ctrl_for(int e)
 {
     struct ctrl *c;
@@ -395,25 +418,7 @@ static int ctrl_for(int e)
         free(t);
         c->rows = 3;
     } else if (dn[e].tag == T_button) {
-        char *t = dom_text_of(e, 0), lab[64];
-        const char *v = dom_attr(e, "value");
-        ctrl_text_u8(c, v ? v : "");
-        font_text(t ? t : "", lab, sizeof lab);
-        free(t);
-        {                                                /* (its words, spaces joined) */
-            int i, k2 = 0;
-            for (i = 0; lab[i]; i++) if (lab[i] != ' ' || (k2 && lab[k2 - 1] != ' ')) lab[k2++] = lab[i];
-            while (k2 && lab[k2 - 1] == ' ') k2--;
-            lab[k2] = 0;
-        }
-        if (!lab[0]) {
-            const char *al = dom_attr(e, "aria-label");
-            if (!al) al = dom_attr(e, "title");
-            font_text(al ? al : "", lab, sizeof lab);
-        }
-        free(c->val);
-        c->val = malloc(strlen(lab) + 2);
-        if (c->val) copy(c->val, lab, strlen(lab) + 1);
+        ctrl_btn_label(c, e);
     } else {
         const char *v = dom_attr(e, "value");
         if (!v && (c->kind == CT_SUBMIT || c->kind == CT_IMAGE)) v = dom_attr(e, "alt");
@@ -1036,8 +1041,10 @@ static void lay_block(int e, int al, int ar, int shrink)
     int s_cbl = cb_l, s_cbr = cb_r, s_ta = talign_cur, s_fb = fl_base, s_nfl = nfl, s_ibg = nibg, s_npos = npos;
     int bfc, h, ch, is_ctrl;
     struct boxrec rec;
+    int s_node = lay_node;
     if (lay_depth > 200) return;
     lay_depth++;
+    lay_node = e;
     rec.bg = rec.bgi = rec.br[0] = rec.br[1] = rec.br[2] = rec.br[3] = -1;
     ml = cs->m[3].kind == L_AUTO ? 0 : lay_len(&cs->m[3], avail);
     mr = cs->m[1].kind == L_AUTO ? 0 : lay_len(&cs->m[1], avail);
@@ -1220,6 +1227,7 @@ width_done:
     x = cb_l;
     line_start = nitems;
     line_room();
+    lay_node = s_node;
     lay_depth--;
 }
 
@@ -1367,9 +1375,11 @@ static void lay_atomic(int c)
 static void lay_inline_el(int c)
 {
     struct cstyle *cs = CS(c);
-    int slink = cur_link, start = nitems, lpad = 0, rpad = 0;
+    int slink = cur_link, start = nitems, lpad = 0, rpad = 0, s_node;
     if (dn[c].tag == T_br) { flush_word(); text_style(cs); end_line(1); return; }
     if (dn[c].tag == T_wbr) return;
+    s_node = lay_node;
+    lay_node = c;
     if (dn[c].tag == T_a || dn[c].tag == T_area) {
         const char *h = dom_attr(c, "href");
         if (h) cur_link = add_link(h);
@@ -1391,8 +1401,21 @@ static void lay_inline_el(int c)
     }
     if (cs->bw[2] && cs->bc[2] != 0xFFFFFFFFu && dn[c].tag != T_a) { flush_word(); }
     cur_link = slink;
-    dn[c].bx = start < nitems ? items[start].x : x;
-    dn[c].by = start < nitems ? items[start].y : y;
+    lay_node = s_node;
+    flush_word();
+    if (start < nitems) {                                 /* (its box: around what's in it) */
+        int i, x0 = 1 << 30, y0 = 1 << 30, x1 = -(1 << 30), y1 = -(1 << 30);
+        for (i = start; i < nitems; i++) {
+            struct item *it = &items[i];
+            if (it->kind == IT_NONE || it->kind == IT_GROUP) continue;
+            if (it->x < x0) x0 = it->x;
+            if (it->y < y0) y0 = it->y;
+            if (it->x + it->w > x1) x1 = it->x + it->w;
+            if (it->y + it->h > y1) y1 = it->y + it->h;
+        }
+        if (x1 > x0) { dn[c].bx = x0; dn[c].by = y0; dn[c].bw = x1 - x0; dn[c].bh = y1 - y0; }
+        else { dn[c].bx = items[start].x; dn[c].by = items[start].y; }
+    } else { dn[c].bx = x; dn[c].by = y; }
 }
 
 /* a node in the line (text, or an element of any kind) */
@@ -2285,6 +2308,8 @@ static void layout_dom(void)
     css_reader = reader;
     css_page_bg = reader ? RGB(250, 246, 236) : C_PAGE;
     lay_img_bg = css_page_bg;
+    for (i = 1; i < ndn; i++) dn[i].bx = dn[i].by = dn[i].bw = dn[i].bh = 0;     /* (not shown: no box) */
+    lay_node = 0;
     css_compute_tree(dom_doc);
     hs = CS(dom_html);
     bs = CS(dom_body);

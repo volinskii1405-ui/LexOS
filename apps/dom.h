@@ -589,7 +589,7 @@ static void dom_parse(const char *b, int n, int cs, int parent)
             while (q < n && !is_space(b[q]) && b[q] != '>' && b[q] != '/') q++;
             t = atom_lc(b + s, q - s, 1);
             if (t == T_html || t == T_body || (t == T_head && !parent)) {            /* (its attributes: to ours) */
-                int e2 = t == T_html ? dom_html : t == T_head ? dom_head : (parent ? 0 : dom_body);
+                int e2 = parent ? 0 : t == T_html ? dom_html : t == T_head ? dom_head : dom_body;
                 if (e2) dom_attrs(e2, b, &q, n, cs);
                 while (q < n && b[q] != '>') q++;
                 p = q + 1;
@@ -690,6 +690,7 @@ static void dom_ser(int n, int outer)
         if (raw) dom_tb_put(dstr + dn[n].text, dn[n].tlen); else dom_esc(dstr + dn[n].text, dn[n].tlen, 0);
         return;
     }
+    if (dn[n].type == DN_COMMENT) { dom_tb_put("<!--", 4); dom_tb_put(dstr + dn[n].text, dn[n].tlen); dom_tb_put("-->", 3); return; }
     if (dn[n].type != DN_ELEM) { for (c = dn[n].first; c; c = dn[c].next) dom_ser(c, 1); return; }
     if (outer && (dn[n].flags & DF_SVG)) { dom_tb_put(dstr + dn[n].text, dn[n].tlen); return; }
     if (outer) {

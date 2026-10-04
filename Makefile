@@ -172,9 +172,9 @@ lan2: $(BUILD_DIR)/os-image.bin
 # committed, so plain `make` / `make run` never needs any of this.
 APP_CFLAGS = -m32 -ffreestanding -fno-pic -fno-pie -fno-stack-protector \
 	-fno-asynchronous-unwind-tables -nostdlib -O2 -Wall
-C_APPS = guess wc note fire pong mandel modplay ftest cube maze browser cc notepad zip paint calc snake tetris sweeper 2048 hexedit sheet music solitaire
+C_APPS = guess wc note fire pong mandel modplay ftest cube maze cc notepad zip paint calc snake tetris sweeper 2048 hexedit sheet music solitaire
 upper = $(shell echo $(1) | tr a-z A-Z)
-apps: disk/APPS/HELLO.APP disk/APPS/CRASH.APP $(foreach a,$(C_APPS),disk/APPS/$(call upper,$(a)).APP) disk/SYSTEM/LINUX.APP
+apps: disk/APPS/HELLO.APP disk/APPS/CRASH.APP $(foreach a,$(C_APPS),disk/APPS/$(call upper,$(a)).APP) disk/APPS/BROWSER.APP disk/SYSTEM/LINUX.APP
 
 disk/APPS/HELLO.APP: apps/hello.asm apps/lexos.inc
 	$(ASM) -f bin -i apps/ $< -o $@
@@ -192,6 +192,20 @@ disk/APPS/$(call upper,$(1)).APP: apps/$(1).c apps/lexos.h apps/gui.h apps/mod.h
 	ld -m elf_i386 -T apps/app.ld --oformat binary -o $$@ $(BUILD_DIR)/crt0.o $(BUILD_DIR)/$(1).o
 endef
 $(foreach a,$(C_APPS),$(eval $(call C_APP_RULE,$(a))))
+
+# LexOS Web: browser.c with QuickJS (apps/qjs, its JavaScript; the C
+# library it needs: apps/qjs/lxlibc.c) and the page's world for it
+# (apps/jsdom.js, inside the .APP)
+QJS_CFLAGS = -m32 -ffreestanding -fno-pic -fno-pie -fno-stack-protector -fno-asynchronous-unwind-tables \
+	-nostdinc -isystem $(shell gcc -m32 -print-file-name=include) -Iapps/qjs/inc -msse2 -mfpmath=sse -O2 -w \
+	-U__linux__ -U__linux -Ulinux -U__unix__ -U__unix -Uunix -D__STDC_NO_ATOMICS__=1 -D__DJGPP=1 -fno-math-errno
+QJS_OBJS = $(foreach f,quickjs libregexp libunicode dtoa lxlibc,$(BUILD_DIR)/qjs/$(f).o)
+$(BUILD_DIR)/qjs/%.o: apps/qjs/%.c $(wildcard apps/qjs/*.h apps/qjs/inc/*.h apps/qjs/inc/sys/*.h) | $(BUILD_DIR)
+	@mkdir -p $(BUILD_DIR)/qjs
+	gcc $(QJS_CFLAGS) -c $< -o $@
+disk/APPS/BROWSER.APP: apps/browser.c apps/js.h apps/jsdom.js apps/lexos.h apps/png.h apps/deflate.h apps/inflate.h apps/jpeg.h apps/gif.h apps/css.h apps/tls.h apps/dom.h apps/layout.h apps/webp.h apps/webp_tab.h apps/svg.h apps/app.ld $(BUILD_DIR)/crt0.o $(QJS_OBJS)
+	gcc $(APP_CFLAGS) -Iapps/qjs/inc -c apps/browser.c -o $(BUILD_DIR)/browser.o
+	ld -m elf_i386 -T apps/app.ld --oformat binary -o $@ $(BUILD_DIR)/crt0.o $(BUILD_DIR)/browser.o $(QJS_OBJS)
 
 # Linux programs' runner (src/linux.asm starts it): in /SYSTEM, not a
 # program of its own for the menus

@@ -41,8 +41,16 @@ static int host_net(const char *u)
 #undef puts
 #undef exit
 #undef mkdir
-#include <stdio.h>
-#include <stdlib.h>
+/* (stdio's, by hand: quickjs.h's own headers stand in for the system's here) */
+typedef unsigned long size_t_;
+FILE *fopen(const char *, const char *);
+int fprintf(FILE *, const char *, ...);
+int fputc(int, FILE *);
+int fclose(FILE *);
+size_t_ fwrite(const void *, size_t_, size_t_, FILE *);
+extern FILE *stderr;
+char *getenv(const char *);
+void *calloc(size_t_, size_t_);
 static void save_ppm(const char *name, const unsigned *p, int w, int h, int stride)
 {
     FILE *f = fopen(name, "wb");
@@ -64,6 +72,35 @@ int main(int argc, char **argv)
     t0 = millis();
     go(argv[1], 1);
     fprintf(stderr, "laid out: %d items, %d high, %u ms\n", nitems, doc_h, millis() - t0);
+    if (getenv("LXKEY") && jcx) {                        /* LXKEY=ch,scancode: a key to the page */
+        int ch = atoi(getenv("LXKEY")), sc = 0;
+        const char *c = getenv("LXKEY");
+        while (*c && *c != ',') c++;
+        if (*c) sc = atoi(c + 1);
+        fprintf(stderr, "keydown: prevented %d\n", js_event("keydown", dom_body, 0, 0, ch, sc, 0));
+        fprintf(stderr, "js_after %d\n", js_after());
+    }
+    if (getenv("LXEVAL") && jcx) { js_eval_url(getenv("LXEVAL")); js_tick(1); }   /* LXEVAL=code: run on the page */
+    if (getenv("LXCLICK")) {                             /* LXCLICK=x,y: a click there (the window's) */
+        int cx = atoi(getenv("LXCLICK")), cy = 0;
+        const char *c = getenv("LXCLICK");
+        while (*c && *c != ',') c++;
+        if (*c) cy = atoi(c + 1);
+        if (cy >= VIEW_Y && ctrl_at(cx, cy) >= 0) { fprintf(stderr, "(a field)\n"); ctrl_click(ctrl_at(cx, cy)); }
+        else if (jcx) js_click_at(cx, cy);
+        if (jcx) { js_tick(1); js_after(); }
+    }
+    {                                                    /* the page's timers, for a while */
+        unsigned until = millis() + (getenv("LXJSWAIT") ? atoi(getenv("LXJSWAIT")) : 1000);
+        int i;
+        while (jcx && (int)(millis() - until) < 0) {
+            js_tick(0);
+            if (js_after()) break;
+            for (i = 0; i < 200000; i++) __asm__ volatile("");
+        }
+        if (jcx) js_tick(1);
+        if (jcx) fprintf(stderr, "scripts: %d run, %d errors; %d items, %d high\n", js_scripts, js_errors, nitems, doc_h);
+    }
     if (getenv("LXDUMP")) { FILE *f = fopen("src.html", "wb"); fwrite(src, 1, srclen, f); fclose(f); }
     if (getenv("LXTREE")) {
         int n, d;

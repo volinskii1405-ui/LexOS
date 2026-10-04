@@ -138,6 +138,7 @@ struct item {
     int text, len;                        /* IT_TEXT: in pool; IT_GROUP: how many after it are its */
     unsigned color;
     unsigned *pix;                        /* IT_IMAGE */
+    int node;                             /* the DOM node it's of (0: none) */
 };
 static struct item *items;
 static int nitems, items_cap;
@@ -161,6 +162,8 @@ static int nhist, hpos = -1;
 static int editing, edit_fresh, hover_link = -1, hover_btn = -1, hover_ctrl = -1;
 static char *post_body;                   /* a form POSTed: the next page's request */
 static int post_len, post_now;
+static const char *js_req_method, *js_req_hdrs, *js_req_body;   /* (a script's request: js.h) */
+static int js_req_blen;
 static void ck_set(const char *h);
 static void ck_save(void);
 static char status[URL_MAX + 40];
@@ -603,6 +606,7 @@ static unsigned base_text;
 static unsigned cur_color(void) { return text_col; }
 static int cur_style(void) { return (bold ? ST_BOLD : 0) | (ital ? ST_ITAL : 0) | (under ? ST_UNDER : 0); }
 
+static int lay_node;                                     /* (the element being laid out: its items') */
 static struct item *new_item(int kind)
 {
     struct item *it;
@@ -612,6 +616,7 @@ static struct item *new_item(int kind)
     it->kind = kind;
     it->link = -1;
     it->layer = cur_layer;
+    it->node = lay_node;
     return it;
 }
 
@@ -1785,6 +1790,30 @@ static int build_req(char *req, int max, const char *host, const char *path, con
 {
     static char cks[8192];
     int n;
+    if (js_req_method && tg == T_BUF) {                  /* a script's: its method, headers, body */
+        char t[16];
+        int k = 0, v = js_req_blen;
+        copy(req, js_req_method, max);
+        append(req, " ", max);
+        append(req, path, max);
+        append(req, " HTTP/1.1\r\nHost: ", max);
+        append(req, host, max);
+        append(req, "\r\nUser-Agent: Mozilla/5.0 (compatible; LexOS-Web/2.0)\r\nAccept-Encoding: gzip, deflate\r\n", max);
+        if (!strstr_ci(js_req_hdrs, "accept:")) append(req, "Accept: */*\r\n", max);
+        append(req, js_req_hdrs, max);
+        ck_header(host, path, cur_https, cks, sizeof cks);
+        append(req, cks, max);
+        if (js_req_body) {
+            append(req, "Content-Length: ", max);
+            do { t[k++] = '0' + v % 10; v /= 10; } while (v);
+            while (k) { char o[2] = { t[--k], 0 }; append(req, o, max); }
+            append(req, "\r\n", max);
+        }
+        append(req, "Connection: close\r\n\r\n", max);
+        n = strlen(req);
+        if (js_req_body && n + js_req_blen < max) { memcpy(req + n, js_req_body, js_req_blen); n += js_req_blen; }
+        return n;
+    }
     copy(req, post_now ? "POST " : "GET ", max);
     append(req, path, max);
     append(req, " HTTP/1.1\r\nHost: ", max);
@@ -2731,13 +2760,12 @@ static void js_page_text(void)
 }
 
 static int dom_ok;                                       /* (the tree is the page's) */
+static int js_laid_gen = -1, js_in_layout;              /* (js.h's: the tree as last laid out) */
+static void js_page_start(void);
 static void title_scan(void) { }
-static void layout(void)
+static void layout_begin(void)
 {
-    char keep_title[sizeof title];
-    layout_gen++;
     free_page();
-    copy(keep_title, title, sizeof keep_title);
     left_x = reader ? 96 : MARGIN;
     right_x = W - SBW - (reader ? 96 : MARGIN);
     x = line_left = cb_l = left_x;
@@ -2757,21 +2785,49 @@ static void layout(void)
     page_bg = reader ? RGB(250, 246, 236) : C_PAGE;
     base_text = reader ? RGB(40, 36, 32) : C_TEXT;
     text_col = base_text;
-    if (pi.kind == PK_TEXT || view_source) {
-        layout_plain();
-    } else {
-        if (!dom_ok) {
-            ctrls_free();
-            imgc_free();
-            dom_parse(src, srclen, cs_mode, 0);
-            dom_ok = 1;
-            title_from_dom();
-        }
-        layout_dom();
+}
+static void layout(void)
+{
+    char keep_title[sizeof title];
+    layout_gen++;
+    copy(keep_title, title, sizeof keep_title);
+    if (!(pi.kind == PK_TEXT || view_source) && !dom_ok) {
+        free_page();
+        ctrls_free();
+        imgc_free();
+        dom_parse(src, srclen, cs_mode, 0);
+        dom_ok = 1;
+        title_from_dom();
+        js_page_start();                                 /* (its scripts: before it's shown) */
     }
+    layout_begin();
+    js_in_layout = 1;
+    if (pi.kind == PK_TEXT || view_source) layout_plain();
+    else layout_dom();
+    js_in_layout = 0;
+    js_laid_gen = dom_gen;
     if (!title[0]) copy(title, keep_title, sizeof title);
     doc_h = y + 20;
     scroll = 0;
+}
+/* the page laid out again where it is (a script changed it) */
+static void clamp_scroll(void);
+static void relayout_keep(void)
+{
+    int s = scroll;
+    if (js_in_layout || pi.kind == PK_TEXT || view_source || !dom_ok) return;
+#ifdef LX_HOST
+    lxh_trace("relayout, gen %d\n", dom_gen);
+#endif
+    layout_gen++;
+    layout_begin();
+    js_in_layout = 1;
+    layout_dom();
+    js_in_layout = 0;
+    js_laid_gen = dom_gen;
+    doc_h = y + 20;
+    scroll = s;
+    clamp_scroll();
 }
 
 /* ============================================================
@@ -3569,6 +3625,8 @@ static void tab_go(int i)
 }
 
 static void draw_info(void);
+static int show_console;
+static void draw_console(void);
 static void redraw(void)
 {
     draw_tabs();
@@ -3576,6 +3634,7 @@ static void redraw(void)
     draw_page();
     if (show_dls) draw_downloads();
     if (show_info) draw_info();
+    if (show_console) draw_console();
     draw_sug();
     if (finding) draw_find(); else draw_status();
     gfx_blit(frame);
@@ -3737,6 +3796,8 @@ static void load_styles(void)
     }
 }
 
+#include "js.h"
+
 /* a picture or a file, not a page: a page about it */
 static void about_page(const char *where)
 {
@@ -3824,6 +3885,7 @@ static void go(const char *to, int remember)
     st_reset();
     css_reset();
     css_load_ua();
+    if (!js_enabled) css_text("noscript{display:block}", 0);          /* (no scripts: what's for that, shown) */
     ncss_links = 0;
     dom_ok = 0;
     imgc_free();
@@ -3881,7 +3943,7 @@ static void go(const char *to, int remember)
         pick_charset();
         if (pi.kind == PK_TEXT && is_markdown(where)) pi.kind = PK_MD;
         if (pi.kind == PK_MD && !vs) { markdown(); pi.kind = PK_HTML; }
-        if (pi.kind == PK_HTML && !vs) js_page_text();
+        if (pi.kind == PK_HTML && !vs && !js_enabled) js_page_text();
         if (pi.kind == PK_HTML && !vs && ncss_links) load_styles();
     }
     pi.kept = srclen;
@@ -3972,11 +4034,17 @@ static int font_to_cs(const char *v, char *out, int max)
 }
 static void go(const char *to, int remember);
 /* form f sent (btn: the button pressed, -1 Enter) */
+static int js_submitting;                                /* (form.submit(): no submit event) */
 static void form_submit(int f, int btn)
 {
     static char q[16384], enc[VAL_MAX * 4];
     char act[URL_MAX], to[URL_MAX];
     int n = 0, i;
+    if (f >= 0 && jcx && !js_submitting) {               /* the page's say first */
+        int fn = forms[f].node;
+        if (js_event("submit", fn, 0, 0, 0, 0, 0)) return;
+        if (js_nav[0]) return;                           /* (it went somewhere itself) */
+    }
     q[0] = 0;
     for (i = 0; i < nctrls; i++) {
         struct ctrl *c = &ctrls[i];
@@ -4030,11 +4098,16 @@ static void form_submit(int f, int btn)
     append(to, q, URL_MAX);
     go(to, 1);
 }
+static int js_mx, js_my;                                 /* (where the mouse is: a click's place) */
 static void ctrl_click(int ci)
 {
     struct ctrl *c = &ctrls[ci];
-    int i;
+    int i, was = c->checked, old_focus = focus, node = c->node;
     focus = ci;
+    if (jcx && old_focus != ci) {
+        if (old_focus >= 0 && old_focus < nctrls) js_event("blur", ctrls[old_focus].node, 0, 0, 0, 0, 0);
+        js_event("focus", node, 0, 0, 0, 0, 0);
+    }
     switch (c->kind) {
     case CT_CHECK: c->checked = !c->checked; break;
     case CT_RADIO:
@@ -4042,8 +4115,28 @@ static void ctrl_click(int ci)
             if (ctrls[i].kind == CT_RADIO && ctrls[i].form == c->form && !strcmp(ctrls[i].name, c->name)) ctrls[i].checked = 0;
         c->checked = 1;
         break;
+    }
+    if (jcx) {                                           /* the page's click: it may say no */
+        if (js_event("click", node, js_mx, js_my, 0, 0, js_mods())) {
+            if (c->kind == CT_CHECK) c->checked = was;
+            return;
+        }
+        if ((c->kind == CT_CHECK || c->kind == CT_RADIO) && c->checked != was) {
+            js_event("input", node, 0, 0, 0, 0, 0);
+            js_event("change", node, 0, 0, 0, 0, 0);
+        }
+        if (js_nav[0]) return;
+    }
+    switch (c->kind) {
     case CT_SELECT: sel_open = sel_open == ci ? -1 : ci; break;
-    case CT_SUBMIT: case CT_IMAGE: form_submit(c->form, ci); break;
+    case CT_SUBMIT: case CT_IMAGE: if (c->form >= 0 || !jcx) form_submit(c->form, ci); break;   /* (a <button> in no form: the page's) */
+    case CT_BUTTON:                                      /* <button type=reset>: as it was */
+        if (dn[node].type == DN_ELEM) {
+            const char *t = dom_attr(node, "type");
+            if (t && starts_ci(t, "reset") && c->form >= 0)
+                for (i = 0; i < nctrls; i++) if (ctrls[i].form == c->form && ctrls[i].edited) { ctrls[i].edited = 0; js_ctrl_attr(ctrls[i].node, atom_of("value"), dom_attr(ctrls[i].node, "value")); }
+        }
+        break;
     }
 }
 /* a key, with a field chosen -> 1 if it was the field's */
@@ -4077,7 +4170,7 @@ static int ctrl_key(int ch, int sc)
     n = strlen(c->val);
     if (ch == 13) {
         if (c->kind == CT_AREA) { if (n < VAL_MAX - 1) { c->val[n] = '\n'; c->val[n + 1] = 0; c->edited = 1; } }
-        else form_submit(c->form, -1);
+        else if (c->form >= 0 || !jcx) form_submit(c->form, -1);
         return 1;
     }
     if (ch == 8) { if (n) c->val[n - 1] = 0; c->edited = 1; return 1; }
@@ -4140,7 +4233,7 @@ static void num_str(char *t, int v, int size)
 }
 static void draw_info(void)
 {
-    int bw = 580, bh = 296, bx = (W - SBW - bw) / 2, by = VIEW_Y + 20, ly;
+    int bw = 580, bh = 314, bx = (W - SBW - bw) / 2, by = VIEW_Y + 20, ly;
     char t[160];
     static const char *how[] = { " (the default)", " - the server says", " - the page says (<meta>)", " - guessed from its bytes",
                                  " - its byte order mark" };
@@ -4196,6 +4289,16 @@ static void draw_info(void)
     num_str(t, nitems, sizeof t);
     append(t, " pieces laid out", sizeof t);
     info_line(bx, &ly, "Laid out", t, 0);
+    t[0] = 0;
+    if (!js_enabled) copy(t, "off (Ctrl+J: on)", sizeof t);
+    else {
+        num_str(t, js_scripts, sizeof t);
+        append(t, " run, ", sizeof t);
+        num_str(t, js_errors, sizeof t);
+        append(t, js_errors == 1 ? " error" : " errors", sizeof t);
+        append(t, jcx ? " (Ctrl+K: the console)" : "", sizeof t);
+    }
+    info_line(bx, &ly, "Scripts", t, 0);
 }
 
 /* what was typed in the address bar -> an address: words (a space in
@@ -4260,9 +4363,87 @@ static void press(int b)
     else if (b == 8) { bookmark_toggle(); redraw(); }
 }
 
+/* a script's wishes, done once it's back: go somewhere, send a form, back/forward */
+static int same_page(const char *to)                     /* (to: this page, a #part of it) */
+{
+    int i;
+    for (i = 0; url[i] && url[i] != '#' && to[i] == url[i]; i++) ;
+    return (!url[i] || url[i] == '#') && (to[i] == '#' || !to[i]) && to[i] == '#';
+}
+static void scroll_to_part(const char *to)
+{
+    const char *h = to;
+    int e;
+    while (*h && *h != '#') h++;
+    if (!*h) return;
+    copy(url, to, URL_MAX);
+    if (hpos >= 0 && hpos < HIST_MAX) copy(hist[hpos], url, URL_MAX);
+    if (!h[1]) { scroll = 0; return; }
+    e = dom_by_id(h + 1);
+    if (!e) {                                            /* (<a name=...>) */
+        int n, a = atom_get("name", 4, 0);
+        for (n = dom_doc; n && a; n = dom_next_in(n, dom_doc))
+            if (dn[n].type == DN_ELEM && dn[n].tag == T_a && dom_attr_a(n, a) && !strcmp(dom_attr_a(n, a), h + 1)) { e = n; break; }
+    }
+    if (e) { scroll = dn[e].by - 8; clamp_scroll(); }
+}
+static int js_after(void)
+{
+    if (js_nav[0]) {
+        char to[URL_MAX];
+        copy(to, js_nav, URL_MAX);
+        js_nav[0] = 0;
+        if (same_page(to)) { scroll_to_part(to); js_event("hashchange", 0, 0, 0, 0, 0, 0); return 1; }
+        go(to, !js_nav_replace);
+        return 1;
+    }
+    if (js_submit_form > 0) {
+        int fn = js_submit_form, i;
+        js_submit_form = -1;
+        for (i = 0; i < nforms; i++) if (forms[i].node == fn) break;
+        if (i == nforms) {                               /* (a form no field's of: one now) */
+            int k;
+            for (k = dn[fn].first; k; k = dom_next_in(k, fn)) if (dn[k].type == DN_ELEM && js_ctrl(k) >= 0) break;
+            for (i = 0; i < nforms && forms[i].node != fn; i++) ;
+        }
+        js_submitting = 1;
+        form_submit(i < nforms ? i : -1, -1);
+        js_submitting = 0;
+        return 1;
+    }
+    if (js_hist_go) {
+        int g = js_hist_go;
+        js_hist_go = 0;
+        press(g < 0 ? 0 : 1);
+        return 1;
+    }
+    return 0;
+}
+/* the console (F12): a script's console.log()s and errors */
+static void draw_console(void)
+{
+    int bh = 16 * 12 + 26, by = VIEW_Y + VIEW_H - bh, i, n = jcon_n < 12 ? jcon_n : 12;
+    fill(0, by, W - SBW, bh, RGB(28, 30, 36), 0, H);
+    fill(0, by, W - SBW, 1, RGB(90, 96, 110), 0, H);
+    text_at(8, by + 5, "Console (Ctrl+K)", RGB(200, 210, 230), ST_BOLD, 200);
+    {
+        char t[80];
+        t[0] = 0;
+        num_str(t, js_scripts, sizeof t); append(t, " scripts, ", sizeof t);
+        num_str(t, js_errors, sizeof t); append(t, " errors", sizeof t);
+        if (!js_enabled) copy(t, "JavaScript is off (Ctrl+J)", sizeof t);
+        text_at(W - SBW - 250, by + 5, t, RGB(150, 160, 180), 0, 240);
+    }
+    for (i = 0; i < n; i++) {
+        int k = (jcon_at - n + i + JCON_N) % JCON_N, lv = jcon_lvl[k];
+        unsigned c = lv == 'E' ? RGB(255, 120, 110) : lv == 'W' ? RGB(240, 200, 90) : lv == 'A' ? RGB(120, 200, 255) : RGB(210, 214, 222);
+        text_at(8, by + 24 + i * 16, jcon[k], c, 0, W - SBW - 16);
+    }
+}
+
 int main(int argc, char **argv)
 {
-    int m[4], was_down = 0, drag = -1, drag_scroll = 0;
+    int m[4], was_down = 0, drag = -1, drag_scroll = 0, last_scroll = 0, hover_node = 0, js_kick = 0;
     if (gfx_mode_ex(W, H, 32) < 0) { puts("browser: needs 800x600 in 32 bits\n"); return 1; }
     frame = malloc(W * H * 4);
     if (!frame) { puts("browser: no memory\n"); return 1; }
@@ -4279,6 +4460,25 @@ int main(int argc, char **argv)
         if (k) {
             int ch = k & 0xFF, sc = (k >> 8) & 0xFF;
             int shift = keydown(KEY_LSHIFT) || keydown(KEY_RSHIFT);
+            int js_target = focus >= 0 && focus < nctrls ? ctrls[focus].node : dom_body;
+            if (jcx && !editing && !finding && ch != 27 && !(keydown(KEY_CTRL) && (ch == 20 || ch == 23 || ch == 10))) {
+                int pv = js_event("keydown", js_target, 0, 0, ch, sc, js_mods());
+                if (ch >= 32 && ch != 127 && !pv) pv = js_event("keypress", js_target, 0, 0, ch, sc, js_mods());
+                js_event("keyup", js_target, 0, 0, ch, sc, js_mods());
+                js_kick = 1;
+                if (pv || js_after()) { changed = 1; k = 0; }
+            }
+        }
+        if (k) {
+            int ch = k & 0xFF, sc = (k >> 8) & 0xFF;
+            int shift = keydown(KEY_LSHIFT) || keydown(KEY_RSHIFT);
+            if (ch == 10 && keydown(KEY_CTRL)) {                              /* Ctrl+J: JavaScript on/off */
+                js_enabled = !js_enabled;
+                notify(js_enabled ? "LexOS Web: JavaScript on" : "LexOS Web: JavaScript off");
+                press(2);
+                continue;
+            }
+            if (sc == 0x58 || (ch == 11 && keydown(KEY_CTRL))) { show_console = !show_console; redraw(); continue; }   /* F12, Ctrl+K */
             if (editing) {
                 int l = strlen(edit_url), typed = 1;
                 if (ch == 13) {
@@ -4317,7 +4517,13 @@ int main(int argc, char **argv)
                     if (c >= 32 || c == 13) ctrl_key(c, 0);
                 }
                 changed = 1;
-            } else if (focus >= 0 && ctrl_key(ch, sc)) { changed = 1;
+            } else if (focus >= 0 && focus < nctrls && ctrls[focus].val && (ctrls[focus].kind == CT_TEXT || ctrls[focus].kind == CT_PASS || ctrls[focus].kind == CT_AREA) &&
+                       (ch == 8 || (ch >= 32 && ch != 127) || (ch == 13 && ctrls[focus].kind == CT_AREA))) {
+                int fk = focus, before = strlen(ctrls[fk].val), node = ctrls[fk].node;
+                ctrl_key(ch, sc);
+                if (jcx && ctrls[fk].val && (int)strlen(ctrls[fk].val) != before) { js_event("input", node, 0, 0, ch, sc, 0); js_kick = 1; }
+                changed = 1;
+            } else if (focus >= 0 && ctrl_key(ch, sc)) { changed = 1; js_after();
             } else if (finding && (ch == 27 || ch == 13 || ch == 8 || (ch >= 32 && ch != 127))) {     /* Ctrl+F's bar */
                 if (ch == 27) finding = 0;
                 else if (ch == 13) find_step(shift);
@@ -4373,10 +4579,19 @@ int main(int argc, char **argv)
         }
         if (over) {
             int down = m[2] & 1, mx = m[0], my = m[1];
+            js_mx = mx; js_my = my - VIEW_Y;
             int hl = my >= VIEW_Y && my < VIEW_Y + VIEW_H && mx < W - SBW ? item_at(mx, my) : -1;
             int hb = button_at(mx, my);
             int on_x, ht = tab_at(mx, my, &on_x), hx = on_x ? ht : -1;
             if (hl != hover_link || hb != hover_btn) { hover_link = hl; hover_btn = hb; changed = 1; }
+            if (jcx && (js_wants & JW_MOVE) && my >= VIEW_Y && my < VIEW_Y + VIEW_H && mx < W - SBW && !down) {
+                int nd = js_node_at(mx, my);
+                if (nd != hover_node) {
+                    js_event("hover", nd, mx, my - VIEW_Y, hover_node, 0, js_mods());
+                    hover_node = nd;
+                    js_kick = 1;
+                }
+            }
             {
                 int hc = my >= VIEW_Y && my < VIEW_Y + VIEW_H && mx < W - SBW ? ctrl_at(mx, my) : -1;
                 if (hc != hover_ctrl) { hover_ctrl = hc; changed = 1; }
@@ -4414,28 +4629,56 @@ int main(int argc, char **argv)
                     changed = 1;
                 } else if (show_info) { show_info = 0; changed = 1;
                 } else if (sel_open >= 0) {                         /* an open list: a line of it */
-                    int o = sel_list_at(mx, my);
-                    if (o >= 0) ctrls[sel_open].sel = o;
+                    int o = sel_list_at(mx, my), so = sel_open;
+                    if (o >= 0 && o != ctrls[so].sel) {
+                        ctrls[so].sel = o;
+                        if (jcx) { js_event("input", ctrls[so].node, 0, 0, 0, 0, 0); js_event("change", ctrls[so].node, 0, 0, 0, 0, 0); js_kick = 1; }
+                    }
                     sel_open = -1;
                     changed = 1;
+                    if (js_after()) { was_down = down; continue; }
                 } else if (my >= VIEW_Y && my < VIEW_Y + VIEW_H && ctrl_at(mx, my) >= 0) {
                     editing = 0;
                     ctrl_click(ctrl_at(mx, my));
                     changed = 1;
+                    js_kick = 1;
+                    if (js_after()) { was_down = down; continue; }
                 } else if (hl >= 0 && starts_ci(lpool + link_off[hl], "download:")) {
                     download(lpool + link_off[hl] + 9);
                     was_down = down;
                     continue;
                 } else if (hl >= 0) {
-                    char to[URL_MAX];
+                    char to[URL_MAX], href[URL_MAX];
                     editing = 0;
-                    resolve(base_url[0] ? base_url : url, lpool + link_off[hl], to);
+                    copy(href, lpool + link_off[hl], URL_MAX);
+                    if (jcx) {                                      /* the page's click first */
+                        int nd = js_node_at(mx, my), pv;
+                        js_event("mousedown", nd, mx, my - VIEW_Y, 0, 0, js_mods());
+                        js_event("mouseup", nd, mx, my - VIEW_Y, 0, 0, js_mods());
+                        pv = js_event("click", nd, mx, my - VIEW_Y, 0, 0, js_mods());
+                        js_kick = 1;
+                        if (js_after() || pv) { changed = 1; was_down = down; continue; }
+                    }
+                    if (starts_ci(href, "javascript:")) {            /* (its code: run, not gone to) */
+                        if (jcx) js_eval_url(href + 11);
+                        js_kick = 1;
+                        js_after();
+                        changed = 1; was_down = down;
+                        continue;
+                    }
+                    resolve(base_url[0] ? base_url : url, href, to);
                     unwrap_link(to);
                     if (keydown(KEY_CTRL)) tab_new(to);             /* Ctrl: a new tab */
+                    else if (same_page(to)) { scroll_to_part(to); if (jcx) js_event("hashchange", 0, 0, 0, 0, 0, 0); changed = 1; }
                     else go(to, 1);
                     was_down = down;
                     continue;
+                } else if (jcx && my >= VIEW_Y && my < VIEW_Y + VIEW_H && mx < W - SBW && js_click_at(mx, my)) {
+                    js_kick = 1;                                    /* (the page took it) */
+                    changed = 1;
+                    js_after();
                 } else {
+                    if (jcx) { js_kick = 1; if (js_after()) { was_down = down; continue; } }
                     if (editing) { editing = 0; nsug = 0; changed = 1; }
                     if (focus >= 0) { focus = -1; changed = 1; }
                     if (my >= VIEW_Y && my < VIEW_Y + VIEW_H && mx < W - SBW) {     /* choosing text begins */
@@ -4476,8 +4719,15 @@ int main(int argc, char **argv)
             was_down = 0;
             drag = -1;
         }
+        if (jcx) {
+            if (scroll != last_scroll && (js_wants & JW_SCROLL)) { js_event("scroll", 0, 0, 0, 0, 0, 0); js_kick = 1; }
+            last_scroll = scroll;
+            if (js_tick(js_kick)) changed = 1;
+            js_kick = 0;
+            if (js_after()) continue;
+        }
         if (changed) redraw();
-        sleep_ms(15);
+        sleep_ms(jcx ? 10 : 15);
     }
     return 0;
 }
