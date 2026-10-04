@@ -922,18 +922,19 @@ static void abs_place(int k, int cbx, int cby, int cbw, int cbh)
     (void)box_x0; (void)box_y0;
 }
 /* the boxes waiting for e (the box they're positioned in) - or for the page (e 0) */
+static int abs_depth;
 static void abs_flush(int e, int cbx, int cby, int cbw, int cbh)
 {
-    int k, n0 = nabs;
+    int k;
+    abs_depth++;
     for (k = 0; k < nabs; k++) {
         if (absq[k].cb != e) continue;
         absq[k].cb = -1;
         abs_place(k, cbx, cby, cbw, cbh);
     }
-    {                                                    /* (the done ones: off the list) */
-        int w2 = 0;
+    if (!--abs_depth) {                                  /* (the done ones: off the list - not while a flush */
+        int w2 = 0;                                      /*  around this one is going through it) */
         for (k = 0; k < nabs; k++) if (absq[k].cb != -1) absq[w2++] = absq[k];
-        nabs = w2 < n0 ? w2 : nabs;
         nabs = w2;
     }
 }
@@ -1278,6 +1279,23 @@ static void lay_float(int c)
         if (nfl < FL_MAX) {
             fl[nfl].x0 = fx; fl[nfl].x1 = fx + w; fl[nfl].y0 = fy; fl[nfl].y1 = fy + h; fl[nfl].side = cs->flt;
             nfl++;
+        }
+        if (nitems > start && start >= sls) {            /* (its pieces: before the line's, not in it) */
+            int nf = nitems - start, nl = start - sls, k;
+            struct item *tmp = nl ? malloc(nl * sizeof *tmp) : 0;
+            if (!nl) sls += nf;
+            else if (tmp) {
+                memcpy(tmp, items + sls, nl * sizeof *tmp);
+                memmove(items + sls, items + start, nf * sizeof *tmp);
+                memcpy(items + sls + nf, tmp, nl * sizeof *tmp);
+                free(tmp);
+                for (k = 0; k < nctrls; k++) {
+                    if (ctrls[k].item >= sls && ctrls[k].item < start) ctrls[k].item += nf;
+                    else if (ctrls[k].item >= start && ctrls[k].item < nitems) ctrls[k].item -= nl;
+                }
+                for (k = 0; k < nibg; k++) if (ibg[k].from >= sls && ibg[k].from < start) { ibg[k].from += nf; ibg[k].to += nf; }
+                sls += nf;
+            }
         }
     }
     y = sy; x = sx; line_start = sls; last_gap = slg;
@@ -1660,6 +1678,10 @@ static void lay_flex(int e, struct cstyle *cs, int cw)
                     if (it[k].h > lineh) lineh = it[k].h;
                     y = sty;
                     pos += w + sp;
+                }
+                if (ls == 0 && le == n && cs->h.kind == L_LEN && !cs->h.pct) {   /* (one line, a height set: the line's that tall) */
+                    int defh = css_resolve(&cs->h, 0) - (cs->boxsz ? lay_len(&cs->p[0], cw) + lay_len(&cs->p[2], cw) + lay_bw(cs, 0) + lay_bw(cs, 2) : 0);
+                    if (defh > lineh && defh < 4000) lineh = defh;
                 }
                 for (k = ls; k < le; k++) {              /* align-items / align-self */
                     int al = it[k].text ? cs->aitems : (CS(it[k].e)->aself != J_AUTO ? CS(it[k].e)->aself : cs->aitems);

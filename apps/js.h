@@ -646,6 +646,7 @@ JF(jx_active) { return jnum(focus >= 0 && focus < nctrls ? ctrls[focus].node : 0
 /* ================================================================
  * the browser
  * ================================================================ */
+static const char *js_unfile(const char *s) { return s && starts_ci(s, "file://") ? s + 7 : s; }   /* (file:///DEMOS/x: /DEMOS/x) */
 JF(jx_url) { return jstr(url); }
 JF(jx_base) { return jstr(base_url[0] ? base_url : url); }
 JF(jx_resolve)
@@ -654,7 +655,7 @@ JF(jx_resolve)
     const char *h = JS_ToCString(cx, JARG(0)), *b = argc > 1 && !JS_IsUndefined(argv[1]) ? JS_ToCString(cx, argv[1]) : 0;
     JSValue r;
     if (!h) return JS_EXCEPTION;
-    resolve(b ? b : base_url[0] ? base_url : url, h, out);
+    resolve(b ? js_unfile(b) : base_url[0] ? base_url : url, js_unfile(h), out);
     r = jstr(out);
     JS_FreeCString(cx, h);
     if (b) JS_FreeCString(cx, b);
@@ -664,7 +665,7 @@ JF(jx_nav)                                               /* (done when the scrip
 {
     const char *s = JS_ToCString(cx, JARG(0));
     if (!s) return JS_EXCEPTION;
-    resolve(base_url[0] ? base_url : url, s, js_nav);
+    resolve(base_url[0] ? base_url : url, js_unfile(s), js_nav);
     js_nav_replace = JS_ToBool(cx, JARG(1));
     JS_FreeCString(cx, s);
     return JS_UNDEFINED;
@@ -674,7 +675,7 @@ JF(jx_pushurl)                                           /* history.pushState():
 {
     const char *s = JS_ToCString(cx, JARG(0));
     if (!s) return JS_EXCEPTION;
-    resolve(url, s, js_push_url);
+    resolve(url, js_unfile(s), js_push_url);
     JS_FreeCString(cx, s);
     if (js_push_url[0] && (is_http(js_push_url) == is_http(url))) {
         copy(url, js_push_url, URL_MAX);
@@ -795,7 +796,7 @@ JF(jx_http)
     int code = 0, n;
     JSValue a = JS_NewArray(cx);
     if (!m || !u || !h) goto done;
-    resolve(base_url[0] ? base_url : url, u, w);
+    resolve(base_url[0] ? base_url : url, js_unfile(u), w);
     copy(final, w, URL_MAX);
     ctype[0] = 0;
     copy(status, "Script fetching ", sizeof status); append(status, w, sizeof status);
@@ -849,7 +850,7 @@ JF(jx_load)
     int n = 0;
     JSValue r;
     if (!u) return JS_EXCEPTION;
-    resolve(base_url[0] ? base_url : url, u, w);
+    resolve(base_url[0] ? base_url : url, js_unfile(u), w);
     JS_FreeCString(cx, u);
     t = js_load(w, &n);
     r = t ? jstrn(t, n) : JS_NULL;

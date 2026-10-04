@@ -113,7 +113,7 @@ int main(int argc, char **argv)
             else {
                 struct cstyle *c = dn[n].cs;
                 fprintf(f, "<%s>", atom_name(dn[n].tag));
-                if (c) fprintf(f, " d=%d box=%d,%d %dx%d", c->display, dn[n].bx, dn[n].by, dn[n].bw, dn[n].bh);
+                if (c) fprintf(f, " d=%d f=%d p=%d box=%d,%d %dx%d", c->display, c->flt, c->position, dn[n].bx, dn[n].by, dn[n].bw, dn[n].bh);
                 fprintf(f, "\n");
             }
         }

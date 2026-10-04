@@ -2101,9 +2101,16 @@ class URL {
             if (base === undefined) { if (!p) throw new TypeError(`Failed to construct 'URL': Invalid URL`); }
             else {
                 const b = String(base instanceof URL ? base.href : base);
-                if (!parseURL(b)) throw new TypeError(`Failed to construct 'URL': Invalid base URL`);
-                p = parseURL(lx.resolve(u, b));
-                if (!p) throw new TypeError(`Failed to construct 'URL': Invalid URL`);
+                if (b[0] === '/') {                      // (a file on LexOS's disk: file:)
+                    const r = lx.resolve(u, b), q = r.indexOf('?'), hs = r.indexOf('#');
+                    const end = q >= 0 ? q : hs >= 0 ? hs : r.length;
+                    p = { protocol: 'file:', username: '', password: '', hostname: '', port: '', pathname: r.slice(0, end),
+                        search: q >= 0 ? r.slice(q, hs >= 0 ? hs : r.length) : '', hash: hs >= 0 ? r.slice(hs) : '' };
+                } else {
+                    if (!parseURL(b)) throw new TypeError(`Failed to construct 'URL': Invalid base URL`);
+                    p = parseURL(lx.resolve(u, b));
+                    if (!p) throw new TypeError(`Failed to construct 'URL': Invalid URL`);
+                }
             }
         }
         if (p.port === DEFPORT[p.protocol]) p.port = '';
@@ -2145,7 +2152,7 @@ class URL {
     static revokeObjectURL(u) { blobURLs.delete(u); }
 }
 const location = Object.create({
-    get href() { return lx.url(); },
+    get href() { const u = lx.url(); return u[0] === '/' ? 'file://' + u : u; },
     set href(v) { lx.nav(String(v), 0); },
     assign(v) { lx.nav(String(v), 0); },
     replace(v) { lx.nav(String(v), 1); },
@@ -2155,10 +2162,10 @@ const location = Object.create({
 });
 for (const k of ['protocol', 'host', 'hostname', 'port', 'pathname', 'search', 'hash', 'origin']) {
     Object.defineProperty(Object.getPrototypeOf(location), k, {
-        get() { try { return new URL(lx.url())[k]; } catch (e) { return ''; } },
+        get() { try { return new URL(location.href)[k]; } catch (e) { return ''; } },
         set(v) {
             if (k === 'origin') return;
-            const u = new URL(lx.url());
+            const u = new URL(location.href);
             u[k] = v;
             lx.nav(u.href, 0);
         },
@@ -2409,6 +2416,7 @@ function bodyOf(b) {
 }
 function netGet(method, url, headers, body, bin) {
     let h = '';
+    if (/^file:\/\//i.test(url)) url = decodeURIComponent(url.slice(7));          // (LexOS's own files)
     headers.forEach((v, k) => { if (!/^(host|content-length|connection|user-agent|accept-encoding|cookie)$/.test(k)) h += k + ': ' + v + '\r\n'; });
     if (/^data:/i.test(url)) {
         const m = /^data:([^,;]*)(;base64)?,(.*)$/is.exec(url);
@@ -2429,7 +2437,7 @@ class Request {
     constructor(input, init) {
         init = init || {};
         const base = input instanceof Request ? input : null;
-        this.url = base ? base.url : new URL(String(input), lx.base()).href;
+        this.url = base ? base.url : lx.resolve(String(input instanceof URL ? input.href : input));
         this.method = String(init.method || (base && base.method) || 'GET').toUpperCase();
         this.headers = new Headers(init.headers || (base && base.headers));
         hide(this, '_body', init.body !== undefined ? init.body : base ? base._body : null);
@@ -2508,7 +2516,7 @@ class XMLHttpRequest extends XMLHttpRequestEventTarget {
     }
     open(m, u, async) {
         this._m = String(m).toUpperCase();
-        this._u = new URL(String(u), lx.base()).href;
+        this._u = lx.resolve(String(u instanceof URL ? u.href : u));
         this._async = async !== false;
         this._h = new Headers();
         this._n++;
