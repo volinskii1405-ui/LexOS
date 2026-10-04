@@ -699,6 +699,7 @@ static void replaced_size(int e, struct cstyle *cs, int avail, int *pw, int *ph)
     *ph = h;
 }
 /* e drawn into its box (x0, y0, w x h) */
+static int js_canvas_item(int e, int x0, int y0, int w, int h, unsigned bg);
 static void replaced_draw(int e, struct cstyle *cs, int x0, int y0, int w, int h)
 {
     int t = dn[e].tag;
@@ -760,7 +761,7 @@ static void replaced_draw(int e, struct cstyle *cs, int x0, int y0, int w, int h
         int n = strlen(wd);
         const char *poster = t == T_video ? dom_attr(e, "poster") : 0;
         if (poster && *poster) { int ci = img_get(poster, w, h); if (ci >= 0) { img_item(ci, x0, y0, w, h, 1); return; } }
-        if (t == T_canvas) return;
+        if (t == T_canvas) { js_canvas_item(e, x0, y0, w, h, cs->has_bg ? cs->bg : cs->eff_bg); return; }
         if ((it = new_item(IT_BOX))) { it->x = x0; it->y = y0; it->w = w; it->h = h; it->color = RGB(232, 234, 240); }
         if (POOL_ROOM(n) && (it = new_item(IT_TEXT))) {
             memcpy(pool + npool, wd, n);
@@ -1138,6 +1139,7 @@ width_done:
             replaced_draw(e, cs, bx, top, rw + pl + pr + bl + br, rh + pt + pb + bt + bb);
         } else replaced_draw(e, cs, cb_l, y, rw, rh);
         y += rh;
+        line_start = nitems;                              /* (placed: not a line's, for end_line to move) */
         if (rw > cw && !shrink) cw = rw;
     } else switch (cs->display) {
     case D_FLEX: case D_INLINE_FLEX: lay_flex(e, cs, cw); break;

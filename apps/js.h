@@ -35,6 +35,7 @@ static JSContext *jcx;
 static JSValue j_event_fn, j_tick_fn, j_start_fn;
 static int js_enabled = 1;
 static unsigned js_deadline, js_next_due, js_t0, js_last_relayout;
+static int js_fresh_left, js_relayout_ms = 150;        /* (a script measuring what it just changed: laid out again, a few times a turn) */
 static int js_wants;                                    /* (mouse moves, scrolls: asked for) */
 static int js_scripts, js_errors;
 static char js_nav[URL_MAX];                            /* (where the page sent us: after it's back) */
@@ -116,7 +117,7 @@ static int js_interrupt(JSRuntime *rt, void *op)
     }
     return 0;
 }
-static void js_budget(int ms) { js_deadline = millis() + ms; }
+static void js_budget(int ms) { js_deadline = millis() + ms; js_fresh_left = 6; }
 
 /* ---- argument helpers ---- */
 #define JF(name) static JSValue name(JSContext *cx, JSValueConst this_val, int argc, JSValueConst *argv)
@@ -130,7 +131,13 @@ static JSValue jstr(const char *s) { return s ? JS_NewString(jcx, s) : JS_NULL; 
 
 /* ---- the layout, kept up with the tree (what a script measures) ---- */
 static void relayout_keep(void);
-static void js_fresh(void) { if (dom_gen != js_laid_gen && !js_in_layout) relayout_keep(); }
+static void js_fresh(void)
+{
+    if (dom_gen != js_laid_gen && !js_in_layout && js_fresh_left > 0) {
+        js_fresh_left--;
+        relayout_keep();
+    }
+}
 
 /* ================================================================
  * the tree
@@ -853,7 +860,7 @@ JF(jx_load)
 static int js_run(const char *code, int n, const char *name, int module)
 {
     JSValue v;
-    js_budget(8000);
+    js_budget(15000);
     v = JS_Eval(jcx, code, n, name, module ? JS_EVAL_TYPE_MODULE : JS_EVAL_TYPE_GLOBAL);
     js_scripts++;
     if (JS_IsException(v)) { js_report(jcx); return 0; }
@@ -998,6 +1005,382 @@ JF(jx_scanels)
 }
 JF(jx_gen) { if (argc) dom_gen = jint(argv[0]); return jnum(dom_gen); }
 
+/* ================================================================
+ * <canvas>: its pixels (RGBA, its own size), drawn with svg.h's
+ * rasterizer; shown on the page (at the box's size) as a picture
+ * that's drawn again when they change
+ * ================================================================ */
+#define CV_MAX 32
+struct jcanvas { int node, w, h; unsigned char *rgba; unsigned short *disp; int dw, dh; unsigned bg; int dirty; };
+static struct jcanvas jcv[CV_MAX];
+static int njcv, jcv_dirty;
+static float *jf32(JSValueConst v, int *n)              /* a Float32Array's numbers */
+{
+    size_t off, len, el, sz;
+    JSValue ab = JS_GetTypedArrayBuffer(jcx, v, &off, &len, &el);
+    uint8_t *p;
+    *n = 0;
+    if (JS_IsException(ab)) return 0;
+    p = JS_GetArrayBuffer(jcx, &sz, ab);
+    JS_FreeValue(jcx, ab);
+    if (!p || el != 4) return 0;
+    *n = len / 4;
+    return (float *)(p + off);
+}
+static struct jcanvas *jcv_of(JSValueConst v) { int i = jint(v); return i >= 0 && i < njcv && jcv[i].rgba ? &jcv[i] : 0; }
+static void jcv_ras(struct jcanvas *c, struct svg_ras *r, int argc, JSValueConst *argv, int at)
+{
+    static float cov[4096];
+    memset(r, 0, sizeof *r);
+    r->w = c->w; r->h = c->h; r->rgba = c->rgba; r->cov = cov;
+    if (argc > at + 3) {                                 /* (a clip: x0 y0 x1 y1) */
+        r->cx0 = jint(argv[at]); r->cy0 = jint(argv[at + 1]); r->cx1 = jint(argv[at + 2]); r->cy1 = jint(argv[at + 3]);
+        if (r->cx0 < 0) r->cx0 = 0;
+        if (r->cy0 < 0) r->cy0 = 0;
+        if (r->cx1 > c->w) r->cx1 = c->w;
+        if (r->cy1 > c->h) r->cy1 = c->h;
+        if (r->cx1 <= r->cx0 || r->cy1 <= r->cy0) { r->cx0 = r->cy0 = 0; r->cx1 = 1; r->cy1 = 0; }   /* (nothing) */
+    }
+}
+static void jcv_touch(struct jcanvas *c) { c->dirty = 1; jcv_dirty = 1; }
+/* figures: [points, closed, x, y, x, y ...] ... -> svg.h's */
+static void jcv_poly(struct svg_poly *p, float *f, int n)
+{
+    int i = 0;
+    struct svg_mx id = { 1, 0, 0, 1, 0, 0 };
+    while (i + 2 <= n) {
+        int k = (int)f[i], closed = (int)f[i + 1], j;
+        i += 2;
+        if (k <= 0 || i + 2 * k > n) break;
+        svg_begin(p);
+        for (j = 0; j < k; j++) svg_pt(p, &id, f[i + 2 * j], f[i + 2 * j + 1]);
+        p->closed[p->nst - 1] = closed;
+        i += 2 * k;
+    }
+}
+static void jcv_poly_free(struct svg_poly *p) { free(p->x); free(p->y); free(p->starts); free(p->closed); }
+JF(jx_cvnew)
+{
+    int w = jint(JARG(1)), h = jint(JARG(2)), i;
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    if (w > 4096) w = 4096;
+    if (h > 4096) h = 4096;
+    for (i = 0; i < njcv && jcv[i].rgba; i++) ;
+    if (i == CV_MAX) return jnum(-1);
+    memset(&jcv[i], 0, sizeof jcv[i]);
+    jcv[i].node = jn(JARG(0));
+    jcv[i].w = w; jcv[i].h = h;
+    jcv[i].rgba = calloc(w * h, 4);
+    if (!jcv[i].rgba) return jnum(-1);
+    if (i == njcv) njcv++;
+    return jnum(i);
+}
+JF(jx_cvsize)
+{
+    struct jcanvas *c = jcv_of(JARG(0));
+    int w = jint(JARG(1)), h = jint(JARG(2));
+    unsigned char *n2;
+    if (!c) return JS_UNDEFINED;
+    if (w < 1) w = 1;
+    if (h < 1) h = 1;
+    if (w > 4096) w = 4096;
+    if (h > 4096) h = 4096;
+    n2 = calloc(w * h, 4);
+    if (!n2) return JS_UNDEFINED;
+    free(c->rgba);
+    c->rgba = n2; c->w = w; c->h = h;
+    jcv_touch(c);
+    return JS_UNDEFINED;
+}
+/* (canvas, figures, 0xRRGGBB, alpha 0-255, evenodd, clip...) */
+JF(jx_cvfill)
+{
+    struct jcanvas *c = jcv_of(JARG(0));
+    struct svg_ras r;
+    struct svg_poly p;
+    int n;
+    float *f = jf32(JARG(1), &n);
+    if (!c || !f) return JS_UNDEFINED;
+    memset(&p, 0, sizeof p);
+    jcv_poly(&p, f, n);
+    jcv_ras(c, &r, argc, argv, 5);
+    svg_fill_edges(&r, &p);
+    svg_fill(&r, jint(JARG(2)), jint(JARG(3)), jint(JARG(4)));
+    free(r.e);
+    jcv_poly_free(&p);
+    jcv_touch(c);
+    return JS_UNDEFINED;
+}
+/* (canvas, figures, width, 0xRRGGBB, alpha, clip...) */
+JF(jx_cvstroke)
+{
+    struct jcanvas *c = jcv_of(JARG(0));
+    struct svg_ras r;
+    struct svg_poly p;
+    int n;
+    double wd = 1;
+    float *f = jf32(JARG(1), &n);
+    if (!c || !f) return JS_UNDEFINED;
+    JS_ToFloat64(cx, &wd, JARG(2));
+    memset(&p, 0, sizeof p);
+    jcv_poly(&p, f, n);
+    jcv_ras(c, &r, argc, argv, 5);
+    svg_stroke_edges(&r, &p, (float)wd);
+    svg_fill(&r, jint(JARG(3)), jint(JARG(4)), 0);
+    free(r.e);
+    jcv_poly_free(&p);
+    jcv_touch(c);
+    return JS_UNDEFINED;
+}
+/* (canvas, x, y, w, h, 0xRRGGBB, alpha; alpha -1: cleared) - a plain rectangle, fast */
+JF(jx_cvrect)
+{
+    struct jcanvas *c = jcv_of(JARG(0));
+    struct svg_ras r;
+    int x0 = jint(JARG(1)), y0 = jint(JARG(2)), x1 = x0 + jint(JARG(3)), y1 = y0 + jint(JARG(4)), col = jint(JARG(5)), a = jint(JARG(6)), x, y;
+    if (!c) return JS_UNDEFINED;
+    jcv_ras(c, &r, argc, argv, 7);
+    if (!r.cx1) { r.cx1 = c->w; r.cy1 = c->h; }
+    if (x0 < r.cx0) x0 = r.cx0;
+    if (y0 < r.cy0) y0 = r.cy0;
+    if (x1 > r.cx1) x1 = r.cx1;
+    if (y1 > r.cy1) y1 = r.cy1;
+    for (y = y0; y < y1; y++) {
+        unsigned char *q = c->rgba + 4 * (y * c->w + x0);
+        for (x = x0; x < x1; x++, q += 4) {
+            if (a < 0) { q[0] = q[1] = q[2] = q[3] = 0; continue; }
+            if (a >= 255) { q[0] = col >> 16 & 255; q[1] = col >> 8 & 255; q[2] = col & 255; q[3] = 255; continue; }
+            {
+                int na = a + q[3] * (255 - a) / 255;
+                if (na > 0) {
+                    q[0] = ((col >> 16 & 255) * a + q[0] * q[3] * (255 - a) / 255) / na;
+                    q[1] = ((col >> 8 & 255) * a + q[1] * q[3] * (255 - a) / 255) / na;
+                    q[2] = ((col & 255) * a + q[2] * q[3] * (255 - a) / 255) / na;
+                }
+                q[3] = na;
+            }
+        }
+    }
+    jcv_touch(c);
+    return JS_UNDEFINED;
+}
+static void jcv_blend(struct jcanvas *c, int x, int y, unsigned col, int a, struct svg_ras *r)
+{
+    unsigned char *q;
+    int na;
+    if (x < r->cx0 || y < r->cy0 || x >= r->cx1 || y >= r->cy1 || a <= 0) return;
+    q = c->rgba + 4 * (y * c->w + x);
+    if (a > 255) a = 255;
+    na = a + q[3] * (255 - a) / 255;
+    if (na <= 0) return;
+    q[0] = ((col >> 16 & 255) * a + q[0] * q[3] * (255 - a) / 255) / na;
+    q[1] = ((col >> 8 & 255) * a + q[1] * q[3] * (255 - a) / 255) / na;
+    q[2] = ((col & 255) * a + q[2] * q[3] * (255 - a) / 255) / na;
+    q[3] = na;
+}
+/* (canvas, x, y (its top left), text, size in px, 0xRRGGBB, alpha, bold, clip...) - the font's
+ * letters, made that size (8x16 -> size/2 x size), edges smoothed */
+JF(jx_cvtext)
+{
+    struct jcanvas *c = jcv_of(JARG(0));
+    struct svg_ras r;
+    size_t l;
+    const char *t;
+    double dx = 0, dy = 0, dpx = 16;
+    int px, cw, col = jint(JARG(5)), a = jint(JARG(6)), bold = jint(JARG(7)), p = 0;
+    float x;
+    if (!c) return JS_UNDEFINED;
+    JS_ToFloat64(cx, &dx, JARG(1)); JS_ToFloat64(cx, &dy, JARG(2)); JS_ToFloat64(cx, &dpx, JARG(4));
+    t = JS_ToCStringLen(cx, &l, JARG(3));
+    if (!t) return JS_EXCEPTION;
+    jcv_ras(c, &r, argc, argv, 8);
+    if (!r.cx1) { r.cx1 = c->w; r.cy1 = c->h; }
+    px = (int)(dpx + 0.5);
+    if (px < 6) px = 6;
+    if (px > 200) px = 200;
+    cw = px / 2;
+    x = (float)dx;
+    while (p < (int)l) {
+        char f[3];
+        int m = to_font(dom_u8(t, l, &p), f), k;
+        for (k = 0; k < m; k++) {
+            const unsigned char *g = glyphs + (unsigned char)f[k] * 16;
+            int gx, gy, ox = (int)x, oy = (int)dy;
+            for (gy = 0; gy < px; gy++)
+                for (gx = 0; gx < cw; gx++) {
+                    int sx, sy, hit = 0;                 /* (2x2 samples a pixel) */
+                    for (sy = 0; sy < 2; sy++)
+                        for (sx = 0; sx < 2; sx++) {
+                            int bx = (gx * 2 + sx) * 8 / (cw * 2), by = (gy * 2 + sy) * 16 / (px * 2);
+                            if (g[by] & (0x80 >> bx)) hit++;
+                        }
+                    if (hit) {
+                        jcv_blend(c, ox + gx, oy + gy, col, a * hit / 4, &r);
+                        if (bold) jcv_blend(c, ox + gx + 1, oy + gy, col, a * hit / 4, &r);
+                    }
+                }
+            x += cw;
+        }
+    }
+    JS_FreeCString(cx, t);
+    jcv_touch(c);
+    return JS_UNDEFINED;
+}
+/* (canvas, from canvas (-1: a picture), its url, sx sy sw sh, dx dy dw dh, alpha, clip...) */
+JF(jx_cvimage)
+{
+    struct jcanvas *c = jcv_of(JARG(0)), *from = 0;
+    struct svg_ras r;
+    int sx = jint(JARG(3)), sy = jint(JARG(4)), sw = jint(JARG(5)), sh = jint(JARG(6));
+    int dx = jint(JARG(7)), dy = jint(JARG(8)), dw = jint(JARG(9)), dh = jint(JARG(10)), a = jint(JARG(11)), ci = -1, x, y, iw, ih;
+    if (!c || dw <= 0 || dh <= 0 || dw > 8192 || dh > 8192) return JS_UNDEFINED;
+    if (jint(JARG(1)) >= 0) { from = jcv_of(JARG(1)); if (!from) return JS_UNDEFINED; iw = from->w; ih = from->h; }
+    else {
+        const char *u = JS_ToCString(cx, JARG(2));
+        if (!u) return JS_EXCEPTION;
+        ci = img_get(u, 0, 0);
+        JS_FreeCString(cx, u);
+        js_budget(3000);
+        if (ci < 0) return JS_UNDEFINED;
+        iw = imgc[ci].w; ih = imgc[ci].h;
+    }
+    if (sw <= 0) sw = iw;
+    if (sh <= 0) sh = ih;
+    jcv_ras(c, &r, argc, argv, 12);
+    if (!r.cx1) { r.cx1 = c->w; r.cy1 = c->h; }
+    for (y = 0; y < dh; y++) {
+        int ty = dy + y, fy = sy + y * sh / dh;
+        if (ty < r.cy0 || ty >= r.cy1 || fy < 0 || fy >= ih) continue;
+        for (x = 0; x < dw; x++) {
+            int tx = dx + x, fx = sx + x * sw / dw;
+            unsigned col;
+            int pa;
+            if (tx < r.cx0 || tx >= r.cx1 || fx < 0 || fx >= iw) continue;
+            if (from) { const unsigned char *q = from->rgba + 4 * (fy * iw + fx); col = q[0] << 16 | q[1] << 8 | q[2]; pa = q[3]; }
+            else { unsigned short v = imgc[ci].pix[fy * iw + fx]; col = (v & 0xF800) << 8 | (v & 0x07E0) << 5 | (v & 0x1F) << 3; pa = 255; }
+            jcv_blend(c, tx, ty, col, pa * a / 255, &r);
+        }
+    }
+    jcv_touch(c);
+    return JS_UNDEFINED;
+}
+JF(jx_cvget)                                             /* (canvas, x, y, w, h) -> RGBA bytes */
+{
+    struct jcanvas *c = jcv_of(JARG(0));
+    int x0 = jint(JARG(1)), y0 = jint(JARG(2)), w = jint(JARG(3)), h = jint(JARG(4)), y;
+    unsigned char *b;
+    JSValue r;
+    if (!c || w <= 0 || h <= 0 || (long long)w * h > 16 * 1024 * 1024) return JS_NewArrayBufferCopy(cx, (const uint8_t *)"", 0);
+    b = calloc(w * h, 4);
+    if (!b) return JS_EXCEPTION;
+    for (y = 0; y < h; y++) {
+        int sy = y0 + y, x;
+        if (sy < 0 || sy >= c->h) continue;
+        for (x = 0; x < w; x++) {
+            int sx = x0 + x;
+            if (sx >= 0 && sx < c->w) memcpy(b + 4 * (y * w + x), c->rgba + 4 * (sy * c->w + sx), 4);
+        }
+    }
+    r = JS_NewArrayBufferCopy(cx, b, w * h * 4);
+    free(b);
+    return r;
+}
+JF(jx_cvput)                                             /* (canvas, RGBA bytes (a typed array), x, y, w, h) */
+{
+    struct jcanvas *c = jcv_of(JARG(0));
+    size_t off, len, el, sz;
+    JSValue ab;
+    uint8_t *b;
+    int x0 = jint(JARG(2)), y0 = jint(JARG(3)), w = jint(JARG(4)), h = jint(JARG(5)), y;
+    if (!c) return JS_UNDEFINED;
+    ab = JS_GetTypedArrayBuffer(cx, JARG(1), &off, &len, &el);
+    if (JS_IsException(ab)) return JS_EXCEPTION;
+    b = JS_GetArrayBuffer(cx, &sz, ab);
+    JS_FreeValue(cx, ab);
+    if (!b || len < (size_t)w * h * 4) return JS_UNDEFINED;
+    b += off;
+    for (y = 0; y < h; y++) {
+        int ty = y0 + y, x;
+        if (ty < 0 || ty >= c->h) continue;
+        for (x = 0; x < w; x++) {
+            int tx = x0 + x;
+            if (tx >= 0 && tx < c->w) memcpy(c->rgba + 4 * (ty * c->w + tx), b + 4 * (y * w + x), 4);
+        }
+    }
+    jcv_touch(c);
+    return JS_UNDEFINED;
+}
+/* a color the page says ("#f80", "rgba(...)", "tomato") -> 0xAARRGGBB as a number (-1: not one) */
+JF(jx_color)
+{
+    const char *s = JS_ToCString(cx, JARG(0));
+    unsigned c = 0;
+    int a = 255, ok;
+    if (!s) return JS_EXCEPTION;
+    ok = css_color(s, &c, &a);
+    JS_FreeCString(cx, s);
+    if (!ok) return jnum(-1);
+    if (a < 0) a = 0;
+    if (a > 255) a = 255;
+    return JS_NewFloat64(cx, (double)((unsigned)a << 24 | (c & 0xFFFFFF)));
+}
+/* the picture of canvas c, at the box's size, over bg */
+static void jcv_show(struct jcanvas *c)
+{
+    int x, y;
+    if (!c->disp) return;
+    for (y = 0; y < c->dh; y++) {
+        const unsigned char *row = c->rgba + 4 * (y * c->h / c->dh) * c->w;
+        unsigned short *o = c->disp + y * c->dw;
+        for (x = 0; x < c->dw; x++) {
+            const unsigned char *q = row + 4 * (x * c->w / c->dw);
+            int a = q[3], rr = (q[0] * a + (c->bg >> 16 & 255) * (255 - a)) / 255, gg = (q[1] * a + (c->bg >> 8 & 255) * (255 - a)) / 255,
+                bb = (q[2] * a + (c->bg & 255) * (255 - a)) / 255;
+            o[x] = (rr >> 3) << 11 | (gg >> 2) << 5 | bb >> 3;
+        }
+    }
+}
+/* layout.h: canvas e's picture into the page (1) - or it hasn't one (0) */
+static int js_canvas_item(int e, int x0, int y0, int w, int h, unsigned bg)
+{
+    int i;
+    struct item *it;
+    if (w < 1 || h < 1 || w > 4096 || h > 4096) return 0;
+    for (i = 0; i < njcv; i++) if (jcv[i].rgba && jcv[i].node == e) break;
+    if (i == njcv) return 0;
+    if (!jcv[i].disp || jcv[i].dw != w || jcv[i].dh != h) {
+        free(jcv[i].disp);
+        jcv[i].disp = malloc(w * h * 2);
+        if (!jcv[i].disp) return 0;
+        jcv[i].dw = w; jcv[i].dh = h;
+    }
+    jcv[i].bg = bg;
+    jcv_show(&jcv[i]);
+    jcv[i].dirty = 0;
+    if (!(it = new_item(IT_IMAGE))) return 1;
+    it->x = x0; it->y = y0; it->w = w; it->h = h;
+    it->pix = (unsigned *)jcv[i].disp;
+    it->own = 0;
+    it->link = cur_link;
+    return 1;
+}
+static int jcv_refresh(void)                             /* (what's drawn since: shown) -> 1 if any */
+{
+    int i, any = 0;
+    if (!jcv_dirty) return 0;
+    jcv_dirty = 0;
+    for (i = 0; i < njcv; i++) if (jcv[i].rgba && jcv[i].dirty) { jcv[i].dirty = 0; if (jcv[i].disp) { jcv_show(&jcv[i]); any = 1; } }
+    return any;
+}
+static void jcv_free(void)
+{
+    int i;
+    for (i = 0; i < njcv; i++) { free(jcv[i].rgba); free(jcv[i].disp); }
+    memset(jcv, 0, sizeof jcv);
+    njcv = jcv_dirty = 0;
+}
+
 /* ---- modules: import "./x.js" - from where the importer is ---- */
 static char *js_mod_name(JSContext *cx, const char *base, const char *name, void *op)
 {
@@ -1046,7 +1429,10 @@ static const JSCFunctionListEntry jx_funcs[] = {
     JS_CFUNC_DEF("load", 1, jx_load), JS_CFUNC_DEF("run", 3, jx_run), JS_CFUNC_DEF("addcss", 2, jx_addcss),
     JS_CFUNC_DEF("lsload", 0, jx_lsload), JS_CFUNC_DEF("lssave", 1, jx_lssave), JS_CFUNC_DEF("clip", 1, jx_clip),
     JS_CFUNC_DEF("gen", 1, jx_gen), JS_CFUNC_DEF("kids", 2, jx_kids), JS_CFUNC_DEF("empty", 1, jx_empty),
-    JS_CFUNC_DEF("scan", 1, jx_scanels),
+    JS_CFUNC_DEF("scan", 1, jx_scanels), JS_CFUNC_DEF("cvnew", 3, jx_cvnew), JS_CFUNC_DEF("cvsize", 3, jx_cvsize),
+    JS_CFUNC_DEF("cvfill", 9, jx_cvfill), JS_CFUNC_DEF("cvstroke", 9, jx_cvstroke), JS_CFUNC_DEF("cvrect", 11, jx_cvrect),
+    JS_CFUNC_DEF("cvtext", 12, jx_cvtext), JS_CFUNC_DEF("cvimage", 16, jx_cvimage), JS_CFUNC_DEF("cvget", 5, jx_cvget),
+    JS_CFUNC_DEF("cvput", 6, jx_cvput), JS_CFUNC_DEF("color", 1, jx_color),
 };
 
 /* ================================================================
@@ -1072,6 +1458,7 @@ static void js_stop(void)
     jcx = 0;
     njsels = 0;
     js_wants = 0;
+    jcv_free();
 }
 static void relayout_keep(void);
 static void js_page_start(void)
@@ -1117,13 +1504,11 @@ static void js_page_start(void)
     j_start_fn = JS_GetPropertyStr(jcx, g, "__lxStart");
     { JSAtom at = JS_NewAtom(jcx, "__lx"); JS_DeleteProperty(jcx, g, at, 0); JS_FreeAtom(jcx, at); }
     JS_FreeValue(jcx, g);
-    js_in_layout = 1;                                    /* (not laid out yet: none to measure) */
-    js_budget(8000);
+    js_budget(15000);
     v = JS_Call(jcx, j_start_fn, JS_UNDEFINED, 0, 0);
     if (JS_IsException(v)) js_report(jcx);
     JS_FreeValue(jcx, v);
     js_jobs();
-    js_in_layout = 0;
     status[0] = 0;
 }
 /* the page's listeners told: type at node (x, y on the page; key...) -> 1 if prevented */
@@ -1208,9 +1593,14 @@ static int js_tick(int force)
         JS_FreeValue(jcx, r);
         js_jobs();
     }
-    if (dom_gen != js_laid_gen && (force || (int)(now - js_last_relayout) > 150)) {
+    if (jcv_refresh()) changed = 1;
+    if (dom_gen != js_laid_gen && (force || (int)(now - js_last_relayout) > js_relayout_ms)) {
+        unsigned t0 = millis();
         relayout_keep();
         js_last_relayout = millis();
+        js_relayout_ms = 3 * (int)(js_last_relayout - t0);        /* (a slow page: laid out less often) */
+        if (js_relayout_ms < 150) js_relayout_ms = 150;
+        if (js_relayout_ms > 3000) js_relayout_ms = 3000;
         changed = 1;
     }
     return changed;

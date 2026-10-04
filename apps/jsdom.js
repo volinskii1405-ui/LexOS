@@ -1343,34 +1343,291 @@ class HTMLTemplateElement extends HTMLElement {
         return this._c;
     }
 }
-class CanvasRenderingContext2D {
-    constructor(c) { this.canvas = c; Object.assign(this, { fillStyle: '#000', strokeStyle: '#000', lineWidth: 1, font: '10px sans-serif', globalAlpha: 1,
-        textAlign: 'start', textBaseline: 'alphabetic', lineCap: 'butt', lineJoin: 'miter', shadowBlur: 0, shadowColor: 'transparent',
-        globalCompositeOperation: 'source-over', imageSmoothingEnabled: true }); }
-    measureText(t) { const w = String(t).length * 6; return { width: w, actualBoundingBoxAscent: 8, actualBoundingBoxDescent: 2, actualBoundingBoxLeft: 0, actualBoundingBoxRight: w, fontBoundingBoxAscent: 8, fontBoundingBoxDescent: 2 }; }
-    getImageData(x, y, w, h) { return { width: w, height: h, data: new Uint8ClampedArray(Math.max(0, w * h * 4)) }; }
-    createImageData(w, h) { return this.getImageData(0, 0, w, h); }
-    createLinearGradient() { return { addColorStop() { } }; }
-    createRadialGradient() { return { addColorStop() { } }; }
-    createConicGradient() { return { addColorStop() { } }; }
-    createPattern() { return {}; }
-    getTransform() { return { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }; }
-    isPointInPath() { return false; }
-    getLineDash() { return []; }
-    getContextAttributes() { return {}; }
+/* <canvas>: the 2D context - its state, paths and transforms here, the
+ * pixels in js.h (svg.h's rasterizer) */
+const CVSTATE = ['fillStyle', 'strokeStyle', 'lineWidth', 'font', 'globalAlpha', 'textAlign', 'textBaseline', 'lineCap', 'lineJoin',
+    'miterLimit', 'shadowBlur', 'shadowColor', 'shadowOffsetX', 'shadowOffsetY', 'globalCompositeOperation', 'imageSmoothingEnabled',
+    'direction', 'letterSpacing', 'filter', 'lineDashOffset'];
+class CanvasGradient {
+    constructor() { this._stops = []; }
+    addColorStop(o, c) { this._stops.push([+o, String(c)]); this._stops.sort((a, b) => a[0] - b[0]); }
+    _color() { const s = this._stops; return s.length ? s[Math.floor(s.length / 2)][1] : '#000'; }
 }
-for (const k of ['save', 'restore', 'scale', 'rotate', 'translate', 'transform', 'setTransform', 'resetTransform', 'clearRect', 'fillRect', 'strokeRect',
-    'beginPath', 'closePath', 'moveTo', 'lineTo', 'bezierCurveTo', 'quadraticCurveTo', 'arc', 'arcTo', 'ellipse', 'rect', 'roundRect', 'fill', 'stroke',
-    'clip', 'fillText', 'strokeText', 'drawImage', 'putImageData', 'setLineDash', 'drawFocusIfNeeded', 'reset'])
-    CanvasRenderingContext2D.prototype[k] = function () { };
+class CanvasPattern { setTransform() { } }
+const colorCache = new Map();
+function cvColor(c) {                                    // a fill/stroke style -> [0xRRGGBB, alpha 0..1]
+    if (c instanceof CanvasGradient) c = c._color();
+    else if (c && typeof c === 'object') return [0x808080, 1];
+    c = String(c);
+    let v = colorCache.get(c);
+    if (v === undefined) {
+        const n = lx.color(c);
+        v = n < 0 ? null : [n & 0xFFFFFF, Math.floor(n / 16777216) / 255];
+        if (colorCache.size > 500) colorCache.clear();
+        colorCache.set(c, v);
+    }
+    return v || [0, 1];
+}
+function fontPx(f) {
+    const m = /(\d+(?:\.\d+)?)(px|pt|em|rem)/.exec(String(f));
+    if (!m) return 10;
+    const n = parseFloat(m[1]);
+    return m[2] === 'pt' ? n * 4 / 3 : m[2] === 'px' ? n : n * 16;
+}
+class CanvasRenderingContext2D {
+    constructor(c) {
+        hide(this, '_c', c);
+        hide(this, '_m', [1, 0, 0, 1, 0, 0]);
+        hide(this, '_path', []);                         // figures: {pts: [x, y ...] (the canvas's own), closed}
+        hide(this, '_fig', null);
+        hide(this, '_stack', []);
+        hide(this, '_clip', null);                       // [x0, y0, x1, y1]
+        hide(this, '_dash', []);
+        Object.assign(this, { fillStyle: '#000000', strokeStyle: '#000000', lineWidth: 1, font: '10px sans-serif', globalAlpha: 1,
+            textAlign: 'start', textBaseline: 'alphabetic', lineCap: 'butt', lineJoin: 'miter', miterLimit: 10, shadowBlur: 0,
+            shadowColor: 'rgba(0, 0, 0, 0)', shadowOffsetX: 0, shadowOffsetY: 0, globalCompositeOperation: 'source-over',
+            imageSmoothingEnabled: true, direction: 'ltr', letterSpacing: '0px', filter: 'none', lineDashOffset: 0 });
+    }
+    get canvas() { return this._c; }
+    _h() { return this._c._cv(); }
+    _clipArgs() { const c = this._clip; return c ? [c[0], c[1], c[2], c[3]] : []; }
+    /* ---- state ---- */
+    save() { const st = { m: this._m.slice(), clip: this._clip && this._clip.slice(), dash: this._dash.slice() }; for (const k of CVSTATE) st[k] = this[k]; this._stack.push(st); }
+    restore() { const st = this._stack.pop(); if (!st) return; this._m = st.m; this._clip = st.clip; this._dash = st.dash; for (const k of CVSTATE) this[k] = st[k]; }
+    reset() { this._stack = []; this._m = [1, 0, 0, 1, 0, 0]; this._clip = null; this._path = []; this._fig = null; this.clearRect(0, 0, this._c.width, this._c.height); }
+    /* ---- transforms ---- */
+    setTransform(a, b, c, d, e, f) {
+        if (a && typeof a === 'object') ({ a, b, c, d, e, f } = a);
+        this._m = [+a, +b, +c, +d, +e, +f];
+    }
+    resetTransform() { this._m = [1, 0, 0, 1, 0, 0]; }
+    getTransform() { const [a, b, c, d, e, f] = this._m; return Object.assign(new DOMMatrix(), { a, b, c, d, e, f, isIdentity: a === 1 && !b && !c && d === 1 && !e && !f }); }
+    transform(a, b, c, d, e, f) {
+        const m = this._m;
+        this._m = [m[0] * a + m[2] * b, m[1] * a + m[3] * b, m[0] * c + m[2] * d, m[1] * c + m[3] * d, m[0] * e + m[2] * f + m[4], m[1] * e + m[3] * f + m[5]];
+    }
+    translate(x, y) { this.transform(1, 0, 0, 1, +x || 0, +y || 0); }
+    scale(x, y) { this.transform(+x, 0, 0, +y, 0, 0); }
+    rotate(r) { const c = Math.cos(r), s = Math.sin(r); this.transform(c, s, -s, c, 0, 0); }
+    _pt(x, y) { const m = this._m; return [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]]; }
+    _scale() { const m = this._m; return Math.sqrt(Math.abs(m[0] * m[3] - m[1] * m[2])) || 1; }
+    /* ---- paths ---- */
+    beginPath() { this._path = []; this._fig = null; }
+    moveTo(x, y) { if (!isFinite(x) || !isFinite(y)) return; this._fig = { pts: this._pt(x, y), closed: false, sx: x, sy: y, lx: x, ly: y }; this._path.push(this._fig); }
+    lineTo(x, y) {
+        if (!isFinite(x) || !isFinite(y)) return;
+        if (!this._fig) return this.moveTo(x, y);
+        const p = this._pt(x, y);
+        this._fig.pts.push(p[0], p[1]);
+        this._fig.lx = x; this._fig.ly = y;
+    }
+    closePath() { if (this._fig) { this._fig.closed = true; const { sx, sy } = this._fig; this.moveTo(sx, sy); this._path[this._path.length - 1].closed = false; } }
+    _segs(len) { return Math.max(4, Math.min(100, Math.ceil(len * this._scale() / 3))); }
+    quadraticCurveTo(cx, cy, x, y) {
+        if (!this._fig) this.moveTo(cx, cy);
+        const { lx, ly } = this._fig, n = this._segs(Math.hypot(cx - lx, cy - ly) + Math.hypot(x - cx, y - cy));
+        for (let i = 1; i <= n; i++) { const t = i / n, u = 1 - t; this.lineTo(u * u * lx + 2 * u * t * cx + t * t * x, u * u * ly + 2 * u * t * cy + t * t * y); }
+    }
+    bezierCurveTo(c1x, c1y, c2x, c2y, x, y) {
+        if (!this._fig) this.moveTo(c1x, c1y);
+        const { lx, ly } = this._fig, n = this._segs(Math.hypot(c1x - lx, c1y - ly) + Math.hypot(c2x - c1x, c2y - c1y) + Math.hypot(x - c2x, y - c2y));
+        for (let i = 1; i <= n; i++) {
+            const t = i / n, u = 1 - t;
+            this.lineTo(u * u * u * lx + 3 * u * u * t * c1x + 3 * u * t * t * c2x + t * t * t * x, u * u * u * ly + 3 * u * u * t * c1y + 3 * u * t * t * c2y + t * t * t * y);
+        }
+    }
+    arc(x, y, r, a0, a1, ccw) { this.ellipse(x, y, r, r, 0, a0, a1, ccw); }
+    ellipse(x, y, rx, ry, rot, a0, a1, ccw) {
+        if (rx < 0 || ry < 0) throw new DOMException('The radius provided is negative.', 'IndexSizeError');
+        let d = a1 - a0;
+        const T = 2 * Math.PI;
+        if (!ccw && d >= T) d = T;
+        else if (ccw && -d >= T) d = -T;
+        else if (!ccw) { d %= T; if (d < 0) d += T; }
+        else { d %= T; if (d > 0) d -= T; }
+        const n = Math.max(2, Math.ceil(this._segs(Math.max(rx, ry) * Math.abs(d)))), cr = Math.cos(rot || 0), sr = Math.sin(rot || 0);
+        for (let i = 0; i <= n; i++) {
+            const a = a0 + d * i / n, ex = rx * Math.cos(a), ey = ry * Math.sin(a), px = x + ex * cr - ey * sr, py = y + ex * sr + ey * cr;
+            if (i === 0 && !this._fig) this.moveTo(px, py); else this.lineTo(px, py);
+        }
+    }
+    arcTo(x1, y1, x2, y2, r) {
+        if (!this._fig) this.moveTo(x1, y1);
+        const { lx: x0, ly: y0 } = this._fig;
+        const a1 = Math.atan2(y0 - y1, x0 - x1), a2 = Math.atan2(y2 - y1, x2 - x1);
+        let da = a2 - a1;
+        while (da > Math.PI) da -= 2 * Math.PI;
+        while (da < -Math.PI) da += 2 * Math.PI;
+        const t = Math.abs(Math.tan(da / 2));
+        if (!r || t < 1e-6) { this.lineTo(x1, y1); return; }
+        const dist = r / t, tx = x1 + Math.cos(a1) * dist, ty = y1 + Math.sin(a1) * dist;
+        const bis = a1 + da / 2, cd = r / Math.abs(Math.sin(da / 2)), ccx = x1 + Math.cos(bis) * cd, ccy = y1 + Math.sin(bis) * cd;
+        this.lineTo(tx, ty);
+        const s0 = Math.atan2(ty - ccy, tx - ccx), ex = x1 + Math.cos(a2) * dist, ey = y1 + Math.sin(a2) * dist, s1 = Math.atan2(ey - ccy, ex - ccx);
+        this.arc(ccx, ccy, r, s0, s1, da > 0);
+    }
+    rect(x, y, w, h) { this.moveTo(x, y); this.lineTo(x + w, y); this.lineTo(x + w, y + h); this.lineTo(x, y + h); this._fig.closed = true; this.moveTo(x, y); }
+    roundRect(x, y, w, h, r) {
+        r = Math.min(Math.abs(typeof r === 'number' ? r : Array.isArray(r) ? (typeof r[0] === 'number' ? r[0] : (r[0] && r[0].x) || 0) : (r && r.x) || 0), Math.abs(w) / 2, Math.abs(h) / 2);
+        if (!r) return this.rect(x, y, w, h);
+        this.moveTo(x + r, y); this.arcTo(x + w, y, x + w, y + h, r); this.arcTo(x + w, y + h, x, y + h, r);
+        this.arcTo(x, y + h, x, y, r); this.arcTo(x, y, x + w, y, r); this._fig.closed = true; this.moveTo(x, y);
+    }
+    _buf(path) {
+        const figs = path || this._path;
+        let n = 0;
+        for (const f of figs) if (f.pts.length >= 4) n += 2 + f.pts.length;
+        const b = new Float32Array(n);
+        let i = 0;
+        for (const f of figs) {
+            if (f.pts.length < 4) continue;
+            b[i++] = f.pts.length / 2; b[i++] = f.closed ? 1 : 0;
+            b.set(f.pts, i); i += f.pts.length;
+        }
+        return b;
+    }
+    fill(a, b) {
+        const path = a instanceof Path2D ? a._ctxPath(this) : null, rule = typeof a === 'string' ? a : b;
+        const [col, al] = cvColor(this.fillStyle), alpha = Math.round(255 * al * this.globalAlpha);
+        if (alpha > 0) lx.cvfill(this._h(), this._buf(path), col, alpha, rule === 'evenodd' ? 1 : 0, ...this._clipArgs());
+    }
+    stroke(p) {
+        const path = p instanceof Path2D ? p._ctxPath(this) : null;
+        const [col, al] = cvColor(this.strokeStyle), alpha = Math.round(255 * al * this.globalAlpha);
+        if (alpha > 0 && this.lineWidth > 0) lx.cvstroke(this._h(), this._buf(path), this.lineWidth * this._scale(), col, alpha, ...this._clipArgs());
+    }
+    clip() {
+        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;     // (as the box around the path)
+        for (const f of this._path) for (let i = 0; i < f.pts.length; i += 2) {
+            x0 = Math.min(x0, f.pts[i]); x1 = Math.max(x1, f.pts[i]); y0 = Math.min(y0, f.pts[i + 1]); y1 = Math.max(y1, f.pts[i + 1]);
+        }
+        if (x0 === Infinity) { x0 = y0 = x1 = y1 = 0; }
+        let c = [Math.floor(x0), Math.floor(y0), Math.ceil(x1), Math.ceil(y1)];
+        if (this._clip) c = [Math.max(c[0], this._clip[0]), Math.max(c[1], this._clip[1]), Math.min(c[2], this._clip[2]), Math.min(c[3], this._clip[3])];
+        this._clip = c;
+    }
+    isPointInPath(x, y) {
+        for (const f of this._path) {
+            let inside = false;
+            const p = f.pts;
+            for (let i = 0, j = p.length - 2; i < p.length; j = i, i += 2)
+                if ((p[i + 1] > y) !== (p[j + 1] > y) && x < (p[j] - p[i]) * (y - p[i + 1]) / (p[j + 1] - p[i + 1]) + p[i]) inside = !inside;
+            if (inside) return true;
+        }
+        return false;
+    }
+    isPointInStroke() { return false; }
+    /* ---- rectangles ---- */
+    _plain() { const m = this._m; return !m[1] && !m[2]; }
+    fillRect(x, y, w, h) {
+        if (!isFinite(x + y + w + h)) return;
+        if (!this._plain()) { const s = this._path; this._path = []; this.rect(x, y, w, h); this.fill(); this._path = s; return; }
+        const [col, al] = cvColor(this.fillStyle), alpha = Math.round(255 * al * this.globalAlpha);
+        if (w < 0) { x += w; w = -w; }
+        if (h < 0) { y += h; h = -h; }
+        const p = this._pt(x, y), m = this._m;
+        if (alpha > 0) lx.cvrect(this._h(), Math.round(p[0]), Math.round(p[1]), Math.round(w * m[0]), Math.round(h * m[3]), col, alpha, ...this._clipArgs());
+    }
+    clearRect(x, y, w, h) {
+        if (w < 0) { x += w; w = -w; }
+        if (h < 0) { y += h; h = -h; }
+        const p = this._pt(x, y), m = this._m;
+        lx.cvrect(this._h(), Math.floor(p[0]), Math.floor(p[1]), Math.ceil(w * Math.abs(m[0] || 1)), Math.ceil(h * Math.abs(m[3] || 1)), 0, -1, ...this._clipArgs());
+    }
+    strokeRect(x, y, w, h) { const s = this._path; this._path = []; this.rect(x, y, w, h); this.stroke(); this._path = s; }
+    /* ---- text: the browser's letters, at the font's size ---- */
+    measureText(t) {
+        const px = fontPx(this.font), w = String(t).length * px / 2 * this._scale() / this._scale();
+        return { width: w, actualBoundingBoxLeft: 0, actualBoundingBoxRight: w, actualBoundingBoxAscent: px * 0.8, actualBoundingBoxDescent: px * 0.2,
+            fontBoundingBoxAscent: px * 0.8, fontBoundingBoxDescent: px * 0.2, emHeightAscent: px * 0.8, emHeightDescent: px * 0.2,
+            alphabeticBaseline: 0, hangingBaseline: px * 0.8, ideographicBaseline: -px * 0.2 };
+    }
+    _text(t, x, y, style) {
+        t = String(t);
+        const s = this._scale(), px = fontPx(this.font) * s, w = t.length * px / 2, p = this._pt(x, y);
+        const al = this.textAlign;
+        let tx = p[0], ty = p[1];
+        if (al === 'center') tx -= w / 2;
+        else if (al === 'right' || (al === 'end' && this.direction !== 'rtl')) tx -= w;
+        const bl = this.textBaseline;
+        ty -= bl === 'top' || bl === 'hanging' ? 0 : bl === 'middle' ? px / 2 : bl === 'bottom' || bl === 'ideographic' ? px : px * 0.8;
+        const [col, a] = cvColor(style), alpha = Math.round(255 * a * this.globalAlpha);
+        if (alpha > 0) lx.cvtext(this._h(), tx, ty, t, px, col, alpha, /bold|[6-9]00/.test(this.font) ? 1 : 0, ...this._clipArgs());
+    }
+    fillText(t, x, y) { this._text(t, x, y, this.fillStyle); }
+    strokeText(t, x, y) { this._text(t, x, y, this.strokeStyle); }
+    /* ---- pictures ---- */
+    drawImage(img, a, b, c, d, e, f, g, h) {
+        let sx = 0, sy = 0, sw = 0, sh = 0, dx, dy, dw, dh;
+        const iw = img.width || img.naturalWidth || 0, ih = img.height || img.naturalHeight || 0;
+        if (arguments.length <= 5) { dx = a; dy = b; dw = c === undefined ? iw : c; dh = d === undefined ? ih : d; }
+        else { sx = a; sy = b; sw = c; sh = d; dx = e; dy = f; dw = g; dh = h; }
+        const p = this._pt(dx, dy), m = this._m, alpha = Math.round(255 * this.globalAlpha);
+        let from = -1, url = '';
+        if (img instanceof HTMLCanvasElement) from = img._cv();
+        else if (img && img.src) url = img.src;
+        else return;
+        lx.cvimage(this._h(), from, url, sx | 0, sy | 0, sw | 0, sh | 0, Math.round(p[0]), Math.round(p[1]), Math.round(dw * m[0]), Math.round(dh * m[3]), alpha, ...this._clipArgs());
+    }
+    createImageData(w, h) {
+        if (w && typeof w === 'object') ({ width: w, height: h } = w);
+        return new ImageData(Math.max(1, w | 0), Math.max(1, h | 0));
+    }
+    getImageData(x, y, w, h) {
+        const d = new ImageData(w | 0, h | 0);
+        d.data.set(new Uint8ClampedArray(lx.cvget(this._h(), x | 0, y | 0, w | 0, h | 0)));
+        return d;
+    }
+    putImageData(d, x, y) { lx.cvput(this._h(), d.data, x | 0, y | 0, d.width, d.height); }
+    /* ---- styles ---- */
+    createLinearGradient() { return new CanvasGradient(); }
+    createRadialGradient() { return new CanvasGradient(); }
+    createConicGradient() { return new CanvasGradient(); }
+    createPattern() { return new CanvasPattern(); }
+    setLineDash(d) { this._dash = Array.from(d || []); }
+    getLineDash() { return this._dash.slice(); }
+    getContextAttributes() { return { alpha: true, desynchronized: false, colorSpace: 'srgb', willReadFrequently: false }; }
+    drawFocusIfNeeded() { }
+    scrollPathIntoView() { }
+    isContextLost() { return false; }
+}
+class Path2D {
+    constructor(p) { hide(this, '_ops', p instanceof Path2D ? p._ops.slice() : []); if (typeof p === 'string') this._ops.push(['svg', p]); }
+    _ctxPath(ctx) {
+        const save = ctx._path, fig = ctx._fig;
+        ctx._path = []; ctx._fig = null;
+        for (const [op, ...a] of this._ops) if (op !== 'svg') ctx[op](...a);
+        const r = ctx._path;
+        ctx._path = save; ctx._fig = fig;
+        return r;
+    }
+    addPath(p) { this._ops.push(...p._ops); }
+}
+for (const k of ['moveTo', 'lineTo', 'closePath', 'quadraticCurveTo', 'bezierCurveTo', 'arc', 'arcTo', 'ellipse', 'rect', 'roundRect'])
+    Path2D.prototype[k] = function (...a) { this._ops.push([k, ...a]); };
+class ImageData {
+    constructor(a, b, c) {
+        if (a instanceof Uint8ClampedArray) { this.data = a; this.width = b; this.height = c || a.length / 4 / b; }
+        else { this.width = a; this.height = b; this.data = new Uint8ClampedArray(a * b * 4); }
+        this.colorSpace = 'srgb';
+    }
+}
 class HTMLCanvasElement extends HTMLElement {
-    get width() { return +this.getAttribute('width') || 300; }
-    set width(v) { this.setAttribute('width', v); }
-    get height() { return +this.getAttribute('height') || 150; }
-    set height(v) { this.setAttribute('height', v); }
-    getContext(t) { return t === '2d' ? this._ctx || (hide(this, '_ctx', new CanvasRenderingContext2D(this)), this._ctx) : null; }
-    toDataURL() { return 'data:,'; }
-    toBlob(cb) { setTimeout(() => cb(null), 0); }
+    get width() { const v = parseInt(this.getAttribute('width'), 10); return v >= 0 ? v : 300; }
+    set width(v) { this.setAttribute('width', Math.max(0, v | 0)); if (this._h !== undefined) lx.cvsize(this._h, this.width, this.height); }
+    get height() { const v = parseInt(this.getAttribute('height'), 10); return v >= 0 ? v : 150; }
+    set height(v) { this.setAttribute('height', Math.max(0, v | 0)); if (this._h !== undefined) lx.cvsize(this._h, this.width, this.height); }
+    _cv() {
+        if (this._h === undefined) hide(this, '_h', lx.cvnew(this[N], this.width, this.height));
+        return this._h;
+    }
+    getContext(t) {
+        if (t !== '2d') return null;
+        if (!this._ctx) { this._cv(); hide(this, '_ctx', new CanvasRenderingContext2D(this)); }
+        return this._ctx;
+    }
+    toDataURL() { return 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='; }
+    toBlob(cb) { setTimeout(() => cb(new Blob([], { type: 'image/png' })), 0); }
     captureStream() { return null; }
     transferControlToOffscreen() { throw new DOMException('Not supported', 'NotSupportedError'); }
 }
@@ -2650,7 +2907,7 @@ const glob = {
     HTMLDialogElement, HTMLDetailsElement, HTMLTableElement, HTMLTableSectionElement, HTMLTableRowElement, HTMLTableCellElement,
     HTMLMetaElement, HTMLTitleElement, HTMLBaseElement, HTMLProgressElement, HTMLMeterElement, HTMLSlotElement, HTMLSourceElement,
     HTMLObjectElement, HTMLEmbedElement, HTMLLIElement, HTMLOListElement, HTMLDataElement, HTMLTimeElement, HTMLQuoteElement, HTMLModElement,
-    SVGElement, SVGSVGElement, SVGGraphicsElement, CanvasRenderingContext2D, Range, TreeWalker, NodeIterator: TreeWalker, NodeFilter, Selection: Object,
+    SVGElement, SVGSVGElement, SVGGraphicsElement, CanvasRenderingContext2D, CanvasGradient, CanvasPattern, Path2D, ImageData, Range, TreeWalker, NodeIterator: TreeWalker, NodeFilter, Selection: Object,
     DOMRect, DOMRectReadOnly, DOMPoint, DOMMatrix, WebKitCSSMatrix: DOMMatrix, URL, webkitURL: URL, URLSearchParams, Headers, Request, Response,
     fetch, XMLHttpRequest, XMLHttpRequestEventTarget, FormData, Blob, File, FileReader, ReadableStream, TextEncoder, TextDecoder, AbortController,
     AbortSignal, WebSocket, EventSource, Storage, MediaQueryList, FontFace, Image, Audio, Option, DOMParser, XMLSerializer, Window, CSS,

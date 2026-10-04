@@ -506,6 +506,7 @@ struct svg_ras {
     float *cov;                                          /* a row's coverage */
     float px, py, sx, sy;                                /* the pen, where its figure began */
     int open;
+    int cx0, cy0, cx1, cy1;                              /* (a clip rectangle, if cx1: a <canvas>'s) */
 };
 static void svg_edge_add(struct svg_ras *r, float x0, float y0, float x1, float y1)
 {
@@ -535,6 +536,7 @@ static void svg_fill(struct svg_ras *r, unsigned color, int alpha, int evenodd)
     }
     if (ymin < 0) ymin = 0;
     if (ymax > r->h) ymax = r->h;
+    if (r->cx1) { if (ymin < r->cy0) ymin = r->cy0; if (ymax > r->cy1) ymax = r->cy1; }
     for (y = ymin; y < ymax; y++) {
         int x0 = r->w, x1 = -1;
         for (sub = 0; sub < 5; sub++) {
@@ -574,7 +576,7 @@ static void svg_fill(struct svg_ras *r, unsigned color, int alpha, int evenodd)
         }
         for (i = x0; i <= x1 && i < r->w; i++) {          /* that row, painted */
             float c = r->cov[i];
-            if (c > 0) {
+            if (c > 0 && (!r->cx1 || (i >= r->cx0 && i < r->cx1))) {
                 unsigned char *p = r->rgba + 4 * (y * r->w + i);
                 int a = (int)((c > 1 ? 1 : c) * alpha), na;
                 if (a > 0) {

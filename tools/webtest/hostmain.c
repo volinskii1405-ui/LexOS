@@ -119,6 +119,10 @@ int main(int argc, char **argv)
         }
         fclose(f);
     }
+    if (getenv("LXITEMS")) {                             /* the laid out pieces */
+        int i;
+        for (i = 0; i < nitems; i++) fprintf(stderr, "item %d: kind %d at %d,%d %dx%d node %d len %d\n", i, items[i].kind, items[i].x, items[i].y, items[i].w, items[i].h, items[i].node, items[i].len);
+    }
     redraw();
     save_ppm("screen.ppm", frame, W, H, W);
     total = doc_h < maxh ? doc_h : maxh;
