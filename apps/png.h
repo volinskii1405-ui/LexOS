@@ -81,6 +81,7 @@ static int png_sample(const png_u8 *r, int index)
     }
 }
 /* pixel x of the row -> r, g, b over white */
+static unsigned png_bg = 0xFFFFFF;                      /* (what transparency shows) */
 static void png_pixel(const png_u8 *r, int x, int *R, int *G, int *B)
 {
     int a = 255, v, c = x * pg_chan;
@@ -106,10 +107,10 @@ static void png_pixel(const png_u8 *r, int x, int *R, int *G, int *B)
     default:                                               /* RGBA */
         *R = png_sample(r, c); *G = png_sample(r, c + 1); *B = png_sample(r, c + 2); a = png_sample(r, c + 3);
     }
-    if (a < 255) {                                         /* over white */
-        *R = (*R * a + 255 * (255 - a)) / 255;
-        *G = (*G * a + 255 * (255 - a)) / 255;
-        *B = (*B * a + 255 * (255 - a)) / 255;
+    if (a < 255) {                                         /* over png_bg (white, unless said) */
+        *R = (*R * a + (int)(png_bg >> 16 & 255) * (255 - a)) / 255;
+        *G = (*G * a + (int)(png_bg >> 8 & 255) * (255 - a)) / 255;
+        *B = (*B * a + (int)(png_bg & 255) * (255 - a)) / 255;
     }
 }
 static void png_put(int dx, int dy, int R, int G, int B)
