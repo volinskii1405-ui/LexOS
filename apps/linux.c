@@ -154,7 +154,7 @@ static void time_init(void)
 {
     unsigned char t[8];
     lx_op(LXO_TIME, (int)t, 0);
-    tz_minutes = (short)(t[6] | t[7] << 8);
+    tz_minutes = (short)(t[6] | t[7] << 8) * 60;          /* (the kernel keeps it in hours) */
     boot_epoch = days_from(2000 + t[0], t[1] ? t[1] : 1, t[2] ? t[2] : 1) * 86400u + t[3] * 3600 + t[4] * 60 + t[5];
     boot_ms = millis();
 }

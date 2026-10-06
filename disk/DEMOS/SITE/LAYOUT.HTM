@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Layout and pictures in LexOS Web</title>
+<style>
+body { font-family: sans-serif; margin: 0; background: #fff; color: #222; }
+nav { display: flex; gap: 6px; background: #223; padding: 10px 20px; align-items: center; }
+nav a { color: #fff; text-decoration: none; padding: 4px 10px; background: #3a4a6a; }
+nav .grow { flex-grow: 1; }
+.wrap { padding: 12px 20px; }
+.cards { display: flex; flex-wrap: wrap; gap: 12px; }
+.cards div { flex: 1 1 200px; background: #eef3ff; border-left: 5px solid #4a70c0; padding: 8px 12px; }
+.grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+.grid div { background: #fdf0e0; text-align: center; padding: 12px 0; border: 1px solid #e8c89a; }
+.grid .wide { grid-column: span 2; background: #f0e0fd; border-color: #c8a0e8; }
+.pics { overflow: hidden; margin-top: 12px; }
+.pics img { float: left; margin: 0 14px 6px 0; }
+.box { position: relative; height: 90px; background: #e8f5ec; margin-top: 12px; border: 1px solid #9c9; }
+.box .badge { position: absolute; right: 10px; top: 10px; background: #c03050; color: #fff; padding: 2px 8px; }
+.box .foot { position: absolute; left: 10px; bottom: 8px; color: #464; }
+.center { display: flex; justify-content: center; align-items: center; height: 60px; background: #223; color: #fc6; margin-top: 12px; }
+</style>
+</head>
+<body>
+<nav><a href="INDEX.HTM">Home</a><a href="JS.HTM">JavaScript</a><span class="grow"></span><a href="ABOUT.HTM">About</a></nav>
+<div class="wrap">
+<h1>Flexbox, grid, float, position</h1>
+<div class="cards">
+  <div><b>display: flex</b><br>These cards wrap onto new lines when they don't fit (flex-wrap, flex: 1 1 200px).</div>
+  <div><b>gap</b><br>Space between the items, without margins.</div>
+  <div><b>align-items</b><br>The menu above is centered across its height.</div>
+</div>
+<div class="grid">
+  <div>1</div><div class="wide">2 (span 2)</div><div>3</div>
+  <div class="wide">4 (span 2)</div><div>5</div><div>6</div>
+</div>
+<div class="pics">
+  <img src="LEX.WEBP" alt="Lex (WebP)" width="160" height="123">
+  <img src="LOGO.SVG" alt="LexOS logo (SVG)" width="120" height="120">
+  <p><b>Pictures:</b> the cat is a <b>WebP</b> file (lossy, VP8), decoded by LexOS Web itself; the logo is an
+  <b>SVG</b> - paths, a rounded rectangle, a gradient and curves, drawn into pixels with smoothed edges.
+  Both float left, and this text goes around them. PNG, JPEG, GIF and BMP work too.</p>
+  <svg width="220" height="40" viewBox="0 0 220 40"><rect x="0" y="0" width="220" height="40" rx="8" fill="#223"/>
+  <circle cx="20" cy="20" r="10" fill="#c03050"/><circle cx="50" cy="20" r="10" fill="#f0c040"/><circle cx="80" cy="20" r="10" fill="#4ab070"/>
+  <path d="M100 30 L120 10 L140 30 L160 10 L180 30 L200 10" stroke="#fff" stroke-width="3" fill="none"/></svg>
+  <p class="note">(That strip is SVG written into the page.)</p>
+</div>
+<div class="box"><span class="badge">position: absolute</span><span class="foot">a box with position: relative - the badge and this line sit in its corners</span></div>
+<div class="center">justify-content: center; align-items: center</div>
+</div>
+</body>
+</html>

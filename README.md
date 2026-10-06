@@ -238,6 +238,17 @@ All taken in QEMU (1024x768) - more in [docs/screenshots](docs/screenshots).
 <td align="center" valign="top"><img src="docs/screenshots/117-linux-lua.png" alt="Lua" width="400"><br><sub>The Lua 5.4 interpreter (a static Linux build) running DEMO.LUA</sub></td>
 <td align="center" valign="top"><img src="docs/screenshots/118-linux-syscall-tests.png" alt="Linux syscall tests" width="400"><br><sub>tools/linux/lxtest.c: 36 Linux system-call checks pass</sub></td>
 </tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/119-browser-javascript.png" alt="JavaScript in LexOS Web" width="400"><br><sub>JavaScript (QuickJS): clicks, a canvas clock, a to-do list in localStorage</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/120-browser-flex-grid-webp-svg.png" alt="Flex, grid, WebP, SVG" width="400"><br><sub>CSS flex, grid, floats and position; WebP and SVG pictures</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/121-browser-bootstrap-menu.png" alt="Bootstrap menu" width="400"><br><sub>A Bootstrap site's menu, opened by its own script</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/122-browser-chartjs-canvas.png" alt="Chart.js" width="400"><br><sub>Chart.js charts on a canvas, with a tooltip under the pointer</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/123-browser-js-console.png" alt="JavaScript console" width="400"><br><sub>The console (Ctrl+K): scripts run, errors and warnings</sub></td>
+</tr>
 </table>
 
 Every screenshot, described in Russian: [docs/screenshots/README.md](docs/screenshots/README.md).
@@ -772,8 +783,8 @@ tester@/DESKTOP$ run snake.app
   `<button>`, sent by GET or POST (urlencoded, in the page's own
   charset - a windows-1251 site gets windows-1251), Enter in a field
   sends it, Tab goes to the next one. **Cookies** are kept (and sent
-  back) in `/TMP/WEB/COOKIES`: logins and settings stay. **Pages that
-  draw themselves with JavaScript** (which isn't run) aren't left blank:
+  back) in `/TMP/WEB/COOKIES`: logins and settings stay. With scripts off (Ctrl+J), **pages that
+  draw themselves with JavaScript** aren't left blank:
   the sentences in the data they carry - JSON `<script>`s,
   `__NEXT_DATA__`, `window.__STATE__ = {...}`, Next.js's streamed pieces
   - and their `<meta>` description are shown at the end, under a line
@@ -797,18 +808,50 @@ tester@/DESKTOP$ run snake.app
   emoji as `*`; icon fonts' private letters, accents on top, flags,
   zero-width spaces, soft hyphens and BOMs not at all). Long words and
   addresses are cut at the line's end - after a `/`, `-`, `.` or `?` if
-  there is one. Pages are read as they come - scripts, SVG,
-  comments and most attributes are left out on the way - and kept
-  whole, however big (up to 48MB of what's left, in memory the kernel
-  hands the browser past its own 4MB: a page of 40000 paragraphs, 6MB of
-  text, is no trouble). A **little CSS** (`apps/css.h`, the
-  page's `<style>`, up to 3 stylesheets and `style=""`; tag, `.class`
-  and `#id` selectors, `@media` as for an 800x600 screen): `display:none`,
-  `visibility:hidden`, `hidden`, `aria-hidden`, screen-reader-only
-  classes, folded-away blocks (`height:0; overflow:hidden`), invisible
-  ones (`opacity:0` placed aside) and text pushed off for a logo
-  (`text-indent:-9999px`) aren't shown; bold, italic, underline, colors (only if they can
-  be read), centering, the page's background. JSON and text are shown as
+  there is one. **JavaScript** runs (QuickJS-ng, `apps/qjs/`,
+  MIT-licensed, built for LexOS with a little C library of its own,
+  `apps/qjs/lxlibc.c`): the page's `<script>`s - inline and loaded,
+  `defer`, `async` and `type=module` (with `import`) - in the order a
+  browser runs them, then `DOMContentLoaded` and `load`. `apps/js.h`
+  joins it to the page and `apps/jsdom.js` (a prelude, ~2700 lines of
+  JavaScript) gives scripts the **DOM** they expect: `document`,
+  `getElementById`, `querySelector(All)`, `createElement`,
+  `appendChild` and the rest, `innerHTML`/`outerHTML`, `classList`,
+  `style`, `dataset`, attributes; **events** with capture and bubbling
+  (`addEventListener`, `onclick=""`, mouse clicks and moves, keys,
+  `input`/`change`/`submit` from the form fields, `scroll`),
+  `setTimeout`/`setInterval`/`requestAnimationFrame`, **`fetch`** and
+  `XMLHttpRequest` (over http and https, the browser's own cookies),
+  `FormData`, `URL`, `localStorage` (kept in `/TMP/WEB`) and
+  `sessionStorage`, `history.pushState`, `location`,
+  `getComputedStyle`, `getBoundingClientRect` and sizes,
+  `matchMedia`, `MutationObserver`, `IntersectionObserver`,
+  `ResizeObserver`, custom elements, `<template>`, `DOMParser`, `Blob`,
+  `TextEncoder` - and a **`<canvas>`** 2D context (paths, arcs,
+  curves, fills and strokes, text, `drawImage`, `getImageData`).
+  What a script changes is laid out again (the scroll kept). jQuery,
+  Bootstrap's menus, React, Vue, Alpine, htmx and Chart.js work.
+  **Ctrl+K** shows the console (`console.log`, errors with their file
+  and line), **Ctrl+J** turns scripts off and on. A script that hangs
+  is stopped (15 seconds for a page's, 3 for a click's).
+  The page is read into a **document tree** (`apps/dom.h`) and laid
+  out from it (`apps/layout.h`) with **real CSS** (`apps/css.h`: the
+  page's `<style>`, its `<link>`ed stylesheets and `style=""`): full
+  selectors (combinators, attributes, `:nth-child`, `:not`, `:is`), the
+  cascade with specificity and `!important`, `var()`, `calc()`, `em`,
+  `rem`, `vw`, `@media` as for an 800x600 screen; blocks with margins,
+  borders, padding and backgrounds (colors and pictures), **floats**,
+  **`position`** relative/absolute/fixed, **flex** (wrap, grow/shrink,
+  justify/align, gap, order), **grid** (`fr`, `minmax`, `repeat`,
+  `auto-fill`, areas, spans), tables, inline-blocks, `overflow:
+  hidden`; `display:none`, `hidden` and the rest aren't shown. Pictures
+  can also be **WebP** (`apps/webp.h`, lossy, lossless and with alpha)
+  and **SVG** (`apps/svg.h`: inline `<svg>` and `.svg` files - paths,
+  shapes, groups, transforms, fills and strokes). The demo site has a
+  page for each: `/DEMOS/SITE/JS.HTM` (clicks, a canvas clock, a to-do
+  list kept in `localStorage`, a chart from `fetch`ed JSON, a sortable
+  table) and `/DEMOS/SITE/LAYOUT.HTM` (flex, grid, floats, position,
+  WebP, SVG). JSON and text are shown as
   text, a picture on its own as a picture, anything else is offered as a
   download. **Reader mode** (the **Aa** button or F9): only the article
   (`<article>`, `<main>`), without menus, sidebars, share buttons,
@@ -1862,13 +1905,16 @@ src/
 - Pipes pass files, not streams: a command's whole output is caught
   first (up to 20KB per console), then handed on - and a command that
   waits for keys (`uranium`, a game) can't be piped.
-- LexOS Web knows only a little CSS and runs no JavaScript (a page made
-  by it shows only the text in its data, not its buttons or menus;
-  sites that need a script to log in, or that check for a real browser
-  - Cloudflare's checks, Google's sites - don't work); no `display:flex`
-  or grid (blocks one under another), no web fonts; an `<iframe>` is a
-  link, not shown in place; only the outermost table is a grid (a table inside a cell has its
-  cells one after another in it), no rowspan. Its cache is 64 files in
+- LexOS Web's JavaScript is slow under QEMU (a big framework's page
+  takes seconds to start) and has 48MB of memory; there are no
+  WebSockets, Workers, WebGL or WebAssembly, canvas gradients are drawn
+  in their middle color and a clip is the path's box; sites that check
+  for a real browser (Cloudflare's checks, Google's sites) don't work,
+  and scripts from a CDN need the Internet. CSS's `:hover`/`:focus`,
+  `::before`/`::after`, `@font-face` (no web fonts), `@keyframes` and
+  transitions aren't there; an `<iframe>` is a link, not shown in
+  place; no rowspan. A click while the page's pictures are still
+  coming can be lost. Its cache is 64 files in
   `/TMP/WEB` (512KB each at most), kept until the same slot's needed
   again - F5 reads past it, but nothing checks whether a picture
   changed on the server otherwise. Its https offers TLS 1.3 and 1.2

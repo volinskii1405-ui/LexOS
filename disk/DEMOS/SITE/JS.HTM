@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>JavaScript in LexOS Web</title>
+<style>
+body { font-family: sans-serif; background: #f4f6fb; color: #223; margin: 0; }
+header { background: #2c4a8a; color: #fff; padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; }
+header h1 { margin: 0; font-size: 26px; }
+header span { color: #bcd; }
+main { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 16px 24px; }
+.card { background: #fff; border: 1px solid #d0d6e4; padding: 12px 16px; }
+.card h2 { margin: 0 0 8px 0; font-size: 18px; color: #2c4a8a; }
+.big { font-size: 28px; font-weight: bold; color: #c03050; }
+button { background: #2c4a8a; color: #fff; border: 0; padding: 4px 12px; }
+.done { color: #889; text-decoration: line-through; }
+table { border-collapse: collapse; width: 100%; }
+th { background: #e4e9f4; cursor: pointer; }
+td, th { border: 1px solid #d0d6e4; padding: 2px 6px; }
+.note { color: #667; font-size: 13px; }
+</style>
+</head>
+<body>
+<header><h1>JavaScript in LexOS Web</h1><span id="ua">...</span></header>
+<main>
+<div class="card">
+  <h2>Clicks</h2>
+  <p>You clicked <span class="big" id="n">0</span> times.</p>
+  <button id="inc">Click me</button> <button id="reset">Reset</button>
+</div>
+<div class="card">
+  <h2>A clock, drawn on a &lt;canvas&gt;</h2>
+  <canvas id="clock" width="150" height="150"></canvas>
+  <p class="note" id="time"></p>
+</div>
+<div class="card">
+  <h2>To do (kept in localStorage)</h2>
+  <form id="todo-form"><input id="todo-text" placeholder="Something to do"> <button>Add</button></form>
+  <ul id="todos"></ul>
+  <p class="note">Click an item: done. Its list stays after a restart.</p>
+</div>
+<div class="card">
+  <h2>fetch() and a chart</h2>
+  <canvas id="chart" width="320" height="150"></canvas>
+  <p class="note" id="chart-note">Loading NEWS.JSN ...</p>
+</div>
+<div class="card">
+  <h2>Typing</h2>
+  <input id="echo" placeholder="Type here">
+  <p>Backwards: <b id="rev"></b></p>
+  <p class="note">Letters: <span id="count">0</span></p>
+</div>
+<div class="card">
+  <h2>A table to sort</h2>
+  <table id="tbl"><thead><tr><th data-k="0">Planet</th><th data-k="1">Moons</th><th data-k="2">Day, h</th></tr></thead>
+  <tbody><tr><td>Mercury</td><td>0</td><td>4223</td></tr><tr><td>Venus</td><td>0</td><td>2802</td></tr>
+  <tr><td>Earth</td><td>1</td><td>24</td></tr><tr><td>Mars</td><td>2</td><td>25</td></tr>
+  <tr><td>Jupiter</td><td>95</td><td>10</td></tr><tr><td>Saturn</td><td>146</td><td>11</td></tr></tbody></table>
+  <p class="note">Click a column's name.</p>
+</div>
+</main>
+<p class="note" style="padding: 0 24px">The scripts on this page run in QuickJS, inside LexOS. Ctrl+K shows the console,
+Ctrl+J turns JavaScript off and on. <a href="INDEX.HTM">Back home</a></p>
+<script>
+'use strict';
+const $ = s => document.querySelector(s);
+$('#ua').textContent = navigator.userAgent.split(') ')[0] + ')';
+
+// clicks
+let n = +(sessionStorage.getItem('n') || 0);
+const show = () => { $('#n').textContent = n; sessionStorage.setItem('n', n); };
+$('#inc').addEventListener('click', () => { n++; show(); });
+$('#reset').onclick = () => { n = 0; show(); };
+show();
+
+// the clock
+function clock() {
+  const c = $('#clock').getContext('2d'), d = new Date(), r = 70;
+  c.clearRect(0, 0, 150, 150);
+  c.save(); c.translate(75, 75);
+  c.beginPath(); c.arc(0, 0, r, 0, Math.PI * 2); c.fillStyle = '#eef2fa'; c.fill();
+  c.lineWidth = 3; c.strokeStyle = '#2c4a8a'; c.stroke();
+  for (let i = 0; i < 12; i++) {
+    const a = i * Math.PI / 6;
+    c.beginPath(); c.moveTo(Math.sin(a) * (r - 10), -Math.cos(a) * (r - 10)); c.lineTo(Math.sin(a) * (r - 3), -Math.cos(a) * (r - 3));
+    c.lineWidth = 2; c.stroke();
+  }
+  const hand = (a, len, w, col) => { c.beginPath(); c.moveTo(0, 0); c.lineTo(Math.sin(a) * len, -Math.cos(a) * len); c.lineWidth = w; c.strokeStyle = col; c.stroke(); };
+  const h = d.getHours() % 12, m = d.getMinutes(), s = d.getSeconds();
+  hand((h + m / 60) * Math.PI / 6, 38, 5, '#223');
+  hand((m + s / 60) * Math.PI / 30, 55, 3, '#223');
+  hand(s * Math.PI / 30, 60, 1, '#c03050');
+  c.restore();
+  $('#time').textContent = d.toLocaleTimeString() + ' - ' + d.toDateString();
+}
+clock();
+setInterval(clock, 1000);
+
+// to do
+const KEY = 'lexos-todos';
+let todos = JSON.parse(localStorage.getItem(KEY) || '[{"t":"Try JavaScript in LexOS","done":true},{"t":"Pet Lex the cat","done":false}]');
+function drawTodos() {
+  const ul = $('#todos');
+  ul.innerHTML = '';
+  todos.forEach((td, i) => {
+    const li = document.createElement('li');
+    li.textContent = td.t;
+    if (td.done) li.className = 'done';
+    li.addEventListener('click', () => { td.done = !td.done; save(); });
+    const x = document.createElement('a');
+    x.href = '#'; x.textContent = ' [x]';
+    x.onclick = e => { e.preventDefault(); e.stopPropagation(); todos.splice(i, 1); save(); };
+    li.appendChild(x);
+    ul.appendChild(li);
+  });
+}
+function save() { localStorage.setItem(KEY, JSON.stringify(todos)); drawTodos(); }
+$('#todo-form').addEventListener('submit', e => {
+  e.preventDefault();
+  const t = $('#todo-text').value.trim();
+  if (t) { todos.push({ t, done: false }); $('#todo-text').value = ''; save(); }
+});
+drawTodos();
+
+// fetch, and a chart
+fetch('NEWS.JSN').then(r => r.json()).then(data => {
+  const c = $('#chart').getContext('2d'), max = Math.max(...data.values), bw = 300 / data.values.length;
+  c.fillStyle = '#fff'; c.fillRect(0, 0, 320, 150);
+  data.values.forEach((v, i) => {
+    const h = v / max * 110;
+    c.fillStyle = i % 2 ? '#4a70c0' : '#c03050';
+    c.fillRect(10 + i * bw + 3, 125 - h, bw - 6, h);
+    c.fillStyle = '#223'; c.font = '11px sans-serif'; c.textAlign = 'center';
+    c.fillText(data.labels[i], 10 + i * bw + bw / 2, 140);
+  });
+  $('#chart-note').textContent = data.title + ' (' + data.values.length + ' values, fetched as JSON)';
+}).catch(e => { $('#chart-note').textContent = 'fetch failed: ' + e; });
+
+// typing
+$('#echo').addEventListener('input', e => {
+  const v = e.target.value;
+  $('#rev').textContent = [...v].reverse().join('');
+  $('#count').textContent = v.length;
+});
+
+// sorting
+let dir = 1;
+document.querySelectorAll('#tbl th').forEach(th => th.addEventListener('click', () => {
+  const k = +th.dataset.k, body = $('#tbl tbody'), rows = [...body.rows];
+  rows.sort((a, b) => {
+    const x = a.cells[k].textContent, y = b.cells[k].textContent;
+    return (isNaN(x) ? x.localeCompare(y) : x - y) * dir;
+  });
+  dir = -dir;
+  rows.forEach(r => body.appendChild(r));
+}));
+console.log('JS.HTM ready:', document.querySelectorAll('*').length, 'elements');
+</script>
+</body>
+</html>
