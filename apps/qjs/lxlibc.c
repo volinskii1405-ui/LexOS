@@ -296,7 +296,7 @@ static void t_init(void)
     if (t_ready) return;
     t_ready = 1;
     lx_sys3(48, 8, (int)t, 0);                           /* (lx_op TIME) */
-    t_tz = (short)(t[6] | t[7] << 8);
+    t_tz = (short)(t[6] | t[7] << 8) * 60;               /* (the kernel keeps it in hours) */
     t0_ms = (days_from(2000 + t[0], t[1] ? t[1] : 1, t[2] ? t[2] : 1) * 86400 + t[3] * 3600 + t[4] * 60 + t[5]) * 1000LL;
     t0_millis = (unsigned)lx_sys3(26, 0, 0, 0);
 }

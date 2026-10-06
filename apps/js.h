@@ -1467,6 +1467,7 @@ static void js_page_start(void)
     JSValue g, lx, v;
     js_stop();
     js_scripts = js_errors = 0;
+    jcon_n = jcon_at = 0;                                /* (a new page: a new console) */
     js_nav[0] = 0; js_hist_go = 0; js_submit_form = -1;
     if (!js_enabled || pi.kind != PK_HTML || view_source || starts_ci(url, "about:")) return;
     {                                                    /* (no <script>: no world needed) */
