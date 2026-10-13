@@ -521,15 +521,20 @@ tester@/DESKTOP$ run snake.app
   picks QEMU's card.
 - Keyboard, PIT timer and PS/2 mouse (with its wheel) via IRQ1, IRQ0 and
   IRQ12, not `int 0x16`/BIOS polling.
-- ATA disk driver talking directly to ports `0x1F0-0x1F7`. At boot it
-  walks PCI config space (ports `0xCF8`/`0xCFC`, no BIOS) looking for a
-  Bus Master IDE controller; if one turns up, every sector transfer
-  goes through it via DMA (the controller moves the 512 bytes on its
-  own while the CPU just polls a status bit) instead of a 256-iteration
-  PIO in/out loop. Falls back to the original PIO path automatically
-  wherever no such controller is found - `run`, `cat`, `cp`, saving in
-  `uranium`, and everything else built on `ata_read_sector`/
-  `ata_write_sector` work identically either way.
+- ATA disk driver talking directly to ports `0x1F0-0x1F7`, and **DMA**
+  (src/atadma.asm): at boot it looks through the PCI devices (every bus
+  and function - src/pci.asm; on QEMU the PIIX3's IDE controller is
+  00:01.1) for a Bus Master IDE controller, switches its bus mastering
+  on, and from then on the controller moves the data itself - up to
+  64KB a command, two PRD entries split at a 64KB line, straight into
+  the filesystem's buffers (FAT32 bounces what it can't reach) - while
+  the CPU just polls a status bit, instead of a 256-word `in`/`out` loop
+  per sector. Copying a 1.5MB file, QEMU counts 51 reads instead of
+  3092. If a DMA transfer ever fails, the channel is reset, the transfer
+  done again through the ports and DMA left off (`lspci` says which:
+  "Disk: DMA ..." or "Disk: PIO ..."); with no such controller it's PIO
+  from the start - `run`, `cat`, `cp`, saving in `uranium`, and
+  everything else work identically either way.
 - VGA text-mode output straight to linear memory (`0xB8000`) with a
   hardware cursor driven through the CRTC ports — no `int 0x10`.
 - CMOS RTC (`date`, `time`), PC speaker (`beep`), and a minimal 16550 UART
@@ -1758,8 +1763,9 @@ src/
   devices.asm          device manager/table (the `devices` command).
   ata.asm              ATA driver (the `ataread` command); dispatches to
                        atadma.asm's DMA path when available, PIO otherwise.
-  atadma.asm           Bus Master IDE (ATA DMA): PCI enumeration and the
-                       actual DMA sector transfers. %included at the very
+  atadma.asm           Bus Master IDE (ATA DMA): its controller found in
+                       pci.asm's table, the DMA transfers, the fall back
+                       to PIO if one fails. %included at the very
                        end of kernel.asm rather than next to ata.asm, since
                        (unlike ata.asm) its own code never needs to sit
                        below 0x10000 - see the note at its top.
@@ -1932,12 +1938,14 @@ src/
   uppercase names stay uppercase; `busybox ls` shows `?` for Russian
   letters in names (its static C library knows only ASCII), and Russian
   text shows when Russian is on in LexOS.
-- ATA DMA only looks at PCI bus 0, function 0 (see `ata_dma_probe` in
-  `src/atadma.asm`) and only understands an I/O-space BAR4 - and QEMU's
-  own IDE controller (the PIIX3's) is function 1 (`lspci`: 00:01.1), so
-  under QEMU the disks actually go through the PIO path, as on any
-  board that puts the controller somewhere else (no error message, just
-  slower transfers).
+- ATA DMA drives only the primary channel's master drive, through an
+  IDE controller with an I/O-space BAR4 (not AHCI/SATA in its native
+  mode, not NVMe), doesn't set the drive's DMA mode itself (it takes the
+  one the firmware left), and polls instead of taking IRQ14. Under QEMU
+  without KVM it isn't faster in seconds - emulated port I/O is cheap
+  there; the gain is in the work (one 64KB transfer instead of 128
+  sectors moved a word at a time by the CPU), which counts under KVM
+  and on real hardware.
 - `.com` program support (`src/dosrun.asm`) understands only the DOS
   calls listed under **Programs** above - real DOS software (which
   reaches for file I/O, memory management, and dozens of other `int

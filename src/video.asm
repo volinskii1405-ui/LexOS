@@ -640,6 +640,30 @@ lspci_command:
     call vid_info
     call basic_puts
     call basic_newline
+    mov esi, lspci_s_disk                 ; and how the disk's read and
+    call basic_puts                       ; written (src/atadma.asm)
+    cmp byte [ata_dma_available], 0
+    je .pio
+    mov esi, lspci_s_dma
+    call basic_puts
+    movzx eax, word [ata_bmide_base]
+    push eax
+    mov al, ah
+    call print_hex_byte
+    pop eax
+    call print_hex_byte
+    mov al, ')'
+    call print_char
+    jmp .disk_said
+.pio:
+    mov esi, lspci_s_pio
+    cmp byte [ata_dma_failed], 0
+    je .pio_said
+    mov esi, lspci_s_pio_failed
+.pio_said:
+    call basic_puts
+.disk_said:
+    call basic_newline
     popad
     ret
 
@@ -1658,6 +1682,10 @@ lspci_s_other   db "other", 0
 lspci_s_dash    db " - ", 0
 lspci_s_head    db "bus:dv.f vend:dev    class - name (*: it draws the screen)", 13, 10, 0
 lspci_s_video   db "Video: ", 0
+lspci_s_disk    db "Disk: ", 0
+lspci_s_dma     db "DMA (Bus Master IDE, ports 0x", 0
+lspci_s_pio     db "PIO (no Bus Master IDE controller)", 0
+lspci_s_pio_failed db "PIO (a DMA transfer failed: DMA turned off)", 0
 ; vendor | device << 16, then a name (the ones LexOS drives first)
 lspci_names     dd 0x11111234
                 db "QEMU/Bochs VGA (BGA, VBE)", 0

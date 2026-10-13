@@ -9,9 +9,14 @@
 ; original PIO path exactly as before.
 ;
 ; Finding the controller means walking PCI config space directly (no
-; BIOS, same reasoning as the rest of this kernel) - this kernel only
-; ever looks at bus 0, function 0, which is where QEMU's "pc" machine
-; (and most single-IDE-controller boards) puts it.
+; BIOS, same reasoning as the rest of this kernel): src/pci.asm's table
+; of every function on every bus, for the first IDE controller - on
+; QEMU's "pc" machine the PIIX3's, function 1 of device 1 (00:01.1), so
+; not where a look at each device's function 0 alone would find it.
+; Its bus mastering is switched on (the PCI command register's bit 2:
+; without it the controller may not touch memory). If a DMA transfer
+; ever fails, it's done again through the ports and DMA is left off
+; from then on - a disk that works slowly beats one that doesn't.
 ;
 ; Uses only 32-bit registers and direct memory operands (never the
 ; 16-bit mov si/di most of this kernel uses for addressing), so unlike
@@ -28,6 +33,8 @@ PCI_CONFIG_DATA equ 0xCFC
 BM_CMD    equ 0      ; Bus Master Command register (8-bit)
 BM_STATUS equ 2      ; Bus Master Status register (8-bit)
 BM_PRDT   equ 4      ; Bus Master PRDT Address register (32-bit)
+ATA_DEV_CTRL equ 0x3F6 ; the primary channel's device control (write) /
+                       ; alternate status (read)
 
 ATA_DMA_TIMEOUT equ 10000000   ; poll iterations before giving up - generous,
                                 ; but bounded so a wedged controller can't
@@ -35,68 +42,83 @@ ATA_DMA_TIMEOUT equ 10000000   ; poll iterations before giving up - generous,
                                 ; forever until the bit changes" would
 
 ; ============================================================
-; Scans PCI bus 0 (function 0 only) for a Mass Storage/IDE controller
-; (base class 0x01, subclass 0x01) and records its Bus Master base I/O
-; port (BAR4) in ata_bmide_base, setting ata_dma_available = 1. Leaves
-; ata_dma_available = 0 (the safe default it already starts at) if none
-; is found, or if BAR4 turns out to be a memory-space BAR rather than
-; an I/O one - either way, ata_read_sector/ata_write_sector fall back
-; to plain PIO with no other change needed.
+; Finds the first Mass Storage/IDE controller (base class 0x01,
+; subclass 0x01) in src/pci.asm's table - any bus, any function - and
+; records its Bus Master base I/O port (BAR4) in ata_bmide_base, its
+; bus mastering on, ata_dma_available = 1. Leaves ata_dma_available = 0
+; (the safe default) if there's none, if it can't bus-master (prog-if
+; bit 7), or if BAR4 isn't an I/O one - ata_read_sector/ata_write_sector
+; then keep to plain PIO with no other change needed.
 ; ============================================================
 ata_dma_probe:
     pushad
-
-    xor esi, esi                     ; esi = PCI device number, 0..31
+    mov byte [ata_dma_available], 0
+    call pci_scan                    ; (src/pci.asm: once, all of them)
+    mov esi, pci_devs
+    mov ecx, [pci_n]
 .scan_loop:
-    cmp esi, 32
-    jae .not_found
-
-    mov ecx, esi
-    shl ecx, 11
-    mov eax, 0x80000000
-    or eax, ecx                      ; offset 0: vendor/device ID
-    mov edx, PCI_CONFIG_ADDR
-    out dx, eax
-    mov edx, PCI_CONFIG_DATA
-    in eax, dx
-    cmp eax, 0xFFFFFFFF
-    je .next_device                  ; nothing at this device number
-
-    mov eax, 0x80000000
-    or eax, ecx
-    or eax, 0x08                     ; offset 8: revision/prog-if/subclass/class
-    mov edx, PCI_CONFIG_ADDR
-    out dx, eax
-    mov edx, PCI_CONFIG_DATA
-    in eax, dx
-    shr eax, 16                      ; ax = (base class << 8) | subclass
+    jecxz .done
+    mov eax, [esi + 8]               ; class, subclass, prog-if, revision
+    shr eax, 16
     cmp ax, 0x0101                   ; 01 = mass storage, 01 = IDE controller
-    jne .next_device
-
-    mov eax, 0x80000000
-    or eax, ecx
-    or eax, 0x20                     ; offset 0x20: BAR4
-    mov edx, PCI_CONFIG_ADDR
-    out dx, eax
-    mov edx, PCI_CONFIG_DATA
-    in eax, dx
-
-    test eax, 1                      ; bit0 = 1 means an I/O-space BAR
-    jz .not_found                    ; a memory-space BAR isn't handled here
-    and eax, 0xFFFFFFFC
-    mov [ata_bmide_base], ax
-    mov byte [ata_dma_available], 1
-    jmp .done
-
-.next_device:
-    inc esi
+    je .found
+    add esi, 12
+    dec ecx
     jmp .scan_loop
 
-.not_found:
-    mov byte [ata_dma_available], 0
+.found:
+    test byte [esi + 9], 0x80        ; prog-if bit 7: a bus master
+    jz .done
+    mov eax, [esi]
+    or eax, 0x20                     ; offset 0x20: BAR4
+    call pci_read                    ; (read, not sized: the disk's in use)
+    test eax, 1                      ; bit0 = 1 means an I/O-space BAR
+    jz .done                         ; a memory-space BAR isn't handled here
+    and eax, 0xFFFC
+    jz .done
+    mov [ata_bmide_base], ax
+    mov eax, [esi]
+    mov edx, 5                       ; its I/O ports, and bus mastering
+    call pci_enable
+    mov byte [ata_dma_available], 1
 
 .done:
     popad
+    ret
+
+; A DMA transfer failed: the engine stopped, the drive reset (it may
+; still be waiting for the data: a software reset of the channel puts it
+; back to idle), DMA off from now on - the caller does it again through
+; the ports
+ata_dma_give_up:
+    push eax
+    push ecx
+    push edx
+    movzx edx, word [ata_bmide_base]
+    add dx, BM_CMD
+    xor al, al
+    out dx, al
+    mov dx, ATA_DEV_CTRL
+    mov al, 0x04                     ; SRST
+    out dx, al
+    mov ecx, 16                      ; (a few microseconds: the status reads)
+.hold:
+    in al, dx
+    loop .hold
+    xor al, al
+    out dx, al
+    mov ecx, 4000000                 ; till it's not busy (not forever)
+.busy:
+    in al, dx
+    test al, ATA_STATUS_BSY
+    jz .ready
+    loop .busy
+.ready:
+    mov byte [ata_dma_available], 0
+    mov byte [ata_dma_failed], 1
+    pop edx
+    pop ecx
+    pop eax
     ret
 
 ; ============================================================
@@ -171,8 +193,8 @@ ata_dma_read_sector:
 
 .error:
     popad
-    stc
-    ret
+    call ata_dma_give_up
+    jmp ata_read_sector              ; (PIO now: ata_dma_available is 0)
 
 ata_dma_write_sector:
     pushad
@@ -240,8 +262,8 @@ ata_dma_write_sector:
 
 .error:
     popad
-    stc
-    ret
+    call ata_dma_give_up
+    jmp ata_write_sector             ; (PIO now)
 
 ; ============================================================
 ; Polls the Bus Master Status register until the transfer's interrupt
@@ -329,8 +351,8 @@ ata_rw_lba:
     cmp byte [ata_dma_available], 0
     je .pio
     call ata_rw_dma
-    jc .fail
-    jmp .next
+    jnc .next
+    call ata_dma_give_up             ; (failed: again, through the ports)
 .pio:
     call ata_rw_pio
     jc .fail
@@ -501,5 +523,6 @@ ata_rw_dma:
     ret
 
 ata_rw_dir    db 0
+ata_dma_failed db 0                  ; 1: a transfer failed, DMA's off
 ata_rw_lba_at dd 0
 ata_rw_n      dd 0
