@@ -150,6 +150,7 @@ shared_system_start:
 %include "src/sched.asm"
 %include "src/usermode.asm"
 %include "src/appsys.asm"
+%include "src/pci.asm"             ; (the PCI bus: every device, once)
 %include "src/console.asm"
 %include "src/desktop.asm"
 %include "src/dkwins.asm"
@@ -381,4 +382,5 @@ kext_start:
 %include "src/dknight.asm"
 %include "src/dkchist.asm"
 %include "src/dkmfind.asm"
+%include "src/video.asm"           ; (the graphics cards' drivers)
 kext_end:

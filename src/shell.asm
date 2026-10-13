@@ -505,6 +505,12 @@ handle_command:
     je .do_neofetch
 
     mov si, buffer
+    mov di, cmd_lspci
+    call strcmp_eq
+    cmp ax, 1
+    je .do_lspci
+
+    mov si, buffer
     mov di, cmd_kill_prefix
     call strcmp_prefix
     cmp ax, 1
@@ -866,6 +872,10 @@ handle_command:
 
 .do_neofetch:
     call neofetch_command
+    jmp .done
+
+.do_lspci:
+    call lspci_command         ; (src/video.asm)
     jmp .done
 
 .do_ls_l:

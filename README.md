@@ -248,6 +248,14 @@ All taken in QEMU (1024x768) - more in [docs/screenshots](docs/screenshots).
 </tr>
 <tr>
 <td align="center" valign="top"><img src="docs/screenshots/123-browser-js-console.png" alt="JavaScript console" width="400"><br><sub>The console (Ctrl+K): scripts run, errors and warnings</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/124-video-lspci.png" alt="lspci" width="400"><br><sub><code>lspci</code>: every PCI device; QEMU's VGA draws the desktop at the monitor's own 1280x800 (its EDID)</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/125-video-vmware.png" alt="VMware SVGA II" width="400"><br><sub>The same desktop on VMware SVGA II (<code>make run VGA=vmware</code>)</sub></td>
+<td align="center" valign="top"><img src="docs/screenshots/126-video-virtio-gpu.png" alt="virtio-gpu" width="400"><br><sub>...and on virtio-gpu (<code>VGA=virtio</code>): the picture in LexOS's RAM, sent to QEMU</sub></td>
+</tr>
+<tr>
+<td align="center" valign="top"><img src="docs/screenshots/127-video-monitor-size.png" alt="Monitor size" width="400"><br><sub>Control panel - Appearance - Monitor: the monitor's own size</sub></td>
 </tr>
 </table>
 
@@ -454,8 +462,9 @@ tester@/DESKTOP$ run snake.app
   (older two- and four-line ones still work). The nickname shows
   up in every prompt as `nickname@/path$ `, the offset in every clock.
   After that every boot goes straight to the desktop (Terminal 1 waits on
-  the taskbar), through a login screen if there's a password. Without the
-  BGA video it's the old text setup, and the shell.
+  the taskbar), through a login screen if there's a password. Without a
+  graphics card LexOS can drive (below) it's the old text setup, and the
+  shell.
 - **Russian and Spanish layouts** (src/lang.asm), if chosen: the
   Cyrillic letters of code page 866 in the VGA font - the text screen,
   the desktop and the programs all show them - and the ЙЦУКЕН layout;
@@ -474,6 +483,42 @@ tester@/DESKTOP$ run snake.app
   `head`/`tail` can still read it like any other file.
 
 ### Drivers
+- **Graphics without the BIOS** (src/video.asm): the desktop, the sign-in
+  screen and full-screen programs draw through one way in (`vid_find`,
+  `vid_set_mode`, `vid_show_page`, `vid_dirty`/`vid_flush`, `vid_off`),
+  and behind it a driver for the card the PCI bus has, each programmed
+  by its own registers:
+  - **Bochs/QEMU VBE** ("BGA": QEMU's `-vga std`, Bochs, VirtualBox's
+    VBoxVGA): its registers through ports `0x1CE`/`0x1CF` or, when the
+    card has them there, memory (BAR2 + 0x500 - QEMU's `bochs-display`
+    has no ports at all); two pages of video memory, one drawn while the
+    other's shown, swapped by the Y offset. The same BAR holds the
+    monitor's **EDID**: LexOS reads its own size from it.
+  - **VMware SVGA II** (QEMU's `-vga vmware`, VMware, VirtualBox's
+    VMSVGA): the mode through its index/value ports, the picture drawn
+    straight into its memory, then each changed rectangle sent through
+    its command FIFO (`SVGA_CMD_UPDATE`).
+  - **virtio-gpu** (QEMU's `-vga virtio`, `-device virtio-gpu-pci`):
+    modern virtio over PCI capabilities, a virtqueue of commands. The
+    picture lives in LexOS's own RAM, given to the card as a 2D
+    resource (`RESOURCE_CREATE_2D`, `ATTACH_BACKING`, `SET_SCANOUT`);
+    each frame's changed rectangles go over in one batch
+    (`TRANSFER_TO_HOST_2D` + `RESOURCE_FLUSH`). It also tells the
+    window's size and the EDID.
+
+  The picture's memory is mapped **write-combining** (the CPU's PAT -
+  writes gathered into whole lines instead of one bus trip each), the
+  registers uncached. A card with no VGA in it (bochs-display,
+  virtio-gpu-pci, and real machines without one) has no font to read:
+  LexOS carries its own copy of the VGA's 8x16 font (`src/font8x16.bin`)
+  and puts the Cyrillic and Spanish letters into that. A program asking
+  for 256 colors on a card without a palette (VMware, virtio) gets true
+  color, its frames turned into it through the palette. `lspci` lists
+  every PCI device (all the buses now - src/pci.asm, which the network
+  card and the AC'97 are found through too) and marks the card that
+  draws the screen; `neofetch` and the Control panel's System page say
+  which driver it is. `make run VGA=std|vmware|virtio|virtio-gpu|bochs`
+  picks QEMU's card.
 - Keyboard, PIT timer and PS/2 mouse (with its wheel) via IRQ1, IRQ0 and
   IRQ12, not `int 0x16`/BIOS polling.
 - ATA disk driver talking directly to ports `0x1F0-0x1F7`. At boot it
@@ -629,8 +674,9 @@ tester@/DESKTOP$ run snake.app
   its own and `gfx_blit`s it to the screen, can set any palette color,
   and `keydown(scancode)` tells whether a key is held - what games
   need. `gfx_mode_ex(800, 600, 32)` asks for more: up to 1600x1200,
-  in 256 colors or true color (0x00RRGGBB pixels), through QEMU's VBE
-  adapter (Bochs "BGA", its framebuffer found on PCI), and
+  in 256 colors or true color (0x00RRGGBB pixels), through whichever
+  graphics card LexOS drives (see Drivers; 256 colors on a card without
+  a palette are turned into true color by the kernel), and
   `gfx_blit_rect` updates just part of the screen. The screen goes back
   to text by itself when the program ends. Sound: `audio_open(22050, 2)`
   and `audio_write(samples, bytes)` stream 16-bit PCM to the Sound
@@ -1049,9 +1095,11 @@ tester@/DESKTOP$ run snake.app
     (stars or Lex's night), window **animations** - a window
     grows out of its middle as it opens, shrinks into its taskbar button
     minimized and grows back out of it - and the **screen size**:
-    800x600, 1024x768, 1280x720 or 1280x1024, changed at once, the
-    windows and icons kept on it; the two 1280-wide ones need 256MB -
-    `make run` gives QEMU that), the **night light** (Off, On, or
+    800x600, 1024x768, 1280x720 or 1280x1024, or **the monitor's own**
+    (Monitor: the size its EDID gives, or the window's under virtio-gpu
+    - QEMU's is 1280x800), changed at once, the windows and icons kept
+    on it; the ones bigger than 1024x768 need 256MB - `make run` gives
+    QEMU that), the **night light** (Off, On, or
     Evening - 19:00 to 7:00 - a warmer screen, less blue: src/dknight.asm)
     and the **Terminal's colors** (Classic, Green, Amber, or Light - dark
     text on paper), Sound (on/off, the Mixer),
@@ -1467,6 +1515,7 @@ run`, or the same options on the command line):
 | `SOUNDCARDS=` | (no `-device AC97`, `-device adlib`) | no sound cards at all: is it QEMU's emulation of them? |
 | `SOUNDCARDS="-device AC97,audiodev=snd0"` | (no `-device adlib`) | no AdLib (.IMF music silent): is it the AdLib's? |
 | `CARD=sb16` | `-device sb16,audiodev=snd0` (instead of the AC'97) | the Sound Blaster 16 |
+| `VGA=vmware` (or `virtio`, `virtio-gpu`, `bochs`; `std` by default) | `-vga vmware` (`-vga virtio`, `-vga none -device virtio-gpu-pci`, `-vga none -device bochs-display`) | another graphics card, and LexOS's driver for it (the last two have no VGA: nothing shows until the desktop) |
 | `QEMUFLAGS="-display sdl"` | `-display sdl` (or `gtk`, `cocoa`) | another window for QEMU; any other flags go here too | On a PipeWire system (Fedora, recent Ubuntu) use
 `pipewire` - through PipeWire's PulseAudio stand-in QEMU stalls the
 whole machine while a sound plays. `make run` picks `pipewire` by itself
@@ -1475,9 +1524,11 @@ package).
 
 **VirtualBox**: create a new VM (Type: Other, Version: Other/Unknown,
 no EFI), attach the image as an IDE hard disk (not as an optical
-drive), and boot it. The graphical setup and the desktop need QEMU's
-standard VGA (Bochs VBE, found on PCI) - without it LexOS falls back to
-the text-mode setup and the shell. VirtualBox doesn't emulate the PC
+drive), and boot it. LexOS has drivers for both of VirtualBox's
+graphics controllers - VBoxVGA speaks the same VBE registers as QEMU's,
+VMSVGA is VMware's SVGA II - though they've only been tried under QEMU's
+own versions of them; with neither, LexOS falls back to the text-mode
+setup and the shell. VirtualBox doesn't emulate the PC
 speaker at all — `beep` will be silent there no matter what.
 
 **A real USB stick** (⚠️ this overwrites everything on the target device
@@ -1533,6 +1584,7 @@ is case-insensitive; type the extension yourself (`uranium notes.txt`).
 | `clock` | toggle a clock in the top-right corner (a background task) |
 | `uptime` | how long since boot, the consoles and tasks |
 | `neofetch` | the system at a glance, next to Lex the cat (ASCII, in color) |
+| `lspci` | the PCI devices (bus, ids, class, a name), the graphics card that draws the screen marked `*`, and its mode |
 | `lex [text]` | Lex the cat says something in a speech bubble (or your text) |
 | `lex diary` | Lex's day: fed, petted, played with, the ball, the meows, sleep, how he is |
 | `play <n.imf \| n.wav>` | play AdLib music or a WAV (an AC'97 or a Sound Blaster 16, or the PC speaker) |
@@ -1734,6 +1786,13 @@ src/
   vga.asm              switches the VGA hardware to/from mode 13h (320x200,
                        256 colors) by programming its registers directly -
                        no BIOS int 10h in protected mode.
+  pci.asm              the PCI bus: every device on every bus, found once;
+                       lookups by id, a BAR's address and size.
+  video.asm            the graphics drivers: Bochs/QEMU VBE (ports or
+                       MMIO, EDID), VMware SVGA II, virtio-gpu; the PAT's
+                       write-combining; the built-in font; `lspci`.
+  font8x16.bin         the VGA's 8x16 font (code page 437, SeaBIOS's), for
+                       cards with no VGA to read it from.
   view.asm             `view <name>`: a .BMP in mode 13h.
   chip8.asm            `chip8 <name>`, a CHIP-8/SUPER-CHIP interpreter -
                        vga.asm's mode switch, reuses
@@ -1802,7 +1861,8 @@ src/
   dkpics.asm           Pictures: the viewer (zoom, slideshow, its bar).
   dknotify.asm         the notification center.
   dkanim.asm           windows' animations.
-  dkres.asm            the screen's size (the Control panel's Screen).
+  dkres.asm            the screen's size (the Control panel's Screen and
+                       Monitor).
   dkswitch.asm         Alt+Tab's panel of the windows.
   dkregion.asm         Shift+PrintScreen: a part of the screen.
   dkclock.asm          the Clock's alarm, timer and stopwatch.
@@ -1873,10 +1933,11 @@ src/
   letters in names (its static C library knows only ASCII), and Russian
   text shows when Russian is on in LexOS.
 - ATA DMA only looks at PCI bus 0, function 0 (see `ata_dma_probe` in
-  `src/atadma.asm`) and only understands an I/O-space BAR4 - enough for
-  QEMU's own IDE controller (what this project is tested against), but
-  a real board that puts it somewhere else falls back to the original
-  PIO path with no error message, just slower transfers.
+  `src/atadma.asm`) and only understands an I/O-space BAR4 - and QEMU's
+  own IDE controller (the PIIX3's) is function 1 (`lspci`: 00:01.1), so
+  under QEMU the disks actually go through the PIO path, as on any
+  board that puts the controller somewhere else (no error message, just
+  slower transfers).
 - `.com` program support (`src/dosrun.asm`) understands only the DOS
   calls listed under **Programs** above - real DOS software (which
   reaches for file I/O, memory management, and dozens of other `int
@@ -1941,9 +2002,25 @@ src/
   numbers 32-bit integers; a script line handed to the shell is cut at
   63 characters (the shell's own line length).
 - The screen's size is one of four (800x600, 1024x768, 1280x720,
-  1280x1024 - QEMU's standard VGA); the sign-in screen is always
-  1024x768, and the two 1280-wide sizes need 256MB of memory (with less
-  they stay 1024x768 and say why).
+  1280x1024) or the monitor's own, if that's no more than 1280x1024's
+  pixels (a 1920x1080 monitor can't be used at its size); the sign-in
+  screen is always 1024x768, and the sizes past 1024x768 need 256MB of
+  memory (with less they stay 1024x768 and say why). Switching between
+  a machine whose monitor size is known and one whose isn't moves the
+  desktop's icons about.
+- Graphics: drivers only for virtual machines' cards (QEMU's, Bochs's,
+  VMware's, VirtualBox's) - not for a real Intel, AMD or NVIDIA GPU, and
+  not the framebuffer a UEFI firmware sets up (LexOS boots from a BIOS
+  MBR). No hardware pointer (it's drawn by the desktop), no following
+  QEMU's window when it's resized under virtio-gpu, no 3D. The text
+  screen is the VGA's: on a card without one (`VGA=bochs`,
+  `VGA=virtio-gpu`) nothing shows until the desktop does, and a program
+  in mode 13h (320x200) outside the desktop isn't seen. Under QEMU's
+  virtio-vga, going back to text alternates 9- and 8-dot characters
+  (720 or 640 wide) - otherwise QEMU keeps showing the 640x480 picture
+  the card's reset left. Write-combining is set up, but how much faster
+  it makes a real machine hasn't been measured (under QEMU without KVM
+  it makes no difference).
 - Only `.APP` programs run in ring 3, each isolated by paging (its own
   4MB, nothing else). The kernel, the shell and everything built in run
   in ring 0 - and so do the PROGRAM-type files `run` starts (raw machine

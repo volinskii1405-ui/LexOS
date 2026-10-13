@@ -1917,6 +1917,7 @@ app_gfx              db 0                 ; 0 text, 1 mode 13h, 2 VBE, 3 a windo
 app_gfx_w            dd 320
 app_gfx_h            dd 200
 app_gfx_bpp          dd 1                 ; bytes per pixel
+app_gfx_conv         db 0                 ; 1: 8-bit frames, a 32-bit screen
 app_win_slot         dd 0                 ; (app_gfx 3: src/dkwins.asm's slot)
 app_rect_x           dd 0                 ; the rectangle being blitted - per
 app_rect_y           dd 0                 ; console too: a blit may wait for

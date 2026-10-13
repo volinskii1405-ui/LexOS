@@ -426,6 +426,52 @@ dkc_set_termcol:
     mov byte [dk_cfg_dirty], 1
     ret
 
+; The monitor's own size (src/dkres.asm's dkr_monitor): its button says
+; how big, lit while it's the one in use
+dkc_get_monitor:
+    push esi
+    push edi
+    mov edi, dkc_l_monsize
+    call dkr_monitor
+    jc .unknown
+    movzx eax, word [dkr_sizes + DKR_MONITOR * 4]
+    call wget_append_num
+    mov byte [edi], 'x'
+    inc edi
+    movzx eax, word [dkr_sizes + DKR_MONITOR * 4 + 2]
+    call wget_append_num
+    jmp .named
+.unknown:
+    mov esi, dkc_l_unknown
+    call tr_lookup
+    call wget_append
+.named:
+    mov byte [edi], 0
+    pop edi
+    pop esi
+    mov eax, -1
+    cmp dword [dk_res], DKR_MONITOR
+    jne .ret
+    xor eax, eax
+.ret:
+    ret
+dkc_set_monitor:
+    call dkr_monitor
+    jc .no
+    mov eax, DKR_MONITOR
+    jmp dkc_set_screen
+.no:
+    push esi                              ; (not known, or too big)
+    push edi
+    mov esi, dkc_m_monitor
+    mov edi, dk_toast_buf
+    call wget_append
+    mov byte [edi], 0
+    call dk_toast
+    pop edi
+    pop esi
+    ret
+
 dkc_get_screen:                           ; (src/dkres.asm)
     mov eax, [dk_res]
     ret
@@ -963,6 +1009,7 @@ dkc_rows_look  dd dk_msg_theme, dkc_o_theme, DK_THEMES, 66, dkc_get_theme, dkc_s
                dd dkc_l_saverkind, dkc_o_saverkind, 2, 72, dkc_get_saverkind, dkc_set_saverkind
                dd dkc_l_anim, dkc_o_onoff, 2, 72, dkc_get_anim, dkc_set_anim
                dd dkc_l_screen, dkc_o_screen, 4, 84, dkc_get_screen, dkc_set_screen
+               dd dkc_l_monitor, dkc_o_monitor, 1, 84, dkc_get_monitor, dkc_set_monitor
                dd dkc_l_night, dkc_o_night, 3, 72, dkc_get_night, dkc_set_night
                dd dkc_l_termcol, dkc_o_termcol, 4, 72, dkc_get_termcol, dkc_set_termcol
                dd 0
@@ -1014,6 +1061,11 @@ dkc_l_stars    db "Stars", 0
 dkc_l_lexnight db "Lex", 0
 dkc_l_anim     db "Animations", 0
 dkc_l_screen   db "Screen", 0
+dkc_l_monitor  db "Monitor", 0
+dkc_l_unknown  db "unknown", 0
+dkc_m_monitor  db "The monitor's size isn't known, or is too big for the desktop", 0
+dkc_o_monitor  dd dkc_l_monsize
+dkc_l_monsize  times 16 db 0
 dkc_l_night    db "Night light", 0
 dkc_l_evening  db "Evening", 0
 dkc_l_termcol  db "Terminal colors", 0

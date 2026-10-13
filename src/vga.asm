@@ -225,6 +225,8 @@ vga_map_eax:                           ; (eax = what's to be seen there)
 ; ============================================================
 vga_save_font:
     pusha
+    cmp byte [vga_font_own], 0      ; (no VGA: the font's ours, kept here
+    jne .own                        ;  - src/video.asm's vid_font_fix)
 
     mov dx, VGA_SEQ_INDEX
     mov al, 0x02
@@ -269,7 +271,9 @@ vga_save_font:
     ; back to whatever addressing mode was actually active before this
     mov esi, vga_saved_regs
     call vga_apply_regs
-
+    call vid_font_fix               ; (no VGA, no font in it: LexOS's own,
+                                    ;  src/video.asm)
+.own:
     popa
     ret
 
@@ -744,6 +748,7 @@ vga_default_palette:
 
 vga_saved_dac times 768 db 0
 vga_saved_font times VGA_FONT_SIZE db 0
+vga_font_own   db 0             ; 1: vga_saved_font is the font (no VGA)
 
 vga_draw_color db 15
 vga_graphics_active db 0

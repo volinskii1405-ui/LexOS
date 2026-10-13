@@ -67,7 +67,7 @@ dkfs_write:
 dkfs_run:
     pushad
     mov byte [dkfs_gfx], 0
-    call bga_find
+    call vid_find
     jc .quiet
     mov byte [dkfs_gfx], 1
     call wl_begin                         ; (src/welcome.asm: the green screen)

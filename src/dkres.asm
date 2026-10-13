@@ -1,6 +1,8 @@
 ; ============================================================
-; LexOS desktop - the screen's size: 800x600, 1024x768, 1280x720 or
-; 1280x1024 (the Control panel's Appearance - Screen; "res=" in
+; LexOS desktop - the screen's size: 800x600, 1024x768, 1280x720,
+; 1280x1024, or the monitor's own (its EDID, or what virtio-gpu says the
+; window is: src/video.asm's vid_mon_w/h - if LexOS can draw that big;
+; the Control panel's Appearance - Screen and Monitor; "res=" in
 ; DESKTOP.CFG). dk_w, dk_h and what's made of them (src/desktop.asm's
 ; data) are what everything draws by; the pictures (DESK_BACK, the
 ; pages' copies, the wallpaper made to fit, a screenshot) stay in the
@@ -10,7 +12,8 @@
 ; Exports: dk_res_set, dk_res_apply, dkr_mem_mb, DKR_N
 ; ============================================================
 
-DKR_N            equ 4
+DKR_N            equ 5
+DKR_MONITOR      equ 4                    ; (the monitor's own)
 DKR_HI_MB        equ 160                  ; (the big ones' pictures end at 152MB)
 
 ; eax = which size (dkr_sizes) -> dk_w, dk_h and the rest; carry=1 (and
@@ -22,6 +25,12 @@ dk_res_set:
     jb .known
     mov eax, 1
 .known:
+    cmp eax, DKR_MONITOR
+    jne .preset
+    call dkr_monitor                      ; (its size known, and drawable?)
+    jnc .preset
+    mov eax, 1
+.preset:
     movzx ecx, word [dkr_sizes + eax*4]
     movzx edx, word [dkr_sizes + eax*4 + 2]
     mov ebx, ecx
@@ -92,6 +101,38 @@ dk_res_set:
     ret
 .ok:
     clc
+    ret
+
+; The monitor's own size (src/video.asm) into dkr_sizes' last place;
+; carry=1 if it isn't known, or the desktop can't be that big (its
+; pictures are 5MB each at most: 1280x1024 pixels' worth)
+dkr_monitor:
+    pushad
+    call vid_find
+    jc .no
+    mov eax, [vid_mon_w]
+    and eax, ~7                           ; (whole 8-pixel columns)
+    mov ecx, [vid_mon_h]
+    cmp eax, 640
+    jb .no
+    cmp eax, VID_MAX_W
+    ja .no
+    cmp ecx, 480
+    jb .no
+    cmp ecx, VID_MAX_H
+    ja .no
+    mov edx, eax
+    imul edx, ecx
+    cmp edx, 1280 * 1024
+    ja .no
+    mov [dkr_sizes + DKR_MONITOR * 4], ax
+    mov [dkr_sizes + DKR_MONITOR * 4 + 2], cx
+    popad
+    clc
+    ret
+.no:
+    popad
+    stc
     ret
 
 ; -> eax = the memory, in MB (the CMOS's count above 16MB, 64KB each)
@@ -272,7 +313,7 @@ dkr_replace:
 ; ============================================================
 ; Data
 ; ============================================================
-dkr_sizes        dw 800, 600, 1024, 768, 1280, 720, 1280, 1024
+dkr_sizes        dw 800, 600, 1024, 768, 1280, 720, 1280, 1024, 0, 0
 dkr_short        db 0
 dkr_said         db 0
 dkr_old_w        dd 1024

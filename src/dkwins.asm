@@ -1007,6 +1007,14 @@ dk_draw_system:
 .ip_done:
     mov esi, dk_sys_buf
     call dk_sys_line
+    mov edi, dk_sys_buf                   ; the graphics card (src/video.asm)
+    mov esi, dk_sys_video
+    call wget_append
+    call vid_info
+    call wget_append
+    mov byte [edi], 0
+    mov esi, dk_sys_buf
+    call dk_sys_line
     mov esi, dk_sys_hint
     mov edx, COL_MUTED
     call dk_sys_line
@@ -5794,7 +5802,7 @@ dk_m_now          db 0
 dk_s_now          db 0
 dk_line_x         dd 0
 dk_line_y         dd 0
-dk_sys_buf        times 64 db 0
+dk_sys_buf        times 96 db 0
 dk_cp_w           dd 0
 dk_cp_h           dd 0
 dk_cp_scale       dd 1
@@ -6061,6 +6069,7 @@ dk_sys_memory       db "Memory: ", 0
 dk_sys_mb           db " MB", 0
 dk_sys_consoles     db "Consoles: ", 0
 dk_sys_ip           db "Address: ", 0
+dk_sys_video        db "Video: ", 0
 dk_sys_no_ip        db "(no network yet)", 0
 dk_sys_hint         db "Type `desktop` again to leave.", 0
 dk_task_cpu         db "CPU ", 0

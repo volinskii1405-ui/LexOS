@@ -85,10 +85,22 @@ neofetch_command:
     mov esi, nf_val_text
     cmp byte [dk_active], 0
     je .display
+    mov eax, [dk_w]                       ; (its size: the Control panel's)
+    call wget_append_num
+    mov byte [edi], 'x'
+    inc edi
+    mov eax, [dk_h]
+    call wget_append_num
     mov esi, nf_val_desktop
 .display:
     call wget_append
     mov esi, nf_lbl_display
+    call nf_field
+    ; GPU: the card and its driver (src/video.asm)
+    mov edi, nf_buf
+    call vid_info
+    call wget_append
+    mov esi, nf_lbl_gpu
     call nf_field
     ; Theme (and its backdrop)
     mov edi, nf_buf
@@ -465,6 +477,7 @@ nf_lbl_kernel  db "Kernel: ", 0
 nf_lbl_uptime  db "Uptime: ", 0
 nf_lbl_shell   db "Shell: ", 0
 nf_lbl_display db "Display: ", 0
+nf_lbl_gpu     db "GPU: ", 0
 nf_lbl_theme   db "Theme: ", 0
 nf_lbl_lang    db "Keyboard: ", 0
 nf_lbl_cpu     db "CPU: ", 0
@@ -475,7 +488,7 @@ nf_val_os      db "LexOS x86 (32-bit, protected mode)", 0
 nf_val_kernel  db "lexos, ", 0
 nf_val_shell   db "lexsh", 0
 nf_val_text    db "80x25 text", 0
-nf_val_desktop db "1024x768x32, desktop", 0
+nf_val_desktop db "x32, desktop", 0
 nf_val_en      db "English", 0
 nf_w_ru        db " + Russian", 0
 nf_w_es        db " + Spanish", 0

@@ -36,25 +36,16 @@ AC97_GLOB_STA    equ 0x30
 ; -> carry=0 and the card ready (its interrupt ours) if there's one
 ac97_init:
     pushad
-    xor ebx, ebx                          ; each device on bus 0
-.scan:
-    cmp ebx, 32
-    jae .none
-    mov eax, ebx
-    shl eax, 11
-    or eax, 0x80000000
-    call net_pci_read
-    cmp eax, 0x24158086                   ; Intel 82801AA AC'97
-    je .found
-    inc ebx
-    jmp .scan
+    mov ebx, 0x24158086                   ; Intel 82801AA AC'97, on any bus
+    xor ecx, ecx                          ; (src/pci.asm)
+    call pci_find
+    jnc .found
 .none:
     popad
     stc
     ret
 .found:
-    shl ebx, 11
-    or ebx, 0x80000000
+    mov ebx, eax
     lea eax, [ebx + 0x10]                 ; BAR0: the mixer's ports
     call net_pci_read
     and eax, 0xFFFC

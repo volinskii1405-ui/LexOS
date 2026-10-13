@@ -12,7 +12,7 @@
 ; `-nic user,model=rtl8139`) - about the simplest real NIC there is to
 ; drive: one contiguous receive ring the card fills by DMA, four
 ; transmit slots, everything else plain I/O ports. Found by scanning
-; PCI bus 0 for vendor 10EC / device 8139, initialized lazily the first
+; the PCI bus for vendor 10EC / device 8139, initialized lazily the first
 ; time a command needs it (so boot is unchanged, and a machine without
 ; one only notices when it asks). Polled, never interrupt-driven:
 ; the only thing that waits for packets is ping itself.
@@ -373,19 +373,11 @@ net_init:
     jne .ok
     pushad
 
-    ; PCI bus 0: vendor 10EC, device 8139
-    xor ebx, ebx
-.scan:
-    cmp ebx, 32
-    jae .absent
-    mov eax, ebx
-    shl eax, 11
-    or eax, 0x80000000
-    call net_pci_read
-    cmp eax, 0x813910EC
-    je .found
-    inc ebx
-    jmp .scan
+    ; vendor 10EC, device 8139, on any bus (src/pci.asm)
+    mov ebx, 0x813910EC
+    xor ecx, ecx
+    call pci_find
+    jnc .found
 .absent:
     popad
     mov esi, net_msg_no_card
@@ -393,9 +385,6 @@ net_init:
     stc
     ret
 .found:
-    mov eax, ebx
-    shl eax, 11
-    or eax, 0x80000000
     mov [net_pci_addr], eax
     or eax, 0x10                          ; BAR0: the I/O ports
     call net_pci_read

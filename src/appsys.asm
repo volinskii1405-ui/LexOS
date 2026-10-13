@@ -13,8 +13,8 @@
 ; (32 + r*36 + g*6 + b) - and SYS_BLIT copies a 64000-byte frame from
 ; the program's memory to the screen. SYS_GFX_MODE asks for more: up to
 ; 1600x1200 in 256 colors (the same palette) or true color (a pixel =
-; 0x00RRGGBB), through the Bochs/QEMU VBE adapter ("BGA" - ports
-; 0x1CE/0x1CF, its framebuffer at PCI BAR0, mapped in on first use).
+; 0x00RRGGBB), through whichever graphics card src/video.asm drives
+; (Bochs/QEMU's VBE adapter, VMware SVGA, virtio-gpu).
 ; SYS_BLIT_RECT copies just part of a frame. The screen goes back to
 ; text by itself when the program ends, so a crash message is always
 ; readable.
@@ -495,22 +495,22 @@ app_unwindow:
     add esi, dk_app_pal
     mov dx, VGA_DAC_WRITE_INDEX
     xor al, al
-    out dx, al
+    call app_dac_index
     mov dx, VGA_DAC_DATA
     mov ecx, 256
 .color:
     mov ebx, [esi]
     mov eax, ebx
     shr eax, 18                           ; red, 8 bits -> 6
-    out dx, al
+    call app_dac_out
     mov eax, ebx
     shr eax, 10
     and al, 0x3F
-    out dx, al
+    call app_dac_out
     mov eax, ebx
     shr eax, 2
     and al, 0x3F
-    out dx, al
+    call app_dac_out
     add esi, 4
     loop .color
 .colors_done:
@@ -534,10 +534,8 @@ app_gfx_off:
     pushad
     cmp byte [app_gfx], 2
     jne .vga
-    mov ax, BGA_ENABLE                    ; VBE off: the VGA registers
-    xor dx, dx                            ; (restored next) are in charge again
-    call bga_write
-.vga:
+    call vid_off                          ; the card's mode off: the VGA
+.vga:                                     ; registers (restored next) again
     call vga_leave_mode13
     popad
     mov byte [app_gfx], 0
@@ -549,19 +547,6 @@ app_gfx_off:
 ; 32) -> eax = 0, or -1 if this machine's video can't. 320x200x8 is
 ; plain mode 13h, like SYS_GFX 1.
 ; ============================================================
-BGA_INDEX       equ 0x1CE
-BGA_DATA        equ 0x1CF
-BGA_ID          equ 0
-BGA_XRES        equ 1
-BGA_YRES        equ 2
-BGA_BPP         equ 3
-BGA_ENABLE      equ 4
-BGA_VIRT_WIDTH  equ 6
-BGA_X_OFFSET    equ 8
-BGA_Y_OFFSET    equ 9
-BGA_MAX_W       equ 1600
-BGA_MAX_H       equ 1200
-
 sys_gfx_mode:
     mov eax, [ebp + 16]
     mov ecx, [ebp + 24]
@@ -643,58 +628,44 @@ app_gfx_screen:
     ret
 .vbe:
     call console_wait_fg                  ; (the screen's the one on it's)
-    cmp eax, 64
-    jb .fail
-    cmp eax, BGA_MAX_W
+    cmp eax, 64                           ; (a size and depth no card does:
+    jb .fail                              ;  no, before the mode's let go)
+    cmp eax, VID_MAX_W
     ja .fail
     test eax, 7
     jnz .fail
     cmp ecx, 64
     jb .fail
-    cmp ecx, BGA_MAX_H
+    cmp ecx, VID_MAX_H
     ja .fail
     cmp edx, 8
     je .depth_ok
     cmp edx, 32
     jne .fail
 .depth_ok:
-    call bga_find
+    call vid_find                         ; (src/video.asm)
     jc .fail
     call app_gfx_off
+    pushad
     mov [app_gfx_w], eax
     mov [app_gfx_h], ecx
-    shr edx, 3
-    mov [app_gfx_bpp], edx
-    pushad
+    mov ebx, edx
+    shr ebx, 3
+    mov [app_gfx_bpp], ebx
     call desktop_suspend_hook             ; (src/desktop.asm)
     mov byte [vga_graphics_active], 1     ; (like vga_enter_mode13: keep the
     call vga_save_regs                    ; text screen, font and registers
     call vga_save_font                    ; to come back to)
-    mov ax, BGA_ENABLE
-    xor dx, dx
-    call bga_write
-    mov ax, BGA_XRES
-    mov dx, [app_gfx_w]
-    call bga_write
-    mov ax, BGA_YRES
-    mov dx, [app_gfx_h]
-    call bga_write
-    mov ax, BGA_BPP
-    mov dx, [app_gfx_bpp]
-    shl dx, 3
-    call bga_write
-    mov ax, BGA_VIRT_WIDTH
-    mov dx, [app_gfx_w]
-    call bga_write
-    mov ax, BGA_X_OFFSET
-    xor dx, dx
-    call bga_write
-    mov ax, BGA_Y_OFFSET
-    xor dx, dx
-    call bga_write
-    mov ax, BGA_ENABLE
-    mov dx, 0x41                          ; on, linear framebuffer, cleared
-    call bga_write
+    mov byte [app_gfx_conv], 0
+    call vid_set_mode
+    jnc .mode_set
+    cmp edx, 8                            ; 8 bits on a card without a
+    jne .no_mode                          ; palette: true color, the frames
+    mov edx, 32                           ; turned into it (app_pal32)
+    call vid_set_mode
+    jc .no_mode
+    mov byte [app_gfx_conv], 1
+.mode_set:
     cmp dword [app_gfx_bpp], 1
     jne .no_palette
     call app_gfx_palette
@@ -703,95 +674,11 @@ app_gfx_screen:
     mov byte [app_gfx], 2
     xor eax, eax
     ret
+.no_mode:
+    call vga_leave_screen                 ; (the text back, as it was)
+    popad
 .fail:
     mov eax, -1
-    ret
-
-; ax = a BGA register, dx = its new value
-bga_write:
-    push edx
-    push eax
-    mov dx, BGA_INDEX
-    out dx, ax
-    pop eax
-    pop edx
-    push eax
-    push edx
-    mov ax, dx
-    mov dx, BGA_DATA
-    out dx, ax
-    pop edx
-    pop eax
-    ret
-
-; Finds the BGA adapter (PCI 1234:1111) and maps its framebuffer
-; (identity, 16MB of 4MB kernel pages). carry=1 if there isn't one.
-; Preserves registers.
-bga_find:
-    cmp dword [bga_lfb], 0
-    jne .ok
-    pushad
-    mov dx, BGA_INDEX                     ; does it answer at all?
-    mov ax, BGA_ID
-    out dx, ax
-    mov dx, BGA_DATA
-    in ax, dx
-    cmp ax, 0xB0C0
-    jb .absent
-    cmp ax, 0xB0CF
-    ja .absent
-    xor ebx, ebx                          ; PCI bus 0, device ebx
-.scan:
-    mov eax, ebx
-    shl eax, 11
-    or eax, 0x80000000
-    mov dx, PCI_CONFIG_ADDR
-    out dx, eax
-    mov dx, PCI_CONFIG_DATA
-    in eax, dx
-    cmp eax, 0x11111234
-    je .found
-    inc ebx
-    cmp ebx, 32
-    jb .scan
-    jmp .absent
-.found:
-    mov eax, ebx
-    shl eax, 11
-    or eax, 0x80000010                    ; BAR0
-    mov dx, PCI_CONFIG_ADDR
-    out dx, eax
-    mov dx, PCI_CONFIG_DATA
-    in eax, dx
-    and eax, 0xFFFFFFF0
-    jz .absent
-    mov [bga_lfb], eax
-    shr eax, 22                           ; its page directory entries
-    mov ecx, 4
-.map:
-    mov edx, eax
-    shl edx, 22
-    or edx, 0x83                          ; present, writable, 4MB, kernel only
-    mov [PAGE_DIR + eax*4], edx
-    push ecx                              ; (every console's directory)
-    mov ecx, CONSOLE_MAX
-    mov edi, CONSOLE_PT_BASE
-.dirs:
-    mov [edi + eax*4], edx
-    add edi, 0x3000
-    loop .dirs
-    pop ecx
-    inc eax
-    loop .map
-    mov eax, cr3
-    mov cr3, eax
-    popad
-.ok:
-    clc
-    ret
-.absent:
-    popad
-    stc
     ret
 
 ; SYS_BLIT_RECT: ebx = a whole frame (as for SYS_BLIT), ecx = x | y << 16,
@@ -865,7 +752,9 @@ app_blit:
     mov edi, VGA_FB                       ; where the screen is
     cmp byte [app_gfx], 2
     jne .have_screen
-    mov edi, [bga_lfb]
+    mov edi, [vid_lfb]                    ; (src/video.asm)
+    cmp byte [app_gfx_conv], 0
+    jne .convert
 .have_screen:
     mov ebx, [app_gfx_w]                  ; the stride, in bytes
     imul ebx, [app_gfx_bpp]
@@ -883,7 +772,7 @@ app_blit:
     cld
 .row:
     or eax, eax
-    jz .done
+    jz .rows_done
     push esi
     push edi
     mov ecx, edx
@@ -898,6 +787,46 @@ app_blit:
     add edi, ebx
     dec eax
     jmp .row
+; 8-bit pixels onto a true-color screen, through the palette
+.convert:
+    mov eax, [app_rect_y]
+    imul eax, [app_gfx_w]
+    add eax, [app_rect_x]                 ; eax = the corner's pixel
+    lea edi, [edi + eax*4]
+    mov esi, [ebp + 16]
+    add esi, eax
+    mov edx, [app_rect_h]
+    cld
+.conv_row:
+    or edx, edx
+    jz .rows_done
+    push esi
+    push edi
+    mov ecx, [app_rect_w]
+.conv_px:
+    movzx eax, byte [esi]
+    inc esi
+    mov eax, [app_pal32 + eax*4]
+    stosd
+    loop .conv_px
+    pop edi
+    pop esi
+    add esi, [app_gfx_w]
+    mov eax, [app_gfx_w]
+    lea edi, [edi + eax*4]
+    dec edx
+    jmp .conv_row
+.rows_done:
+    cmp byte [app_gfx], 2                 ; (a card that's told what changed)
+    jne .done
+    mov eax, [app_rect_x]
+    mov ebx, [app_rect_y]
+    mov ecx, eax
+    add ecx, [app_rect_w]
+    mov edx, ebx
+    add edx, [app_rect_h]
+    call vid_dirty
+    call vid_flush
 .done:
     xor eax, eax
     ret
@@ -907,13 +836,13 @@ app_gfx_palette:
     pushad
     mov dx, VGA_DAC_WRITE_INDEX
     xor al, al
-    out dx, al
+    call app_dac_index
     mov dx, VGA_DAC_DATA
     mov esi, vga_default_palette          ; 0-15: the text colors
     mov ecx, 48
 .text:
     lodsb
-    out dx, al
+    call app_dac_out
     loop .text
     xor ecx, ecx                          ; 16-31: grays
 .gray:
@@ -924,9 +853,9 @@ app_gfx_palette:
     mov ebx, 15
     div ebx
     pop edx
-    out dx, al
-    out dx, al
-    out dx, al
+    call app_dac_out
+    call app_dac_out
+    call app_dac_out
     inc ecx
     cmp ecx, 16
     jb .gray
@@ -965,6 +894,44 @@ app_gfx_palette:
 
 app_cube_levels db 0, 13, 25, 38, 50, 63
 
+; The VGA's palette (its DAC): al = the first color to write - and the
+; same colors kept as 0x00RRGGBB in app_pal32, for a card that has no
+; palette (VMware's, virtio's: an 8-bit program's frame is turned into
+; true color through it - app_gfx_conv)
+app_dac_index:
+    out dx, al
+    mov [app_dac_i], al
+    mov byte [app_dac_c], 0
+    ret
+
+; al = the next red, green or blue (6 bits) for the DAC
+app_dac_out:
+    out dx, al
+    push eax
+    push ebx
+    push ecx
+    movzx ebx, byte [app_dac_i]
+    movzx ecx, byte [app_dac_c]
+    and al, 63
+    mov ah, al                            ; 6 bits -> 8
+    shl al, 2
+    shr ah, 4
+    or al, ah
+    neg ecx                               ; red the high byte, blue the low
+    mov [app_pal32 + ebx*4 + ecx + 2], al
+    neg ecx
+    inc ecx
+    cmp ecx, 3
+    jb .same
+    xor ecx, ecx
+    inc byte [app_dac_i]
+.same:
+    mov [app_dac_c], cl
+    pop ecx
+    pop ebx
+    pop eax
+    ret
+
 
 ; SYS_PALETTE: ebx = color 0-255, ecx = 0xRRGGBB
 sys_palette:
@@ -982,20 +949,20 @@ sys_palette:
     ret
 .dac:
     mov dx, VGA_DAC_WRITE_INDEX
-    out dx, al
+    call app_dac_index
     mov dx, VGA_DAC_DATA
     mov ecx, [ebp + 24]
     mov eax, ecx
     shr eax, 18                           ; 8-bit red -> the DAC's 6 bits
-    out dx, al
+    call app_dac_out
     mov eax, ecx
     shr eax, 10
     and al, 63
-    out dx, al
+    call app_dac_out
     mov eax, ecx
     shr eax, 2
     and al, 63
-    out dx, al
+    call app_dac_out
     xor eax, eax
     ret
 .bad:
@@ -1513,7 +1480,6 @@ fh_pos       times FH_COUNT dd 0
 fh_cur       dd 0
 fh_cur_slot  dw 0
 fh_src_ptr   dd 0
-bga_lfb      dd 0
 app_audio_until dd 0
 
 FETCH_URL_MAX    equ 256
@@ -1524,3 +1490,8 @@ wget_app_max     dd 0
 wget_app_len     dd 0
 app_tcp_pos      dd 0
 app_tcp_until    dd 0
+
+app_dac_i      db 0                       ; app_dac_out's next color...
+app_dac_c      db 0                       ; ...and which part of it
+align 4
+app_pal32      times 256 dd 0             ; the DAC's colors, 0x00RRGGBB

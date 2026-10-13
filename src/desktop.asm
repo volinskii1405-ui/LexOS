@@ -137,7 +137,7 @@ desktop_command:
     call task_wait
     jmp .wait_gone
 .start:
-    call bga_find                         ; (src/appsys.asm)
+    call vid_find                         ; (src/video.asm)
     jnc .have_video
     mov esi, dk_msg_no_video
     call basic_puts
@@ -235,30 +235,10 @@ dk_video_on:
 ; the pointer in the middle, everything to be drawn
 dk_video_mode:
     pushad
-    mov ax, BGA_ENABLE
-    xor dx, dx
-    call bga_write
-    mov ax, BGA_XRES
-    mov dx, [dk_w]
-    call bga_write
-    mov ax, BGA_YRES
-    mov dx, [dk_h]
-    call bga_write
-    mov ax, BGA_BPP
-    mov dx, 32
-    call bga_write
-    mov ax, BGA_VIRT_WIDTH
-    mov dx, [dk_w]
-    call bga_write
-    mov ax, BGA_X_OFFSET
-    xor dx, dx
-    call bga_write
-    mov ax, BGA_Y_OFFSET
-    xor dx, dx
-    call bga_write
-    mov ax, BGA_ENABLE
-    mov dx, 0x41
-    call bga_write
+    mov eax, [dk_w]
+    mov ecx, [dk_h]
+    mov edx, 32
+    call vid_set_mode                     ; (src/video.asm: whichever card)
     mov eax, [dk_w]
     dec eax
     mov [mouse_max_x], eax
@@ -284,9 +264,7 @@ dk_video_off:
     pushad
     call vga_map_real                     ; (the font goes back in there)
     mov byte [dk_in_transition], 1
-    mov ax, BGA_ENABLE
-    xor dx, dx
-    call bga_write
+    call vid_off
     call vga_leave_screen
     mov byte [dk_in_transition], 0
     mov byte [gfx_mouse_desk], 0
@@ -2832,7 +2810,9 @@ dk_blit:
 ; BGA's Y offset) - so the screen never shows a frame half drawn. The
 ; hidden page last got the frame before the one just shown, so it takes
 ; this frame's rectangles and the last frame's, and the pointer: rubbed
-; out where it was drawn on this page, drawn where it is.
+; out where it was drawn on this page, drawn where it is. A card with
+; one page (VMware's, virtio's: src/video.asm) is drawn into as it's
+; shown, and then told which rectangles changed.
 dk_present:
     pushad
     cmp dword [dk_frame_n], 0
@@ -2857,9 +2837,13 @@ dk_present:
 .go:
     mov ebp, [dk_page]
     xor ebp, 1                            ; ebp = the hidden page
+    cmp dword [vid_pages], 2
+    je .two_pages
+    xor ebp, ebp                          ; (one: that one)
+.two_pages:
     mov eax, [dk_page_bytes]
     imul eax, ebp
-    add eax, [bga_lfb]
+    add eax, [vid_lfb]
     mov [dk_page_lfb], eax
     mov eax, [dk_fronts + ebp*4]
     mov [dk_page_front], eax
@@ -2868,6 +2852,10 @@ dk_present:
     call .rects
     mov esi, dk_prev_rects                ; the last one's
     mov ecx, [dk_prev_n]
+    cmp dword [vid_pages], 2              ; (one page: it has them)
+    je .prev
+    xor ecx, ecx
+.prev:
     call .rects
     cmp byte [dk_pg_ptr_on + ebp], 0      ; the pointer as drawn here
     je .no_old
@@ -2889,9 +2877,15 @@ dk_present:
     cmp byte [dmag_zoom], 0               ; and where it is now (src/dkmag.asm)
     je .lens_done
     call dmag_draw
+    mov eax, [dmag_x]                     ; (changed, for a one-page card)
+    mov ebx, [dmag_y]
+    lea ecx, [eax + DMAG_W]
+    lea edx, [ebx + DMAG_H]
+    call vid_dirty
 .lens_done:
     call dk_draw_pointer
     call dk_ptr_rect
+    call vid_dirty
     mov esi, ebp
     shl esi, 4
     mov [dk_pg_ptr + esi], eax
@@ -2900,10 +2894,9 @@ dk_present:
     mov [dk_pg_ptr + esi + 12], edx
     mov byte [dk_pg_ptr_on + ebp], 1
     call dk_front_poison                  ; (its copy doesn't have it)
-    mov ax, BGA_Y_OFFSET                  ; shown
-    mov edx, [dk_h]
-    imul edx, ebp
-    call bga_write
+    mov eax, ebp                          ; shown
+    call vid_show_page
+    call vid_flush                        ; (or told what changed)
     mov [dk_page], ebp
     mov esi, dk_frame_rects               ; (the other page lacks these now)
     mov edi, dk_prev_rects
@@ -2926,6 +2919,7 @@ dk_present:
     mov ebx, [esi + 4]
     mov ecx, [esi + 8]
     mov edx, [esi + 12]
+    call vid_dirty
     sub ecx, eax
     sub edx, ebx
     call dk_blit

@@ -45,7 +45,7 @@ WL_LINE        equ 0xD3E3D8
 ; ============================================================
 welcome_setup:
     pushad
-    call bga_find
+    call vid_find                         ; (src/video.asm)
     jc .no_video
     call wl_begin
     mov dword [wl_step], 0
@@ -232,7 +232,7 @@ wl_edit:
 ; ============================================================
 welcome_boot:
     pushad
-    call bga_find
+    call vid_find                         ; (src/video.asm)
     jc .done
     cmp byte [wl_did_setup], 0
     jne .desktop
@@ -249,7 +249,7 @@ welcome_boot:
 ; alone without a password - then the desktop
 welcome_relogin:
     pushad
-    call bga_find
+    call vid_find                         ; (src/video.asm)
     jc .done
     call wl_login
     call wl_desktop
@@ -357,7 +357,7 @@ wl_show:
     lea esi, [esi + eax*4]
     mov edi, esi
     add esi, DESK_BACK
-    add edi, [bga_lfb]
+    add edi, [vid_lfb]
     mov edx, ecx
     cld
 .row:
@@ -371,6 +371,12 @@ wl_show:
     add edi, WL_STRIDE
     dec ebp
     jnz .row
+    popad
+    pushad                                ; (a card that's told what changed)
+    add ecx, eax
+    add edx, ebx
+    call vid_dirty
+    call vid_flush
     popad
     ret
 

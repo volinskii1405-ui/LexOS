@@ -1,6 +1,6 @@
 ASM = nasm
 BUILD_DIR = build
-SRC_FILES = src/fat32.asm src/atadma.asm kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/serial.asm src/mouse.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/parse.asm src/vga.asm src/view.asm src/rtc.asm src/speaker.asm src/sound.asm src/mixer.asm src/ac97.asm src/chip8.asm src/turtle.asm src/hostfs.asm src/basic.asm src/net.asm src/inet.asm src/httpd.asm src/chat.asm src/sched.asm src/usermode.asm src/appsys.asm src/console.asm src/desktop.asm src/dkwins.asm src/dkstyle.asm src/dksound.asm src/dkicons.asm src/lang.asm src/font866.inc src/dkclip.asm src/dkfind.asm src/dkextra.asm src/neofetch.asm src/langui.asm src/dkcat.asm src/grep.asm src/headtail.asm src/uranium.asm src/user.asm src/welcome.asm src/tabcomplete.asm src/script.asm src/pipe.asm src/shellx.asm src/dkmag.asm src/fsjournal.asm src/fslong.asm src/dkname.asm src/dkgrid.asm src/dkprops.asm src/dktrash.asm src/dkdrop.asm src/appext.asm src/dkart.asm src/dkshot.asm src/dkfview.asm src/dkwall.asm src/dkmsel.asm src/dkundo.asm src/dklock.asm src/dkusers.asm src/dkcpanel.asm src/dksaver.asm src/dkfscheck.asm src/dkpng.asm src/dkpics.asm src/dknotify.asm src/dkanim.asm src/dkres.asm src/dkswitch.asm src/dkregion.asm src/dkclock.asm src/dknight.asm src/dkchist.asm src/dkmfind.asm src/acpi.asm src/longname.asm src/linux.asm src/dkart.inc
+SRC_FILES = src/fat32.asm src/atadma.asm kernel.asm src/data.asm src/screen.asm src/input.asm src/shell.asm src/interrupts.asm src/devices.asm src/ata.asm src/serial.asm src/mouse.asm src/filesystem.asm src/fs_extra.asm src/programs.asm src/parse.asm src/vga.asm src/view.asm src/rtc.asm src/speaker.asm src/sound.asm src/mixer.asm src/ac97.asm src/chip8.asm src/turtle.asm src/hostfs.asm src/basic.asm src/net.asm src/inet.asm src/httpd.asm src/chat.asm src/sched.asm src/usermode.asm src/appsys.asm src/console.asm src/desktop.asm src/dkwins.asm src/dkstyle.asm src/dksound.asm src/dkicons.asm src/lang.asm src/font866.inc src/dkclip.asm src/dkfind.asm src/dkextra.asm src/neofetch.asm src/langui.asm src/dkcat.asm src/grep.asm src/headtail.asm src/uranium.asm src/user.asm src/welcome.asm src/tabcomplete.asm src/script.asm src/pipe.asm src/shellx.asm src/dkmag.asm src/fsjournal.asm src/fslong.asm src/dkname.asm src/dkgrid.asm src/dkprops.asm src/dktrash.asm src/dkdrop.asm src/appext.asm src/dkart.asm src/dkshot.asm src/dkfview.asm src/dkwall.asm src/dkmsel.asm src/dkundo.asm src/dklock.asm src/dkusers.asm src/dkcpanel.asm src/dksaver.asm src/dkfscheck.asm src/dkpng.asm src/dkpics.asm src/dknotify.asm src/dkanim.asm src/dkres.asm src/dkswitch.asm src/dkregion.asm src/dkclock.asm src/dknight.asm src/dkchist.asm src/dkmfind.asm src/video.asm src/pci.asm src/font8x16.bin src/acpi.asm src/longname.asm src/linux.asm src/dkart.inc
 
 .PHONY: all run run-serial lan1 lan2 clean apps fresh-disk
 
@@ -114,6 +114,17 @@ CARD ?= ac97
 SOUNDCARDS ?= $(if $(filter sb16,$(CARD)),$(SB16),-device AC97,audiodev=snd0 -device adlib,audiodev=snd0$(comma)iobase=0x220)
 QEMUFLAGS ?=
 
+# The graphics card (src/video.asm drives each one):
+#   make run VGA=std          QEMU's standard VGA - the Bochs VBE adapter
+#   make run VGA=vmware       VMware SVGA II
+#   make run VGA=virtio       virtio-gpu, with a VGA too (virtio-vga)
+#   make run VGA=virtio-gpu   virtio-gpu alone - no VGA, no text mode
+#   make run VGA=bochs        bochs-display - the VBE registers, no VGA
+# (the last two show nothing until the desktop: LexOS's text screen is
+# the VGA's)
+VGA ?= std
+VIDEO = $(if $(filter virtio-gpu,$(VGA)),-vga none -device virtio-gpu-pci,$(if $(filter bochs,$(VGA)),-vga none -device bochs-display,-vga $(VGA)))
+
 # The host folder LexOS's `hostls`/`hostget` see (src/hostfs.asm): QEMU
 # presents it to the guest as a whole FAT16 disk - the primary IDE
 # channel's slave drive - built from whatever's in it at startup. Files
@@ -132,7 +143,7 @@ run: $(BUILD_DIR)/os-image.bin
 	qemu-system-i386 $(QEMU_ACCEL) -m 256 -drive format=raw,file=$(BUILD_DIR)/os-image.bin,if=ide,index=0 \
 		$(SHARED_DRIVE) $(NIC) \
 		$(AUDIO) -machine pcspk-audiodev=snd0 \
-		$(SOUNDCARDS)
+		$(SOUNDCARDS) $(VIDEO)
 
 # Same as `run`, but also exposes COM1 as a TCP socket on localhost, so
 # `recv <name> <hex size>` (see README) has something to actually receive
@@ -144,7 +155,7 @@ run-serial: $(BUILD_DIR)/os-image.bin
 	qemu-system-i386 $(QEMU_ACCEL) -m 256 -drive format=raw,file=$(BUILD_DIR)/os-image.bin,if=ide,index=0 \
 		$(SHARED_DRIVE) $(NIC) \
 		$(AUDIO) -machine pcspk-audiodev=snd0 \
-		$(SOUNDCARDS) \
+		$(SOUNDCARDS) $(VIDEO) \
 		-serial tcp::$(SERIALPORT),server,nowait
 
 # Two LexOS machines on one network, for `chat` (src/chat.asm): run
@@ -156,7 +167,7 @@ run-serial: $(BUILD_DIR)/os-image.bin
 LAN_PORT ?= 5560
 LAN_QEMU = qemu-system-i386 $(QEMU_ACCEL) -m 256 \
 	$(AUDIO) -machine pcspk-audiodev=snd0 \
-	-device AC97,audiodev=snd0
+	-device AC97,audiodev=snd0 $(VIDEO)
 lan1: $(BUILD_DIR)/os-image.bin
 	$(LAN_QEMU) -drive format=raw,file=$(BUILD_DIR)/os-image.bin,if=ide,index=0 \
 		-nic socket,model=rtl8139,listen=:$(LAN_PORT),mac=52:54:00:4c:58:15
